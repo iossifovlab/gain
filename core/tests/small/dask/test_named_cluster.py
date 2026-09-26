@@ -1,11 +1,14 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import logging
+import pathlib
 from typing import Any
 from unittest.mock import DEFAULT
 
+import gain.dask
 import gain.dask.named_cluster
 import pytest
 import pytest_mock
+import yaml
 from dask import config
 from gain.dask.named_cluster import setup_client, setup_client_from_config
 
@@ -222,6 +225,37 @@ def test_setup_slurm_cluster(mocker: pytest_mock.MockerFixture) -> None:
 
     assert mocked_slurm.call_count == 1
     assert "number_of_workers" not in mocked_slurm.call_args.kwargs
+
+
+@pytest.mark.parametrize("cluster_type", ["kubernetes", "kubgernetes"])
+def test_unknown_cluster_type_is_refused_by_name(
+    mocker: pytest_mock.MockerFixture,
+    cluster_type: str,
+) -> None:
+    mocked_client = mocker.patch(
+        "gain.dask.named_cluster.Client",
+        autospec=True)
+
+    with pytest.raises(ValueError, match=cluster_type) as excinfo:
+        setup_client_from_config({"type": cluster_type})
+
+    assert "local, manual, sge, slurm" in str(excinfo.value)
+    assert mocked_client.call_count == 0
+
+
+def test_bundled_config_names_only_supported_cluster_types() -> None:
+    bundled = pathlib.Path(gain.dask.__file__).parent / "named_cluster.yaml"
+    named_clusters = yaml.safe_load(bundled.read_text())["dae_named_cluster"]
+    supported = {"manual", *gain.dask.named_cluster._CLUSTER_TYPES}
+
+    types = {conf["name"]: conf["type"] for conf in named_clusters["clusters"]}
+
+    assert named_clusters["default"] in types
+    assert {
+        name: cluster_type
+        for name, cluster_type in types.items()
+        if cluster_type not in supported
+    } == {}
 
 
 def test_setup_manual_client(mocker: pytest_mock.MockerFixture) -> None:

@@ -1,7 +1,6 @@
 import copy
-import os
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any
 
 import dask.config
 from distributed.client import Client
@@ -49,40 +48,9 @@ def set_up_slurm_cluster(cluster_conf: dict[str, Any]) -> Cluster:
     return SLURMCluster(**cluster_conf)
 
 
-def set_up_kubernetes_cluster(cluster_conf: dict[str, Any]) -> Cluster:
-    """Create a kubernetes cluster."""
-    # pylint: disable=import-outside-toplevel,import-error
-    from dask_kubernetes.operator.kubecluster import (  # pyright: ignore
-        KubeCluster,
-        make_cluster_spec,
-    )
-
-    cluster_conf.pop("number_of_workers", None)
-    env = {}
-    if "envvars" in cluster_conf:
-        env = {v: os.environ[v] for v in cluster_conf["envvars"]}
-
-    spec = make_cluster_spec(
-        name="gpf-dask-cluster",
-        image=cluster_conf["container_image"],
-        env=env,
-    )
-
-    if cluster_conf.get("image_pull_secrets"):
-        secrets = [
-            {"name": name}
-            for name in cluster_conf.get("image_pull_secrets", [])
-        ]
-        spec["spec"]["worker"]["spec"]["imagePullSecrets"] = secrets
-        spec["spec"]["scheduler"]["spec"]["imagePullSecrets"] = secrets
-
-    return cast(Cluster, KubeCluster(n_workers=1, custom_cluster_spec=spec))
-
-
 _CLUSTER_TYPES["local"] = set_up_local_cluster
 _CLUSTER_TYPES["sge"] = set_up_sge_cluster
 _CLUSTER_TYPES["slurm"] = set_up_slurm_cluster
-_CLUSTER_TYPES["kubernetes"] = set_up_kubernetes_cluster
 
 
 def set_up_manual_client(cluster_conf: dict[str, Any]) -> Client:
@@ -107,6 +75,11 @@ def setup_client_from_config(
     _resilence_distributed_logging()
     _adjust_default_distributed_config()
     cluster_type = cluster_config["type"]
+    if cluster_type != "manual" and cluster_type not in _CLUSTER_TYPES:
+        supported = ", ".join(sorted({"manual", *_CLUSTER_TYPES}))
+        raise ValueError(
+            f"Unknown named cluster type {cluster_type!r}; "
+            f"supported types: {supported}.")
     if cluster_type == "manual":
         return set_up_manual_client(cluster_config), cluster_config
 

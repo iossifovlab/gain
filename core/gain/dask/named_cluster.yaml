@@ -74,15 +74,6 @@ dae_named_cluster:
         - "-V"
         - "-l h_rss=8G"
         # - "-l h_vmem=8G"
-    - name: kubernetes
-      type: kubgernetes
-      params:
-        container_image: registry.seqpipe.org/iossifovlab-gpf:latest
-        # extra_pod_config:
-        #   A: B
-        #   b: 234234
-        # envvars: 
-        #   - PATH
     - name: slurm
       type: slurm
       number_of_threads: 10
