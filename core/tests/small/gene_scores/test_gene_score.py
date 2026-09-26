@@ -941,6 +941,35 @@ def test_get_values(scores_repo: GenomicResourceRepo) -> None:
 
 
 # ---------------------------------------------------------------------------
+# view range auto-ranging
+# ---------------------------------------------------------------------------
+
+def test_view_range_is_auto_ranged_from_a_renamed_source_column(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The score is read from a source column named differently from its id,
+    # and declares no view_range: the constructor ranges the histogram over
+    # that column's values, before the column takes the score id's name.
+    res = (
+        a_gene_score()
+        .with_score("pli", "float", column_name="pli_raw")
+        .with_data("""
+            gene   pli_raw
+            G1     0.2
+            G2     0.9
+            G3     0.5
+        """)
+        .build_resource(tmp_path)
+    )
+
+    gene_score = build_gene_score_from_resource(res)
+
+    hist_conf = gene_score.get_histogram_config("pli")
+    assert isinstance(hist_conf, NumberHistogramConfig)
+    assert hist_conf.view_range == (0.2, 0.9)
+
+
+# ---------------------------------------------------------------------------
 # get_score_range
 # ---------------------------------------------------------------------------
 

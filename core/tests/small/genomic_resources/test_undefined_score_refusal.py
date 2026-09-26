@@ -105,6 +105,11 @@ def test_several_undefined_scores_are_named_together_once_each(
 @pytest.mark.parametrize("method", [
     "get_score_range", "get_histogram_filename", "get_score_histogram",
     "get_x_scale", "get_y_scale",
+    "get_min", "get_max", "get_values", "get_score_df",
+    "get_genes", "to_dict", "to_tsv",
+    pytest.param(
+        "_to_dict",
+        marks=pytest.mark.filterwarnings("ignore::DeprecationWarning")),
 ])
 def test_a_gene_score_refuses_in_the_same_sentence(
     gene: GeneScore, method: str,
