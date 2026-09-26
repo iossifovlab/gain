@@ -1,6 +1,7 @@
 # pylint: disable=W0621,C0114,C0115,C0116,W0212,W0613
 import os
 import pathlib
+from collections.abc import Generator
 from typing import Any, cast
 
 import networkx
@@ -18,10 +19,12 @@ from gain.task_graph.cli_tools import (
     task_graph_run_with_results,
     task_graph_status,
 )
+from gain.task_graph.dask_executor import DaskExecutor
 from gain.task_graph.executor import (
     TaskGraphExecutor,
 )
 from gain.task_graph.graph import Task, TaskDesc, TaskGraph
+from gain.task_graph.sequential_executor import SequentialExecutor
 
 
 def add_to_list(what: int, where: list[int]) -> list[int]:
@@ -179,7 +182,54 @@ def test_task_graph_run_keep_going_logs_errors(
     assert result is False
     captured = capsys.readouterr()
     assert "Task fail failed with:" in captured.err
-    assert "ValueError: Task failed" in captured.out
+    assert "ValueError: Task failed" in captured.err
+    assert captured.out == ""
+
+
+@pytest.fixture(params=[
+    pytest.param("dask", marks=pytest.mark.dask_executor),
+    "sequential",
+])
+def logging_executor(
+    request: pytest.FixtureRequest, tmp_path: pathlib.Path,
+) -> Generator[TaskGraphExecutor, None, None]:
+    """An executor writing its task logs under ``tmp_path``."""
+    log_dir = str(tmp_path / "task-log")
+    if request.param == "dask":
+        # The client is session-scoped and shared: closing the executor
+        # would shut it down, so it is not closed here (see conftest).
+        yield DaskExecutor(
+            request.getfixturevalue("dask_client"), task_log_dir=log_dir)
+        return
+    executor = SequentialExecutor(task_log_dir=log_dir)
+    yield executor
+    executor.close()
+
+
+def test_a_failed_task_logs_its_exception_to_its_task_log(
+    logging_executor: TaskGraphExecutor, tmp_path: pathlib.Path,
+) -> None:
+    graph = TaskGraph()
+    graph.create_task("fail", raise_exception, args=[], deps=[])
+
+    assert task_graph_run(graph, logging_executor, keep_going=True) is False
+
+    log_text = (tmp_path / "task-log" / "log_fail.log").read_text()
+    assert " ERROR " in log_text
+    assert "task <fail> failed" in log_text
+    assert "Traceback (most recent call last)" in log_text
+    assert "ValueError: Task failed" in log_text
+
+
+def test_a_successful_task_logs_no_error_to_its_task_log(
+    logging_executor: TaskGraphExecutor, tmp_path: pathlib.Path,
+) -> None:
+    graph = TaskGraph()
+    graph.create_task("ok", lambda: 1, args=[], deps=[])
+
+    assert task_graph_run(graph, logging_executor, keep_going=True) is True
+
+    assert " ERROR " not in (tmp_path / "task-log" / "log_ok.log").read_text()
 
 
 def test_task_graph_run_with_results_yields_values() -> None:
@@ -210,7 +260,8 @@ def test_task_graph_run_with_results_keep_going_handles_error(
 
     captured = capsys.readouterr()
     assert "Task fail failed with:" in captured.err
-    assert "ValueError: Task failed" in captured.out
+    assert "ValueError: Task failed" in captured.err
+    assert captured.out == ""
 
 
 def test_task_graph_status_prints_records(

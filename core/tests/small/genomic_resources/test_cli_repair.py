@@ -4,6 +4,7 @@ import gzip
 import logging
 import os
 import pathlib
+import re
 import textwrap
 from typing import Any
 
@@ -499,6 +500,170 @@ def test_repo_repair_fails_when_the_statistics_hash_is_not_stored(
     assert "were not built" in caplog.text
     assert "is consistent" not in caplog.text
     assert not (path / "one" / "statistics" / "stats_hash").exists()
+
+
+@pytest.fixture
+def repaired_path(
+    proto_fixture: tuple[pathlib.Path, FsspecReadWriteProtocol],
+) -> pathlib.Path:
+    """The fixture repository after one healthy repair: every hash current."""
+    path, _proto = proto_fixture
+    cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
+    assert (path / "one" / "statistics" / "stats_hash").is_file()
+    return path
+
+
+# The run's summary line, naming `one` and nothing else.
+_BLAMES_ONLY_ONE = re.compile(
+    r"^failed resources in GRR <[^>]*>: one$", re.MULTILINE)
+
+
+def _error_messages(caplog: pytest.LogCaptureFixture) -> str:
+    return "\n".join(
+        record.getMessage() for record in caplog.records
+        if record.levelno >= logging.ERROR)
+
+
+def test_a_forced_repair_names_the_resource_whose_task_failed(
+    repaired_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Every hash is current going in, so only the forced run's own clearing
+    # of it lets the failure be pinned on `one`.
+    monkeypatch.setattr(
+        scan, "do_histogram_task", _histogram_that_raises("one"))
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"), \
+            pytest.raises(SystemExit) as excinfo:
+        cli_manage(["repo-repair", "-f", "-R", str(repaired_path), "-j", "1"])
+
+    assert excinfo.value.code != 0
+    errors = _error_messages(caplog)
+    assert _BLAMES_ONLY_ONE.search(errors)
+    assert "statistics of <one> were not built" in errors
+    assert "no single resource can be blamed" not in errors
+    assert "<two>" not in errors
+    assert (repaired_path / "two" / "statistics" / "stats_hash").is_file()
+
+
+@pytest.mark.parametrize("command", ["resource-repair", "resource-stats"])
+def test_a_forced_resource_command_names_the_resource_whose_task_failed(
+    repaired_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    command: str,
+) -> None:
+    monkeypatch.setattr(
+        scan, "do_histogram_task", _histogram_that_raises("one"))
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"), \
+            pytest.raises(SystemExit) as excinfo:
+        cli_manage([
+            command, "-f", "-R", str(repaired_path), "-r", "one", "-j", "1"])
+
+    assert excinfo.value.code != 0
+    errors = _error_messages(caplog)
+    assert _BLAMES_ONLY_ONE.search(errors)
+    assert "statistics of <one> were not built" in errors
+    assert "no single resource can be blamed" not in errors
+
+
+def _failed_forced_repair(
+    path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            scan, "do_histogram_task", _histogram_that_raises("one"))
+        with pytest.raises(SystemExit):
+            cli_manage(["repo-repair", "-f", "-R", str(path), "-j", "1"])
+
+
+def test_a_failed_forced_rebuild_is_retried_by_the_next_plain_repair(
+    repaired_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _failed_forced_repair(repaired_path, monkeypatch)
+
+    with pytest.raises(SystemExit) as dry_run:
+        cli_manage(["repo-repair", "--dry-run", "-R", str(repaired_path)])
+    assert dry_run.value.code == 1
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"):
+        cli_manage(["repo-repair", "-R", str(repaired_path), "-j", "1"])
+
+    assert "is consistent" in caplog.text
+    assert (repaired_path / "one" / "statistics" / "stats_hash").is_file()
+
+
+def _fingerprint(path: pathlib.Path) -> tuple[bytes, int]:
+    """What a rewrite of ``path`` would change: its content and mtime."""
+    return path.read_bytes(), path.stat().st_mtime_ns
+
+
+def test_a_repair_that_rebuilds_nothing_keeps_the_stored_hash(
+    repaired_path: pathlib.Path,
+) -> None:
+    stats_hash = repaired_path / "one" / "statistics" / "stats_hash"
+    before = _fingerprint(stats_hash)
+
+    cli_manage(["repo-repair", "-R", str(repaired_path)])
+
+    assert _fingerprint(stats_hash) == before
+
+
+def test_a_dry_run_keeps_the_stored_hash_of_a_stale_resource(
+    repaired_path: pathlib.Path,
+) -> None:
+    # `one` IS a rebuild candidate here -- its config changed -- so only
+    # the dry run itself stands between it and a cleared hash.
+    config = repaired_path / "one" / GR_CONF_FILE_NAME
+    config.write_text(config.read_text() + "# edited\n")
+    stats_hash = repaired_path / "one" / "statistics" / "stats_hash"
+    before = _fingerprint(stats_hash)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli_manage(["repo-repair", "--dry-run", "-R", str(repaired_path)])
+
+    assert excinfo.value.code == 1
+    assert _fingerprint(stats_hash) == before
+
+
+def test_a_hash_that_cannot_be_cleared_fails_the_resource_before_its_build(
+    repaired_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    real_delete = FsspecReadWriteProtocol.delete_resource_file
+
+    def delete(self: Any, resource: Any, filename: str) -> None:
+        if resource.resource_id == "one" and filename.endswith("stats_hash"):
+            raise PermissionError("stats_hash is read-only")
+        real_delete(self, resource, filename)
+
+    monkeypatch.setattr(FsspecReadWriteProtocol, "delete_resource_file", delete)
+    histogram = (
+        repaired_path / "one" / "statistics" / "histogram_phastCons100way.json")
+    before = _fingerprint(histogram)
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"), \
+            pytest.raises(SystemExit):
+        cli_manage(["repo-repair", "-f", "-R", str(repaired_path), "-j", "1"])
+
+    assert "<one>" in _error_messages(caplog)
+    assert _fingerprint(histogram) == before
+
+
+def test_a_failed_forced_rebuild_leaves_no_stats_hash_in_the_manifest(
+    repaired_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _failed_forced_repair(repaired_path, monkeypatch)
+
+    manifest = (repaired_path / "one" / GR_MANIFEST_FILE_NAME).read_text()
+    assert not (repaired_path / "one" / "statistics" / "stats_hash").exists()
+    assert "statistics/stats_hash" not in manifest
 
 
 def test_the_info_page_is_not_written_before_the_statistics_page_renders(

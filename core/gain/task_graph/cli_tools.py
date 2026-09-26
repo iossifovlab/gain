@@ -242,7 +242,7 @@ def task_graph_run_with_results(
                     traceback.print_exception(
                         None, value=result_or_error,
                         tb=result_or_error.__traceback__,
-                        file=sys.stdout,
+                        file=sys.stderr,
                     )
                 else:
                     raise result_or_error
