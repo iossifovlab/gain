@@ -99,6 +99,8 @@ pip install -e web_api
 # Optional annotator plugins:
 pip install -e demo_annotator
 pip install -e vep_annotator
+mamba env update --name gain \
+    --file ./spliceai_annotator/spliceai-environment.yml
 pip install -e spliceai_annotator
 ```
 
@@ -107,6 +109,13 @@ gain-web-api pyprojects: after changing any pyproject
 dependency, run `python scripts/conda_env.py` from the repo
 root and commit the result (`core/tests/test_conda_deps.py`
 fails CI until you do).
+
+`spliceai_annotator/spliceai-environment.yml` is generated
+the same way, from the spliceai plugin's runtime
+dependencies (tensorflow, onnxruntime) and its dev tools
+(incl. `onnx` and `tf2onnx`), which keeps tensorflow out of
+`dev-environment.yml`. The demo and vep plugins add nothing
+beyond the core files, so they have no environment file.
 
 Notes:
 

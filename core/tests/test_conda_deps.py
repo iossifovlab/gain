@@ -25,6 +25,8 @@ REGENERATE = (
     "run `python scripts/conda_env.py` from the repo root and commit "
     "the result")
 
+PLUGINS = ("demo_annotator", "vep_annotator", "spliceai_annotator")
+
 
 @pytest.fixture(scope="module")
 def conda_env() -> ModuleType:
@@ -43,7 +45,10 @@ def test_committed_environment_files_are_current(
     conda_env: ModuleType,
 ) -> None:
     rendered = conda_env.render_all()
-    assert set(rendered) == {"environment.yml", "dev-environment.yml"}
+    assert set(rendered) == {
+        "environment.yml", "dev-environment.yml",
+        "spliceai_annotator/spliceai-environment.yml",
+    }
 
     for filename, text in rendered.items():
         committed = REPO_ROOT / filename
@@ -51,6 +56,24 @@ def test_committed_environment_files_are_current(
             pytest.fail(f"{committed} is missing; {REGENERATE}")
         assert committed.read_text() == text, (
             f"{committed} is stale; {REGENERATE}")
+    # vep and demo add nothing beyond the core files, so they have none.
+    for output in conda_env.OUTPUTS:
+        if output.filename not in rendered:
+            leftover = REPO_ROOT / output.filename
+            assert not leftover.exists(), f"{leftover} is stale; {REGENERATE}"
+
+
+def test_dev_environment_file_carries_no_spliceai_tooling(
+    conda_env: ModuleType,
+) -> None:
+    rendered = conda_env.render_all()
+    names = {
+        re.split(r"[<>=!~:]", line.strip().removeprefix("- "), maxsplit=1)[0]
+        for line in _dependencies(rendered["dev-environment.yml"])
+        if not line.strip().startswith("#")
+    }
+
+    assert not names & {"tensorflow", "tf2onnx", "onnx"}
 
 
 def test_pip_only_entries_carry_a_reason(conda_env: ModuleType) -> None:
@@ -59,6 +82,24 @@ def test_pip_only_entries_carry_a_reason(conda_env: ModuleType) -> None:
         name for name, reason in conda_env.PIP_ONLY.items()
         if not reason.strip()
     ] == []
+
+
+def _pyproject(
+    name: str,
+    deps: Iterable[str],
+    group: str,
+    group_deps: Iterable[str],
+    requires_python: str = ">=3.12",
+) -> str:
+    """Return a pyproject with dependencies and one dependency group."""
+    def listed(items: Iterable[str]) -> str:
+        return "[\n" + "".join(f"    {item!r},\n" for item in items) + "]\n"
+
+    return (
+        f'[project]\nname = "{name}"\n'
+        f'requires-python = "{requires_python}"\n'
+        f"dependencies = {listed(deps)}"
+        f"[dependency-groups]\n{group} = {listed(group_deps)}")
 
 
 def _workspace(
@@ -71,17 +112,10 @@ def _workspace(
     web_api_dev: Iterable[str] = (),
     docs: Iterable[str] = (),
 ) -> pathlib.Path:
-    def listed(deps: Iterable[str]) -> str:
-        return "[\n" + "".join(f"    {dep!r},\n" for dep in deps) + "]\n"
-
     def pyproject(
         name: str, deps: list[str], group: str, group_deps: Iterable[str],
     ) -> str:
-        return (
-            f'[project]\nname = "{name}"\n'
-            f'requires-python = "{requires_python}"\n'
-            f"dependencies = {listed(deps)}"
-            f"[dependency-groups]\n{group} = {listed(group_deps)}")
+        return _pyproject(name, deps, group, group_deps, requires_python)
 
     (root / "core").mkdir(parents=True, exist_ok=True)
     (root / "web_api").mkdir(exist_ok=True)
@@ -95,6 +129,11 @@ def _workspace(
         pyproject("gain-core", core, "dev", core_dev))
     (root / "web_api/pyproject.toml").write_text(
         pyproject("gain-web-api", web_api, "dev", web_api_dev))
+    # The annotator plugins OUTPUTS feeds from, adding nothing to core.
+    for plugin in PLUGINS:
+        (root / plugin).mkdir(exist_ok=True)
+        (root / plugin / "pyproject.toml").write_text(
+            pyproject(f"gain-{plugin}", ["gain-core"], "dev", []))
     return root
 
 
@@ -317,8 +356,113 @@ def test_check_reports_drift_without_rewriting(
     assert (root / stale).read_text() == before
 
 
-RECIPE_PACKAGES = (
-    "core", "demo_annotator", "vep_annotator", "spliceai_annotator")
+PLUGIN_FILE = "plugin/plugin-environment.yml"
+
+
+def _plugin(
+    conda_env: ModuleType,
+    root: pathlib.Path,
+    deps: Iterable[str],
+    dev: Iterable[str] = (),
+) -> tuple[object, ...]:
+    """Write a plugin pyproject; return it as an output over the core files.
+
+    The returned outputs are the two core files plus the plugin's, so a
+    test renders exactly the workspace it wrote.
+    """
+    (root / "plugin").mkdir(exist_ok=True)
+    (root / "plugin/pyproject.toml").write_text(
+        _pyproject("gain-plugin", deps, "dev", dev))
+    core_outputs = tuple(
+        output for output in conda_env.OUTPUTS
+        if output.filename in conda_env.CORE_FILES)
+    return (*core_outputs, conda_env.plugin_output("plugin", "plugin"))
+
+
+def test_plugin_covered_by_the_core_files_renders_no_file(
+    conda_env: ModuleType, tmp_path: pathlib.Path,
+) -> None:
+    root = _workspace(
+        tmp_path, core=["fsspec>=2026.2"], web_api=[],
+        core_dev=["pytest>=9", "mypy==1.15.0"])
+    outputs = _plugin(
+        conda_env, root,
+        deps=["gain-core", "fsspec>=2026.2"], dev=["pytest", "mypy==1.15.0"])
+
+    rendered = conda_env.render_all(root, outputs=outputs, pip_only={})
+
+    assert set(rendered) == set(conda_env.CORE_FILES)
+
+
+def test_plugin_adding_a_package_renders_all_of_its_requirements(
+    conda_env: ModuleType, tmp_path: pathlib.Path,
+) -> None:
+    root = _workspace(
+        tmp_path, core=["numpy>=2.2"], web_api=[], core_dev=["pytest>=9"])
+    outputs = _plugin(
+        conda_env, root,
+        deps=["gain-core", "numpy>=2.2", "tensorflow>=2.18"],
+        dev=["pytest", "tf2onnx==1.17.0"])
+
+    rendered = conda_env.render_all(root, outputs=outputs, pip_only={})
+
+    assert _dependencies(rendered[PLUGIN_FILE]) == [
+        "  - python>=3.12",
+        "  # gain-plugin (plugin/pyproject.toml [project.dependencies])",
+        "  - numpy>=2.2",
+        "  - tensorflow>=2.18",
+        "  # gain-plugin (plugin/pyproject.toml [dependency-groups.dev])",
+        "  - pytest",
+        "  - tf2onnx==1.17.0",
+    ]
+
+
+def test_plugin_bound_tighter_than_the_core_files_renders(
+    conda_env: ModuleType, tmp_path: pathlib.Path,
+) -> None:
+    root = _workspace(tmp_path, core=["numpy>=2.2"], web_api=[])
+    outputs = _plugin(conda_env, root, deps=["numpy>=2.3"])
+
+    rendered = conda_env.render_all(root, outputs=outputs, pip_only={})
+
+    assert "  - numpy>=2.3\n" in rendered[PLUGIN_FILE]
+
+
+def test_main_writes_no_file_for_a_plugin_that_adds_nothing(
+    conda_env: ModuleType, tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = _workspace(
+        tmp_path, core=["numpy"], web_api=[],
+        core_dev=list(conda_env.PIP_ONLY))
+
+    assert conda_env.main([], root=root) == 0
+
+    assert not list(root.glob("*_annotator/*-environment.yml"))
+    assert (
+        "vep_annotator/vep-environment.yml not written: its feeds add "
+        "nothing beyond environment.yml, dev-environment.yml"
+    ) in capsys.readouterr().out.splitlines()
+    assert conda_env.main(["--check"], root=root) == 0
+
+
+def test_leftover_file_of_a_plugin_that_adds_nothing_is_stale(
+    conda_env: ModuleType, tmp_path: pathlib.Path,
+) -> None:
+    root = _workspace(
+        tmp_path, core=["numpy"], web_api=[],
+        core_dev=list(conda_env.PIP_ONLY))
+    assert conda_env.main([], root=root) == 0
+    leftover = root / "vep_annotator/vep-environment.yml"
+    leftover.write_text("dependencies: []\n")
+
+    assert conda_env.main(["--check"], root=root) == 1
+    assert leftover.exists()
+    assert conda_env.main([], root=root) == 0
+    assert not leftover.exists()
+
+
+RECIPE_PACKAGES = ("core", *PLUGINS)
 
 
 @pytest.mark.parametrize("package", RECIPE_PACKAGES)
