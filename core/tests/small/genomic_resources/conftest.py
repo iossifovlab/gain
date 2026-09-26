@@ -337,6 +337,19 @@ STATE_OPERATIONS = (*METADATA_OPERATIONS, "open")
 #: arrangement -- the state that has to be removed or spoiled -- readable.
 CACHED_FILE = "data.txt"
 
+#: What is asked about a stored file whose recorded state is current, per
+#: ``grr_full`` scheme -- by a manifest build and by a cache verdict alike,
+#: since each judges the state on the stat it opens with (gain#1659). On s3
+#: the state carries a change token and that stat carries the same one, so
+#: nothing is left to ask. The local filesystem has no tokens: the state is
+#: judged by size and modification time, and the time is not read out of
+#: the stat (see ``_StoredFileStat``). Sorted, as :func:`calls_for`'s
+#: output is compared.
+CURRENT_STATE_BUDGET = {
+    "file": ["info", "modified"],
+    "s3": ["info"],
+}
+
 
 def forget_the_recorded_state(
     proto: FsspecReadWriteProtocol, resource: GenomicResource,

@@ -3052,8 +3052,9 @@ class FsspecReadWriteProtocol(
         carries the size and the change token a rebuilt state needs. So
         the rebuild reads only what that dict cannot say: the
         modification time, and the md5 off the bytes themselves (see
-        gain#1039). A verdict that finds its recorded state current
-        spends one stat.
+        gain#1039). The recorded state is judged on the same stat: a
+        current state costs that one stat, plus a modification time
+        wherever no change token decides.
 
         The stat is taken before the md5 that is recorded beside it, so
         a file rewritten in between is recorded with the older token
@@ -3078,7 +3079,8 @@ class FsspecReadWriteProtocol(
 
         local_state = self.load_resource_file_state(dest_resource, filename)
         if local_state is None or not self._state_describes_stored_file(
-                dest_resource, local_state):
+                dest_resource, local_state,
+                size=stored.size, change_token=stored.change_token):
             local_state = self.build_resource_file_state(
                 dest_resource, filename,
                 size=stored.size, change_token=stored.change_token)
