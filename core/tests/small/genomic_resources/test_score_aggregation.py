@@ -45,7 +45,11 @@ from gain.genomic_resources.genomic_scores.aggregation import (
 from gain.genomic_resources.score_def import GenomicScoreDef, ScoreValue
 from gain.genomic_resources.testing.builders import a_grr, a_position_score
 
-from tests.small.genomic_resources.conftest import a_flag_score, count_calls
+from tests.small.genomic_resources.conftest import (
+    a_flag_score,
+    count_calls,
+    phrase_sites,
+)
 
 _TWO_SCORES = """
     chrom  pos_begin  pos_end  s    t
@@ -445,12 +449,13 @@ def test_both_surfaces_state_the_missing_default_rule_identically(
     assert query_remedy == "name one on the query"
 
 
-# Each refusal this package makes about an aggregation request, anchored
+# Each refusal this package words about an aggregation request, anchored
 # by the part that carries the RULE rather than the surface's own remedy
 # -- long enough to be unmistakable, short enough to survive an
-# f-string's line breaks.
+# f-string's line breaks.  The undefined-score refusal is not here: it is
+# shared with surfaces outside this package, and is fenced gain-wide in
+# ``test_undefined_score_refusal``.
 _REFUSAL_RULES = [
-    "is not defined by resource",
     "has no default aggregator",
 ]
 
@@ -460,30 +465,16 @@ _STATED_IN = "aggregation.py"
 def test_each_aggregation_refusal_is_written_in_exactly_one_place() -> None:
     """The tests above cannot see two copies that agree; this can.
 
-    Two surfaces emitting the same words is what the pins can observe, and
-    it is satisfied just as well by two copies -- which is how the missing
-    default's remedy came to differ in the first place while the rule half
-    still matched.  So the "stated once" half of gain#1087 is pinned where
-    it lives: in the source, by counting where each rule is spelled.
+    A fence that only counted files would pass while
+    ``resolve_aggregator_requests`` quietly re-inlined the rule that
+    ``resolve_aggregator_name`` exists to state -- see
+    :func:`~tests.small.genomic_resources.conftest.phrase_sites` for how
+    the spellings are counted.
 
-    OCCURRENCES and not files: a second copy is just as much a second
-    statement for living in the same module as the first, and a fence that
-    only counted files would pass while ``resolve_aggregator_requests``
-    quietly re-inlined the guard that ``score_def_for`` exists to be.
-
-    Scoped to the ``genomic_scores`` package, which is what these two
-    sentences are about, and not to ``gain`` at large: a fence over the
-    whole distribution would make every unrelated module's error prose
-    answerable to an aggregation test.  The rule itself is worded
-    differently elsewhere on purpose, for surfaces that name a SET of
-    unknown scores rather than one (``_resolve_score_defs``,
-    ``ScoreResource._guard_score_id``, ``score_filter``); converging those
-    is gain#1112, so what is pinned here is these two wordings.
-
-
-    The other limit: this matches raw source text, so a copy whose
-    f-string happens to wrap mid-phrase evades it -- which is why each
-    anchor is short.
+    Scoped to the ``genomic_scores`` package, which is what these sentences
+    are about, and not to ``gain`` at large: a fence over the whole
+    distribution would make every unrelated module's error prose
+    answerable to an aggregation test.
 
     An intentional rewording goes red here, and should: the new wording
     wants re-anchoring, and the point of the trip is to notice whether
@@ -491,17 +482,9 @@ def test_each_aggregation_refusal_is_written_in_exactly_one_place() -> None:
     """
     package = pathlib.Path(gain.__file__).parent / \
         "genomic_resources" / "genomic_scores"
-    sources = sorted(package.rglob("*.py"))
-    # Guard against a scan that silently matches nothing: a fence over an
-    # empty list is not a fence, and this package is the whole score layer.
-    assert len(sources) > 5, len(sources)
 
     for rule in _REFUSAL_RULES:
-        sites = sorted(
-            f"{path.relative_to(package)}:{count}"
-            for path in sources
-            if (count := path.read_text().count(rule))
-        )
+        sites = phrase_sites(package, rule, min_sources=6)
         assert sites == [f"{_STATED_IN}:1"], (rule, sites)
 
 

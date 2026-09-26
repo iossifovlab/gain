@@ -135,7 +135,7 @@ def test_an_unknown_include_attributes_id_is_refused_at_load(
         """)
 
     assert str(excinfo.value).endswith(
-        "genomic score <alleles> does not define ['nope']; it has "
+        "score 'nope' is not defined by resource 'alleles'; it has "
         "['flag', 'freq', 'id']")
 
 

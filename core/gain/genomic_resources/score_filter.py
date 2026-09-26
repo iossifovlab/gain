@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from lark import Lark, LarkError, Token, Tree
 
+from gain.genomic_resources.resource_errors import undefined_scores_message
 from gain.utils.log_safety import escape_unsafe_characters
 
 if TYPE_CHECKING:
@@ -349,7 +350,6 @@ def _require_score_id(score: GenomicScore, name: str) -> str:
     """Refuse a variable naming no score of this resource."""
     if name not in score.score_definitions:
         raise ScoreFilterError(
-            f"filter names {name!r}, which genomic score "
-            f"<{score.resource_id}> does not define; it has "
-            f"{sorted(score.score_definitions)}")
+            f"filter names {name!r}: " + undefined_scores_message(
+                score.resource_id, [name], score.score_definitions))
     return name

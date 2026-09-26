@@ -1001,7 +1001,9 @@ def test_get_score_range_unknown_score(
     res = scores_repo.get_resource("LinearHist")
     gene_score = build_gene_score_from_resource(res)
 
-    with pytest.raises(ValueError, match="unknown score nonexistent"):
+    with pytest.raises(
+            ValueError,
+            match="score 'nonexistent' is not defined by resource"):
         gene_score.get_score_range("nonexistent")
 
 
@@ -1053,7 +1055,9 @@ def test_get_score_histogram_unknown_score(
     res = scores_repo.get_resource("LinearHist")
     gene_score = build_gene_score_from_resource(res)
 
-    with pytest.raises(ValueError, match="unknown score nonexistent"):
+    with pytest.raises(
+            ValueError,
+            match="score 'nonexistent' is not defined by resource"):
         gene_score.get_score_histogram("nonexistent")
 
 
@@ -1175,7 +1179,9 @@ def test_get_x_scale_unknown_score(scores_repo: GenomicResourceRepo) -> None:
     res = scores_repo.get_resource("LinearHist")
     gene_score = build_gene_score_from_resource(res)
 
-    with pytest.raises(ValueError, match="unexpected score_id"):
+    with pytest.raises(
+            ValueError,
+            match="score 'nonexistent' is not defined by resource"):
         gene_score.get_x_scale("nonexistent")
 
 
@@ -1183,7 +1189,9 @@ def test_get_y_scale_unknown_score(scores_repo: GenomicResourceRepo) -> None:
     res = scores_repo.get_resource("LinearHist")
     gene_score = build_gene_score_from_resource(res)
 
-    with pytest.raises(ValueError, match="unexpected score_id"):
+    with pytest.raises(
+            ValueError,
+            match="score 'nonexistent' is not defined by resource"):
         gene_score.get_y_scale("nonexistent")
 
 
@@ -1241,7 +1249,9 @@ def test_get_histogram_filename_unknown_score(
     res = scores_repo.get_resource("LinearHist")
     gene_score = build_gene_score_from_resource(res)
 
-    with pytest.raises(ValueError, match="unknown score nonexistent"):
+    with pytest.raises(
+            ValueError,
+            match="score 'nonexistent' is not defined by resource"):
         gene_score.get_histogram_filename("nonexistent")
 
 
