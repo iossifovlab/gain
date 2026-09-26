@@ -313,7 +313,8 @@ def test_an_unknown_allele_key_score_is_refused_from_the_call(
     """
     with alleles.open() as score, pytest.raises(
             ValueError,
-            match=r"does not define \['nope'\]; it has \['freq', 'id'\]"):
+            match=r"score 'nope' is not defined by resource '[^']*'; "
+                  r"it has \['freq', 'id'\]"):
         score.get_allele_scores_in_region_agg(
             "1", 200, 300, allele_keys=("nope",))
 

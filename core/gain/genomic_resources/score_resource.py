@@ -22,6 +22,7 @@ would instead create a ``genomic_resources`` <-> ``scores`` import cycle.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, ClassVar
 from urllib.parse import quote
@@ -42,6 +43,7 @@ from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_errors import (
     HistogramError,
     score_configuration_error,
+    undefined_scores_message,
 )
 from gain.genomic_resources.resource_implementation import (
     ResourceConfigValidationMixin,
@@ -155,15 +157,23 @@ class ScoreResource[ScoreDefT: ScoreDef](ResourceConfigValidationMixin):
         return self.score_definitions.get(score_id)
 
     def _guard_score_id(self, score_id: str) -> None:
-        """Raise if ``score_id`` is not a defined score.
+        """Raise if ``score_id`` is not a defined score."""
+        self._guard_score_ids([score_id])
 
+    def _guard_score_ids(self, score_ids: Iterable[str]) -> None:
+        """Raise if any of ``score_ids`` is not a defined score.
+
+        Every undefined id is named in one refusal, not just the first.
         Guards on ``score_definitions`` directly -- the shared, canonical
         source of what scores exist -- so it depends on no memoisation.
         """
-        if score_id not in self.score_definitions:
-            raise ValueError(
-                f"unknown score {score_id}; "
-                f"available scores are {list(self.score_definitions.keys())}")
+        unknown = [
+            score_id for score_id in score_ids
+            if score_id not in self.score_definitions
+        ]
+        if unknown:
+            raise ValueError(undefined_scores_message(
+                self.resource.resource_id, unknown, self.score_definitions))
 
     def get_score_range(
             self, score_id: str) -> tuple[float, float] | None:

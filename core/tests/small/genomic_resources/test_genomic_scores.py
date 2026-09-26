@@ -1442,7 +1442,9 @@ def test_get_score_range_unknown_score_raises() -> None:
     score = build_score_from_resource(build_simple_position_score_resource())
     score.open()
 
-    with pytest.raises(ValueError, match="unknown score missing"):
+    with pytest.raises(
+            ValueError,
+            match="score 'missing' is not defined by resource"):
         score.get_score_range("missing")
 
 
@@ -1450,7 +1452,9 @@ def test_get_histogram_filename_unknown_score_raises() -> None:
     score = build_score_from_resource(build_simple_position_score_resource())
     score.open()
 
-    with pytest.raises(ValueError, match="unknown score missing"):
+    with pytest.raises(
+            ValueError,
+            match="score 'missing' is not defined by resource"):
         score.get_histogram_filename("missing")
 
 

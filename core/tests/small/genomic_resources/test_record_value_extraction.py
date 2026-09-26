@@ -374,7 +374,9 @@ def test_region_fetch_empty_region_unknown_score_raises(
         chrom  pos_begin  s_float  s_str
         1      10         0.5      hello
     """)
-    with score, pytest.raises(ValueError, match="does not define"):
+    with score, pytest.raises(
+            ValueError,
+            match="score 'NOPE' is not defined by resource"):
         list(score.fetch_region_segments_scores(
             "1", 5000, 5001, scores=["NOPE"]))
 
@@ -386,7 +388,9 @@ def test_region_fetch_nonempty_region_unknown_score_raises(
         chrom  pos_begin  s_float  s_str
         1      10         0.5      hello
     """)
-    with score, pytest.raises(ValueError, match="does not define"):
+    with score, pytest.raises(
+            ValueError,
+            match="score 'NOPE' is not defined by resource"):
         list(score.fetch_region_segments_scores("1", 10, 10, scores=["NOPE"]))
 
 
@@ -397,7 +401,9 @@ def test_point_fetch_empty_region_unknown_score_raises(
         chrom  pos_begin  s_float  s_str
         1      10         0.5      hello
     """)
-    with score, pytest.raises(ValueError, match="does not define"):
+    with score, pytest.raises(
+            ValueError,
+            match="score 'NOPE' is not defined by resource"):
         score.get_scores_at_position("1", 5000, scores=["NOPE"])
 
 
@@ -426,6 +432,8 @@ chr1   10  .  A   T   .    .      scoreA=0.1
 """)
     repo = a_grr().with_resource("vcf", builder).build_repo(tmp_path)
     score = AlleleScore(repo.get_resource("vcf")).open()
-    with score, pytest.raises(ValueError, match="does not define"):
+    with score, pytest.raises(
+            ValueError,
+            match="score 'NOPE' is not defined by resource"):
         score.fetch_allele_scores(
             "chr1", 5000, "A", "T", scores=["NOPE"])

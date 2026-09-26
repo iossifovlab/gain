@@ -41,16 +41,20 @@ definitions a request is resolved against were held to their own rules
 when the score was built (a ``scores:`` ``aggregator:`` that cannot be
 built is refused there, through ``score_configuration_error``), so by the
 time a request arrives every definition is one the resource can reduce
-by.  That is why these refusals carry the request family's address,
-``score '<id>' of resource '<resource>'``, and not the configuration
-prefix: the file to edit is the caller's, and ``Invalid configuration:
-<resource>`` would send the reader to a yaml that is fine.
+by.  That is why these refusals carry the request family's address --
+which score, of which resource -- and not the configuration prefix: the
+file to edit is the caller's, and ``Invalid configuration: <resource>``
+would send the reader to a yaml that is fine.  The undefined-score
+sentence is not worded here: every surface that refuses that mistake
+shares it, from
+:func:`~gain.genomic_resources.resource_errors.undefined_scores_message`.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
 
+from gain.genomic_resources.resource_errors import undefined_scores_message
 from gain.genomic_resources.score_def import GenomicScoreDef, ScoreValue
 
 from ..aggregators import Aggregator, ScoreAggregationQuery
@@ -166,7 +170,7 @@ def score_def_for(
     """The definition an aggregation request names, refusing an unknown one.
 
     The first of the two questions every aggregation request asks, and the
-    one statement of the refusal when the answer is no.  Whether the
+    one place aggregation refuses when the answer is no.  Whether the
     request arrived as a bare score id, as a ``(score_id, aggregator)``
     pair, as a
     :class:`~gain.genomic_resources.aggregators.ScoreAggregationQuery` or
@@ -177,10 +181,8 @@ def score_def_for(
     """
     score_def = score_definitions.get(score_id)
     if score_def is None:
-        raise ValueError(
-            f"score {score_id!r} is not defined by resource "
-            f"{resource_id!r}; it has "
-            f"{sorted(score_definitions)}")
+        raise ValueError(undefined_scores_message(
+            resource_id, [score_id], score_definitions))
     return score_def
 
 

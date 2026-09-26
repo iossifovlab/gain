@@ -984,3 +984,27 @@ def assert_golden(golden_path: pathlib.Path, actual: str, *, what: str) -> None:
             f"{what} changed.\n"
             f"--- expected ({golden_path})\n{expected}\n"
             f"--- actual\n{actual}")
+
+
+def phrase_sites(
+    package: pathlib.Path, phrase: str, *, min_sources: int,
+) -> list[str]:
+    """Where ``phrase`` is spelled under ``package``, as ``path:count``.
+
+    The scan behind the "written in exactly one place" fences: tests that
+    two surfaces emit the same words are satisfied just as well by two
+    copies that agree, so the fences count spellings in the source instead.
+    OCCURRENCES, not files: a second copy in the same module is still a
+    second statement.  It matches raw text, so a copy whose f-string wraps
+    mid-phrase evades it -- which is why a fence's anchor is kept short.
+
+    ``min_sources`` guards against a scan that silently matches nothing: a
+    fence over an empty file list is not a fence.
+    """
+    sources = sorted(package.rglob("*.py"))
+    assert len(sources) >= min_sources, len(sources)
+    return sorted(
+        f"{path.relative_to(package)}:{count}"
+        for path in sources
+        if (count := path.read_text().count(phrase))
+    )

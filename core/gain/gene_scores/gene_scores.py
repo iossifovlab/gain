@@ -168,11 +168,7 @@ class GeneScore(ScoreResource[GeneScoreDef]):
 
     def _get_number_hist_conf(
             self, score_id: str) -> NumberHistogramConfig | None:
-        if score_id not in self.score_definitions:
-            logger.warning("Score %s does not exist!", score_id)
-            raise ValueError(
-                f"unexpected score_id {score_id} for gene score "
-                f"{self.resource.resource_id}")
+        self._guard_score_id(score_id)
         hist_conf = self.score_definitions[score_id].hist_conf
         if hist_conf is None:
             logger.warning(

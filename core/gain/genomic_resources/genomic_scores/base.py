@@ -600,15 +600,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         """
         if scores is None:
             scores = self.get_all_scores()
-        unknown = [
-            score_id for score_id in scores
-            if score_id not in self.score_definitions
-        ]
-        if unknown:
-            raise ValueError(
-                f"genomic score <{self.resource_id}> does not define "
-                f"{sorted(unknown)}; it has "
-                f"{sorted(self.score_definitions)}")
+        self._guard_score_ids(scores)
         return [self.score_definitions[score_id] for score_id in scores]
 
     def _resolve_single_score(self, score: str | None) -> str:

@@ -481,7 +481,9 @@ def test_an_unknown_score_id_is_refused_before_the_first_record(
     composing it rather than by re-deferring it.
     """
     with fragments.open() as score, \
-            pytest.raises(ValueError, match="does not define"):
+            pytest.raises(
+                ValueError,
+                match="score 'nope' is not defined by resource"):
         getattr(score, method)(*locus, scores=["nope"])
 
 

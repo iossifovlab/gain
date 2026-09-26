@@ -15,7 +15,7 @@ without importing the histogram module; `cli_errors` says why it may not.
 """
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 
 
 class HistogramError(Exception):
@@ -114,9 +114,11 @@ def score_configuration_error(
     ``none_value_replacement`` of the wrong type.  Those fire at read time
     against a definition that is fine, so the resource's config is not the
     file to edit, and this prefix would send the reader there.  They carry
-    the other address, ``score '<id>' … resource '<resource>'``, worded at
-    each site in :mod:`~gain.genomic_resources.genomic_scores.aggregation`
-    and on the position score.
+    the other address, ``score '<id>' … resource '<resource>'``: the
+    undefined score id is worded by :func:`undefined_scores_message`, the
+    aggregator refusals in
+    :mod:`~gain.genomic_resources.genomic_scores.aggregation` and the
+    replacement refusal on the position score.
 
     The prefix matches ``ResourceConfigValidationMixin`` so that a caller
     reading a config error sees one wording; the TYPE is
@@ -126,6 +128,37 @@ def score_configuration_error(
     """
     return MalformedResourceError(
         f"Invalid configuration: {resource_id}: score {score_id!r} {detail}")
+
+
+def undefined_scores_message(
+    resource_id: str, unknown: Iterable[str], defined: Iterable[str],
+) -> str:
+    """State that a caller named scores the resource does not define.
+
+    The one sentence for this mistake, whichever surface a caller reaches it
+    through: an aggregation request, a read, a histogram accessor a gene
+    score shares, a filter expression.  It is a refusal of the REQUEST, so it
+    carries the request address, not :func:`score_configuration_error`'s
+    prefix: the resource's config is fine, and the caller's list is the
+    thing to fix.
+
+    Returned as text rather than as an exception because the surfaces raise
+    different types -- ``ValueError`` from the score API,
+    ``ScoreFilterError`` from a filter -- and a caller catching either by
+    type must keep doing so.
+
+    One unknown id and several read as one sentence and its plural.  Both
+    lists are sorted and ``unknown`` is deduplicated, so the message does not
+    depend on the order a caller listed its ids in, and it names what would
+    have worked, since a typo is the usual cause.
+    """
+    names = sorted(set(unknown))
+    subject = (
+        f"score {names[0]!r} is" if len(names) == 1
+        else f"scores {names} are")
+    return (
+        f"{subject} not defined by resource {resource_id!r}; it has "
+        f"{sorted(defined)}")
 
 
 def vcf_header_file_error(

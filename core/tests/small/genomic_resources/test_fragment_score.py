@@ -289,7 +289,9 @@ def test_fragment_score_unknown_score_id_is_refused_on_the_call(
     contig than on an empty one, so it is asserted on the bare call.
     """
     with fragments.open() as score, \
-            pytest.raises(ValueError, match="does not define"):
+            pytest.raises(
+                    ValueError,
+                    match="score 'no_such_score' is not defined by resource"):
         score.fetch_fragment_scores("1", 5, 15, ["no_such_score"])
 
 
