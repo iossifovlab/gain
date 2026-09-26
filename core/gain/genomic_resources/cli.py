@@ -875,16 +875,18 @@ def _find_resources(
     return []
 
 
+def _stats_hash_path() -> str:
+    """Return the resource-relative path of the stored statistics hash."""
+    return f"{ResourceStatistics.get_statistics_folder()}/stats_hash"
+
+
 def _read_stats_hash(
         proto: ReadWriteRepositoryProtocol,
         implementation: GenomicResourceImplementation) -> bytes | None:
     res = implementation.resource
-    stats_dir = ResourceStatistics.get_statistics_folder()
-    if not proto.file_exists(res, f"{stats_dir}/stats_hash"):
+    if not proto.file_exists(res, _stats_hash_path()):
         return None
-    with proto.open_raw_file(
-        res, f"{stats_dir}/stats_hash", mode="rb",
-    ) as infile:
+    with proto.open_raw_file(res, _stats_hash_path(), mode="rb") as infile:
         return cast(bytes, infile.read())
 
 
@@ -895,14 +897,8 @@ def _store_stats_hash(
 
     try:
         impl = build_resource_implementation(resource)
-        stats_dir = ResourceStatistics.get_statistics_folder()
-        if stats_dir is None:
-            logger.warning(
-                "Couldn't store stats hash for %s; unable to get stats dir",
-                resource.resource_id)
-            return False
         with proto.open_raw_file(
-            resource, f"{stats_dir}/stats_hash", mode="wb",
+            resource, _stats_hash_path(), mode="wb",
         ) as outfile:
             stats_hash = impl.calc_statistics_hash()
             outfile.write(stats_hash)
@@ -921,7 +917,13 @@ def _collect_impl_stats_tasks(
     *,
     region_size: int,
 ) -> None:
+    """Add a resource's statistics tasks to ``graph``, ending in its hash.
 
+    The stored hash is removed first, before any task is added, so only a
+    rebuild that succeeds leaves one behind and a resource whose hash
+    cannot be removed fails with none of its tasks in the graph.
+    """
+    proto.delete_resource_file(impl.resource, _stats_hash_path())
     tasks = impl.create_statistics_build_tasks(
         region_size=region_size, grr=grr)
 

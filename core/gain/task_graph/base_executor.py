@@ -113,8 +113,11 @@ class TaskGraphExecutorBase(TaskGraphExecutor):
 
         try:
             result = task_func(*args, **kwargs)
-        except Exception as exp:  # ruff: ignore[blind-except]
+        except Exception as exp:
             # pylint: disable=broad-except
+            # Through the task's own handler, so the failure is in its
+            # task log; the exception is still the task's result.
+            task_logger.exception("task <%s> failed", task_id)
             result = exp
 
         elapsed = time.time() - start
