@@ -26,6 +26,7 @@ from gain.genomic_resources.histogram import (
     NullHistogram,
     NullHistogramConfig,
 )
+from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.repository import GenomicResource
 from rest_framework import generics, permissions, views
 from rest_framework.views import Request, Response
@@ -35,7 +36,11 @@ from web_annotation.annotation_base_view import (
     AsyncAnnotationBaseView,
 )
 from web_annotation.authentication import WebAnnotationAuthentication
-from web_annotation.messages import SINGLE_ALLELE_QUOTA_EXCEEDED
+from web_annotation.messages import (
+    DAE_INDEL_NOT_SUPPORTED,
+    INVALID_ANNOTATABLE,
+    SINGLE_ALLELE_QUOTA_EXCEEDED,
+)
 from web_annotation.models import AlleleQuery, BaseUser, User
 from web_annotation.pipeline_cache import ThreadSafePipeline, await_build
 from web_annotation.serializers import AlleleSerializer
@@ -43,6 +48,38 @@ from web_annotation.single_allele_annotation.throttling import (
     AnnotateUserRateThrottle,
 )
 from web_annotation.utils import non_object_body_response
+
+
+class _ReferenceGenomeNeededError(Exception):
+    """The requested allele converts only against a real genome."""
+
+
+class _NoReferenceGenome:
+    """Reference-genome stand-in that refuses every sequence read.
+
+    A single-allele request names no genome. The annotatable builder reads
+    one only once it has chosen a DAE converter, parsed the position and
+    matched an ``ins(...)`` / ``del(...)`` variant -- so a read here is
+    exactly the well-formed allele that needs a genome, told apart from
+    one that is malformed (iossifovlab/gain#1680).
+    """
+
+    resource_id = None
+
+    def get_sequence(self, chrom: str, start: int, stop: int) -> str:
+        raise _ReferenceGenomeNeededError(chrom, start, stop)
+
+    def __getattr__(self, name: str) -> Any:
+        # Any other member means the builder's use of the genome outgrew
+        # this stand-in. Fail loudly -- a RuntimeError is outside the
+        # malformed-input catch, which would pass it off as a 400.
+        raise RuntimeError(
+            f"single-allele stand-in genome has no {name!r}; "
+            "the annotatable builder now reads more of the genome",
+        )
+
+
+_NO_REFERENCE_GENOME = cast(ReferenceGenome, _NoReferenceGenome())
 
 
 def resource_index_url(resource: GenomicResource) -> str:
@@ -188,9 +225,9 @@ class SingleAnnotation(AsyncAnnotationBaseView):
                 status=views.status.HTTP_400_BAD_REQUEST,
             )
         annotatable = self._parse_annotatable(request.data["annotatable"])
-        if annotatable is None:
+        if isinstance(annotatable, str):
             return Response(
-                {"reason": "Invalid annotatable provided!"},
+                {"reason": annotatable},
                 status=views.status.HTTP_400_BAD_REQUEST,
             )
 
@@ -246,8 +283,8 @@ class SingleAnnotation(AsyncAnnotationBaseView):
         return Response(response_data)
 
     @staticmethod
-    def _parse_annotatable(annotatable_data: Any) -> Annotatable | None:
-        """Build the requested annotatable, or ``None`` if it is malformed.
+    def _parse_annotatable(annotatable_data: Any) -> Annotatable | str:
+        """Build the requested annotatable, or the reason it is refused.
 
         The value comes straight from an anonymous request body, so it may
         be any JSON value. The builder has no validation of its own: a
@@ -257,13 +294,26 @@ class SingleAnnotation(AsyncAnnotationBaseView):
         constructor ``AssertionError``. Each is the caller's 400, not an
         unhandled 500 (iossifovlab/gain#1660). Needs no pipeline, so a bad
         allele is refused before one is built and before quota is read.
+
+        A DAE-style ``ins(...)`` or ``del(...)`` is well-formed but converts
+        only against a reference genome, which the request does not name;
+        it is refused by name rather than as malformed
+        (iossifovlab/gain#1680). Given a genome, an unrecognised DAE
+        variant gets past that point and raises ``NotImplementedError``.
         """
         if not isinstance(annotatable_data, dict):
-            return None
+            return INVALID_ANNOTATABLE
         try:
-            return build_annotatable_from_dict(annotatable_data)
-        except (ValueError, TypeError, AttributeError, AssertionError):
-            return None
+            return build_annotatable_from_dict(
+                annotatable_data, _NO_REFERENCE_GENOME,
+            )
+        except _ReferenceGenomeNeededError:
+            return DAE_INDEL_NOT_SUPPORTED
+        except (
+            ValueError, TypeError, AttributeError, AssertionError,
+            NotImplementedError,
+        ):
+            return INVALID_ANNOTATABLE
 
     @staticmethod
     def _run_annotate(
