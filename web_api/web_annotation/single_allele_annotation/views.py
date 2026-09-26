@@ -14,7 +14,10 @@ from gain.annotation.gene_score_annotator import GeneScoreAnnotator
 from gain.annotation.genomic_score_annotator_base import (
     GenomicScoreAnnotatorBase,
 )
-from gain.annotation.record_to_annotatable import build_annotatable_from_dict
+from gain.annotation.record_to_annotatable import (
+    MalformedRecordError,
+    build_annotatable_from_dict,
+)
 from gain.gene_scores.gene_scores import (
     _build_gene_score_help,
     build_gene_score_from_resource,
@@ -287,19 +290,16 @@ class SingleAnnotation(AsyncAnnotationBaseView):
         """Build the requested annotatable, or the reason it is refused.
 
         The value comes straight from an anonymous request body, so it may
-        be any JSON value. The builder has no validation of its own: a
-        wrongly-typed field fails wherever the converter its keys select
-        first touches it -- ``int()`` raises ``ValueError``/``TypeError``,
-        a string method on a number ``AttributeError``, the ``VCFAllele``
-        constructor ``AssertionError``. Each is the caller's 400, not an
-        unhandled 500 (iossifovlab/gain#1660). Needs no pipeline, so a bad
-        allele is refused before one is built and before quota is read.
+        be any JSON value. Anything but an object, and any object the
+        builder refuses with ``MalformedRecordError`` -- a field of the
+        wrong type, a position below 1, a span ending before it begins --
+        is refused as invalid. Needs no pipeline, so a bad allele is
+        refused before one is built and before quota is read.
 
         A DAE-style ``ins(...)`` or ``del(...)`` is well-formed but converts
         only against a reference genome, which the request does not name;
         it is refused by name rather than as malformed
-        (iossifovlab/gain#1680). Given a genome, an unrecognised DAE
-        variant gets past that point and raises ``NotImplementedError``.
+        (iossifovlab/gain#1680).
         """
         if not isinstance(annotatable_data, dict):
             return INVALID_ANNOTATABLE
@@ -309,10 +309,7 @@ class SingleAnnotation(AsyncAnnotationBaseView):
             )
         except _ReferenceGenomeNeededError:
             return DAE_INDEL_NOT_SUPPORTED
-        except (
-            ValueError, TypeError, AttributeError, AssertionError,
-            NotImplementedError,
-        ):
+        except MalformedRecordError:
             return INVALID_ANNOTATABLE
 
     @staticmethod
