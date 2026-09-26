@@ -419,6 +419,38 @@ async def test_single_annotation_quota_counts_only_non_internal_attributes(
                  "type": "REGION",
             },
         ),
+        # A stray DAE ins/del ``variant`` does not change the shape the
+        # other keys select, so it is not refused (iossifovlab/gain#1680).
+        (
+            {
+                "chrom": "chr1", "pos": "4", "ref": "C", "alt": "CT",
+                "variant": "del(1)",
+            },
+            {
+                 "chrom": "chr1", "pos": 4,
+                 "ref": "C", "alt": "CT",
+                 "type": "SMALL_INSERTION",
+            },
+        ),
+        (
+            {"vcf_like": "chr1:4:C:CT", "variant": "ins(A)"},
+            {
+                 "chrom": "chr1", "pos": 4,
+                 "ref": "C", "alt": "CT",
+                 "type": "SMALL_INSERTION",
+            },
+        ),
+        (
+            {
+                "chrom": "chr1", "pos_beg": "4", "pos_end": "30",
+                "variant": "del(1)",
+            },
+            {
+                 "chrom": "chr1", "pos_begin": 4,
+                 "pos_end": 30,
+                 "type": "REGION",
+            },
+        ),
         (
             {"location": "chr1:13", "variant": "sub(A->T)"},
             {
