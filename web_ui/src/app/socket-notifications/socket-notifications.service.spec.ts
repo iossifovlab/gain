@@ -107,6 +107,15 @@ describe('SocketNotificationsService', () => {
       return { subjects: subjects };
     }
 
+    const calls = (): number => (webSocket as unknown as jest.Mock).mock.calls.length;
+
+    function connectWithFakeTimers(): void {
+      jest.useFakeTimers();
+      (webSocket as unknown as jest.Mock).mockReturnValue(new Subject<object>());
+      service = new SocketNotificationsService();
+      service.ensureConnected();
+    }
+
     it('should propagate CloseEvent for job notifications', () => {
       const { subjects } = makeMultiSubscriptionWs();
       const errorSpy = jest.fn();
@@ -223,8 +232,6 @@ describe('SocketNotificationsService', () => {
       service = new SocketNotificationsService();
       service.ensureConnected();
 
-      const calls = (): number => (webSocket as unknown as jest.Mock).mock.calls.length;
-
       // Attempt 1: 200ms (fast first retry for CI session sync).
       service.reopenConnection().subscribe();
       let before = calls();
@@ -281,7 +288,6 @@ describe('SocketNotificationsService', () => {
       const before = (webSocket as unknown as jest.Mock).mock.calls.length;
       const obs1 = service.reopenConnection();
       const obs2 = service.reopenConnection();
-      expect(obs2).toBe(obs1);
 
       obs1.subscribe();
       obs2.subscribe();
@@ -319,6 +325,83 @@ describe('SocketNotificationsService', () => {
       expect((webSocket as unknown as jest.Mock).mock.calls).toHaveLength(before);
       jest.advanceTimersByTime(1);
       expect((webSocket as unknown as jest.Mock).mock.calls).toHaveLength(before + 1);
+    });
+
+    it('picks the reconnect delay when subscribed, not when called', () => {
+      jest.useFakeTimers();
+      let openObserver!: { next: () => void };
+      (webSocket as unknown as jest.Mock).mockImplementation(
+        (config: { openObserver: { next: () => void } }) => {
+          openObserver = config.openObserver;
+          return new Subject<object>();
+        }
+      );
+      service = new SocketNotificationsService();
+      service.ensureConnected();
+      for (let i = 0; i < 3; i++) {
+        service.reopenConnection().subscribe();
+        jest.advanceTimersByTime(10000);
+      }
+
+      // Called while backed off, never subscribed; then the server confirms
+      // an open, which resets the backoff.
+      service.reopenConnection();
+      openObserver.next();
+
+      // The next subscribed reconnect uses the fresh 200ms first attempt.
+      const before = calls();
+      service.reopenConnection().subscribe();
+      jest.advanceTimersByTime(199);
+      expect(calls()).toBe(before);
+      jest.advanceTimersByTime(1);
+      expect(calls()).toBe(before + 1);
+    });
+
+    it('backs off to the next delay after a failed attempt', () => {
+      connectWithFakeTimers();
+      (webSocket as unknown as jest.Mock).mockImplementationOnce(() => {
+        throw new Error('socket creation failed');
+      });
+      const errorSpy = jest.fn();
+      service.reopenConnection().subscribe({ error: errorSpy });
+      jest.advanceTimersByTime(200);
+      expect(errorSpy).toHaveBeenCalledWith(new Error('socket creation failed'));
+
+      const before = calls();
+      service.reopenConnection().subscribe({ error: () => { /* ignore */ } });
+      jest.advanceTimersByTime(999);
+      expect(calls()).toBe(before);
+      jest.advanceTimersByTime(1);
+      expect(calls()).toBe(before + 1);
+    });
+
+    it('neither reconnects nor advances the backoff for a call that is never subscribed', () => {
+      connectWithFakeTimers();
+      const before = calls();
+
+      service.reopenConnection();
+      jest.advanceTimersByTime(60000);
+      expect(calls()).toBe(before);
+
+      // The next subscribed attempt is still the 200ms first attempt.
+      service.reopenConnection().subscribe();
+      jest.advanceTimersByTime(199);
+      expect(calls()).toBe(before);
+      jest.advanceTimersByTime(1);
+      expect(calls()).toBe(before + 1);
+    });
+
+    it('starts a fresh backed-off attempt when reconnecting from the next handler', () => {
+      connectWithFakeTimers();
+      const before = calls();
+
+      service.reopenConnection().subscribe(() => service.reopenConnection().subscribe());
+      jest.advanceTimersByTime(200);
+      expect(calls()).toBe(before + 1);
+      jest.advanceTimersByTime(999);
+      expect(calls()).toBe(before + 1);
+      jest.advanceTimersByTime(1);
+      expect(calls()).toBe(before + 2);
     });
 
     it('should allow manual reconnection after CloseEvent', () => {
