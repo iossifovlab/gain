@@ -2,10 +2,10 @@ import { Injectable } from '@angular/core';
 import {
   BehaviorSubject,
   concatWith,
+  defer,
   filter,
   map,
   Observable,
-  of,
   shareReplay,
   switchMap,
   tap,
@@ -32,7 +32,6 @@ export class SocketNotificationsService {
   // the counter -- no page reload required.
   private readonly maxReconnectionAttempts = 5;
   private readonly reconnectionCooldownMs = 30000;
-  private isReconnecting = false;
   private pendingReconnection$: Observable<void> | null = null;
 
   public ensureConnected(): void {
@@ -89,35 +88,37 @@ export class SocketNotificationsService {
   }
 
   public reopenConnection(): Observable<void> {
-    // A reconnection is already in flight: share it so concurrent callers
-    // wait for the same attempt instead of spawning parallel ones.
-    if (this.isReconnecting) {
-      return this.pendingReconnection$ || of(undefined);
-    }
+    // Lazy: an attempt -- and its backoff delay -- starts only on subscribe.
+    return defer(() => {
+      // A reconnection is already in flight: share it so concurrent callers
+      // wait for the same attempt instead of spawning parallel ones.
+      if (this.pendingReconnection$) {
+        return this.pendingReconnection$;
+      }
 
-    const delayMs = this.nextReconnectDelayMs();
-    this.reconnectionAttempts++;
+      const delayMs = this.nextReconnectDelayMs();
+      this.reconnectionAttempts++;
 
-    const reconnectObservable = timer(delayMs).pipe(
-      tap(() => {
-        // Create a new WebSocket without force-closing the old one; let the
-        // old connection die naturally to avoid a "closed before connection
-        // established" error. reconnectionAttempts is intentionally NOT reset
-        // here — only a confirmed open (openObserver) resets it, so a
-        // persistently-down server keeps backing off instead of hot-looping.
-        this.socketNotifications = null;
-        this.ensureConnected();
-        this.isReconnecting = false;
-        this.pendingReconnection$ = null;
-      }),
-      map(() => undefined as void), // Convert timer output to void
-      shareReplay(1) // Share the observable across multiple subscribers
-    );
-
-    this.pendingReconnection$ = reconnectObservable;
-    this.isReconnecting = true;
-
-    return reconnectObservable;
+      this.pendingReconnection$ = timer(delayMs).pipe(
+        tap(() => {
+          // Release the slot first, before subscribers are notified and before
+          // ensureConnected() can throw, so any reconnect from here on --
+          // including after a failed attempt -- starts a fresh, backed-off one.
+          this.pendingReconnection$ = null;
+          // Create a new WebSocket without force-closing the old one; let the
+          // old connection die naturally to avoid a "closed before connection
+          // established" error. Only a confirmed open (openObserver) resets
+          // reconnectionAttempts, so a down server keeps backing off.
+          this.socketNotifications = null;
+          this.ensureConnected();
+        }),
+        map(() => undefined as void), // Convert timer output to void
+        // Share the attempt among its joiners and keep the timer running even
+        // if they all unsubscribe, so the slot is always released.
+        shareReplay(1)
+      );
+      return this.pendingReconnection$;
+    });
   }
 
   private nextReconnectDelayMs(): number {

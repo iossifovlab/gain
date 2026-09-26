@@ -81,7 +81,7 @@ export class AppComponent implements DoCheck, OnInit, OnDestroy {
         // scoping the reconnect to CloseEvent/Event would let any other error
         // permanently detach the keep-alive and silently reintroduce #215 until
         // the next identity change. We rely on the service's already-deduped,
-        // backed-off reopenConnection() (its isReconnecting/shareReplay dedup +
+        // backed-off reopenConnection() (its in-flight shareReplay dedup +
         // cooldown) rather than hand-rolling backoff, so this cannot become a
         // hot reconnect loop.
         console.error('Notifications socket keep-alive errored; reconnecting:', err);
