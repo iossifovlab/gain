@@ -33,7 +33,7 @@ def dae2vcf_variant(
         assert len(reference) == count + 1, (reference, chrom, position, count)
         return position - 1, reference, reference[0]
 
-    raise NotImplementedError("weird variant: " + variant)
+    raise ValueError("weird variant: " + variant)
 
 
 def cshl2vcf_variant(

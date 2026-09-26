@@ -6,7 +6,7 @@ syntactically valid body that parsed to the wrong type -- a JSON array or
 scalar on a JSON-object endpoint -- raised ``AssertionError``: an unhandled
 500 on an anonymous endpoint (iossifovlab/gain#1650).
 """
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 from django.forms.models import model_to_dict
@@ -17,6 +17,9 @@ from web_annotation.messages import (
     INVALID_ANNOTATABLE,
 )
 from web_annotation.models import AlleleQuery, User, UserQuota
+from web_annotation.single_allele_annotation import (
+    views as single_allele_views,
+)
 
 SINGLE_ALLELE_URL = "/api/single_allele/annotate"
 
@@ -70,11 +73,12 @@ def test_json_body_on_a_multipart_endpoint_is_a_400(
     assert response.json() == {"reason": "Invalid content type!"}
 
 
-#: ``annotatable`` values the single-allele view cannot annotate, each of
-#: which used to be a 500 (iossifovlab/gain#1660). A non-object tripped an
-#: ``assert``; an object went to ``build_annotatable_from_dict``, which picks
-#: its converter by the object's keys -- so every shape it recognises is
-#: reachable here, and each fails differently on a wrongly-typed value.
+#: ``annotatable`` values the single-allele view refuses with a 400. An
+#: object goes to ``build_annotatable_from_dict``, which picks its converter
+#: by the object's keys -- so every shape it recognises is reachable here.
+#: The rows cover a wrongly-typed field per shape, and the values that
+#: type-check but name no real place: a position below 1, a span ending
+#: before it begins.
 INVALID_ANNOTATABLES = [
     3,
     [1],
@@ -100,6 +104,15 @@ INVALID_ANNOTATABLES = [
     {"chrom": "chr1", "pos": "abc", "variant": "del(1)"},
     {"chrom": "chr1", "pos": None, "variant": "ins(A)"},
     {"chrom": "chr1", "pos_beg": 1, "pos_end": 2, "cnv_type": 3},
+    {"chrom": "chr1", "pos_beg": 10, "pos_end": 5},
+    {"chrom": "chr1", "pos_beg": 10, "pos_end": 9},
+    {"chrom": "chr1", "pos_beg": 10, "pos_end": 5, "cnv_type": "CNV+"},
+    {"chrom": "chr1", "pos": 0},
+    {"chrom": "chr1", "pos": -5, "ref": "C", "alt": "A"},
+    {"chrom": 3, "pos": 100},
+    {"chrom": None, "pos": 100},
+    {"chrom": "chr1", "pos": True},
+    {"chrom": "chr1", "pos": 1, "ref": "C", "alt": ["A"]},
 ]
 
 
@@ -149,7 +162,25 @@ def test_dae_indel_is_refused_as_unsupported(
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("annotatable", [3, {}, *DAE_INDELS])
+def test_a_builder_fault_is_not_a_400(
+    anonymous_client: Client, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken_builder(obj: object, ref_genome: object = None) -> NoReturn:
+        raise AttributeError("a bug in the builder, not a bad record")
+
+    monkeypatch.setattr(
+        single_allele_views, "build_annotatable_from_dict", broken_builder)
+
+    with pytest.raises(AttributeError, match="a bug in the builder"):
+        _post_annotatable(
+            anonymous_client, {"chrom": "chr1", "pos": 1, "ref": "C",
+                               "alt": "A"})
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("annotatable", [
+    3, {}, {"chrom": "chr1", "pos_beg": 10, "pos_end": 5}, *DAE_INDELS,
+])
 def test_refused_annotatable_records_no_usage(
     user_client: Client, annotatable: object,
 ) -> None:
