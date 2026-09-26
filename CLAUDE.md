@@ -574,13 +574,15 @@ calling `self.append_meta_into(resource_dir)` after a
 `setup_*` helper wrote the config for it (the
 reference-genome path).
 
-**Five factories are NOT in `builders.py`** — import
+**Six factories are NOT in `builders.py`** — import
 each from its own sibling module:
 `a_data_frame` from
 `gain.genomic_resources.testing.data_frame_builder`,
 `an_ann_data` from `…testing.ann_data_builder`,
 `a_gene_models` from `…testing.gene_models_builder`,
 `a_liftover_chain` from `…testing.liftover_chain_builder`,
+`a_gene_set_collection` from
+`…testing.gene_set_collection_builder`,
 and `a_grr_group` from `…testing.group_builder`.
 `builders.py` is ~1800 lines against pylint's
 `max-module-lines=1500`, which it carries a
@@ -680,14 +682,31 @@ schema's `chrom_prefix:` block, each side an
 `add_prefix`/`del_prefix` mapping; that and `filename` are
 the only type-specific config keys. The chain also reads
 the `source_genome` / `target_genome` labels, which
-`with_labels` declares. The next builder added should
-follow the same sibling-module pattern rather than grow
-`builders.py`.
+`with_labels` declares.
+
+`a_gene_set_collection` realizes the `directory` format:
+one file per set under `GeneSets/`, named after the set,
+holding its name, its description and one gene per line.
+A bare builder carries one set, `main_candidates`
+(`POGZ`, `CHD8`, `ANK2`). `with_gene_set(name, desc,
+genes=…)` authors one set — each call adds one, replacing
+the default — so the set names, the file names and the
+config all come from that one declaration. `with_id`
+(default `main`), `with_web_label` and
+`with_web_format_str` set the remaining config keys; the
+two `web_*` keys are emitted only when declared. A value
+that would not read back as declared — a set name that is
+not one file name or repeats another (ignoring case), a
+description or gene that is not one stripped line — is a
+`ResourceValidationError`. The
+`map` and `gmt` formats are not covered. The next builder
+added should follow the same sibling-module pattern
+rather than grow `builders.py`.
 
 **That list is the whole of the coverage — the gaps are
 large and structural, not an oversight to work around.**
 There is no builder for
-`annotation_pipeline` or `gene_set_collection`, and no
+`annotation_pipeline`, and no
 `with_*` for
 `default_annotation` or explicit
 `chrom`/`pos_begin` `column_name`/`column_index`
