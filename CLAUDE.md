@@ -25,13 +25,19 @@ conda activate gain
 pip install -e core
 pip install -e demo_annotator     # optional
 pip install -e vep_annotator      # optional
+mamba env update --name gain \
+    --file ./spliceai_annotator/spliceai-environment.yml
 pip install -e spliceai_annotator # optional
 ```
 
 `environment.yml` is generated from the gain-core and
 gain-web-api pyprojects by `scripts/conda_env.py` — never
 edit it by hand; `core/tests/test_conda_deps.py` fails when
-it is stale.
+it is stale. `spliceai_annotator/spliceai-environment.yml`
+is generated the same way from the spliceai plugin's runtime
+deps and dev tools (`onnx`, `tf2onnx`), installed on top;
+demo and vep add nothing beyond the core files and get no
+file.
 
 ### uv workspace
 
