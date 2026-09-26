@@ -24,6 +24,7 @@ from rest_framework.request import MultiValueDict
 from rest_framework.views import Request, Response
 
 from web_annotation.annotation_base_view import (
+    PIPELINE_LOOKUP_ERRORS,
     AnnotationBaseView,
     AnnotationMixin,
     AsyncAnnotationBaseView,
@@ -233,27 +234,11 @@ class UserPipeline(AnnotationBaseView):
                 status=views.status.HTTP_400_BAD_REQUEST,
             )
 
-        try:
-            pipeline = request.user.get_temporary_pipeline(pipeline_id)
-        except TemporaryPipeline.DoesNotExist:
-            pipeline = None
-        except ValueError:
-            return Response(
-                {
-                    "reason": (
-                        "Temporary pipeline does not match request session ID"
-                    ),
-                },
-                status=views.status.HTTP_400_BAD_REQUEST,
-            )
+        # Only the caller's own saved pipelines are readable here; a
+        # temporary pipeline has no owner to report.
         try:
             pipeline = request.user.get_pipeline(pipeline_id)
-        except Pipeline.DoesNotExist:
-            return Response(
-                {"reason": "Pipeline name not recognized!"},
-                status=views.status.HTTP_400_BAD_REQUEST,
-            )
-        except ValueError:
+        except PIPELINE_LOOKUP_ERRORS:
             return Response(
                 {"reason": "Pipeline name not recognized!"},
                 status=views.status.HTTP_400_BAD_REQUEST,
@@ -277,7 +262,14 @@ class UserPipeline(AnnotationBaseView):
                 status=views.status.HTTP_400_BAD_REQUEST,
             )
 
-        request.user.delete_pipeline(pipeline_id)
+        # Any id but the caller's own saved pipeline is a no-op: it must not
+        # unload the id from the shared cache, where it may name another
+        # user's or the session's temporary pipeline.
+        try:
+            pipeline = request.user.get_pipeline(pipeline_id)
+        except PIPELINE_LOOKUP_ERRORS:
+            return Response(status=views.status.HTTP_204_NO_CONTENT)
+        pipeline.remove()
         self.lru_cache.unload_pipeline(pipeline_id)
 
         return Response(status=views.status.HTTP_204_NO_CONTENT)
