@@ -699,9 +699,10 @@ class Unread(enum.Enum):
     UNREAD = enum.auto()
     """Not supplied.
 
-    :meth:`ReadWriteRepositoryProtocol.build_resource_file_state` reads a
-    field off the stored file when the caller does not supply it, and for
-    three of the four fields ``None`` says so unambiguously. A change
+    :meth:`ReadWriteRepositoryProtocol.build_resource_file_state` and
+    ``_state_describes_stored_file`` read a field off the stored file when
+    the caller does not supply it, and for every other field ``None``
+    says so unambiguously. A change
     token is the exception: ``None`` is the answer a store offering no
     tokens gives, so a caller that has *asked* and been told "no token"
     must be able to say that, and it must not read as "go and ask".
@@ -2188,9 +2189,10 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         sidecars, they are just not recorded. What the run reports is
         unchanged; what it leaves behind is nothing (#257).
 
-        A state this builds takes its size from ``entry`` and its token
-        from ``change_token`` -- what the scan read in one stat, as
-        :meth:`ResourceScan.change_token` reports it.
+        Judging a recorded state and building a new one both use the
+        size in ``entry`` and the token in ``change_token`` -- what the
+        scan read in one stat, as :meth:`ResourceScan.change_token`
+        reports it.
 
         Both fields are as of the scan, before the bytes are read. On a
         store with change tokens, a write landing after the scan leaves
@@ -2228,7 +2230,8 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
         pre_state = self.load_resource_file_state(resource, entry.name)
         if pre_state is not None:
             if self._state_describes_stored_file(
-                    resource, pre_state, timestamp_tolerance=1e-2):
+                    resource, pre_state, timestamp_tolerance=1e-2,
+                    size=entry.size, change_token=change_token):
                 entry.md5 = pre_state.md5
                 entry.size = pre_state.size
                 return None
@@ -2573,7 +2576,9 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
             self, resource: GenomicResource,
             state: ResourceFileState,
             *,
-            timestamp_tolerance: float = 0.0) -> bool:
+            timestamp_tolerance: float = 0.0,
+            size: int | None = None,
+            change_token: str | Unread | None = Unread.UNREAD) -> bool:
         """Whether a recorded state still describes the file in the store.
 
         Where the store offers a change token and the state recorded one,
@@ -2591,13 +2596,22 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
 
         See ADR 0022, which records why the two tolerances were left
         alone and what the token does not fix.
+
+        ``size`` and ``change_token`` are read off the stored file when
+        they are not supplied, as :meth:`build_resource_file_state` reads
+        them; a caller that has just stat'ed the file passes them. The
+        modification time, whenever the fallback needs it, is always read
+        here: no stat a caller holds carries it portably (see
+        ``_StoredFileStat``).
         """
         if state.change_token is not None:
             # Asked of the state first: a store with no tokens answers
             # None for every file, so consulting it before the state
             # would spend a stat per entry that cannot change the answer.
-            token = self.get_resource_file_change_token(
-                resource, state.filename)
+            token = change_token
+            if token is Unread.UNREAD:
+                token = self.get_resource_file_change_token(
+                    resource, state.filename)
             if token is not None:
                 describes = token == state.change_token
                 if not describes:
@@ -2609,7 +2623,8 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
 
         timestamp = self.get_resource_file_timestamp(
             resource, state.filename)
-        size = self.get_resource_file_size(resource, state.filename)
+        if size is None:
+            size = self.get_resource_file_size(resource, state.filename)
         describes = abs(timestamp - state.timestamp) <= timestamp_tolerance \
             and size == state.size
         if not describes:

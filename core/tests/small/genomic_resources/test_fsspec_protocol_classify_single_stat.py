@@ -32,6 +32,7 @@ from gain.genomic_resources.repository import (
 
 from .conftest import (
     CACHED_FILE,
+    CURRENT_STATE_BUDGET,
     METADATA_OPERATIONS,
     STATE_OPERATIONS,
     a_source_resource,
@@ -152,14 +153,14 @@ def test_a_stale_cached_state_costs_one_stat_to_rebuild(
 ) -> None:
     """The other way into the rebuild must not reopen the second probe.
 
-    Four calls, and which of them belongs to whom is the whole point:
-    the verdict's opening stat, then the two
-    ``_state_describes_stored_file`` spends deciding a token-less state
-    is stale -- a modification time and a size, left as ADR 0022 has
-    them -- and then the one modification time the rebuild still reads.
-    The rebuild's own share is the same as when there was no state at
-    all; a regression to probing for a file already stated shows up here
-    as an ``exists`` among them.
+    Three calls, and which of them belongs to whom is the whole point:
+    the verdict's opening stat, then the modification time
+    ``_state_describes_stored_file`` reads deciding a token-less state is
+    stale -- the size it compares is the opening stat's (gain#1659) --
+    and then the one modification time the rebuild still reads. The
+    rebuild's own share is the same as when there was no state at all; a
+    regression to probing for a file already stated shows up here as an
+    ``exists`` or a second ``info`` among them.
     """
     # Given a cached file whose recorded state no longer describes it:
     # a state written before there were change tokens, recording a size
@@ -181,11 +182,11 @@ def test_a_stale_cached_state_costs_one_stat_to_rebuild(
         verdict = dest_proto.classify_resource_file(
             src_resource, dest_resource, CACHED_FILE)
 
-    # Then it kept the file, and asked about it four times.
+    # Then it kept the file, and asked about it three times.
     assert verdict == FileCacheVerdict(needs_download=False, size=0)
     url = dest_proto.get_resource_file_url(dest_resource, CACHED_FILE)
     assert sorted(calls_for(calls, url)) == [
-        "info", "info", "modified", "modified"]
+        "info", "modified", "modified"]
 
 
 @pytest.mark.grr_full
@@ -214,3 +215,31 @@ def test_a_rebuilt_state_says_what_the_accessors_would_have_said(
     # why the two can disagree on s3.
     dest_proto.filesystem.invalidate_cache()
     assert_state_matches_accessors(dest_proto, dest_resource, CACHED_FILE)
+
+
+@pytest.mark.grr_full
+def test_a_current_cached_state_is_judged_on_the_opening_stat(
+    content_fixture: dict[str, Any],
+    download_dest: FsspecReadWriteProtocol,
+    grr_scheme: str,
+) -> None:
+    """Keeping a current file costs the stat the verdict opens with.
+
+    The steady-state case of a repeat sync. That stat carries the size
+    and the change token the recorded state is compared against, so the
+    comparison does not ask for them again (gain#1659).
+    """
+    # Given a cached file whose recorded state still describes it.
+    dest_proto = download_dest
+    src_resource = a_source_resource(content_fixture)
+    dest_resource, _ = copy_one_resource(src_resource, dest_proto)
+
+    # When the cache decides what to do about it.
+    with record_filesystem_calls(dest_proto, METADATA_OPERATIONS) as calls:
+        verdict = dest_proto.classify_resource_file(
+            src_resource, dest_resource, CACHED_FILE)
+
+    # Then it kept the file, and asked about it only that once.
+    assert verdict == FileCacheVerdict(needs_download=False, size=0)
+    url = dest_proto.get_resource_file_url(dest_resource, CACHED_FILE)
+    assert sorted(calls_for(calls, url)) == CURRENT_STATE_BUDGET[grr_scheme]
