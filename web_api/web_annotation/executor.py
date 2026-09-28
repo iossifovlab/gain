@@ -163,6 +163,10 @@ class ThreadedTaskExecutor(TaskExecutor):
     tracked task older than ``job_timeout`` is cancelled and dropped from
     tracking. Cancelling stops a task still queued for a worker; a task
     that is already running is left to finish.
+
+    Every other task stops being tracked once it is done, however it ended:
+    success, failure or cancellation, by anyone. ``size()`` counts what is
+    still tracked.
     """
     def __init__(
         self,
@@ -189,6 +193,7 @@ class ThreadedTaskExecutor(TaskExecutor):
         callback_failure: Callable[[BaseException], None] | None = None,
     ) -> None:
         if future.cancelled():
+            self._untrack(start_time, future)
             return
         exception = future.exception()
         if exception is not None:
@@ -209,8 +214,14 @@ class ThreadedTaskExecutor(TaskExecutor):
                 "Task completed with a result of type: %s",
                 _result_type_name(future.result()),
             )
+        self._untrack(start_time, future)
+
+    def _untrack(self, start_time: float, future: Future[Any]) -> None:
+        """Stop tracking a done task; a no-op if it is no longer tracked."""
         with self._lock:
-            self._futures.remove((start_time, future))
+            entry = (start_time, future)
+            if entry in self._futures:
+                self._futures.remove(entry)
             logger.debug("Remaining tasks: %d", len(self._futures))
 
     def execute(
@@ -221,18 +232,20 @@ class ThreadedTaskExecutor(TaskExecutor):
         **kwargs: Any,
     ) -> Future[Any]:
         now = time.time()
-        to_remove = []
         with self._lock:
-            for time_started, future in self._futures:
-                if now - time_started > self.job_timeout:
-                    logger.warning(
-                        "Cancelling long-running task started at %s",
-                        time_started,
-                    )
-                    future.cancel()
-                    to_remove.append((time_started, future))
-            for time_started, future in to_remove:
-                self._futures.remove((time_started, future))
+            expired = [
+                (time_started, future)
+                for time_started, future in self._futures
+                if now - time_started > self.job_timeout
+            ]
+            for entry in expired:
+                self._futures.remove(entry)
+        # Cancelled outside the lock: cancelling a queued future runs its
+        # done-callback in this thread, and that callback takes the lock.
+        for time_started, future in expired:
+            logger.warning(
+                "Cancelling long-running task started at %s", time_started)
+            future.cancel()
 
         def wrapped_fn(**kw: Any) -> Any:
             result = fn(**kw)
@@ -240,8 +253,11 @@ class ThreadedTaskExecutor(TaskExecutor):
                 callback_success()
             return result
 
+        # Submitted outside the lock: the pool's shutdown cancels queued
+        # futures while holding its own lock, which submit also takes, and
+        # each cancel runs a done-callback that takes this lock.
+        future = self._executor.submit(wrapped_fn, **kwargs)
         with self._lock:
-            future = self._executor.submit(wrapped_fn, **kwargs)
             if callback_start is not None:
                 callback_start()
             self._futures.append((now, future))
