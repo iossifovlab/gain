@@ -17,6 +17,35 @@
 # Every input has a default matching the Dockerfile's mounts; the job
 # overrides only PYTHON_VERSION (empty = unpinned, what a user's
 # `mamba create` sees; the nightly matrix of #1430 pins it).
+#
+# The package cache, $MAMBA_ROOT_PREFIX/pkgs, is the agent's
+# ${HOME}/conda_pkgs_cache, bind-mounted by the job and shared with the
+# root pipeline's `Conda packages` stage and the spliceai/vep integration
+# jobs (#1602). The rules are the ones conda-builder/verify_packages.sh
+# sets out, with one deliberate difference:
+#
+# - The create runs under flock(1) on $PKGS/.verify.lock, the lock file
+#   verify_packages.sh uses, so installs from every job on the agent
+#   serialise. micromamba's own cache lock is best-effort: when another
+#   process holds it, it warns "Cannot lock" and carries on (#1601).
+#   Only the create is locked, never the test tiers.
+# - Default linking, i.e. COPIES out of the cache (the cache and the env
+#   sit on different mounts, so no hardlinks), NOT --always-softlink.
+#   The env lives for the whole run, and two runs of the SAME gain-core
+#   overlap as a matter of course -- the nightly starts its pinned-Python
+#   runs together against one artefact. Each run removes its own
+#   gain-core entry from the cache on exit; with softlinks the first to
+#   finish would pull the files out from under the other's env mid-test.
+#   A copied env does not need the cache once the create returns.
+# - The local channel gets a per-run path, so its URL -- and so its
+#   repodata cache entry -- is never shared with a concurrent run that
+#   indexed a different artefact into the same path.
+# - The installed gain-core must be the artefact byte for byte: the
+#   version is commit + date, so a same-day rebuild of a commit reuses
+#   the filename with different bytes.
+# - On exit, pass or fail, this run's gain-core entry and its channel's
+#   repodata are removed from the cache, under the same lock. Third-party
+#   packages stay.
 set -euo pipefail
 
 CONDA_DIST="${CONDA_DIST:-/dist/conda}"
@@ -24,8 +53,13 @@ REPORTS="${REPORTS:-/reports}"
 TESTBED="${TESTBED:-/testbed/core}"
 PYTHON_VERSION="${PYTHON_VERSION:-}"
 : "${GRR_INTEGRATION_DIR:?GRR_INTEGRATION_DIR must point at the mounted grr_seqpipe tree}"
+: "${MAMBA_ROOT_PREFIX:?MAMBA_ROOT_PREFIX must be set; its pkgs/ is the package cache}"
 
-CHANNEL=/tmp/channel
+PKGS="$MAMBA_ROOT_PREFIX/pkgs"
+LOCK="$PKGS/.verify.lock"
+export CONDA_PKGS_DIRS="$PKGS"
+mkdir -p "$PKGS"
+CHANNEL="$(mktemp -d /tmp/channel.XXXXXX)"
 ENV_PREFIX=/tmp/env
 
 # --- 1. exactly one gain-core artefact, version off its filename -------
@@ -48,8 +82,26 @@ VERSION="${stem%-*}"
 echo "package under test: $(basename "$artefact")"
 echo "version: $VERSION"
 
+cleanup() {
+    local started=$SECONDS state
+    exec 9>"$LOCK"
+    flock 9
+    rm -rf "$PKGS/gain-core-$VERSION-"*
+    # Repodata cache entries of this run's channel; the state file next
+    # to each names the URL it was fetched from.
+    for state in "$PKGS"/cache/*.state.json; do
+        [ -e "$state" ] || continue
+        if grep -q "\"file://$CHANNEL/" "$state"; then
+            rm -f "${state%.state.json}".*
+        fi
+    done
+    flock -u 9
+    echo "=== cache cleanup $((SECONDS - started)) s"
+}
+trap cleanup EXIT
+
 # --- 2. local channel + solve -----------------------------------------
-rm -rf "$CHANNEL" "$ENV_PREFIX"
+rm -rf "$ENV_PREFIX"
 # The package is noarch, but libmamba also asks the channel for the
 # host platform's subdir and warns for every missing repodata variant;
 # an empty linux-64 gets indexed too and keeps the log clean.
@@ -72,12 +124,28 @@ fi
 echo "solving: ${specs[*]}"
 # Printed with the flags spelled out so the console log is the evidence
 # that no other channel took part (acceptance criterion of #1429).
+started=$SECONDS
 set -x
-micromamba create -y -p "$ENV_PREFIX" \
+flock "$LOCK" micromamba create -y -p "$ENV_PREFIX" \
     --override-channels --strict-channel-priority \
     -c "file://$CHANNEL" -c conda-forge -c bioconda \
     "${specs[@]}"
 set +x
+echo "=== solve + install $((SECONDS - started)) s (including any wait for $LOCK)"
+
+# Installed = artefact: the sha256 conda-meta records for the installed
+# gain-core against the file copied from the upstream build.
+installed_sha=$("$ENV_PREFIX/bin/python" -c \
+    'import json, sys; print(json.load(open(sys.argv[1]))["sha256"])' \
+    "$ENV_PREFIX/conda-meta/$(basename "$artefact" .conda).json")
+artefact_sha=$(sha256sum "$artefact" | cut -d' ' -f1)
+if [ "$installed_sha" != "$artefact_sha" ]; then
+    echo "ERROR: the installed gain-core is not the artefact under test:" >&2
+    echo "  installed sha256 $installed_sha" >&2
+    echo "  artefact  sha256 $artefact_sha ($(basename "$artefact"))" >&2
+    exit 1
+fi
+echo "installed = artefact: $(basename "$artefact") ($artefact_sha)"
 
 # Explicit lockfile of what the solve picked, archived by the job so a
 # red caused by conda-forge/bioconda moving is a one-diff diagnosis

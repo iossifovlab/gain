@@ -527,6 +527,22 @@ pipeline {
                             # /tmp/env inside the container and discarded
                             # with it.
                             #
+                            # micromamba's package cache is
+                            # ${HOME}/conda_pkgs_cache on the agent (#1602),
+                            # the same directory, mounted at the same
+                            # /tmp/mamba/pkgs, as the root Jenkinsfile's
+                            # `Conda packages` stage and
+                            # spliceai_annotator/ and vep_annotator/'s
+                            # Jenkinsfile.integration. The rules for sharing
+                            # it are in conda-builder/verify_packages.sh;
+                            # run.sh follows them (flock on the installs,
+                            # own entries removed on exit) except that it
+                            # copies out of the cache rather than
+                            # softlinking -- see its header. No lock() here:
+                            # that would serialise whole builds. Created
+                            # here, next to its mount, for the gain#921
+                            # reason above.
+                            #
                             # The grr_seqpipe bind resolves the
                             # atomic-publish symlink (<root>/grr_seqpipe ->
                             # <root>/grr_seqpipe.<sha>) on the host at
@@ -557,12 +573,14 @@ pipeline {
                             # it at the test bed's core/tests/.test_grr,
                             # where the host directory apache serves is
                             # bound (#1571).
+                            mkdir -p "${HOME}/conda_pkgs_cache"
                             docker run --rm \
                                 --name gain-conda-integration-${BUILD_NUMBER} \
                                 --network "$COMPOSE_NETWORK" \
                                 --user "$(id -u):$(id -g)" \
                                 -e HOME=/tmp \
                                 -e MAMBA_ROOT_PREFIX=/tmp/mamba \
+                                -v "${HOME}/conda_pkgs_cache":/tmp/mamba/pkgs \
                                 -e PYTHON_VERSION="${PYTHON_VERSION}" \
                                 -e HTTP_HOST=apache:80 \
                                 -e S3_HOST=s3:9000 \

@@ -60,8 +60,12 @@
 # containers share the host kernel and the bind-mounted file, so the
 # lock holds across builds. Only the installs serialise (tens of seconds
 # each), not the checks or the builds; a Jenkins lock() would serialise
-# whole builds. CONDA_PKGS_DIRS pins the cache to that one directory. The
-# workspace is mounted at its host path, not
+# whole builds. core/conda-integration/run.sh (gain-conda-integration)
+# takes the same lock for its install and removes its own gain-core the
+# same way, but copies instead of softlinking: its env lives through the
+# whole test run, and runs of one artefact overlap by design (the
+# nightly's pinned Pythons). CONDA_PKGS_DIRS pins the cache to that
+# one directory. The workspace is mounted at its host path, not
 # at a fixed /workspace, so each workspace's local channels have their
 # own URL -- and so their own repodata cache entry -- and two builds never
 # refresh the same entry with different contents.

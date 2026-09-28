@@ -11,8 +11,10 @@
 #
 # Usage (from the repo root; see core/Jenkinsfile.conda-integration):
 #   docker build -f core/conda-integration/Dockerfile -t gain-conda-integration-ci .
+#   mkdir -p "$HOME/conda_pkgs_cache"
 #   docker run --rm --user "$(id -u):$(id -g)" \
 #       -e HOME=/tmp -e MAMBA_ROOT_PREFIX=/tmp/mamba \
+#       -v "$HOME/conda_pkgs_cache:/tmp/mamba/pkgs" \
 #       -v "$PWD/dist/conda:/dist/conda:ro" \
 #       -v /data/grr/grr_seqpipe:/grr/grr_seqpipe:ro \
 #       -v "$PWD/reports/conda-integration:/reports" \
@@ -30,6 +32,12 @@
 # reason the root Jenkinsfile's `Conda packages` stage does it. That is
 # why the env is created under /tmp (MAMBA_ROOT_PREFIX) rather than in
 # /opt/conda, which an arbitrary UID cannot write to.
+#
+# The cache mount is optional -- without it micromamba downloads into
+# the container and throws it away -- but the job always passes it: it
+# is the agent's shared package cache (#1602), whose rules run.sh's
+# header sets out. run.sh relies on flock(1), which util-linux puts in
+# the base image.
 
 # syntax=docker/dockerfile:1.7
 FROM mambaorg/micromamba:2.3.2
