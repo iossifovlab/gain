@@ -357,12 +357,10 @@ Services defined in `docker-compose.yaml`:
   `minioadmin/minioadmin`, bucket `test-bucket`, which
   the one-shot `s3-setup` service creates. The test
   helpers find it through `S3_HOST` (`host` or
-  `host:port`, default `localhost:29000`). They still read
-  `MINIO_HOST` when `S3_HOST` is unset, for gpf, until
-  gpf#1029 lands. Its LastModified precision differs
-  between a listing and a HEAD, the same way MinIO's
-  does, and the s3 timestamp tests depend on that
-  (gain#1708)
+  `host:port`, default `localhost:29000`). Its
+  LastModified precision differs between a listing and
+  a HEAD, the same way MinIO's does, and the s3
+  timestamp tests depend on that (gain#1708)
 - **Apache httpd** (port 28080) — HTTP fixture server
   for `grr_http` tests; serves
   `core/tests/.test_grr/`. The http fixture finds that

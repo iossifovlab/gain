@@ -655,13 +655,11 @@ def build_http_test_protocol(
 def s3_test_server_endpoint() -> str:
     """Return the url of the S3 test fixture server.
 
-    ``S3_HOST`` names it, as ``host`` or ``host:port``. ``MINIO_HOST`` is
-    read only while ``S3_HOST`` is unset: gpf imports these helpers and
-    still passes ``MINIO_HOST`` (gpf#1029). It is transitional, and goes
-    once gpf passes ``S3_HOST``.
+    ``S3_HOST`` names it, as ``host`` or ``host:port``; a bare host gets
+    port 9000. Unset or empty, it is ``localhost:29000``, the port the
+    docker-compose ``s3`` service publishes.
     """
-    host = os.environ.get("S3_HOST") or os.environ.get(
-        "MINIO_HOST", "localhost:29000")
+    host = os.environ.get("S3_HOST") or "localhost:29000"
     # Accept a hostname-only value (default to the S3 port 9000) as
     # well as host:port.
     if urlparse(f"//{host}").port is None:
