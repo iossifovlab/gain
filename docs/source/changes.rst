@@ -1,6 +1,54 @@
 Release Notes
 =============
 
+* 2026.9.7
+    * The ``kubernetes`` named-cluster type is removed; an unknown
+      cluster ``type`` fails with an error listing the supported types
+      (:issue:`1642`).
+    * ``grr_manage repo-fix-histograms`` is removed; a repository whose
+      statistics predate the truncated-histogram sidecars gets them by
+      rebuilding statistics (:issue:`722`).
+    * ``grr_manage repo-info`` and ``resource-info`` accept
+      ``--region-size`` and default to the same 3 Gb as ``repo-repair``
+      instead of a 3 Mb fallback, and the command functions take their
+      options as keyword-only parameters (:issue:`1657`).
+    * A forced statistics rebuild that fails names the failed resource
+      and leaves it to be rebuilt by the next repair, and a failed
+      task's traceback is written to its task log (:issue:`1719`).
+    * Bulk statistics reads are bounded by cells rather than rows, so a
+      hundreds-of-columns score no longer exhausts a worker's memory
+      (:issue:`1717`).
+    * A repeat repair, verify or cache sync stats each current file
+      once instead of twice (:issue:`1659`).
+    * Every surface that refuses an undefined score id, the
+      ``GeneScore`` value accessors included, says it in one sentence
+      naming the resource and the scores it has (:issue:`1112`,
+      :issue:`1701`).
+    * ``spliceai-environment.yml`` is generated from the plugin's
+      ``pyproject.toml``; ``vep`` and ``demo`` get no file
+      (:issue:`1643`).
+    * The record-to-annotatable builders raise ``MalformedRecordError``
+      for a record they cannot build, and
+      ``/api/single_allele/annotate`` answers 400 instead of 500 or a
+      meaningless annotation to a malformed record, with its own reason
+      for a DAE-style ``ins``/``del`` (:issue:`1679`, :issue:`1680`).
+    * ``GET``/``DELETE /api/pipelines/user`` address only the caller's
+      own saved pipelines and answer 400/204 instead of 500 to any other
+      id (:issue:`1674`).
+    * gainweb's validation pool no longer wedges into 503s after
+      abandoned validations, a pipeline build dropped from the cache
+      mid-flight is closed and reported ``unloaded``, and a build the
+      loader pool cancelled is rebuilt instead of spun on
+      (:issue:`1699`, :issue:`1677`, :issue:`1673`).
+    * The web UI's notifications reconnect picks its backoff delay when
+      subscribed, not when requested (:issue:`206`).
+    * The test-data builders gain ``a_gene_set_collection``
+      (:issue:`316`).
+    * **Fixed:** `the bug issues closed in this release
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+label%3Ab
+      ug+is%3Aclosed+reason%3Acompleted+closed%3A2026-09-25T10%3A16%3A40
+      Z..2026-09-28T13%3A35%3A56Z>`__.
+
 * 2026.9.6
     * The GRR index page's search module is published as ``index.js``,
       so a host that serves ``.mjs`` as text/plain no longer hangs at
