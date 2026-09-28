@@ -1,7 +1,10 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import contextlib
 import logging
 import threading
 import time
+from collections.abc import Callable, Iterator
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -828,3 +831,186 @@ def test_threaded_executor_still_reports_task_completion(
         assert "str" in completions[0]
     finally:
         executor.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# A done task is untracked, whatever ended it -- a cancellation included
+# ---------------------------------------------------------------------------
+# ``size()`` is what the validate view's admission check reads, and the
+# ``job_timeout`` sweep is the only other thing that ever drops an entry. A
+# cancelled task that stays tracked therefore counts against the admission
+# bound until a sweep runs -- and the sweep runs only inside ``execute()``,
+# which a saturated view never reaches again (iossifovlab/gain#1699).
+
+#: How long a test waits on anything that should happen at once. A regression
+#: fails at this bound instead of hanging the suite.
+PROMPT_SECONDS = 5.0
+
+
+#: A ``job_timeout`` short enough that a test can outwait it, so the next
+#: ``execute()`` sweeps every task submitted before the wait.
+SHORT_JOB_TIMEOUT = 0.2
+
+
+@contextlib.contextmanager
+def busy_worker_pool(
+    job_timeout: float = 2 * 60 * 60,
+) -> Iterator[tuple[ThreadedTaskExecutor, threading.Event]]:
+    """A single-worker pool whose worker is held busy until the event is set.
+
+    Anything submitted while the event is clear can only be queued.
+    """
+    executor = ThreadedTaskExecutor(max_workers=1, job_timeout=job_timeout)
+    started = threading.Event()
+    release = threading.Event()
+
+    def occupy() -> None:
+        started.set()
+        release.wait(timeout=PROMPT_SECONDS * 2)
+
+    executor.execute(occupy)
+    assert started.wait(timeout=PROMPT_SECONDS), "the worker never started"
+    try:
+        yield executor, release
+    finally:
+        release.set()
+        _shutdown_even_if_deadlocked(executor)
+
+
+def _shutdown_even_if_deadlocked(executor: ThreadedTaskExecutor) -> None:
+    """Shut the pool down, prising its lock loose if a deadlock holds it.
+
+    After a deadlock the lock is never released, so the pool's workers --
+    non-daemon threads the interpreter joins at exit -- block on it forever,
+    and a regression would hang the run instead of failing it. A
+    ``threading.Lock`` may be released from any thread; doing so here, only
+    once the orderly shutdown has already failed to finish, lets them go.
+    """
+    shutting_down = _call_in_a_thread(executor.shutdown)
+    deadline = time.monotonic() + PROMPT_SECONDS
+    while shutting_down.is_alive() and time.monotonic() < deadline:
+        with contextlib.suppress(RuntimeError):
+            executor._lock.release()
+        shutting_down.join(timeout=0.1)
+
+
+def _call_in_a_thread(fn: Callable[..., Any], *args: Any) -> threading.Thread:
+    """Call ``fn`` off the test thread and wait a bounded time for it.
+
+    A daemon thread, so a call that deadlocks fails the test instead of
+    hanging the process. The caller checks ``is_alive()``.
+    """
+    caller = threading.Thread(target=fn, args=args, daemon=True)
+    caller.start()
+    caller.join(timeout=PROMPT_SECONDS)
+    return caller
+
+
+@pytest.fixture
+def one_busy_worker() -> Iterator[tuple[ThreadedTaskExecutor, threading.Event]]:
+    with busy_worker_pool() as pool:
+        yield pool
+
+
+def test_a_cancelled_queued_task_is_no_longer_tracked(
+    one_busy_worker: tuple[ThreadedTaskExecutor, threading.Event],
+) -> None:
+    executor, release = one_busy_worker
+    queued = executor.execute(lambda: None)
+    assert queued.cancel(), "the task was not queued, so nothing is tested"
+
+    release.set()
+    executor.wait_all(timeout=PROMPT_SECONDS)
+
+    assert executor.size() == 0
+
+
+def test_the_timeout_sweep_cancels_a_queued_task_without_deadlocking() -> None:
+    """The sweep's cancel runs the task's done-callback, which untracks it.
+
+    ``cancel()`` on a queued future runs its done-callbacks synchronously, in
+    the thread that called it. That is ``execute()``'s thread, mid-sweep, so
+    the untracking must not wait on anything the sweep is holding.
+    """
+    with busy_worker_pool(job_timeout=SHORT_JOB_TIMEOUT) as (executor, _):
+        swept = executor.execute(lambda: None)
+        time.sleep(SHORT_JOB_TIMEOUT * 2)
+
+        caller = _call_in_a_thread(executor.execute, lambda: None)
+
+        assert not caller.is_alive(), "execute() deadlocked in its sweep"
+        assert swept.cancelled()
+        # The sweep drops the occupying task too: it is past ``job_timeout``,
+        # and a running task is dropped from tracking though it runs on. What
+        # remains is the task the sweeping call submitted.
+        assert executor.size() == 1
+
+
+def test_a_swept_running_task_finishes_without_a_callback_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The sweep drops a running task it cannot cancel; its finish is quiet.
+
+    ``cancel()`` is a no-op on a running task, so it finishes later and its
+    done-callback untracks an entry the sweep already dropped.
+    ``concurrent.futures`` logs any exception a done-callback raises under
+    its own logger, so that is where an untracking error would surface.
+    """
+    with busy_worker_pool(job_timeout=SHORT_JOB_TIMEOUT) as (
+            executor, release):
+        time.sleep(SHORT_JOB_TIMEOUT * 2)
+        with caplog.at_level(logging.ERROR, logger="concurrent.futures"):
+            executor.execute(lambda: None)
+
+            release.set()
+            executor.wait_all(timeout=PROMPT_SECONDS)
+            _drain(executor)
+
+        assert [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "concurrent.futures"
+        ] == []
+        assert executor.size() == 0
+
+
+#: How long a submission is held open, so a concurrent ``shutdown()`` is
+#: well inside its cancelling pass before the submission reaches the pool.
+SUBMIT_HOLD_SECONDS = 0.5
+
+
+def test_shutdown_during_a_submission_does_not_deadlock() -> None:
+    """``shutdown()`` cancels queued tasks while a submission is under way.
+
+    The pool's shutdown cancels queued futures while holding the pool's own
+    lock, and each cancel runs that task's done-callback, which untracks it.
+    A submission that is still waiting for the pool must not be holding
+    anything that untracking needs.
+    """
+    with busy_worker_pool() as (executor, release):
+        executor.execute(lambda: None)  # queued: shutdown will cancel it
+        submitting = threading.Event()
+        submit = executor._executor.submit
+
+        def held_submit(*args: Any, **kwargs: Any) -> Any:
+            submitting.set()
+            time.sleep(SUBMIT_HOLD_SECONDS)
+            return submit(*args, **kwargs)
+
+        executor._executor.submit = held_submit  # type: ignore[method-assign]
+
+        def execute_after_shutdown_raises() -> None:
+            with contextlib.suppress(RuntimeError):
+                executor.execute(lambda: None)
+
+        executing = threading.Thread(
+            target=execute_after_shutdown_raises, daemon=True)
+        executing.start()
+        assert submitting.wait(timeout=PROMPT_SECONDS)
+
+        release.set()
+        shutting_down = _call_in_a_thread(executor.shutdown)
+        executing.join(timeout=PROMPT_SECONDS)
+
+        assert not shutting_down.is_alive(), "shutdown() deadlocked"
+        assert not executing.is_alive(), "execute() deadlocked"

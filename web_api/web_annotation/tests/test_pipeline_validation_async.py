@@ -21,7 +21,7 @@ from web_annotation.annotation_base_view import (
     AnnotationMixin,
     AsyncAnnotationBaseView,
 )
-from web_annotation.executor import ThreadedTaskExecutor
+from web_annotation.executor import TaskExecutor, ThreadedTaskExecutor
 from web_annotation.pipelines import views
 from web_annotation.pipelines.views import PipelineValidation
 from web_annotation.tests.loop_stall import (
@@ -1041,7 +1041,11 @@ OCCUPY_TIMEOUT_SECONDS = 10.0
 
 def _drain_validation_pool(timeout: float = 10.0) -> None:
     """Wait until the shared validation pool reports no tasks."""
-    executor = PipelineValidation.VALIDATE_EXECUTOR
+    _drain_pool(PipelineValidation.VALIDATE_EXECUTOR, timeout)
+
+
+def _drain_pool(executor: TaskExecutor, timeout: float = 10.0) -> None:
+    """Wait until ``executor`` reports no tasks, or ``timeout`` passes."""
     deadline = time.monotonic() + timeout
     while executor.size() > 0 and time.monotonic() < deadline:
         time.sleep(0.01)
@@ -1217,6 +1221,61 @@ def test_the_validation_pool_width_is_pinned() -> None:
     assert executor._executor._max_workers == (
         AnnotationMixin.VALIDATE_POOL_WORKERS
     ), "the pool is not built from the pinned width"
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+async def test_abandoned_queued_validations_do_not_shed_later_requests(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """A cancelled task stops counting against the admission bound.
+
+    Admission reads ``VALIDATE_EXECUTOR.size()`` once per request, but a
+    request submits up to three tasks, so the queue can hold more than the
+    bound. The editor's debounce abandons requests routinely, and each one
+    cancels its queued task through ``_await_cancellable``. Were a cancelled
+    task still counted, a bound's worth of them would shed every request
+    from then on: the only thing that ever drops them is the ``job_timeout``
+    sweep inside ``execute()``, which a shed request never reaches
+    (iossifovlab/gain#1699).
+
+    A pool of its own, patched in, so a regression cannot leave the shared
+    pool counting phantom tasks for the tests after this one.
+    """
+    executor = ThreadedTaskExecutor(
+        max_workers=AnnotationMixin.VALIDATE_POOL_WORKERS,
+        thread_name_prefix=VALIDATE_THREAD_PREFIX)
+    mocker.patch.object(AnnotationMixin, "VALIDATE_EXECUTOR", executor)
+    release = threading.Event()
+
+    def occupy() -> None:
+        release.wait(timeout=OCCUPY_TIMEOUT_SECONDS)
+
+    try:
+        for _ in range(AnnotationMixin.VALIDATE_POOL_WORKERS):
+            executor.execute(occupy)
+        abandoned = [
+            asyncio.create_task(PipelineValidation._await_cancellable(
+                executor.execute(lambda: None)))
+            for _ in range(PipelineValidation.MAX_VALIDATIONS_IN_FLIGHT)
+        ]
+        await asyncio.sleep(0.05)
+        for request in abandoned:
+            request.cancel()
+        await asyncio.gather(*abandoned, return_exceptions=True)
+        assert all(request.cancelled() for request in abandoned)
+
+        release.set()
+        await asyncio.to_thread(_drain_pool, executor)
+
+        response = await AsyncClient().post(
+            VALIDATE_URL, {"config": VALID_CONFIG})
+
+        assert response.status_code == 200, response.content
+        assert response.json() == {"errors": ""}
+    finally:
+        release.set()
+        executor.shutdown()
 
 
 # ---------------------------------------------------------------------------
