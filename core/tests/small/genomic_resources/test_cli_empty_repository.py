@@ -115,19 +115,6 @@ def test_repo_manifest_settles_the_one_artifact_it_publishes(
     assert (settled_repo / GR_INDEX_FILE_NAME).read_bytes() == page_before
 
 
-def test_repo_fix_histograms_on_an_emptied_repository_writes_nothing(
-    settled_repo: pathlib.Path,
-) -> None:
-    # Its republish is gated on something having been fixed or failed,
-    # so n=0 needs no carve-out to stay a no-op -- it falls out.
-    empty_the_repository(settled_repo)
-    globals_before = snapshot_globals(settled_repo)
-
-    cli_manage(["repo-fix-histograms", "-R", str(settled_repo)])
-
-    assert snapshot_globals(settled_repo) == globals_before
-
-
 @pytest.mark.parametrize("argv", [
     # Every repository-scoped command that offers `--dry-run`.  Their
     # dry-run early returns are separate pieces of code -- repo-manifest

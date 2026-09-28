@@ -312,8 +312,7 @@ there exactly the artifacts listed above — so after deleting the last
 resource of a repository, ``repo-repair`` (or ``repo-index``) leaves
 none of the artifacts it publishes still advertising it. Each command
 still settles only its own, exactly as on a repository that has
-resources in it; ``repo-fix-histograms`` republishes nothing unless it
-fixed or failed on something. Note that a search index rebuilt with no
+resources in it. Note that a search index rebuilt with no
 resource in it holds no contents at all, so searching that repository
 reports the index as unavailable rather than answering that nothing
 matched.
@@ -341,9 +340,8 @@ Rebuilding on demand: ``--force`` and ``--dry-run``
 The ``*-manifest``, ``*-stats``, ``*-info`` and ``*-repair`` commands accept
 these two, in both their repository- and resource-scoped forms. They are
 mutually exclusive: given both, the tool warns and fails rather than
-guessing which one you meant. (``repo-fix-histograms`` writes inside
-resource directories too but offers neither flag, and ``repo-init`` and
-``repo-index`` rebuild nothing.)
+guessing which one you meant. (``repo-init`` and ``repo-index``
+rebuild nothing, so they offer neither flag.)
 
 .. list-table::
    :header-rows: 1

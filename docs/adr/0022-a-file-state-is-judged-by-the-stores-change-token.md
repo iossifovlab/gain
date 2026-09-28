@@ -155,8 +155,9 @@ rebuilds a state, which it does by hashing the whole file, so the extra
 request sits beside a full read of the object; and when it judges a
 recorded state that carries no token — the two cases listed above, one of
 which rebuilds itself away. A cache verdict that rebuilds a state likewise
-re-hashes the file. The one reader that is not a state is `grr_manage`'s
-histogram migration, which compares a sidecar's timestamp with its full
-histogram's: that is now two HEADs per full histogram, at whole-second
-resolution, where a warm listing could answer before — though it could
-also compare a listing value with a HEAD value, which was worse.
+re-hashes the file. The one reader that was not a state was `grr_manage`'s
+histogram migration (removed in gain#722), which compared a sidecar's
+timestamp with its full histogram's: that was two HEADs per full histogram,
+at whole-second resolution, where a warm listing could answer before —
+though it could also compare a listing value with a HEAD value, which was
+worse.
