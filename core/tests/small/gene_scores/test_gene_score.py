@@ -12,7 +12,6 @@ from gain.gene_scores.gene_scores import (
     GeneScore,
     GeneScoresDb,
     ScoreDesc,
-    _build_gene_score_help,
     build_gene_score_from_resource,
     build_gene_score_from_resource_id,
 )
@@ -572,8 +571,7 @@ def test_get_histogram_image_public_url(
 
     # the rendered help page embeds the public histogram URL, so the
     # image is reachable from a browser even for a directory GRR
-    score_def = result.score_definitions["linear score"]
-    help_text = _build_gene_score_help(score_def, result)
+    help_text = result.build_score_help("linear score")
     assert "https://grr.example.com" in help_text
     # a revert to the local URL would leak the unreachable repo path
     assert res.get_url() not in help_text
@@ -587,17 +585,12 @@ def test_build_gene_scores_from_resource_id(
     assert len(gs.get_all_scores()) == 1
 
 
-def test_build_gene_score_help(scores_repo: GenomicResourceRepo) -> None:
+def test_gene_score_build_score_help(scores_repo: GenomicResourceRepo) -> None:
     res = scores_repo.get_resource("LinearHist")
     gene_score = build_gene_score_from_resource(res)
     assert gene_score is not None
 
-    # Get the score definition
-    score_def = gene_score.score_definitions["linear score"]
-    assert score_def is not None
-
-    # Build the help text
-    help_text = _build_gene_score_help(score_def, gene_score)
+    help_text = gene_score.build_score_help("linear score")
 
     # Verify the help text contains expected elements
     assert help_text is not None
