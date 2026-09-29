@@ -128,10 +128,12 @@ constructed, and the statistics scan constructs one *inside every task*:
 `scan.can_bulk_min_max`, `scan.do_min_max`, `scan.do_min_max_bulk`,
 `scan.do_histogram_task` and `scan.do_noregion_histograms` each call
 `build_score_from_resource`. `grr_manage repo-repair` defaults
-to `region_size=3_000_000`, so an hg38-scale resource yields roughly a
-thousand regions and two task kinds — thousands of identical lines naming one
-resource, which is precisely the noise `0003` refused and which hides every
-other offender behind it. Measured on a three-row fragment score at
+to one region per contig, so an hg38-scale resource yields about as many
+regions as it has contigs — hundreds for an assembly with its alt and
+unplaced contigs — and two task kinds per region: hundreds of identical lines
+naming one resource, and far more under an explicit smaller
+`--region-size`, which is precisely the noise `0003` refused and which hides
+every other offender behind it. Measured on a three-row fragment score at
 `region_size=25`: 12 tasks, 33 warnings, one resource.
 
 So the volume guarantee is enforced rather than assumed.

@@ -217,7 +217,10 @@ def _add_hist_parameters_group(parser: argparse.ArgumentParser) -> None:
         "--region-size", type=_non_negative_int,
         default=DEFAULT_STATISTICS_REGION_SIZE,
         help="Region size to use for splitting statistics calculation into "
-        "tasks; 0 does not split")
+        "tasks. The default is one region per contig; 0 does not split. "
+        "A smaller size balances one large resource across -j workers: "
+        "keep it at or below about genome / (4 x -j), e.g. "
+        "--region-size 20000000 for hg38 at -j 32")
 
 
 def _configure_list_subparser(subparsers: argparse._SubParsersAction) -> None:

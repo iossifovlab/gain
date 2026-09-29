@@ -38,9 +38,23 @@ from .statistics.base_statistic import StoredStatistic
 
 logger = logging.getLogger(__name__)
 
-# The region a statistics build splits a resource into when its caller
-# names none: larger than any contig, so one region per contig.
-DEFAULT_STATISTICS_REGION_SIZE = 3_000_000_000
+ONE_REGION_PER_CONTIG = 3_000_000_000
+"""A statistics region size larger than any contig, so every contig is one
+region.
+
+``split_into_regions`` clamps a region size to the contig length, so any
+size at least as long as the longest contig builds exactly one region per
+contig.  This is not the ``0`` sentinel, which means "do not split": a
+genomic score then scans the whole resource in one task, with no regions.
+"""
+
+DEFAULT_STATISTICS_REGION_SIZE = ONE_REGION_PER_CONTIG
+"""The region size a statistics build uses when its caller names none: one
+region per contig (gain#357).
+
+A smaller size balances a single large resource across more workers; keep
+it at or below about genome / (4 x workers).
+"""
 
 
 # Names FTS5 will not accept as a column of the index table: it reserves
