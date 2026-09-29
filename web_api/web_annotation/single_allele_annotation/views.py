@@ -18,10 +18,7 @@ from gain.annotation.record_to_annotatable import (
     MalformedRecordError,
     build_annotatable_from_dict,
 )
-from gain.gene_scores.gene_scores import (
-    _build_gene_score_help,
-    build_gene_score_from_resource,
-)
+from gain.gene_scores.gene_scores import build_gene_score_from_resource
 from gain.genomic_resources.aggregators import Aggregator
 from gain.genomic_resources.genomic_scores import build_score_from_resource
 from gain.genomic_resources.histogram import (
@@ -206,13 +203,9 @@ class SingleAnnotation(AsyncAnnotationBaseView):
             return annotator.build_attribute_help(attribute_info)
 
         assert isinstance(annotator, GeneScoreAnnotator)
-        for score_def in annotator.score.score_definitions.values():
-            if score_def.score_id == attribute_info.source:
-                return _build_gene_score_help(
-                    score_def,
-                    annotator.score,
-                )
-        return None
+        if attribute_info.source not in annotator.score.score_definitions:
+            return None
+        return annotator.score.build_score_help(attribute_info.source)
 
     async def post(self, request: Request) -> Response:
         """Async view for single annotation.

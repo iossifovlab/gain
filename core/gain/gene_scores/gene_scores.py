@@ -281,6 +281,34 @@ class GeneScore(ScoreResource[GeneScoreDef]):
         df.to_csv(outbuf, sep="\t", index=False)
         return outbuf.getvalue().splitlines(keepends=True)
 
+    def build_score_help(self, score_id: str) -> str:
+        """Return the Markdown help for one score of this gene score.
+
+        The help carries the score's id and description, the resource's
+        summary and a link to its info page, and -- when the score has a
+        histogram image -- that image, embedded by its public address.
+
+        Raises ``ValueError`` naming ``score_id`` when this resource does
+        not define it.
+        """
+        self._guard_score_id(score_id)
+        score_def = self.score_definitions[score_id]
+
+        histogram = get_template("score_histogram.jinja").render(
+            hist_url=self.get_histogram_image_public_url(score_id),
+            score_def=score_def,
+        )
+
+        data = {
+            "name": score_def.score_id,
+            "description": score_def.desc,
+            "resource_id": self.resource.resource_id,
+            "resource_summary": self.resource.get_summary(),
+            "resource_url": f"{self.resource.get_public_url()}/index.html",
+            "histogram": histogram,
+        }
+        return get_template("gene_score_help.jinja").render(data=data)
+
     def get_score_df(self, score_id: str) -> pd.DataFrame:
         self._guard_score_id(score_id)
         return self.df[["gene", score_id]].dropna()
@@ -331,30 +359,6 @@ class ScoreDesc:
     large_values_desc: str | None
 
 
-def _build_gene_score_help(
-    score_def: ScoreDef,
-    gene_score: GeneScore,
-) -> str:
-    score_id = score_def.score_id
-    hist_url = gene_score.get_histogram_image_public_url(score_id)
-    assert score_def is not None
-
-    histogram = get_template("score_histogram.jinja").render(
-        hist_url=hist_url,
-        score_def=score_def,
-    )
-
-    data = {
-        "name": score_def.score_id,
-        "description": score_def.desc,
-        "resource_id": gene_score.resource.resource_id,
-        "resource_summary": gene_score.resource.get_summary(),
-        "resource_url": f"{gene_score.resource.get_public_url()}/index.html",
-        "histogram": histogram,
-    }
-    return get_template("gene_score_help.jinja").render(data=data)
-
-
 class GeneScoresDb:
     """
     Helper class used to load all defined gene scores.
@@ -378,7 +382,7 @@ class GeneScoresDb:
         """Build score descriptions from score."""
         result = []
         for score_id, score_def in gene_score.score_definitions.items():
-            help_doc = _build_gene_score_help(score_def, gene_score)
+            help_doc = gene_score.build_score_help(score_id)
             result.append(ScoreDesc(
                 resource_id=gene_score.resource.resource_id,
                 score_id=score_id,

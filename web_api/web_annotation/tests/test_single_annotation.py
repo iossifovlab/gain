@@ -1,4 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import pathlib
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any, cast
@@ -8,7 +9,9 @@ import pytest
 from django.test import Client
 from django.utils import timezone
 from gain.annotation.annotation_config import Attribute
+from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import Annotator, AttributeSpec
+from gain.annotation.gene_score_annotator import GeneScoreAnnotator
 from gain.genomic_resources.repository import GenomicResourceRepo
 from pytest_mock import MockerFixture
 
@@ -52,6 +55,56 @@ class DummyPipeline:
 
     def annotate(self, *args: Any, **kwargs: Any) -> dict:
         return {"test": 1}
+
+
+@pytest.fixture
+def gene_score_annotator(
+    test_grr: GenomicResourceRepo, tmp_path: pathlib.Path,
+) -> GeneScoreAnnotator:
+    """The gene score annotator of the fixture GRR's t4c8 pipeline."""
+    raw = test_grr.get_resource("t4c8/t4c8_pipeline").get_file_content(
+        "t4c8_pipeline.yaml")
+    pipeline = load_pipeline_from_yaml(raw, test_grr, work_dir=tmp_path)
+    annotators = [
+        annotator for annotator in pipeline.annotators
+        if isinstance(annotator, GeneScoreAnnotator)
+    ]
+    assert len(annotators) == 1
+    return annotators[0]
+
+
+def test_gene_score_attribute_help_is_the_gene_score_help(
+    gene_score_annotator: GeneScoreAnnotator,
+) -> None:
+    attribute_info = gene_score_annotator.attributes[0]
+    assert attribute_info.source == "t4c8_score"
+
+    help_text = SingleAnnotation().generate_annotator_help(
+        gene_score_annotator, attribute_info)
+
+    assert help_text == gene_score_annotator.score.build_score_help(
+        "t4c8_score")
+    assert "## t4c8_score" in help_text
+
+
+def test_gene_score_attribute_from_an_undefined_score_has_no_help(
+    gene_score_annotator: GeneScoreAnnotator,
+) -> None:
+    attribute_info = Attribute(
+        "attr_name",
+        "no_such_score",
+        internal=False,
+        spec=AttributeSpec(
+            source="no_such_score",
+            value_type="float",
+            description="desc",
+        ),
+    )
+
+    help_text = SingleAnnotation().generate_annotator_help(
+        gene_score_annotator, attribute_info)
+
+    assert help_text is None
 
 
 def test_build_attribute_description_with_histogram(

@@ -64,24 +64,45 @@ def built_gene_score(tmp_path: pathlib.Path) -> GeneScore:
     return gene_score
 
 
-def gene_score_help(gene_score: GeneScore, score_id: str) -> str:
-    descs = {
-        desc.score_id: desc
-        for desc in GeneScoresDb.build_descs_from_score(gene_score)
+def test_a_gene_score_help_names_the_score_and_its_resource(
+    gene_score: GeneScore,
+) -> None:
+    help_text = gene_score.build_score_help("pli")
+
+    assert '<div class="score-description">' in help_text
+    assert "## pli" in help_text
+    assert "Genomic resource:" in help_text
+    assert f"{gene_score.resource.get_public_url()}/index.html" in help_text
+
+
+def test_a_gene_score_help_for_an_undefined_score_is_refused(
+    gene_score: GeneScore,
+) -> None:
+    with pytest.raises(ValueError, match="no_such_score"):
+        gene_score.build_score_help("no_such_score")
+
+
+def test_the_gene_scores_db_carries_the_gene_score_help(
+    gene_score: GeneScore,
+) -> None:
+    descs = GeneScoresDb.build_descs_from_score(gene_score)
+
+    assert {desc.score_id: desc.help for desc in descs} == {
+        score_id: gene_score.build_score_help(score_id)
+        for score_id in ("pli", "nullified")
     }
-    return descs[score_id].help
 
 
 def test_a_gene_score_help_embeds_the_histogram_by_its_public_address(
     gene_score: GeneScore,
 ) -> None:
-    assert "![HISTOGRAM](" in gene_score_help(gene_score, "pli")
+    assert "![HISTOGRAM](" in gene_score.build_score_help("pli")
 
 
 def test_a_build_nullified_gene_score_histogram_puts_no_image_in_the_help(
     built_gene_score: GeneScore,
 ) -> None:
-    help_text = gene_score_help(built_gene_score, "label")
+    help_text = built_gene_score.build_score_help("label")
 
     assert "![HISTOGRAM]" not in help_text
     assert "None" not in help_text
@@ -90,7 +111,7 @@ def test_a_build_nullified_gene_score_histogram_puts_no_image_in_the_help(
 def test_a_gene_score_histogram_the_build_drew_is_embedded_in_the_help(
     built_gene_score: GeneScore,
 ) -> None:
-    assert "![HISTOGRAM](" in gene_score_help(built_gene_score, "pli")
+    assert "![HISTOGRAM](" in built_gene_score.build_score_help("pli")
 
 
 def test_an_annulled_gene_score_histogram_has_no_image_address(
@@ -102,4 +123,4 @@ def test_an_annulled_gene_score_histogram_has_no_image_address(
 def test_an_annulled_gene_score_histogram_puts_no_image_in_the_help(
     gene_score: GeneScore,
 ) -> None:
-    assert "![HISTOGRAM]" not in gene_score_help(gene_score, "nullified")
+    assert "![HISTOGRAM]" not in gene_score.build_score_help("nullified")
