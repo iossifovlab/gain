@@ -1,11 +1,9 @@
-# pylint: disable=W0621,C0114,C0116,W0212,W0613,W0104
+# pylint: disable=W0621,C0114,C0116,W0212,W0613
 
 import textwrap
 
 import pytest
-from gain.gene_scores.gene_scores import (
-    build_gene_score_from_resource,
-)
+from gain.gene_scores.gene_scores import build_gene_score_from_resource
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GenomicResourceRepo,
