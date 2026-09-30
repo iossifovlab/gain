@@ -38,7 +38,8 @@ class Aggregator(abc.ABC):
     parametrized: ClassVar[bool] = False
     default_parameter: ClassVar[str | None] = None
     # Output value type produced by this aggregator, independent of the input
-    # type. None means the output type matches the input type (e.g. max/min).
+    # type. None means the output type matches the input type (e.g. mode,
+    # sum, product).
     output_value_type: ClassVar[str | None] = None
 
     @classmethod
@@ -243,6 +244,62 @@ class MeanAggregator(Aggregator):
         if self.used_count > 0:
             return self.sum / self.used_count
         return None
+
+
+class SumAggregator(Aggregator):
+    """Aggregator that sums the values it is given.
+
+    The output keeps the input's type -- an ``int`` score sums to an
+    ``int`` -- and it is ``None`` when no non-``None`` value was added.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.total: Any = None
+
+    def _add_internal(self, value: Any, count: int) -> None:
+        if value is None:
+            return
+        contribution = value * count
+        if self.total is None:
+            self.total = contribution
+        else:
+            self.total += contribution
+        self.used_count += count
+
+    def _clear_internal(self) -> None:
+        self.total = None
+
+    def get_final(self) -> Any:
+        return self.total
+
+
+class ProductAggregator(Aggregator):
+    """Aggregator that multiplies the values it is given.
+
+    The output keeps the input's type -- an ``int`` score multiplies to an
+    ``int`` -- and it is ``None`` when no non-``None`` value was added.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.product: Any = None
+
+    def _add_internal(self, value: Any, count: int) -> None:
+        if value is None:
+            return
+        contribution = value ** count
+        if self.product is None:
+            self.product = contribution
+        else:
+            self.product *= contribution
+        self.used_count += count
+
+    def _clear_internal(self) -> None:
+        self.product = None
+
+    def get_final(self) -> Any:
+        return self.product
 
 
 class CountAggregator(Aggregator):
@@ -513,6 +570,8 @@ AGGREGATOR_CLASS_DICT: dict[str, type[Aggregator]] = {
     "min": MinAggregator,
     "mean": MeanAggregator,
     "median": MedianAggregator,
+    "sum": SumAggregator,
+    "product": ProductAggregator,
     "count": CountAggregator,
     "concatenate": ConcatAggregator,
     "mode": ModeAggregator,
@@ -762,7 +821,9 @@ class PositionScoreAggregationQuery:
     none_value_replacement: ScoreValue | None = None
 
 
-NUMERIC_ONLY_AGGREGATORS = {"max", "min", "mean", "median"}
+NUMERIC_ONLY_AGGREGATORS = {
+    "max", "min", "mean", "median", "sum", "product",
+}
 
 
 def validate_aggregator(

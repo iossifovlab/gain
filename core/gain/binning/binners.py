@@ -16,8 +16,10 @@ import numpy.typing as npt
 
 from gain.genomic_resources.aggregators import (
     AGGREGATOR_CLASS_DICT,
-    Aggregator,
+    NUMERIC_ONLY_AGGREGATORS,
+    AggregatorDefinition,
     PositionScoreAggregationQuery,
+    get_aggregator_class,
     validate_aggregator,
 )
 from gain.genomic_resources.genomic_scores.position import PositionScore
@@ -35,17 +37,33 @@ BINNERS_ENTRY_POINT_GROUP = "gain.binning.binners"
 NUMERIC_VALUE_TYPES = {"int", "float"}
 
 
+def _output_type(name: str, value_type: str) -> str | None:
+    """The type the registered aggregator ``name`` answers for a score.
+
+    An aggregator's declared output type, or -- for one that declares
+    none and answers in its input's type -- the score's own
+    ``value_type``, but only when the aggregator is numeric-only, so that
+    the input is known to be a number.  ``mode`` also answers in its
+    input's type yet accepts any type, so it answers ``None`` here.
+    """
+    declared = get_aggregator_class(name).output_value_type
+    if declared is None and name in NUMERIC_ONLY_AGGREGATORS:
+        return value_type
+    return declared
+
+
 def numeric_aggregators() -> list[str]:
     """The registered aggregators whose result is a number (D11).
 
-    Read off each aggregator's declared output type, so a numeric
-    aggregator added to the registry is accepted here without a list to
-    keep in step; one that declares no output type of its own (``mode``,
-    which answers in the input's type) is not among them.
+    Those that declare a numeric output type, and the numeric-only ones
+    that answer in their input's type (``sum``, ``product``) -- a binned
+    score is numeric, so they answer a number too.  Read off the
+    registry, so a numeric aggregator added to it is accepted here
+    without a list to keep in step.
     """
     return sorted(
-        name for name, cls in AGGREGATOR_CLASS_DICT.items()
-        if cls.output_value_type in NUMERIC_VALUE_TYPES)
+        name for name in AGGREGATOR_CLASS_DICT
+        if _output_type(name, "float") in NUMERIC_VALUE_TYPES)
 
 
 class RunDefinitionError(ValueError):
@@ -272,8 +290,10 @@ class PositionScoreBinner:
             raise RunDefinitionError(
                 f"{label}: resource {resource.resource_id!r}: "
                 f"{err.args[0]}") from err
-        output_type = Aggregator.resolve_class(
-            aggregator_name).output_value_type
+        output_type = _output_type(
+            AggregatorDefinition.from_string(aggregator_name)
+            .aggregator_type,
+            score_def.value_type)
         if output_type not in NUMERIC_VALUE_TYPES:
             raise RunDefinitionError(
                 f"{label}: resource {resource.resource_id!r}: aggregator "

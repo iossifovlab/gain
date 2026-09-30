@@ -111,7 +111,8 @@ whose key is the binner kind; the only kind in this version is
     numeric (``int`` or ``float``) scores can be binned; a string-typed
     score, or an aggregator such as ``join`` or ``list`` that builds a
     string or a list, is refused at parse time. The numeric aggregators are
-    ``max``, ``min``, ``mean``, ``median`` and ``count``. To bin one
+    ``max``, ``min``, ``mean``, ``median``, ``sum``, ``product`` and
+    ``count``. To bin one
     resource under two aggregators, list it in two entries.
 
 ``none_value_replacement`` (optional)

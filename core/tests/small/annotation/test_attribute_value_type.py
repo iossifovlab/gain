@@ -56,6 +56,16 @@ def test_an_aggregator_that_keeps_the_input_type_answers_the_spec_type() -> \
     assert attr.get_value_type() == "str"
 
 
+@pytest.mark.parametrize("aggregator", ["sum", "product"])
+@pytest.mark.parametrize("value_type", ["int", "float"])
+def test_sum_and_product_keep_the_numeric_input_type(
+    aggregator: str, value_type: str,
+) -> None:
+    attr = _an_attribute(aggregator=aggregator, value_type=value_type)
+
+    assert attr.get_value_type() == value_type
+
+
 def test_the_spec_type_answers_when_aggregation_was_skipped() -> None:
     attr = _an_attribute(aggregator="list", value_type="float")
 

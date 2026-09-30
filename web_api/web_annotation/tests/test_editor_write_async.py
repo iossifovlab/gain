@@ -444,8 +444,8 @@ async def test_async_annotator_aggregators_numeric_source() -> None:
     result = response.json()
     assert "pos1" in result
     assert set(result["pos1"]["aggregators"]) == {
-        "max", "min", "mean", "median", "count", "concatenate", "mode",
-        "join", "list", "bool", "value_count",
+        "max", "min", "mean", "median", "sum", "product", "count",
+        "concatenate", "mode", "join", "list", "bool", "value_count",
     }
     assert result["pos1"]["default_aggregator"] == "mean"
 
