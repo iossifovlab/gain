@@ -576,6 +576,62 @@ def test_calc_histogram_categorical() -> None:
     assert histogram.raw_values[3] == 1
 
 
+def test_calc_histogram_categorical_int_column_with_missing_values() -> None:
+    # #1744: an int-valued categorical column with an empty cell is read by
+    # pandas as float64, so the categories arrive as whole-number floats
+    # (1.0, 2.0, ...). They must be counted as their int categories, with
+    # the missing cell skipped -- not annul the whole histogram.
+    repo = build_inmemory_test_repository({
+        "genes": {
+            GR_CONF_FILE_NAME: textwrap.dedent("""
+                type: gene_score
+                filename: cat.csv
+                scores:
+                - id: cat
+                  desc: categorical int with missing values
+                  histogram:
+                    type: categorical
+                    value_order: [1, 2, 3]
+            """),
+            "cat.csv": "gene,cat\nG1,1\nG2,2\nG3,\nG4,3\nG5,2\n",
+        },
+    })
+    res = repo.get_resource("genes")
+
+    histogram = GeneScoreImplementation._build_histograms(res)["cat"]
+
+    assert isinstance(histogram, CategoricalHistogram), \
+        getattr(histogram, "reason", histogram)
+    assert histogram.raw_values == {1: 1, 2: 2, 3: 1}
+
+
+def test_calc_histogram_categorical_refuses_non_whole_float() -> None:
+    # #1744: only WHOLE-number floats are folded to their int category; a
+    # non-whole float is not a category and must not be silently truncated.
+    # The histogram is annulled with a reason naming the offending value.
+    repo = build_inmemory_test_repository({
+        "genes": {
+            GR_CONF_FILE_NAME: textwrap.dedent("""
+                type: gene_score
+                filename: cat.csv
+                scores:
+                - id: cat
+                  desc: categorical with a non-whole float
+                  histogram:
+                    type: categorical
+                    value_order: [1, 2, 3]
+            """),
+            "cat.csv": "gene,cat\nG1,1\nG2,2.5\nG3,\nG4,3\n",
+        },
+    })
+    res = repo.get_resource("genes")
+
+    histogram = GeneScoreImplementation._build_histograms(res)["cat"]
+
+    assert isinstance(histogram, NullHistogram)
+    assert "2.5" in histogram.reason
+
+
 def test_calc_histogram_categorical_string_values(
     tmp_path: pathlib.Path,
 ) -> None:
