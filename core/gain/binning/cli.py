@@ -1,11 +1,11 @@
 """``binning_tool``: bin position scores into a fixed genome grid.
 
-One task per (track, bundle of consecutive regions) writes a column
-chunk per region as a ``.npy`` vector in the work directory; one serial
-writer task assembles the HDF5 file region by region.  HDF5 has a single
-writer, so no task other than the writer touches the file, and a rerun
-with the same work directory reuses the finished chunks and reruns only
-the writer.
+One task per (job, bundle of consecutive regions) writes a column chunk
+per track and region as a ``.npy`` vector in the work directory; one
+serial writer task assembles the HDF5 file region by region.  HDF5 has a
+single writer, so no task other than the writer touches the file, and a
+rerun with the same work directory reuses the finished chunks and reruns
+only the writer.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import functools
 import json
 import os
 import sys
-from contextlib import chdir, closing
+from contextlib import chdir
 from typing import Any
 
 import h5py
@@ -24,7 +24,12 @@ import numpy.typing as npt
 import yaml
 
 from gain import __version__
-from gain.binning.binners import Binner, Track, discover_binner_kinds
+from gain.binning.binners import (
+    Binner,
+    BinningJob,
+    Track,
+    discover_binner_kinds,
+)
 from gain.binning.run_definition import (
     RunDefinition,
     RunDefinitionError,
@@ -181,7 +186,7 @@ def _print_plan(run: RunDefinition, task_budget: int) -> None:
     print(f"regions: {len(run.regions)}")
     print(f"bins: {sum(_bin_count(r, run.bin_size) for r in run.regions)}")
     bundles = bundle_regions(run.regions, task_budget)
-    print(f"tasks: {len(bundles) * len(run.tracks)}")
+    print(f"tasks: {len(bundles) * len(run.jobs)}")
 
 
 def _bin_count(region: BedRegion, bin_size: int) -> int:
@@ -192,11 +197,12 @@ def _bin_count(region: BedRegion, bin_size: int) -> int:
 def _build_task_graph(
     run: RunDefinition, args: dict[str, Any], grr: GenomicResourceRepo,
 ) -> TaskGraph:
-    """One task per (track, bundle of regions), then one serial writer.
+    """One task per (job, bundle of regions), then one serial writer.
 
-    A task writes one chunk per region of its bundle, so the chunks --
-    and the writer that assembles them region by region -- are the same
-    whatever the budget; only how many tasks there are changes.
+    A task writes one chunk per track of its job and region of its
+    bundle, so the chunks -- and the writer that assembles them region by
+    region -- are the same whatever the budget; only how many tasks there
+    are changes.
     """
     assert grr.definition is not None
     kinds = discover_binner_kinds()
@@ -207,14 +213,15 @@ def _build_task_graph(
 
     chunk_tasks = []
     for bundle in bundle_regions(run.regions, args["task_budget"]):
-        for track in run.tracks:
+        for job in run.jobs:
             paths = [
                 _chunk_path(chunk_dir, track, region, run.bin_size)
                 for region in bundle
+                for track in job.tracks
             ]
             chunk_tasks.append(graph.create_task(
-                _task_id(track, bundle, run.bin_size), _bin_chunks,
-                args=[kinds[track.binner], track, bundle, run.bin_size,
+                _task_id(job, bundle, run.bin_size), _bin_chunks,
+                args=[kinds[job.binner], job, bundle, run.bin_size,
                       grr.definition, chunk_dir],
                 output_files=paths,
             ))
@@ -267,8 +274,13 @@ def _chunk_path(
         f"_{region.chrom}_{region.start}_{region.stop}.npy")
 
 
-def _task_id(track: Track, bundle: list[BedRegion], bin_size: int) -> str:
-    """Name a task by its track and the span of its bundle.
+def _task_id(
+    job: BinningJob, bundle: list[BedRegion], bin_size: int,
+) -> str:
+    """Name a task by its job's first track and the span of its bundle.
+
+    A track belongs to one job, and its chunks to one task per bundle, so
+    the first track names the job within a bundle.
 
     A bundle is a run of the definition's regions, which never overlap,
     so its first and last region name it; a rerun with the same
@@ -279,7 +291,7 @@ def _task_id(track: Track, bundle: list[BedRegion], bin_size: int) -> str:
     """
     first, last = bundle[0], bundle[-1]
     return (
-        f"bin_{_track_stem(track, bin_size)}"
+        f"bin_{_track_stem(job.tracks[0], bin_size)}"
         f"_{first.chrom}_{first.start}_{last.chrom}_{last.stop}")
 
 
@@ -290,35 +302,38 @@ def _repository(definition: str) -> GenomicResourceRepo:
 
 
 def _bin_chunks(
-    binner: type[Binner], track: Track, regions: list[BedRegion],
+    binner: type[Binner], job: BinningJob, regions: list[BedRegion],
     bin_size: int, grr_definition: dict[str, Any], chunk_dir: str,
 ) -> None:
-    """Write one chunk per region of a bundle, in the same process.
+    """Write one chunk per track of a job and region of a bundle.
 
-    Each array is saved as it arrives and then dropped, so a bundle costs
-    one region of memory however many regions it holds -- which is what
-    makes a whole run in one task (``--task-budget 0``) affordable.
+    The job is bound once for the bundle, inside this function's ``with``,
+    so its resources are released when the task ends, failed or not.
+    Each region's block is saved as soon as it is returned and then
+    dropped, so a bundle costs one region of memory however many regions
+    it holds -- which is what makes a whole run in one task
+    (``--task-budget 0``) affordable.
 
-    The region names its own chunk here, through the same
-    :func:`_chunk_path` the graph declared its outputs with, so the name
-    a task writes and the name the graph expects come from one function
-    rather than from two lists kept parallel across a task argument.
-    ``strict`` then counts the binner's arrays against the regions --
-    the contract's own subject -- rather than against a list built
-    elsewhere.  Their *order* is still the binner's promise to keep: a
-    binner yielding out of turn would write good arrays under the wrong
-    names, and nothing here can see that.
-
-    Closing the generator is this function's job, not the garbage
-    collector's.  The binner's resource stays open across its yields, and
-    on a failed save the executor keeps the exception, whose traceback
-    keeps this frame and the suspended generator with it -- so without
-    the close, a failing task holds its handle for the rest of the run.
+    Column *i* of a block is track *i*'s chunk, named through the same
+    :func:`_chunk_path` the graph declared its outputs with.  A block of
+    any other shape than ``(bins of the region, tracks of the job)``
+    fails the task before any of that region's chunks is written.
     """
     grr = _repository(json.dumps(grr_definition, sort_keys=True))
-    with closing(binner.bin_track(track, regions, bin_size, grr)) as arrays:
-        for region, array in zip(regions, arrays, strict=True):
-            np.save(_chunk_path(chunk_dir, track, region, bin_size), array)
+    with binner.bind(job, grr) as bound:
+        for region in regions:
+            block = bound.bin_region(region, bin_size)
+            expected = (_bin_count(region, bin_size), len(job.tracks))
+            if block.shape != expected:
+                raise ValueError(
+                    f"{binner.kind} returned a block of shape "
+                    f"{block.shape} for {region.chrom}:{region.start}-"
+                    f"{region.stop} at bin size {bin_size}; expected "
+                    f"{expected}, one row per bin and one column per track")
+            for column, track in enumerate(job.tracks):
+                np.save(
+                    _chunk_path(chunk_dir, track, region, bin_size),
+                    block[:, column])
 
 
 def _write_hdf5(

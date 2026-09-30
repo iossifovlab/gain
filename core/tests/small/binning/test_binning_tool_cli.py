@@ -3,8 +3,9 @@ import argparse
 import pathlib
 import shutil
 import textwrap
-from collections.abc import Generator
-from typing import Any
+from collections.abc import Callable
+from dataclasses import replace
+from typing import Any, cast
 
 import h5py
 import numpy as np
@@ -12,7 +13,7 @@ import numpy.typing as npt
 import pytest
 import pytest_mock
 from gain import __version__
-from gain.binning.binners import Track
+from gain.binning.binners import Binner, BinningJob, Track
 from gain.binning.cli import _bin_chunks, _chunk_path, cli
 from gain.genomic_resources import genomic_context as gc_mod
 from gain.genomic_resources.genomic_context_base import (
@@ -35,6 +36,7 @@ TRACK = Track(
     name="scores/one", resource_id="scores/one", score_id="s",
     aggregator="max", none_value_replacement=None,
     binner="stub_binner")
+JOB = BinningJob(binner="stub_binner", tracks=(TRACK,))
 
 RUN_DEFINITION = textwrap.dedent("""
     input_reference_genome: genome
@@ -666,75 +668,141 @@ def test_another_budget_writes_the_same_chunk_files_byte_for_byte(
             for path in chunk_dir.glob("*.npy")} == written
 
 
-def test_a_task_saves_each_chunk_as_the_binner_yields_it(
+class StubBinding:
+    """A bound stub binner: its block per region comes from ``answer``.
+
+    It records whether it was left through ``__exit__``, so a test reads
+    the caller's use of the protocol, not a binner's internals.
+    """
+
+    def __init__(
+        self,
+        answer: Callable[[BedRegion], npt.NDArray[np.float64]],
+        on_bin_region: Callable[[], None] = lambda: None,
+    ) -> None:
+        self.answer = answer
+        self.on_bin_region = on_bin_region
+        self.closed = False
+
+    def __enter__(self) -> "StubBinding":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.closed = True
+
+    def bin_region(
+        self, region: BedRegion, _bin_size: int,
+    ) -> npt.NDArray[np.float64]:
+        self.on_bin_region()
+        return self.answer(region)
+
+
+def a_stub_binner(binding: StubBinding) -> type[Binner]:
+    class StubBinner:
+        kind = "stub_binner"
+
+        @staticmethod
+        def bind(_job: BinningJob, _grr: GenomicResourceRepo) -> StubBinding:
+            return binding
+
+    return cast(type[Binner], StubBinner)
+
+
+def one_bin_of(value: float) -> Callable[[BedRegion], Any]:
+    return lambda _region: np.array([[value]], dtype=np.float64)
+
+
+def test_a_task_saves_each_chunk_as_the_binner_returns_it(
     repo: GenomicResourceRepo, tmp_path: pathlib.Path,
 ) -> None:
     # Peak memory is one region, not one bundle, which holds only if the
-    # task consumes the binner's arrays one at a time.  This binner
-    # records, at each yield, which chunks are already on disk: a task
-    # that drew the whole bundle before saving any of it would leave
-    # nothing on disk at any yield.
+    # task saves each block before asking for the next.  This binner
+    # records, at each ask, which chunks are already on disk.
     chunk_dir = str(tmp_path)
     regions = [BedRegion("chr1", start, start + 9) for start in (1, 11, 21)]
     paths = [_chunk_path(chunk_dir, TRACK, region, 10) for region in regions]
-    on_disk_at_each_yield: list[list[str]] = []
-
-    class RecordingBinner:
-        @staticmethod
-        def bin_track(
-            _track: Track, regions: list[BedRegion], _bin_size: int,
-            _grr: GenomicResourceRepo,
-        ) -> Generator[npt.NDArray[np.float64], None, None]:
-            for index in range(len(regions)):
-                on_disk_at_each_yield.append(
-                    [path for path in paths if pathlib.Path(path).exists()])
-                yield np.array([float(index)], dtype=np.float64)
+    on_disk_at_each_ask: list[list[str]] = []
+    binding = StubBinding(
+        lambda region: np.array(
+            [[float(regions.index(region))]], dtype=np.float64),
+        on_bin_region=lambda: on_disk_at_each_ask.append(
+            [path for path in paths if pathlib.Path(path).exists()]))
 
     _bin_chunks(
-        RecordingBinner, TRACK, regions, 10, repo.definition, chunk_dir)
+        a_stub_binner(binding), JOB, regions, 10, repo.definition, chunk_dir)
 
-    assert on_disk_at_each_yield == [[], paths[:1], paths[:2]]
+    assert on_disk_at_each_ask == [[], paths[:1], paths[:2]]
     assert [np.load(path)[0] for path in paths] == [0.0, 1.0, 2.0]
 
 
-def test_a_task_closes_the_binner_when_saving_a_chunk_fails(
+def test_a_task_saves_column_i_of_a_block_to_track_i(
     repo: GenomicResourceRepo, tmp_path: pathlib.Path,
 ) -> None:
-    # The binner holds its resource open across the yields, so the task
-    # is what must close it -- and a failed save is the case that needs
-    # saying, because the executor keeps a failed task's exception, whose
-    # traceback keeps this frame, the generator and the open handle with
-    # it.  A run of many whole-run tasks failing the same way would
-    # otherwise hold one handle each for the rest of the run.
-    closed: list[str] = []
+    # A job may hold several tracks; the block has one column each, and
+    # each column goes to its own track's chunk.
+    chunk_dir = str(tmp_path)
+    other = replace(TRACK, name="scores/two", resource_id="scores/two")
+    job = BinningJob(binner="stub_binner", tracks=(TRACK, other))
+    region = BedRegion("chr1", 1, 20)
+    binding = StubBinding(lambda _region: np.array(
+        [[1.0, 10.0], [2.0, 20.0]], dtype=np.float64))
+
+    _bin_chunks(
+        a_stub_binner(binding), job, [region], 10, repo.definition,
+        chunk_dir)
+
+    np.testing.assert_array_equal(
+        np.load(_chunk_path(chunk_dir, TRACK, region, 10)), [1.0, 2.0])
+    np.testing.assert_array_equal(
+        np.load(_chunk_path(chunk_dir, other, region, 10)), [10.0, 20.0])
+
+
+def test_a_task_closes_its_binding_when_saving_a_chunk_fails(
+    repo: GenomicResourceRepo, tmp_path: pathlib.Path,
+) -> None:
+    # The binding holds its resource for as long as the task's ``with``
+    # lasts, and a failed save is the case that needs saying: the
+    # executor keeps a failed task's exception, and its traceback keeps
+    # this frame alive with it.  The binding must be closed by the time
+    # the exception leaves the task, not whenever the frame is collected.
     chunk_dir = str(tmp_path)
     regions = [BedRegion("chr1", 1, 10), BedRegion("chr1", 11, 20)]
     # A directory where the second chunk's file belongs: the first save
     # succeeds, the second raises, so the failure lands mid-bundle.
     unwritable = pathlib.Path(_chunk_path(chunk_dir, TRACK, regions[1], 10))
     unwritable.mkdir()
-
-    class ClosingBinner:
-        @staticmethod
-        def bin_track(
-            _track: Track, regions: list[BedRegion], _bin_size: int,
-            _grr: GenomicResourceRepo,
-        ) -> Generator[npt.NDArray[np.float64], None, None]:
-            try:
-                for _ in regions:
-                    yield np.array([1.0], dtype=np.float64)
-            finally:
-                closed.append("closed")
+    binding = StubBinding(one_bin_of(1.0))
 
     with pytest.raises(OSError) as failure:
         _bin_chunks(
-            ClosingBinner, TRACK, regions, 10, repo.definition, chunk_dir)
+            a_stub_binner(binding), JOB, regions, 10, repo.definition,
+            chunk_dir)
 
-    # Reading the failure keeps the traceback alive, which is the point:
-    # it is what would keep the generator, and its resource, alive if the
-    # task did not close them itself.
     assert failure.value.filename == str(unwritable)
-    assert closed == ["closed"]
+    assert binding.closed
+
+
+@pytest.mark.parametrize("shape", [(2, 1), (1, 2), (1,)])
+def test_a_wrong_shaped_block_fails_the_task_and_writes_no_chunk(
+    repo: GenomicResourceRepo, tmp_path: pathlib.Path,
+    shape: tuple[int, ...],
+) -> None:
+    # A one-bin region of a one-track job is a (1, 1) block.  Anything
+    # else -- a bin too many, a column too many, no column axis -- is
+    # refused before a chunk is written under the region's name.
+    chunk_dir = str(tmp_path)
+    region = BedRegion("chr1", 1, 10)
+    binding = StubBinding(
+        lambda _region: np.zeros(shape, dtype=np.float64))
+
+    with pytest.raises(ValueError, match=r"\(1, 1\)"):
+        _bin_chunks(
+            a_stub_binner(binding), JOB, [region], 10, repo.definition,
+            chunk_dir)
+
+    assert not pathlib.Path(
+        _chunk_path(chunk_dir, TRACK, region, 10)).exists()
+    assert binding.closed
 
 
 def test_a_set_replacement_is_named_by_its_value(

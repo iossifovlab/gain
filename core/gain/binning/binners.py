@@ -6,9 +6,10 @@ registers the way every other gain plugin does, without editing the tool.
 """
 from __future__ import annotations
 
-from collections.abc import Generator
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from importlib.metadata import entry_points
+from types import TracebackType
 from typing import Any, ClassVar, Protocol
 
 import numpy as np
@@ -56,8 +57,8 @@ class RunDefinitionError(ValueError):
 class Track:
     """One column of the output: a score of a resource, reduced one way.
 
-    ``binner`` names the kind that produces the column; it is how the
-    task graph finds the binner and is not written to the file.
+    ``binner`` names the kind that produces the column; it is not
+    written to the file.
     """
 
     name: str
@@ -68,6 +69,33 @@ class Track:
     binner: str
 
 
+@dataclass(frozen=True)
+class BinningJob:
+    """What one task binds to: tracks read together from one binding.
+
+    ``binner`` names the kind that binds it, which is how the task graph
+    finds the binner.  ``tracks`` are the job's columns, in order; the
+    block a binding returns for a region has one column per track.
+    """
+
+    binner: str
+    tracks: tuple[Track, ...]
+
+
+class BoundBinner(Protocol):
+    """A job bound to its resources: bins them one region at a time."""
+
+    def bin_region(
+        self, region: BedRegion, bin_size: int,
+    ) -> npt.NDArray[np.float64]:
+        """Reduce the job's tracks over ``region`` on the global grid.
+
+        Returns a float64 block of shape ``(n_bins, n_tracks)``: one row
+        per grid bin of ``region``, one column per track of the job, in
+        the job's order.
+        """
+
+
 class Binner(Protocol):
     """What a registered binner kind provides."""
 
@@ -76,34 +104,25 @@ class Binner(Protocol):
     @classmethod
     def parse_entry(
         cls, label: str, config: dict[str, Any], grr: GenomicResourceRepo,
-    ) -> list[Track]:
-        """Resolve one run-definition entry into tracks.
+    ) -> list[BinningJob]:
+        """Resolve one run-definition entry into jobs.
 
+        The entry's tracks are the jobs' tracks, in order.
         ``label`` names the entry in error messages (``binners[2]``).
         Raises :class:`RunDefinitionError` for an entry that cannot be
         resolved, an entry matching nothing included.
         """
 
     @staticmethod
-    def bin_track(
-        track: Track, regions: list[BedRegion], bin_size: int,
-        grr: GenomicResourceRepo,
-    ) -> Generator[npt.NDArray[np.float64], None, None]:
-        """Reduce ``track`` to one float64 per grid bin, region by region.
+    def bind(
+        job: BinningJob, grr: GenomicResourceRepo,
+    ) -> AbstractContextManager[BoundBinner]:
+        """Bind ``job`` to its resources for as long as the ``with`` lasts.
 
-        Yields one array per region of ``regions``, in the order given --
-        a bundle is regions binned side by side, never one run of bins
-        across them.  Yielding rather than returning them all is what
-        lets the caller save each array as it arrives, so a bundle of any
-        size costs one region of memory.
-
-        The bundle is the unit an implementation opens its resource for:
-        one open per call, however many regions the bundle holds.
-
-        A generator rather than any iterator, because holding a resource
-        open across the yields makes closing part of the contract: the
-        caller closes what it does not exhaust, and only a generator can
-        be closed.
+        A task binds once and asks for every region of its bundle through
+        the bound value, so a resource is opened once per task however
+        many regions the bundle holds, and is released when the ``with``
+        ends, whether the task succeeded or not.
         """
 
 
@@ -122,6 +141,58 @@ def check_keys(label: str, config: Any, known: frozenset[str]) -> None:
                 f"{', '.join(sorted(known))}")
 
 
+class PositionScoreBinding:
+    """One track's score, open for as long as the ``with`` lasts.
+
+    Entering opens the score once, whatever number of regions are then
+    binned through it; leaving closes it, on success or failure alike.
+    """
+
+    def __init__(self, track: Track, score: PositionScore) -> None:
+        self.track = track
+        self.score = score
+
+    def __enter__(self) -> PositionScoreBinding:
+        self.score.open()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        self.score.close()
+
+    def bin_region(
+        self, region: BedRegion, bin_size: int,
+    ) -> npt.NDArray[np.float64]:
+        """Reduce the track over ``region`` to one float64 per grid bin.
+
+        Consumes :meth:`PositionScore.get_score_in_bins` unchanged: it is
+        the semantic reference for the global grid, the boundary split and
+        first-record-wins.  A bin no record covers comes back ``None`` and
+        is stored as NaN, unless the track's replacement made it count.
+
+        Unconditionally, a chromosome the score never mentions included:
+        that read folds an absent contig as one uncovered run of its own
+        (gain#1211), so the chromosome's bins are uncovered like any
+        other's.
+
+        Returned as a block of one column, the job's one track.
+        """
+        track = self.track
+        column = np.fromiter(
+            (np.nan if value is None else value
+             for _, _, value in self.score.get_score_in_bins(
+                 region.chrom, region.start, region.stop, bin_size,
+                 score=track.score_id,
+                 aggregator=track.aggregator,
+                 none_value_replacement=track.none_value_replacement)),
+            dtype=np.float64)
+        return column.reshape(-1, 1)
+
+
 class PositionScoreBinner:
     """Bins ``position_score`` resources matched by a ``resource_query``."""
 
@@ -134,8 +205,8 @@ class PositionScoreBinner:
     @classmethod
     def parse_entry(
         cls, label: str, config: dict[str, Any], grr: GenomicResourceRepo,
-    ) -> list[Track]:
-        """Resolve one entry's ``resource_query`` into tracks.
+    ) -> list[BinningJob]:
+        """Resolve one entry's ``resource_query`` into one job per track.
 
         The query is always a repository search -- an exact id is the
         search that matches one resource -- restricted to position scores
@@ -187,50 +258,26 @@ class PositionScoreBinner:
                 f"{label}: resource_query {query!r}{narrowed} matches no "
                 f"position_score resource")
         return [
-            cls._track_of(
+            BinningJob(binner=cls.kind, tracks=(cls._track_of(
                 label, resource,
                 aggregator=config.get("aggregator"),
                 none_value_replacement=config.get("none_value_replacement"),
-            )
+            ),))
             for resource in matches
         ]
 
     @staticmethod
-    def bin_track(
-        track: Track, regions: list[BedRegion], bin_size: int,
-        grr: GenomicResourceRepo,
-    ) -> Generator[npt.NDArray[np.float64], None, None]:
-        """Reduce ``track`` to one float64 per grid bin, region by region.
+    def bind(
+        job: BinningJob, grr: GenomicResourceRepo,
+    ) -> PositionScoreBinding:
+        """Bind the job's one track to its score.
 
-        Consumes :meth:`PositionScore.get_score_in_bins` unchanged: it is
-        the semantic reference for the global grid, the boundary split and
-        first-record-wins.  A bin no record covers comes back ``None`` and
-        is stored as NaN, unless the track's replacement made it count.
-
-        Unconditionally, a chromosome the score never mentions included:
-        that read folds an absent contig as one uncovered run of its own
-        (gain#1211), so a genome-wide run over a track that skips a
-        chromosome needs no case here.  This method used to carry one, and
-        with it a second copy of the fold; the read owning both is D14.
-
-        The read is folded straight into the array rather than through a
-        list of boxed floats.  A suspended generator keeps its locals
-        alive, so an intermediate list would sit beside the array -- at
-        roughly four times its size -- for as long as the caller takes to
-        save it; ``fromiter`` leaves nothing to keep.
+        The score is opened when the binding is entered and closed when
+        it is left.
         """
-        score = PositionScore(grr.get_resource(track.resource_id))
-        with score.open():
-            for region in regions:
-                yield np.fromiter(
-                    (np.nan if value is None else value
-                     for _, _, value in score.get_score_in_bins(
-                         region.chrom, region.start, region.stop, bin_size,
-                         score=track.score_id,
-                         aggregator=track.aggregator,
-                         none_value_replacement=(
-                             track.none_value_replacement))),
-                    dtype=np.float64)
+        (track,) = job.tracks
+        return PositionScoreBinding(
+            track, PositionScore(grr.get_resource(track.resource_id)))
 
     @classmethod
     def _track_of(

@@ -1,7 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import numpy as np
 import pytest_mock
-from gain.binning.binners import PositionScoreBinner, Track
+from gain.binning.binners import BinningJob, PositionScoreBinner, Track
 from gain.genomic_resources.genomic_scores.position import PositionScore
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.utils.regions import BedRegion
@@ -17,16 +17,18 @@ def scores_one(aggregator: str, replacement: float | None = None) -> Track:
         binner="position_score_binner")
 
 
+def a_job(track: Track) -> BinningJob:
+    return BinningJob(binner=track.binner, tracks=(track,))
+
+
 def one_region(
     track: Track, region: BedRegion, repo: GenomicResourceRepo,
 ) -> np.ndarray:
-    """The single array a one-region bundle yields.
-
-    Binning is per region whatever the bundle, so the per-region rules
-    below read at their own scale rather than through a bundle.
-    """
-    array, = PositionScoreBinner.bin_track(track, [region], BIN_SIZE, repo)
-    return array
+    """The block of a one-region binding, as the track's one column."""
+    with PositionScoreBinner.bind(a_job(track), repo) as bound:
+        block = bound.bin_region(region, BIN_SIZE)
+    assert block.shape == (len(block), 1)
+    return block[:, 0]
 
 
 def test_a_track_bins_to_one_float64_value_per_grid_bin_nan_where_uncovered(
@@ -73,41 +75,53 @@ def test_a_replacement_covers_a_chromosome_the_score_never_mentions(
     np.testing.assert_array_equal(values, [0.0, 0.0, 0.0])
 
 
-def test_a_bundle_yields_one_array_per_region_in_the_order_given(
+def test_a_binding_returns_each_region_its_own_one_column_block(
     repo: GenomicResourceRepo,
 ) -> None:
     # A bundle is bins per region, not one run of bins: three regions of
-    # different widths come back as three arrays, each the region's own,
-    # in the order the bundle listed them -- chr2 before chr1 here, so a
-    # yield order taken from the score rather than the bundle shows up.
+    # different widths come back as three blocks, each the region's own,
+    # in the order asked -- chr2 before chr1 here, so an answer taken
+    # from the score's order rather than the caller's shows up.
     regions = [
         BedRegion("chr2", 1, 25), BedRegion("chr1", 1, 20),
         BedRegion("chr1", 31, 40),
     ]
 
-    arrays = list(PositionScoreBinner.bin_track(
-        scores_one("max"), regions, BIN_SIZE, repo))
+    with PositionScoreBinner.bind(a_job(scores_one("max")), repo) as bound:
+        blocks = [bound.bin_region(region, BIN_SIZE) for region in regions]
 
-    assert [len(a) for a in arrays] == [3, 2, 1]
-    np.testing.assert_array_equal(arrays[0], [np.nan, np.nan, np.nan])
-    np.testing.assert_array_equal(arrays[1], [1.0, 1.0])
-    np.testing.assert_array_equal(arrays[2], [2.0])
+    assert [b.shape for b in blocks] == [(3, 1), (2, 1), (1, 1)]
+    assert all(b.dtype == np.float64 for b in blocks)
+    np.testing.assert_array_equal(blocks[0], [[np.nan]] * 3)
+    np.testing.assert_array_equal(blocks[1], [[1.0], [1.0]])
+    np.testing.assert_array_equal(blocks[2], [[2.0]])
 
 
-def test_a_bundle_opens_the_score_once_however_many_regions(
+def test_a_binding_closes_the_score_when_the_with_ends(
+    repo: GenomicResourceRepo,
+) -> None:
+    with PositionScoreBinner.bind(a_job(scores_one("max")), repo) as bound:
+        bound.bin_region(BedRegion("chr1", 1, 10), BIN_SIZE)
+        score = bound.score
+        assert score.is_open()
+
+    assert not score.is_open()
+
+
+def test_a_binding_opens_the_score_once_however_many_regions(
     repo: GenomicResourceRepo, mocker: pytest_mock.MockerFixture,
 ) -> None:
-    # The bundle, not the region, is what a resource is opened for: six
-    # regions cost one open.  Opening per region is what this replaces,
-    # and a bundle is a whole run's worth of regions at --task-budget 0.
+    # The binding, not the region, is what a resource is opened for: six
+    # regions cost one open.  A bundle is a whole run's worth of regions
+    # at --task-budget 0.
     opens = mocker.spy(PositionScore, "open")
     regions = [
         BedRegion("chr1", start, start + 9)
         for start in (1, 11, 21, 31, 41, 51)
     ]
 
-    arrays = list(PositionScoreBinner.bin_track(
-        scores_one("max"), regions, BIN_SIZE, repo))
+    with PositionScoreBinner.bind(a_job(scores_one("max")), repo) as bound:
+        blocks = [bound.bin_region(region, BIN_SIZE) for region in regions]
 
     assert opens.call_count == 1
-    assert len(arrays) == 6
+    assert len(blocks) == 6
