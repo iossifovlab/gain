@@ -139,6 +139,12 @@ class GeneScoreImplementation(ScoreImplementationBase):
                 # for the int-valued case).
                 if isinstance(value, np.generic):
                     value = value.item()
+                # An int column with empty cells is promoted to float by
+                # pandas, so its categories arrive as whole-number floats
+                # (#1744). Count them as their int category; a non-whole
+                # float is not a category and add_value refuses it.
+                if isinstance(value, float) and value.is_integer():
+                    value = int(value)
                 histogram.add_value(value)
         else:
             raise TypeError(f"Unknown histogram config: {hist_conf}")
