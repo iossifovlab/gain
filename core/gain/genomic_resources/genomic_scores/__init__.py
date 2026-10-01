@@ -65,6 +65,7 @@ is gain#1027 and is deliberately sequenced after this split.
 """
 from .allele import (
     AlleleAggregate,
+    AlleleEntry,
     AlleleMultiplicityError,
     AlleleScore,
     allele_key,
@@ -98,6 +99,7 @@ from .records import (
 __all__ = [
     "DEFAULT_VALUE_ARRAYS_BATCH_SIZE",
     "AlleleAggregate",
+    "AlleleEntry",
     "AlleleMultiplicityError",
     "AlleleRecordArrays",
     "AlleleScore",
