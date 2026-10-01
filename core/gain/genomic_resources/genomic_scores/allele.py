@@ -775,7 +775,7 @@ class AlleleScore(GenomicScore):
         """
         return [
             entry.values
-            for entry in self._allele_entries(
+            for entry in self.get_allele_scores_in_region_rows(
                 chrom, pos, pos, scores=scores, score_filter=score_filter)
             if entry.pos == pos and entry.ref == ref and entry.alt == alt
         ]
@@ -806,8 +806,10 @@ class AlleleScore(GenomicScore):
         table, iterate one at a time -- materialise what has to outlive
         the next read.
         """
-        return self._allele_entries(
-            chrom, start, end, scores=scores, score_filter=score_filter)
+        score_defs = self._resolve_score_defs(scores)
+        self._check_allele_region_request(chrom, score_filter)
+        return self._entries_of(
+            chrom, start, end, score_filter, score_defs)
 
     def get_allele_score_for_allele_rows(
         self, chrom: str, pos: int, ref: str, alt: str,
@@ -850,31 +852,17 @@ class AlleleScore(GenomicScore):
             (entry.pos, entry.ref, entry.alt, entry.values[0])
             for entry in entries)
 
-    def _allele_entries(
-        self, chrom: str, start: int, end: int,
-        *,
-        scores: Sequence[str] | None,
-        score_filter: ScoreFilter | None,
-    ) -> Generator[AlleleEntry, None, None]:
-        """The region walk as entries, with the request checked eagerly.
-
-        :meth:`_selected_allele_records` -- the walk the folding read
-        reduces -- with its absence answer turned into an empty stream.
-        The request is checked here, on the call; the walk itself starts
-        on the first ``next()``, so an unstarted generator holds no read
-        of the table and several may be created before any is iterated.
-        """
-        score_defs = self._resolve_score_defs(scores)
-        self._check_allele_region_request(chrom, score_filter)
-        return self._entries_of(
-            chrom, start, end, score_filter, score_defs)
-
     def _entries_of(
         self, chrom: str, start: int, end: int,
         score_filter: ScoreFilter | None,
         score_defs: list[GenomicScoreDef],
     ) -> Generator[AlleleEntry, None, None]:
-        """Walk the region and read each record as an :class:`AlleleEntry`."""
+        """Walk the region and read each record as an :class:`AlleleEntry`.
+
+        :meth:`_walk_allele_records` -- the walk the folding read reduces
+        -- with its absence answer turned into an empty stream.  Being a
+        generator, it starts the walk on the first ``next()``.
+        """
         records = self._walk_allele_records(chrom, start, end, score_filter)
         if records is None:
             return
