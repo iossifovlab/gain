@@ -50,6 +50,7 @@ DELETION = VCFAllele("1", 11, "CG", "C")
 INSERTION = VCFAllele("1", 12, "G", "GT")
 LONG_DELETION = VCFAllele("1", 10, "ACG", "A")
 UNLISTED_INSERTION = VCFAllele("1", 11, "C", "CA")
+UNLISTED_COMPLEX = VCFAllele("1", 11, "CG", "TA")
 
 
 def _repo(allele_score_mode: str | None) -> GenomicResourceRepo:
@@ -107,6 +108,11 @@ def alleles_repo() -> GenomicResourceRepo:
     return _repo("alleles")
 
 
+@pytest.fixture(scope="module")
+def default_mode_repo() -> GenomicResourceRepo:
+    return _repo(None)
+
+
 def test_substitution_on_a_substitutions_resource_is_matched_exactly(
     substitutions_repo: GenomicResourceRepo,
 ) -> None:
@@ -136,6 +142,20 @@ def test_every_allele_on_an_alleles_resource_is_matched_exactly(
     matched: float,
 ) -> None:
     assert _annotate(alleles_repo, allele)["freq"] == matched
+
+
+def test_complex_allele_on_a_substitutions_resource_is_region_folded(
+    substitutions_repo: GenomicResourceRepo,
+) -> None:
+    # No row matches ``CG>TA`` exactly, so only the fold over 11-12
+    # answers 0.3.
+    assert _annotate(substitutions_repo, UNLISTED_COMPLEX)["freq"] == 0.3
+
+
+def test_a_resource_without_the_mode_key_matches_indels_exactly(
+    default_mode_repo: GenomicResourceRepo,
+) -> None:
+    assert _annotate(default_mode_repo, DELETION)["freq"] == 0.05
 
 
 def test_unlisted_indel_on_an_alleles_resource_is_not_folded(
