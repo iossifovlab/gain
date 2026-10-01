@@ -251,3 +251,33 @@ def test_the_read_is_the_fold_over_the_fragments_starting_in_the_region(
         start=4, end=37, bin_size=10,
         aggregators=["count", "sum", "median"])
     np.testing.assert_array_equal(read, folded)
+
+
+def test_a_count_skips_fragments_null_for_that_score_but_not_others(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The fragment at 5 has no ``count``: counting ``count`` skips it.
+
+    Counting the barcode, which every fragment carries, still sees it, so
+    the count is per score and the fragment count is the barcode's.
+    """
+    resource = (
+        a_fragment_score()
+        .with_score("cell", "str")
+        .with_score("count", "int")
+        .with_na_values(".", score_id="count")
+        .with_data("""
+            chrom  pos_begin  pos_end  cell  count
+            1      3          12       AAA   2
+            1      5          9        BBB   .
+            1      15         40       CCC   3
+        """)
+        .build_resource(tmp_path)
+    )
+    with FragmentScore(resource).open() as score:
+        block = score.get_scores_in_bins("1", 1, 20, 10, [
+            ScoreAggregationQuery("count", "count"),
+            ScoreAggregationQuery("cell", "count"),
+        ])
+
+    np.testing.assert_array_equal(block, [[1.0, 2.0], [1.0, 1.0]])

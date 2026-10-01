@@ -376,7 +376,11 @@ def fold_region_segments(
 #: no non-null value, per aggregator: ``0`` where nothing summed or counted
 #: IS zero, ``NaN`` where there is nothing to answer.  The keys are also the
 #: whole set of aggregators the fold accepts -- the ones whose answer is a
-#: float.
+#: float.  This is the fragment surfaces' rule (a bin with no fragment has
+#: nothing to fold), and it differs on purpose from the position-score
+#: binner's, which stores NaN for an uncovered bin unless the track's
+#: ``none_value_replacement`` says otherwise; that key does not exist on
+#: the fragment kind.
 EMPTY_BIN_VALUES: dict[str, float] = {
     "count": 0.0,
     "sum": 0.0,
@@ -446,8 +450,15 @@ def fold_into_bins(
     def flush(row: int, accumulators: list[Aggregator]) -> None:
         for column, accumulator in enumerate(accumulators):
             final = accumulator.get_final()
-            if final is not None:
+            if final is None:
+                continue
+            try:
                 block[row, column] = final
+            except OverflowError:
+                # An exact int (``sum``/``product`` of an int score) past
+                # the float range: saturate, as a float result already does.
+                # (Compared, not ``copysign``-ed: that converts it too.)
+                block[row, column] = math.inf if final > 0 else -math.inf
 
     row = -1
     previous = start

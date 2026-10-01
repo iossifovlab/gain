@@ -145,3 +145,19 @@ def test_records_out_of_position_order_are_refused() -> None:
 def test_a_bin_size_below_one_is_refused() -> None:
     with pytest.raises(ValueError, match="at least one position"):
         fold_into_bins([], start=1, end=20, bin_size=0, aggregators=["count"])
+
+
+@pytest.mark.parametrize("sign,expected", [(1, math.inf), (-1, -math.inf)])
+def test_an_int_result_past_the_float_range_is_a_signed_infinity(
+    sign: int, expected: float,
+) -> None:
+    """An exact int ``product`` past ~1.8e308 saturates, as a float would.
+
+    A Python int that large does not convert to a float at all, so without
+    saturation the whole block would be refused partway through.
+    """
+    block = fold_into_bins(
+        [(1, 0, sign * 10 ** 200), (2, 0, 10 ** 200), (15, 0, 3)],
+        start=1, end=20, bin_size=10, aggregators=["product"])
+
+    np.testing.assert_array_equal(block, [[expected], [3.0]])
