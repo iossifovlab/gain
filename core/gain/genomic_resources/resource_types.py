@@ -26,11 +26,17 @@ See ``docs/adr/0003-fragment-score-vocabulary.md``, superseded by
 """
 from typing import Protocol
 
+from packaging.version import InvalidVersion, Version
+
 # `from gain import logging`, not the stdlib module: the shim bootstraps the
 # TRACE / USER_INFO levels and is what every gain module is required to use
 # (gain#373, pinned by `test_no_gain_module_uses_stdlib_logging_directly`).
-# It is the only gain import here, and it imports nothing from this layer;
-# `typing` is stdlib and pulls in nothing at all.
+# It and the package root are the only gain imports here, and neither
+# imports anything from this layer -- the root is loaded by the shim's
+# import anyway, and is named so that `allele_multiplicity_enforced` reads
+# `gain.__version__` at call time.  `typing` is stdlib and pulls in nothing
+# at all; `packaging` is a core dependency that imports nothing of gain's.
+import gain
 from gain import logging
 
 #: The preferred resource ``type:`` for a fragment score.
@@ -44,6 +50,39 @@ LEGACY_FRAGMENT_SCORE_TYPE = "cnv_collection"
 #: being accepted (gain#539).  Named in every deprecation warning: a notice
 #: that does not say when it bites cannot be scheduled against.
 LEGACY_VOCABULARY_REMOVAL_RELEASE = "2027.1.0"
+
+#: The GAIn release in which an allele score holding several rows for one
+#: allele key without declaring ``allele_multiplicity: many`` stops being a
+#: warning and becomes an error (gain#1749; the allele-plane design, A11).
+#: Ask :func:`allele_multiplicity_enforced` whether it has arrived rather
+#: than comparing versions at the call site.  Named in every such warning:
+#: a notice that does not say when it bites cannot be scheduled against.
+ALLELE_MULTIPLICITY_ENFORCEMENT_RELEASE = "2027.1.0"
+
+
+def allele_multiplicity_enforced(version: str | None = None) -> bool:
+    """Whether an undeclared duplicate allele is an error rather than a warning.
+
+    True when ``version`` -- the installed ``gain.__version__`` when
+    omitted -- is ``ALLELE_MULTIPLICITY_ENFORCEMENT_RELEASE`` or later, by
+    PEP 440 ordering.  A dev or pre-release of that release is earlier,
+    and so is the ``0.0.0.dev0`` an editable checkout without a generated
+    version reports.  A version that does not parse answers ``False``
+    rather than raising: a malformed version string must not turn a
+    warning into an error.
+
+    The one place that question is answered: a reader that warns or
+    refuses by it asks here, and a test that needs either answer patches
+    this function rather than the installed version.
+    """
+    if version is None:
+        version = gain.__version__
+    try:
+        installed = Version(version)
+    except InvalidVersion:
+        return False
+    return installed >= Version(ALLELE_MULTIPLICITY_ENFORCEMENT_RELEASE)
+
 
 #: The resource ``type:`` for an allele score.
 PREFERRED_ALLELE_SCORE_TYPE = "allele_score"

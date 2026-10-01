@@ -114,6 +114,37 @@ def allele_key(
     return key
 
 
+class AlleleMultiplicityError(ValueError):
+    """An allele score's rows disagree with its ``allele_multiplicity``.
+
+    Carries the resource it is about and, when the refusal concerns one
+    allele, that allele as ``(chrom, pos, ref, alt)``; ``allele`` is
+    ``None`` otherwise.  The message is ``detail`` prefixed with the
+    resource id and, when known, the allele spelled by :func:`allele_key`
+    -- the spelling annotation output uses -- so the two read alike::
+
+        AlleleMultiplicityError(
+            "scores/x", "holds 2 rows but declares allele_multiplicity: one",
+            allele=("1", 10, "A", "G"))
+        # allele score 'scores/x', allele 1:10:A:G: holds 2 rows ...
+    """
+
+    def __init__(
+        self,
+        resource_id: str,
+        detail: str,
+        *,
+        allele: tuple[str, int, str | None, str | None] | None = None,
+    ) -> None:
+        self.resource_id = resource_id
+        self.allele = allele
+        self.detail = detail
+        where = f"allele score {resource_id!r}"
+        if allele is not None:
+            where += f", allele {allele_key(*allele)}"
+        super().__init__(f"{where}: {detail}")
+
+
 class _AlleleKeyCollector:
     """A pass-through over records that collects their allele keys.
 
@@ -239,6 +270,8 @@ class AlleleScore(GenomicScore):
         - table.reference: Column/field containing reference alleles
         - table.alternative: Column/field containing alternative alleles
         - allele_score_mode: Either "substitutions" or "alleles" (optional)
+        - allele_multiplicity: Either "one" (the default) or "many" -- how
+          many table rows one allele key may have (optional)
         - scores: List of score definitions with an optional
           aggregator specification
     """
@@ -289,6 +322,18 @@ class AlleleScore(GenomicScore):
                 return AlleleScore.Mode.ALLELES
             raise ValueError(f"unknown allele mode: {name}")
 
+    class Multiplicity(enum.Enum):
+        """How many table rows one allele key may have (gain#1749, A3).
+
+        Rows, not values: several records sharing one
+        ``(chrom, pos, ref, alt)`` -- one per transcript, say -- not a
+        multi-valued field inside one record.  Declared by the resource's
+        top-level ``allele_multiplicity``; ``one`` when undeclared.
+        """
+
+        ONE = "one"
+        MANY = "many"
+
     def __init__(self, resource: GenomicResource):
         # Ahead of the type check below: `np_score` used to be accepted
         # here, so it earns a message naming its replacement rather than
@@ -312,6 +357,17 @@ class AlleleScore(GenomicScore):
             self.mode = AlleleScore.Mode.ALLELES
         else:
             self.mode = AlleleScore.Mode.from_name(allele_score_mode)
+        self._multiplicity = AlleleScore.Multiplicity(
+            self.config.get("allele_multiplicity", "one"))
+
+    @property
+    def multiplicity(self) -> AlleleScore.Multiplicity:
+        """How many table rows one allele key may have.
+
+        A declaration only, so far: no read consults it yet (gain#1752,
+        gain#1753, gain#1755 do).
+        """
+        return self._multiplicity
 
     def substitutions_mode(self) -> bool:
         """Return True if the score is in substitutions mode."""
@@ -334,6 +390,19 @@ class AlleleScore(GenomicScore):
         schema["allele_score_mode"] = {
             "type": "string",
             "allowed": ["substitutions", "alleles"],
+        }
+        # A ``regex`` rather than ``allowed``: cerberus words an
+        # ``allowed`` refusal as "unallowed value X" and never says what
+        # would have been allowed, whereas the regex is quoted in its
+        # refusal, so the logged error names every valid value.  ``\Z``,
+        # not ``$``, which would also admit a trailing newline.  Not a
+        # ``check_with`` callable either -- the validator cache relies on
+        # no resource schema carrying one.
+        schema["allele_multiplicity"] = {
+            "type": "string",
+            "regex": "^(" + "|".join(
+                multiplicity.value
+                for multiplicity in AlleleScore.Multiplicity) + r")\Z",
         }
         schema["merge_vcf_scores"] = {
             "type": "boolean",
