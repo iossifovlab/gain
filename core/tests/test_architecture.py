@@ -283,6 +283,74 @@ def test_binning_does_not_import_the_annotation_layer() -> None:
     )
 
 
+GRR_FACADE_PKG = pathlib.Path(GAIN_SRC) / "grr"
+
+# The modules ``gain.grr`` re-exports from: the module each name is defined
+# in, or the package facade (``gene_models``, ``genomic_scores``) that is
+# already that name's documented home.
+GRR_FACADE_SOURCES = (
+    "gain.genomic_resources.repository_factory",
+    "gain.genomic_resources.genomic_context",
+    "gain.genomic_resources.repository",
+    "gain.genomic_resources.reference_genome",
+    "gain.genomic_resources.gene_models",
+    "gain.genomic_resources.liftover_chain",
+    "gain.genomic_resources.genomic_scores",
+    "gain.gene_scores.gene_scores",
+    "gain.gene_sets.gene_set",
+    "gain.genomic_resources.data_frame_resource",
+    "gain.genomic_resources.ann_data_resource",
+)
+
+
+def test_no_gain_module_imports_the_grr_facade() -> None:
+    """``gain.grr`` is for code outside ``gain``; nothing inside uses it.
+
+    The facade sits on top of the modules it re-exports.  A ``gain`` module
+    that imported it would depend on every one of them at once and could
+    close a cycle through any; internal code names the defining module
+    instead (ADR 0033).  The facade's own modules are the exception, and the
+    tests of the facade live outside ``GAIN_SRC``.
+    """
+    offenders = _imports_of_layer(
+        pathlib.Path(GAIN_SRC), "gain.grr",
+        allowed=set(GRR_FACADE_PKG.rglob("*.py")))
+    assert offenders == [], (
+        f"gain modules import the gain.grr facade: {offenders}. gain.grr is "
+        f"the import path for external users -- import from the module that "
+        f"defines the name instead"
+    )
+
+
+def test_the_grr_facade_imports_only_the_modules_it_re_exports() -> None:
+    """``gain.grr`` re-exports; it reaches nothing beyond its sources.
+
+    An import that is not one of the defining modules is either a new
+    public name that has not been reviewed as one, or code the facade has
+    grown -- and it is a pure re-export.  Every import counts, ``gain`` or
+    not.  String constants that are not dotted identifiers (the docstring)
+    and the names ``__all__`` lists are not imports, so they are skipped.
+
+    This is a rule about the static import graph.  At runtime, importing
+    ``genomic_context`` loads the annotation layer through its plugin
+    entry points (ADR 0033); that is not what is checked here.
+    """
+    init_py = GRR_FACADE_PKG / "__init__.py"
+    exported = set(importlib.import_module("gain.grr").__all__)
+    offenders = sorted(
+        imported for imported in _imported_modules(init_py)
+        if all(part.isidentifier() for part in imported.split("."))
+        and imported not in exported
+        and not any(_is_under(imported, src) for src in GRR_FACADE_SOURCES)
+    )
+    assert offenders == [], (
+        f"gain.grr imports {offenders}, which is not one of the modules it "
+        f"re-exports from. Re-export a name from its defining module, and "
+        f"add that module to GRR_FACADE_SOURCES only as a reviewed change "
+        f"to the public surface"
+    )
+
+
 def _imports_of_layer(
     pkg: pathlib.Path, layer: str, *,
     allowed: Container[pathlib.Path] = (),

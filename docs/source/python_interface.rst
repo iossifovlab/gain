@@ -13,8 +13,17 @@ repository can be accessed without providing any arguments:
 
 .. code-block:: python
 
-    from gain.genomic_resources.repository_factory import build_genomic_resource_repository
+    from gain.grr import build_genomic_resource_repository
     grr = build_genomic_resource_repository()
+
+``gain.grr`` is the import path for working with a GRR from Python. It
+gathers, in one place, the functions that connect to a repository, the
+functions that build a typed object from a resource id (a reference genome,
+gene models, a score, a gene score, a gene set collection, a liftover chain,
+a data frame or an AnnData object), and the types those functions return, so
+that a script can annotate its own variables with them. Each name is the same
+object as in the GAIn module that defines it; those deeper paths keep
+working.
 
 Calling ``build_genomic_resource_repository()`` without arguments uses the default GRR configuration available 
 in the user environment. In a standard GAIn installation, the default configuration provides access to 
@@ -25,7 +34,7 @@ working directory as a local GRR:
 .. code-block:: python
 
     import os
-    from gain.genomic_resources.repository_factory import build_genomic_resource_repository
+    from gain.grr import build_genomic_resource_repository
     grr = build_genomic_resource_repository({
         "id": "local_grr",
         "type": "directory",
@@ -55,11 +64,10 @@ and printed.
 
 .. code-block:: python
 
-    from gain.genomic_resources.repository_factory import build_genomic_resource_repository
-    grr = build_genomic_resource_repository()
+    from gain.grr import build_genomic_resource_repository, build_reference_genome_from_resource_id
 
-    from gain.genomic_resources.reference_genome import build_reference_genome_from_resource_id
-    genome = build_reference_genome_from_resource_id("hg38/genomes/GRCh38-hg38", grr).open()
+    grr = build_genomic_resource_repository()
+    genome =build_reference_genome_from_resource_id("hg38/genomes/GRCh38-hg38", grr).open()
 
     # Define canonical chromosomes
     canonical_chroms = {f"chr{i}" for i in range(1, 23)}
@@ -125,17 +133,20 @@ combined to extract and visualize signal over a biologically meaningful region.
 
     GENE_NAME = "TP53"
 
-    from gain.genomic_resources.repository_factory import build_genomic_resource_repository
+    from gain.grr import (
+        build_gene_models_from_resource_id,
+        build_genomic_resource_repository,
+        build_score_from_resource_id,
+    )
+
     grr = build_genomic_resource_repository()
 
-    from gain.genomic_resources.gene_models import build_gene_models_from_resource_id
-    gene_models = build_gene_models_from_resource_id("hg38/gene_models/MANE/1.5", grr).load()
+    gene_models =build_gene_models_from_resource_id("hg38/gene_models/MANE/1.5", grr).load()
     tx = gene_models.gene_models_by_gene_name(GENE_NAME)[0]
     chrom, start, end = tx.chrom, tx.tx[0], tx.tx[1]
     print(f"{GENE_NAME} is on {chrom}, from position {start} to {end}.")
 
-    from gain.genomic_resources.genomic_scores import build_score_from_resource_id
-    score = build_score_from_resource_id("hg38/scores/phastCons100way", grr).open()
+    score =build_score_from_resource_id("hg38/scores/phastCons100way", grr).open()
 
     xs = []
     ys = []
@@ -187,7 +198,7 @@ how many resources of each type are present for each genome. The result is organ
 
     import pandas as pd
     from collections import defaultdict
-    from gain.genomic_resources.repository_factory import build_genomic_resource_repository
+    from gain.grr import build_genomic_resource_repository
 
     grr = build_genomic_resource_repository()
 
@@ -245,7 +256,7 @@ where each entry gives the number of resources of that type for the correspondin
 4: Annotating variants in Python
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The previous examples accessed GRR resources directly. The Python interface can also be used to construct and run GAIn annotation pipelines without calling the command-line ``annotate_tabular`` or ``annotate_vcf`` tools. This is useful when variants are already available inside a Python script, notebook, or larger analysis workflow, and when users want to annotate them programmatically.
+The previous examples accessed GRR resources directly, through ``gain.grr``. Annotation is not part of ``gain.grr``: pipelines and annotatables are imported from ``gain.annotation``, as below. The Python interface can also be used to construct and run GAIn annotation pipelines without calling the command-line ``annotate_tabular`` or ``annotate_vcf`` tools. This is useful when variants are already available inside a Python script, notebook, or larger analysis workflow, and when users want to annotate them programmatically.
 
 In this example, a small annotation pipeline is defined directly as a YAML string. The pipeline contains a single ``effect_annotator``, which uses the MANE 1.5 gene models resource to predict the effect of a variant. The variant is represented as a VCFAllele object, and the pipeline is then used to annotate that allele.
 
