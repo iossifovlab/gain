@@ -1,5 +1,5 @@
 # pylint: disable=W0621,C0116
-"""The per-score help a gene score carries into the gene-scores database.
+"""The per-score help a gene score builds for each of its scores.
 
 The help embeds the score's histogram image by its public-mirror address,
 and an annulled histogram has none -- see
@@ -11,7 +11,6 @@ import pathlib
 import pytest
 from gain.gene_scores.gene_scores import (
     GeneScore,
-    GeneScoresDb,
     build_gene_score_from_resource,
 )
 from gain.genomic_resources.histogram import NullHistogram
@@ -80,17 +79,6 @@ def test_a_gene_score_help_for_an_undefined_score_is_refused(
 ) -> None:
     with pytest.raises(ValueError, match="no_such_score"):
         gene_score.build_score_help("no_such_score")
-
-
-def test_the_gene_scores_db_carries_the_gene_score_help(
-    gene_score: GeneScore,
-) -> None:
-    descs = GeneScoresDb.build_descs_from_score(gene_score)
-
-    assert {desc.score_id: desc.help for desc in descs} == {
-        score_id: gene_score.build_score_help(score_id)
-        for score_id in ("pli", "nullified")
-    }
 
 
 def test_a_gene_score_help_embeds_the_histogram_by_its_public_address(
