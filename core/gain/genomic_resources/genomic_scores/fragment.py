@@ -17,6 +17,8 @@ from typing import (
     ClassVar,
 )
 
+import numpy as np
+
 from gain import logging
 from gain.genomic_resources.repository import (
     GenomicResource,
@@ -38,9 +40,11 @@ from gain.genomic_resources.score_filter import (
 from ..aggregators import (
     AGGREGATOR_SCHEMA,
     ScoreAggregationQuery,
+    validate_aggregator,
 )
 from .aggregation import (
     build_region_aggregators,
+    fold_into_bins,
     fold_region_segments,
     request_score_ids,
     resolve_aggregation_queries,
@@ -557,8 +561,9 @@ class FragmentScore(GenomicScore):
         which is why this read names the record partition rather than
         reusing that spelling.  That scan is left as it is.
 
-        There is no caller yet.  It is kept for that meaning, so the
-        partition has a name before something needs it.
+        :meth:`get_scores_in_bins` reads through it: each fragment lands
+        in the one bin holding its begin, which is this partition at bin
+        granularity.
 
         Entries are shaped as
         :meth:`get_fragment_scores_overlapping_region` shapes them, spans
@@ -743,3 +748,80 @@ class FragmentScore(GenomicScore):
             min_region_overlap_fraction=min_region_overlap_fraction,
             min_fragment_overlap_fraction=min_fragment_overlap_fraction,
             score_filter=score_filter)
+
+    # -- The binned read ----------------------------------------------------
+
+    def get_scores_in_bins(
+        self, chrom: str, start: int, end: int, bin_size: int,
+        queries: Sequence[ScoreAggregationQuery],
+    ) -> np.ndarray:
+        """Reduce the fragments STARTING in each grid bin, one column a query.
+
+        Answers :func:`~.aggregation.fold_into_bins`'s block: a ``float64``
+        array of shape ``(n_bins, len(queries))``, column ``j`` reducing
+        ``queries[j]``.  Rows follow the GLOBAL grid anchored at position 1
+        -- row ``i`` is bin ``calc_bin_index(bin_size, start) + i`` -- and
+        are whole grid bins, not clipped to the region and returned
+        without bounds.  What an empty cell holds (``0`` for ``count`` and
+        ``sum``, ``NaN`` for ``mean``, ``max``, ``min``, ``median`` and
+        ``product``) and which aggregators are accepted at all are the
+        fold's rules, not this read's.
+
+        **Start-only.**  A fragment belongs to the bin holding its BEGIN
+        and to no other, however far it runs: the fragments are those
+        :meth:`get_fragment_scores_starting_in_region` answers for
+        ``[start, end]``.  So the blocks of two adjacent calls split on a
+        bin edge stack into exactly the block of their union -- no
+        fragment is missed or counted twice.
+
+        **Fragment count** is ``ScoreAggregationQuery(<score>, "count")``:
+        the number of fragments starting in the bin that carry a non-null
+        value for that score.  Asked of a score every fragment carries --
+        a barcode -- it is the number of fragments starting in the bin.
+
+        ``aggregator`` of ``None`` on a query is the score's configured
+        default, as everywhere a :class:`~..aggregators.ScoreAggregationQuery`
+        is read; a default the fold does not accept (``join`` for a
+        ``str`` score) is refused like a named one.  A numeric-only
+        aggregator on a non-numeric score is refused by
+        :func:`~..aggregators.validate_aggregator`.
+
+        A contig the resource lacks answers the all-empty block rather
+        than being refused: a genome-wide pass over fragment files that
+        each skip some contigs is the ordinary case.
+
+        Every refusal -- a region starting below 1 or ending before it
+        starts, a ``bin_size`` below 1, an unknown score, an unaccepted
+        aggregator -- happens before the first fragment is read.  All
+        queries are answered from ONE read of the region, so the
+        one-live-read limit
+        :meth:`get_fragment_scores_overlapping_region` documents applies
+        for the duration of the call only: the block is materialised.
+        """
+        self._guard_region_span(start, end)
+        if bin_size < 1:
+            raise ValueError(
+                f"genomic score <{self.resource_id}> asked for bins of "
+                f"size {bin_size}; a bin holds at least one position")
+        requests, score_ids = self._resolve_fragment_aggregation_queries(
+            queries)
+        for score_id, aggregator in requests:
+            validate_aggregator(
+                aggregator, self.score_definitions[score_id].value_type)
+        records: Iterable[tuple[int, int, ScoreValue]] = ()
+        if self.has_chromosome(chrom):
+            column_of = {
+                score_id: column for column, score_id in enumerate(score_ids)
+            }
+            columns = list(enumerate(
+                column_of[score_id] for score_id, _ in requests))
+            records = (
+                (begin, query, values[column])
+                for begin, _, values in
+                self.get_fragment_scores_starting_in_region(
+                    chrom, start, end, scores=list(score_ids))
+                for query, column in columns
+            )
+        return fold_into_bins(
+            records, start=start, end=end, bin_size=bin_size,
+            aggregators=[aggregator for _, aggregator in requests])

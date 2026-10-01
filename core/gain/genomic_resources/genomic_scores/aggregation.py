@@ -5,6 +5,10 @@ apart from any score class: resolving a caller's request list to
 ``(score_id, aggregator)`` pairs, building a fresh aggregator for each, and
 folding a stream of fetched segments into one value per request.
 
+:func:`fold_into_bins` is the same reduction per grid bin rather than per
+region: a dense block, one row a bin and one column an aggregator, with the
+empty-bin rule (:data:`EMPTY_BIN_VALUES`) stated there and nowhere else.
+
 Resolving and building are separate steps here because they are separate
 questions.  :func:`score_def_for` and :func:`resolve_aggregator_name`
 answer "is this request answerable, and by what", which a caller may ask
@@ -52,10 +56,14 @@ shares it, from
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Iterable, Sequence
+
+import numpy as np
 
 from gain.genomic_resources.resource_errors import undefined_scores_message
 from gain.genomic_resources.score_def import GenomicScoreDef, ScoreValue
+from gain.utils.regions import calc_bin_index
 
 from ..aggregators import Aggregator, ScoreAggregationQuery
 
@@ -362,3 +370,116 @@ def fold_region_segments(
             aggregator.add(values[column], weight)
 
     return [aggregator.get_final() for aggregator in aggregators]
+
+
+#: What a cell of :func:`fold_into_bins` holds when its aggregator received
+#: no non-null value, per aggregator: ``0`` where nothing summed or counted
+#: IS zero, ``NaN`` where there is nothing to answer.  The keys are also the
+#: whole set of aggregators the fold accepts -- the ones whose answer is a
+#: float.  This is the fragment surfaces' rule (a bin with no fragment has
+#: nothing to fold), and it differs on purpose from the position-score
+#: binner's, which stores NaN for an uncovered bin unless the track's
+#: ``none_value_replacement`` says otherwise; that key does not exist on
+#: the fragment kind.
+EMPTY_BIN_VALUES: dict[str, float] = {
+    "count": 0.0,
+    "sum": 0.0,
+    "mean": math.nan,
+    "max": math.nan,
+    "min": math.nan,
+    "median": math.nan,
+    "product": math.nan,
+}
+
+
+def fold_into_bins(
+    records: Iterable[tuple[int, int, ScoreValue]],
+    *,
+    start: int,
+    end: int,
+    bin_size: int,
+    aggregators: Sequence[str],
+) -> np.ndarray:
+    """Fold position-sorted records into a dense block of global-grid bins.
+
+    ``records`` are ``(position, column, value)``: each value is added to
+    a fresh aggregator of its ``column`` in the bin holding its
+    ``position``.  ``aggregators`` names one aggregator per column, which
+    is how a caller gives each column its meaning -- one per query for a
+    score's binned read, one per group for a binner.
+
+    The answer is a ``float64`` array of shape ``(n_bins, n_columns)``.
+    Row ``i`` is bin ``calc_bin_index(bin_size, start) + i`` of the grid
+    anchored at position 1, so ``n_bins`` is
+    ``calc_bin_index(bin_size, end) - calc_bin_index(bin_size, start) + 1``
+    and blocks of adjacent regions split on a bin edge stack into the
+    block of their union.  Bins are not clipped and no bounds are
+    returned: an edge row is a whole grid bin, holding only the records
+    whose position lies in ``[start, end]``.
+
+    **The empty-bin rule.**  Null values are skipped, as every aggregator
+    skips them, and a cell whose aggregator received no non-null value
+    holds :data:`EMPTY_BIN_VALUES` for that aggregator: ``0`` for
+    ``count`` and ``sum``, ``NaN`` for ``mean``, ``max``, ``min``,
+    ``median`` and ``product``.  Those seven are the whole set this fold
+    accepts; any other aggregator cannot answer a float and is refused
+    before the first record is read, as is a ``bin_size`` below 1.
+
+    **Preconditions.**  ``records`` are sorted by position, and every
+    position lies in ``[start, end]``.  The fold holds only the current
+    bin's aggregators, so it consumes the stream once, in order; a record
+    that breaks either precondition is refused when it is reached.  Values
+    are whatever the aggregators accept -- numbers, or anything at all for
+    ``count``.
+    """
+    refused = [
+        name for name in aggregators if name not in EMPTY_BIN_VALUES]
+    if refused:
+        raise ValueError(
+            f"a binned fold cannot aggregate with {', '.join(refused)}: "
+            f"only {', '.join(EMPTY_BIN_VALUES)} answer a float per bin")
+    if bin_size < 1:
+        raise ValueError(
+            f"bins of size {bin_size} asked for; a bin holds at least one "
+            f"position")
+    first_bin = calc_bin_index(bin_size, start)
+    n_bins = calc_bin_index(bin_size, end) - first_bin + 1
+    block = np.empty((n_bins, len(aggregators)), dtype=np.float64)
+    block[:] = [EMPTY_BIN_VALUES[name] for name in aggregators]
+
+    def flush(row: int, accumulators: list[Aggregator]) -> None:
+        for column, accumulator in enumerate(accumulators):
+            final = accumulator.get_final()
+            if final is None:
+                continue
+            try:
+                block[row, column] = final
+            except OverflowError:
+                # An exact int (``sum``/``product`` of an int score) past
+                # the float range: saturate, as a float result already does.
+                # (Compared, not ``copysign``-ed: that converts it too.)
+                block[row, column] = math.inf if final > 0 else -math.inf
+
+    row = -1
+    previous = start
+    accumulators: list[Aggregator] = []
+    for position, column, value in records:
+        if not start <= position <= end:
+            raise ValueError(
+                f"a record at {position} is outside the binned region "
+                f"[{start}, {end}]")
+        if position < previous:
+            raise ValueError(
+                f"a record at {position} arrived after one at {previous}; "
+                f"a binned fold needs its records sorted by position")
+        previous = position
+        record_row = calc_bin_index(bin_size, position) - first_bin
+        if record_row != row:
+            if row >= 0:
+                flush(row, accumulators)
+            row = record_row
+            accumulators = [Aggregator.build(name) for name in aggregators]
+        accumulators[column].add(value)
+    if row >= 0:
+        flush(row, accumulators)
+    return block
