@@ -80,7 +80,9 @@ def test_unknown_multiplicity_is_refused_naming_the_valid_ones(
 
 @pytest.mark.parametrize("declared", [True, 2])
 def test_non_string_multiplicity_is_refused(
-    tmp_path: pathlib.Path, declared: object,
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+    declared: object,
 ) -> None:
     resource = (
         an_allele_score()
@@ -90,6 +92,12 @@ def test_non_string_multiplicity_is_refused(
 
     with pytest.raises(MalformedResourceError, match="Invalid configuration"):
         build_allele_score_from_resource(resource)
+
+    [refusal] = [
+        record.getMessage() for record in caplog.records
+        if "allele_multiplicity" in record.getMessage()
+    ]
+    assert "must be of string type" in refusal
 
 
 def _reads(score: AlleleScore) -> tuple[object, ...]:
