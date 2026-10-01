@@ -147,8 +147,8 @@ def test_every_allele_on_an_alleles_resource_is_matched_exactly(
 def test_complex_allele_on_a_substitutions_resource_is_region_folded(
     substitutions_repo: GenomicResourceRepo,
 ) -> None:
-    # No row matches ``CG>TA`` exactly, so only the fold over 11-12
-    # answers 0.3.
+    # No row matches ``CG>TA`` exactly, so only the fold over the bases
+    # it covers answers 0.3.
     assert _annotate(substitutions_repo, UNLISTED_COMPLEX)["freq"] == 0.3
 
 
