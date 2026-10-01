@@ -1382,6 +1382,15 @@ Allele scores
 
 3. In the ``table`` section, the user must also specify which columns contain the **reference** and **alternative** alleles using reference and alternative.
 
+An allele score may also declare **allele_multiplicity**, which says how many table rows one allele, a single
+chromosome, position, reference and alternative, may have. ``one``, the default when the key is absent, means
+each allele has at most one row. ``many`` means an allele may have several rows, as in a resource with a
+per-transcript dimension that scores each allele once per transcript. Such a resource should declare
+``allele_multiplicity: many`` and give each of its scores an ``aggregator`` that says how those rows reduce to
+one value. GAIn does not yet check the declaration against the table: a planned check will report a resource
+that holds several rows for an allele without declaring ``many``, first with a warning and, from GAIn
+``2027.1.0`` on, as an error.
+
 The scores, ``default_annotation``, and ``meta`` sections are the same as for position scores. The example below shows the beginning of
 a valid ``genomic_resource.yaml`` for an allele score resource:
 

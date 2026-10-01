@@ -756,10 +756,33 @@ class AlleleScoreBuilder(_TableScoreBuilder):
     write its ``genomic_resource.yaml`` by hand.
     """
 
+    # The top-level ``allele_multiplicity:`` value; ``None`` emits no key.
+    allele_multiplicity: Any = None
+
     SCORE_TYPE: ClassVar[str] = "allele_score"
     TRAILING_COLUMNS: ClassVar[tuple[str, ...]] = ("reference", "alternative")
     TABLE_EXTRA_CONFIG: ClassVar[str] = _REF_ALT_TABLE_CONFIG
     DEFAULT_DATA: ClassVar[str] = _ALLELE_DEFAULT_DATA
+
+    def with_allele_multiplicity(self, multiplicity: Any) -> Self:
+        """Emit a top-level ``allele_multiplicity:`` (gain#1750).
+
+        Rendered through ``yaml.safe_dump``, so a non-string value --
+        ``True``, ``2`` -- arrives as that YAML type, which is how the
+        schema's string-only rule is watched refusing one.
+        """
+        return dataclasses.replace(
+            self, allele_multiplicity=multiplicity)
+
+    def _render_config(
+        self, scores: tuple[ScoreSpec, ...], filename: str, data: str,
+    ) -> str:
+        config = super()._render_config(scores, filename, data)
+        if self.allele_multiplicity is None:
+            return config
+        return config + yaml.safe_dump(
+            {"allele_multiplicity": self.allele_multiplicity},
+            default_flow_style=False)
 
 
 @dataclasses.dataclass(frozen=True)
