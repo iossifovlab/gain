@@ -2,7 +2,7 @@
 from typing import Any
 
 import pytest
-from gain.binning.binners import Track
+from gain.binning.binners import BinningJob, Track
 from gain.binning.run_definition import (
     RunDefinition,
     RunDefinitionError,
@@ -278,6 +278,40 @@ def test_an_unknown_binner_kind_is_a_parse_error_listing_the_known_kinds(
     assert "binners[0]" in str(excinfo.value)
     assert "fragment_score_binner" in str(excinfo.value)
     assert "position_score_binner" in str(excinfo.value)
+
+
+def test_a_job_with_no_tracks_is_a_parse_error_naming_its_entry(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A task is named by its job's tracks and writes one chunk per track,
+    # so a job without one has nothing to name or write.  It is refused
+    # where it enters the run, naming the entry that produced it.
+    class EmptyJobBinner:
+        """A kind that resolves every entry into one job of no tracks."""
+
+        kind = "empty_job_binner"
+
+        @staticmethod
+        def parse_entry(
+            _label: str, _config: dict[str, Any], _grr: GenomicResourceRepo,
+        ) -> list[BinningJob]:
+            return [BinningJob(binner="empty_job_binner", tracks=())]
+
+    monkeypatch.setattr(
+        "gain.binning.run_definition.discover_binner_kinds",
+        lambda: {"empty_job_binner": EmptyJobBinner})
+    config = {
+        "bins": {"bin_size": 10},
+        "binners": [{"empty_job_binner": {}}],
+    }
+
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_run_definition(config, repo, genome)
+
+    assert str(excinfo.value) == (
+        "binners[0]: empty_job_binner resolved the entry into a job with "
+        "no tracks; every job needs at least one")
 
 
 def test_a_resource_matched_by_two_entries_names_both_tracks_by_aggregator(

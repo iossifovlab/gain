@@ -162,9 +162,14 @@ def _resolve_jobs(
             raise RunDefinitionError(
                 f"{label}: unknown binner kind {kind!r}; "
                 f"registered kinds: {', '.join(sorted(kinds))}")
-        jobs.extend(
-            (label, job)
-            for job in kinds[kind].parse_entry(label, entry_config, grr))
+        for job in kinds[kind].parse_entry(label, entry_config, grr):
+            # A task is named by its job's first track and writes one
+            # chunk per track, so a job needs at least one.
+            if not job.tracks:
+                raise RunDefinitionError(
+                    f"{label}: {kind} resolved the entry into a job with "
+                    f"no tracks; every job needs at least one")
+            jobs.append((label, job))
     # Naming reads every track of the run at once; the named tracks come
     # back in the order they went in, so each job takes its own back.
     named = iter(_name_tracks([

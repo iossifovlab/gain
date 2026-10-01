@@ -805,6 +805,29 @@ def test_a_wrong_shaped_block_fails_the_task_and_writes_no_chunk(
     assert binding.closed
 
 
+@pytest.mark.parametrize("dtype", [np.int64, np.float32])
+def test_a_block_of_another_dtype_fails_the_task_and_writes_no_chunk(
+    repo: GenomicResourceRepo, tmp_path: pathlib.Path,
+    dtype: type[np.generic],
+) -> None:
+    # Every chunk is float64, whichever kind wrote it, so chunks from two
+    # kinds -- or from a rerun -- assemble into one matrix byte for byte.
+    # A block of the right shape in another dtype is refused, not saved
+    # in that dtype.
+    chunk_dir = str(tmp_path)
+    region = BedRegion("chr1", 1, 10)
+    binding = StubBinding(lambda _region: np.ones((1, 1), dtype=dtype))
+
+    with pytest.raises(ValueError, match="float64"):
+        _bin_chunks(
+            a_stub_binner(binding), JOB, [region], 10, repo.definition,
+            chunk_dir)
+
+    assert not pathlib.Path(
+        _chunk_path(chunk_dir, TRACK, region, 10)).exists()
+    assert binding.closed
+
+
 def test_a_set_replacement_is_named_by_its_value(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
 ) -> None:

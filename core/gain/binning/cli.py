@@ -316,8 +316,9 @@ def _bin_chunks(
 
     Column *i* of a block is track *i*'s chunk, named through the same
     :func:`_chunk_path` the graph declared its outputs with.  A block of
-    any other shape than ``(bins of the region, tracks of the job)``
-    fails the task before any of that region's chunks is written.
+    any other shape than ``(bins of the region, tracks of the job)``, or
+    of any dtype but float64, fails the task before any of that region's
+    chunks is written.
     """
     grr = _repository(json.dumps(grr_definition, sort_keys=True))
     with binner.bind(job, grr) as bound:
@@ -330,6 +331,11 @@ def _bin_chunks(
                     f"{block.shape} for {region.chrom}:{region.start}-"
                     f"{region.stop} at bin size {bin_size}; expected "
                     f"{expected}, one row per bin and one column per track")
+            if block.dtype != np.float64:
+                raise ValueError(
+                    f"{binner.kind} returned a {block.dtype} block for "
+                    f"{region.chrom}:{region.start}-{region.stop}; "
+                    f"expected float64")
             for column, track in enumerate(job.tracks):
                 np.save(
                     _chunk_path(chunk_dir, track, region, bin_size),
