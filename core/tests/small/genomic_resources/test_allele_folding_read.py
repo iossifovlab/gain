@@ -977,10 +977,10 @@ def test_an_unstarted_region_rows_read_does_not_cut_short_another(
             "1", 10, 16, scores=["freq"])
         second = opened.get_allele_score_in_region_rows(
             "1", 30, 40, score="freq")
-        interleaved = list(first)
+        first_rows = list(first)
         later = list(second)
 
-    assert interleaved == [
+    assert first_rows == [
         AlleleEntry(10, "A", "C", (0.2,)),
         AlleleEntry(10, "A", "C", (0.5,)),
         AlleleEntry(10, "A", "G", (0.1,)),

@@ -600,12 +600,16 @@ class AlleleScore(GenomicScore):
     ) -> Iterator[Record] | None:
         """Records of a region the filter keeps; ``None`` when none overlap.
 
-        The region walk every allele region read is built on --
-        :meth:`fetch_allele_records`, :meth:`get_allele_scores_in_region_agg`
-        and the unreduced rows reads -- stated once so they cannot come to
-        disagree about the contig refusal, filter ownership, which records
-        the filter keeps or their order.  The rows reads answer ``None`` as
-        an empty stream; the other two keep it as absent data.
+        :meth:`_check_allele_region_request` then
+        :meth:`_walk_allele_records`: the two halves every allele region read
+        is built on, so they cannot come to disagree about the contig
+        refusal, filter ownership, which records the filter keeps or their
+        order.  :meth:`fetch_allele_records` and
+        :meth:`get_allele_scores_in_region_agg` take both halves through
+        this method; the unreduced rows reads call them separately, to
+        check on the call and walk lazily, and answer ``None`` as an empty
+        stream.  A step every region read must share belongs in one of the
+        halves, not here.
 
         ``None`` is a region no record overlaps, judged BEFORE the filter;
         an iterator -- possibly empty -- is a region that held records, of
