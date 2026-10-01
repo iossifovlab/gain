@@ -747,17 +747,13 @@ class AlleleScoreBuilder(_TableScoreBuilder):
     Requires ``reference``/``alternative`` columns and reads back through
     ``AlleleScore``.
 
-    Had a twin, ``NPScoreBuilder``, differing only in emitting
-    ``type: np_score``.  It was retired with the type itself in 2026.8.5
-    (gain#920): a builder can only produce resources GAIn still reads.
-
-    Its fixtures moved here unchanged apart from the type.  None needed
-    ``allele_score_mode: substitutions`` to keep behaving the same, even
-    though the mode default differs between the two spellings -- nothing
-    in gain reads ``AlleleScore.mode`` outside ``substitutions_mode()``
-    and ``alleles_mode()``, and no migrated fixture consults either.  The
-    mode hazard the removal warns about is real for a GRR holder whose
-    own code asks; it was inert in this suite.
+    The resource it emits declares no ``allele_score_mode`` and the
+    builder has no knob for it, so it always reads in the default
+    ``alleles`` mode.  The allele score annotator routes on that mode --
+    on a ``substitutions`` resource any allele other than a substitution
+    is region-folded rather than matched exactly -- so a fixture that
+    needs a ``substitutions`` resource cannot come from this builder;
+    write its ``genomic_resource.yaml`` by hand.
     """
 
     SCORE_TYPE: ClassVar[str] = "allele_score"

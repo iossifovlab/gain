@@ -211,6 +211,12 @@ class AlleleScore(GenomicScore):
     the allele keys beside them when asked, and the allele annotator's
     region mode reads through it (``gain.annotation.allele_score_annotator``).
 
+    No read consults the mode: an exact-match read answers an indel's own
+    line in either mode.  The mode is for the caller to route on, and the
+    allele score annotator does -- on a ``substitutions`` resource it
+    folds any allele other than a substitution over its span instead of
+    matching it.
+
     Attributes:
         resource: The underlying GenomicResource object
         resource_id: Unique identifier for the resource

@@ -41,22 +41,35 @@
 
 The annotator has two modes selected by the `mode` parameter:
 
-- **`region`** (**default**): the score reduces all allele lines overlapping
+- **`allele`** (**default**): a `VCFAllele` the resource keys as a line of
+  its own gets an exact chrom/pos/ref/alt lookup; any other `VCFAllele` is
+  region-folded, as in `region` mode, subject to `region_length_cutoff`.
+  The resource's `allele_score_mode` decides which alleles those are (#1748):
+
+  - on an **`alleles`** resource every `VCFAllele` is matched exactly, and
+    one with no matching line gets `None`;
+  - on a **`substitutions`** resource only a substitution is matched
+    exactly; an insertion, deletion, complex allele or MNV is folded over
+    the bases it covers.
+
+  The score's reads stay mode-blind — routing on the mode is the
+  annotator's decision alone. Non-`VCFAllele` annotatables always take the
+  region path.
+
+- **`region`**: the score reduces all allele lines overlapping
   the annotatable's span, streaming them through
-  `AlleleScore.get_allele_scores_in_region_agg`. Works with any `Annotatable`.
+  `AlleleScore.get_allele_scores_in_region_agg`. Works with any `Annotatable`,
+  and folds every `VCFAllele` whatever the resource's mode.
   Each score attribute must have an aggregator defined either in the attribute
   config or as the resource's default; an attribute with neither — only a
   `bool` score has no default — is refused when the pipeline loads, in
   **either** mode, because a CNV or a `Region` takes the region path whatever
   the mode.
 
-- **`allele`**: performs an exact chrom/pos/ref/alt lookup. The annotatable must
-  be a `VCFAllele`; any other type produces an empty result.
-
 ```yaml
 - allele_score:
     resource_id: my_score
-    # mode: region   # default — omit for region behaviour
+    mode: region     # fold every annotatable, VCFAllele included
     attributes:
     - source: freq
       aggregator: max
@@ -65,7 +78,7 @@ The annotator has two modes selected by the `mode` parameter:
 ```yaml
 - allele_score:
     resource_id: my_score
-    mode: allele     # exact-match only; VCFAllele required
+    # mode: allele   # default; routed by the resource's allele_score_mode
     attributes:
     - source: freq
 ```
@@ -76,7 +89,7 @@ A virtual attribute `allele` (source `"allele"`, `default=False`) is available
 on all allele score annotators. It is not a column in the underlying data file;
 its value is synthesised from the matched line(s).
 
-#### `allele` mode (exact match)
+#### Exact match
 
 Returns `["chrom:pos:ref:alt"]` for the single matched line.
 
@@ -105,7 +118,7 @@ Optionally append score values by setting `include_attributes`:
     - source: id
 ```
 
-#### `region` mode (default)
+#### Region fold (`region` mode, and `allele` mode's folded alleles)
 
 Collects the distinct allele strings of the lines in the region, in the
 order the lines were first met — the resource's own genomic order (#1163;
@@ -147,6 +160,7 @@ precedence and character rules. The user-facing syntax is documented in
 | Method | Visibility | Description |
 |---|---|---|
 | `AlleleScoreAnnotator.get_all_attribute_descriptions` | override | Extends the parent implementation to add the virtual `"allele"` attribute with `default=False`. |
-| `AlleleScoreAnnotator._annotate_allele` | private | Exact chrom/pos/ref/alt lookup; used in `allele` mode. |
-| `AlleleScoreAnnotator._annotate_region` | private | Asks the score's folding read for the region already reduced and answers an `AnnotatedValues` keyed by attribute name; used in `region` mode. |
-| `AlleleScoreAnnotator.annotate` | public | Dispatches to `_annotate_allele` or `_annotate_region` based on `self.mode`. |
+| `AlleleScoreAnnotator._annotate_allele` | private | Exact chrom/pos/ref/alt lookup; used in `allele` mode for an allele the resource keys exactly. |
+| `AlleleScoreAnnotator._annotate_region` | private | Asks the score's folding read for the region already reduced and answers an `AnnotatedValues` keyed by attribute name; used in `region` mode and for every other annotatable. |
+| `AlleleScoreAnnotator._matched_exactly` | private | Whether the resource's `allele_score_mode` keys a `VCFAllele` exactly: always for `alleles`, only a substitution for `substitutions`. |
+| `AlleleScoreAnnotator.annotate` | public | Dispatches to `_annotate_allele` or `_annotate_region` based on `self.mode` and, in `allele` mode, `_matched_exactly`. |

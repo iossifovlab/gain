@@ -463,7 +463,7 @@ GAIn uses Python entry points for extensibility.
    context providers (DefaultRepository, CLI,
    CLIAnnotation)
 2. **`gain.genomic_resources.implementations`** —
-   position/allele/NP scores, liftover chain, genome,
+   position/allele scores, liftover chain, genome,
    gene models, fragment score (config type
    `fragment_score`, legacy `cnv_collection` also
    accepted), annotation pipeline, gene score,
@@ -551,9 +551,9 @@ res = (
 )
 ```
 
-Factories: `a_position_score`, `a_np_score`,
-`an_allele_score`, `a_fragment_score`, `a_bigwig_score`,
-`a_vcf_info_score`, `a_gene_score`, `a_reference_genome`,
+Factories: `a_position_score`, `an_allele_score`,
+`a_fragment_score`, `a_bigwig_score`, `a_vcf_info_score`,
+`a_gene_score`, `a_reference_genome`, `a_basic_resource`,
 `a_grr`. Compose a
 multi-resource repo with
 `a_grr().with_resource(id, builder).build_repo(tmp_path)`;
