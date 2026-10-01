@@ -747,17 +747,12 @@ class AlleleScoreBuilder(_TableScoreBuilder):
     Requires ``reference``/``alternative`` columns and reads back through
     ``AlleleScore``.
 
-    Had a twin, ``NPScoreBuilder``, differing only in emitting
-    ``type: np_score``.  It was retired with the type itself in 2026.8.5
-    (gain#920): a builder can only produce resources GAIn still reads.
-
-    The two spellings differ in their mode default: ``np_score`` read in
-    ``substitutions`` mode, ``allele_score`` reads in ``alleles`` mode.
-    The allele score annotator routes on that mode -- on a
-    ``substitutions`` resource an indel is region-folded rather than
-    matched exactly -- so a fixture that annotates indels and wants the
-    ``np_score`` behaviour must state
-    ``allele_score_mode: substitutions``.
+    The resource it emits declares no ``allele_score_mode``, so it reads
+    in the default ``alleles`` mode.  The allele score annotator routes on
+    that mode -- on a ``substitutions`` resource an indel is region-folded
+    rather than matched exactly -- so a fixture that annotates indels
+    against a substitutions-only score must state
+    ``allele_score_mode: substitutions`` itself.
     """
 
     SCORE_TYPE: ClassVar[str] = "allele_score"
