@@ -17,6 +17,7 @@ from itertools import chain
 from typing import (
     Any,
     ClassVar,
+    NamedTuple,
 )
 
 from gain.genomic_resources.genomic_position_table.record import (
@@ -85,6 +86,21 @@ class AlleleAggregate:
     allele_keys: tuple[str, ...] | None
 
 
+class AlleleEntry(NamedTuple):
+    """One allele row of a region, as the unreduced region read yields it.
+
+    ``pos``, ``ref`` and ``alt`` are the row's own key columns, read off
+    the record verbatim; a table declaring only one of the two nucleotide
+    columns yields ``None`` for the other.  ``values`` is parallel to the
+    scores the read was asked for, in the order asked.
+    """
+
+    pos: int
+    ref: str
+    alt: str
+    values: tuple[ScoreValue, ...]
+
+
 def allele_key(
     chrom: str, pos: int, ref: str | None, alt: str | None,
     suffix: Sequence[ScoreValue] = (),
@@ -112,6 +128,20 @@ def allele_key(
     if suffix:
         key += ":" + ",".join(stringify(value) for value in suffix)
     return key
+
+
+def _allele_pos(record: Record) -> int:
+    """The position an allele record stands at, refusing an inverted span.
+
+    ``POS_BEGIN``, with ``POS_END`` read only to refuse a record whose end
+    precedes its begin -- the one rule every allele read applies to a
+    record it reads (see :meth:`AlleleScore._score_segments`).
+    """
+    pos: int = record[POS_BEGIN]
+    if record[POS_END] < pos:
+        raise inverted_span_error(
+            record[CHROM], pos, record[POS_END], record[REF], record[ALT])
+    return pos
 
 
 class _AlleleKeyCollector:
@@ -227,6 +257,13 @@ class AlleleScore(GenomicScore):
         get_allele_scores_in_region_agg: Reduce the alleles of a region to
         one value per query -- and their keys -- in one walk, telling
         the same two answers apart
+        get_allele_scores_for_allele_rows: Get the values of every row of
+        one allele, unreduced
+        get_allele_score_for_allele_rows: The same for one score
+        get_allele_scores_in_region_rows: Stream an AlleleEntry per row of
+        a region, unreduced, off the walk the folding read reduces
+        get_allele_score_in_region_rows: The same for one score, as
+        ``(pos, ref, alt, value)``
         fetch_region_segments_scores: Iterate over allele scores in a
         genomic region
         substitutions_mode: Check if operating in SUBSTITUTIONS mode
@@ -435,11 +472,7 @@ class AlleleScore(GenomicScore):
         """
         extract = self._extract_value
         for record in records:
-            pos = record[POS_BEGIN]
-            if record[POS_END] < pos:
-                raise inverted_span_error(
-                    record[CHROM], pos, record[POS_END],
-                    record[REF], record[ALT])
+            pos = _allele_pos(record)
             yield pos, pos, [
                 extract(record, score_def) for score_def in score_defs]
 
@@ -567,13 +600,16 @@ class AlleleScore(GenomicScore):
     ) -> Iterator[Record] | None:
         """Records of a region the filter keeps; ``None`` when none overlap.
 
-        The absence peek :meth:`fetch_allele_records` and
-        :meth:`get_allele_scores_in_region_agg` share, stated once so the
-        two reads cannot come to disagree about what ``None`` means or
-        when a filter is checked.  ``None`` is a region no record overlaps,
-        judged BEFORE the filter; an iterator -- possibly empty -- is a
-        region that held records, of which these are the ones the filter
-        accepted.
+        The region walk every allele region read is built on --
+        :meth:`fetch_allele_records`, :meth:`get_allele_scores_in_region_agg`
+        and the unreduced rows reads -- stated once so they cannot come to
+        disagree about the contig refusal, filter ownership, which records
+        the filter keeps or their order.  The rows reads answer ``None`` as
+        an empty stream; the other two keep it as absent data.
+
+        ``None`` is a region no record overlaps, judged BEFORE the filter;
+        an iterator -- possibly empty -- is a region that held records, of
+        which these are the ones the filter accepted.
 
         The ownership check runs first of all, ahead of the peek: a foreign
         filter is a programming error and must not be refused on a
@@ -696,6 +732,129 @@ class AlleleScore(GenomicScore):
         return AlleleAggregate(
             tuple(values),
             None if collector is None else collector.keys)
+
+    def get_allele_scores_for_allele_rows(
+        self, chrom: str, pos: int, ref: str, alt: str,
+        *,
+        scores: Sequence[str] | None = None,
+        score_filter: ScoreFilter | None = None,
+    ) -> list[tuple[ScoreValue, ...]]:
+        """Return the values of every row of one allele, in file order.
+
+        One tuple per row at exactly ``(chrom, pos, ref, alt)`` that
+        ``score_filter`` keeps, each parallel to ``scores`` -- every score
+        the resource defines when ``scores`` is ``None``.  Several rows may
+        carry one allele, and all of them are answered: this read neither
+        reduces them nor looks at ``allele_score_mode``.
+
+        ``[]`` is the answer both for an allele no row carries and for one
+        whose every row the filter rejected; this read does not tell the
+        two apart.  An unknown score id, an unknown contig and a filter
+        compiled for another resource are refused when this is called.
+        Materialised: a point holds a handful of rows.
+        """
+        return [
+            entry.values
+            for entry in self._allele_entries(
+                chrom, pos, pos, scores=scores, score_filter=score_filter)
+            if entry.pos == pos and entry.ref == ref and entry.alt == alt
+        ]
+
+    def get_allele_scores_in_region_rows(
+        self, chrom: str, start: int, end: int,
+        *,
+        scores: Sequence[str] | None = None,
+        score_filter: ScoreFilter | None = None,
+    ) -> Generator[AlleleEntry, None, None]:
+        """Yield an :class:`AlleleEntry` per row overlapping a region.
+
+        One entry per row ``score_filter`` keeps, in the table's position
+        order, with ``values`` parallel to ``scores`` -- every score the
+        resource defines when ``scores`` is ``None``.  Rows sharing an
+        allele are each yielded; nothing is reduced, and
+        ``allele_score_mode`` is not consulted.
+
+        A region no row overlaps and a region whose every row the filter
+        rejected both yield nothing.  :meth:`get_allele_scores_in_region_agg`
+        reduces the same walk and tells those two apart.
+
+        The REQUEST is checked when this is called; the READING is lazy.  An
+        unknown score id, an unknown contig and a filter compiled for
+        another resource are refused before a generator is returned.  As
+        with every region read of a table, one live read per score at a
+        time: materialise what has to outlive the next read.
+        """
+        return self._allele_entries(
+            chrom, start, end, scores=scores, score_filter=score_filter)
+
+    def get_allele_score_for_allele_rows(
+        self, chrom: str, pos: int, ref: str, alt: str,
+        *,
+        score: str | None = None,
+        score_filter: ScoreFilter | None = None,
+    ) -> list[ScoreValue]:
+        """Return one score's value for every row of one allele.
+
+        The singular form of :meth:`get_allele_scores_for_allele_rows`,
+        which documents the rows answered and the refusals; ``score`` of
+        ``None`` is honoured only when the resource declares exactly one.
+        """
+        return [
+            values[0]
+            for values in self.get_allele_scores_for_allele_rows(
+                chrom, pos, ref, alt,
+                scores=[self._resolve_single_score(score)],
+                score_filter=score_filter)
+        ]
+
+    def get_allele_score_in_region_rows(
+        self, chrom: str, start: int, end: int,
+        *,
+        score: str | None = None,
+        score_filter: ScoreFilter | None = None,
+    ) -> Generator[tuple[int, str, str, ScoreValue], None, None]:
+        """Yield ``(pos, ref, alt, value)`` per row overlapping a region.
+
+        The singular form of :meth:`get_allele_scores_in_region_rows`,
+        which documents the rows yielded, the refusals checked on the call
+        and the one-live-read limit; ``score`` of ``None`` is honoured only
+        when the resource declares exactly one.
+        """
+        entries = self.get_allele_scores_in_region_rows(
+            chrom, start, end,
+            scores=[self._resolve_single_score(score)],
+            score_filter=score_filter)
+        return (
+            (entry.pos, entry.ref, entry.alt, entry.values[0])
+            for entry in entries)
+
+    def _allele_entries(
+        self, chrom: str, start: int, end: int,
+        *,
+        scores: Sequence[str] | None,
+        score_filter: ScoreFilter | None,
+    ) -> Generator[AlleleEntry, None, None]:
+        """The region walk as entries, with the request checked eagerly.
+
+        :meth:`_selected_allele_records` -- the walk the folding read
+        reduces -- with its absence answer turned into an empty stream.
+        """
+        score_defs = self._resolve_score_defs(scores)
+        records = self._selected_allele_records(
+            chrom, start, end, score_filter)
+        if records is None:
+            records = iter(())
+        return self._entries_of(records, score_defs)
+
+    def _entries_of(
+        self, records: Iterator[Record], score_defs: list[GenomicScoreDef],
+    ) -> Generator[AlleleEntry, None, None]:
+        """Read each record as an :class:`AlleleEntry`."""
+        extract = self._extract_value
+        for record in records:
+            yield AlleleEntry(
+                _allele_pos(record), record[REF], record[ALT],
+                tuple(extract(record, score_def) for score_def in score_defs))
 
     def _allele_key_collector(
         self, suffix_scores: Sequence[str],

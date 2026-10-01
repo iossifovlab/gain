@@ -27,6 +27,7 @@ from gain.genomic_resources.aggregators import ScoreAggregationQuery
 from gain.genomic_resources.genomic_position_table.record import Record
 from gain.genomic_resources.genomic_scores import (
     AlleleAggregate,
+    AlleleEntry,
     AlleleScore,
     build_allele_score_from_resource,
 )
@@ -547,3 +548,328 @@ def test_peak_memory_does_not_grow_with_the_number_of_alleles(
 
     assert large < 3 * small, (
         f"peak grew from {small} to {large} bytes for 10x the alleles")
+
+
+# ---------------------------------------------------------------------------
+# Interface B of the allele plane (gain#1751): the UNREDUCED reads.  Every
+# row of an allele, or of a region, as values -- mode-blind and
+# multiplicity-blind, so the repeated allele answers both of its rows.
+# ---------------------------------------------------------------------------
+
+
+def test_an_allele_entry_unpacks_by_position_and_by_name() -> None:
+    entry = AlleleEntry(10, "A", "C", (0.2, "ac"))
+
+    pos, ref, alt, values = entry
+
+    assert (pos, ref, alt, values) == (10, "A", "C", (0.2, "ac"))
+    assert (entry.pos, entry.ref, entry.alt, entry.values) == (
+        10, "A", "C", (0.2, "ac"))
+
+
+def test_for_allele_rows_answers_every_row_of_a_repeated_allele(
+    repeated_alleles: AlleleScore,
+) -> None:
+    """Both rows of ``1:10:A:C``, in file order, every score by default."""
+    with repeated_alleles.open() as score:
+        rows = score.get_allele_scores_for_allele_rows("1", 10, "A", "C")
+
+    assert rows == [(0.2, "ac"), (0.5, "ac2")]
+
+
+@pytest.mark.parametrize(("condition", "expected"), [
+    ("freq > 0.3", [(0.5, "ac2")]),
+    ("freq > 2.0", []),
+])
+def test_for_allele_rows_answers_only_the_rows_the_filter_keeps(
+    repeated_alleles: AlleleScore,
+    condition: str, expected: list[tuple[float, str]],
+) -> None:
+    """Rejecting one row answers the other; rejecting both answers ``[]``."""
+    with repeated_alleles.open() as score:
+        rows = score.get_allele_scores_for_allele_rows(
+            "1", 10, "A", "C",
+            score_filter=score.compile_filter(condition))
+
+    assert rows == expected
+
+
+@pytest.mark.parametrize(("pos", "ref", "alt"), [
+    (10, "A", "G"),
+    (12, "A", "C"),
+    (16, "C", "A"),
+])
+def test_for_allele_rows_answers_an_empty_list_for_an_allele_with_no_row(
+    repeated_alleles: AlleleScore, pos: int, ref: str, alt: str,
+) -> None:
+    """Never ``None``: absent and filtered read the same on this read.
+
+    ``1:10:A:G`` shares a position with two rows and differs in alt only.
+    """
+    with repeated_alleles.open() as score:
+        rows = score.get_allele_scores_for_allele_rows("1", pos, ref, alt)
+
+    assert rows == []
+
+
+def test_for_allele_rows_answers_the_scores_asked_in_the_order_asked(
+    repeated_alleles: AlleleScore,
+) -> None:
+    with repeated_alleles.open() as score:
+        rows = score.get_allele_scores_for_allele_rows(
+            "1", 10, "A", "C", scores=["id", "freq"])
+
+    assert rows == [("ac", 0.2), ("ac2", 0.5)]
+
+
+def test_for_allele_rows_does_not_answer_a_row_starting_elsewhere(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Exact on the position: a row at 8 whose span reaches 10 is not
+    the allele at 10, even with the same nucleotides."""
+    spanning = build_allele_score_from_resource(
+        an_allele_score()
+        .with_score("freq", "float")
+        .with_data("""
+            chrom  pos_begin  pos_end  reference  alternative  freq
+            1      8          12       A          C            0.7
+            1      10         10       A          C            0.2
+        """)
+        .build_resource(tmp_path))
+
+    with spanning.open() as score:
+        rows = score.get_allele_scores_for_allele_rows("1", 10, "A", "C")
+
+    assert rows == [(0.2,)]
+
+
+def test_in_region_rows_yields_one_entry_per_row_in_position_order(
+    repeated_alleles: AlleleScore,
+) -> None:
+    """Both repeated rows, each with its nucleotides, every score."""
+    with repeated_alleles.open() as score:
+        entries = list(score.get_allele_scores_in_region_rows("1", 10, 16))
+
+    assert entries == [
+        AlleleEntry(10, "A", "C", (0.2, "ac")),
+        AlleleEntry(10, "A", "C", (0.5, "ac2")),
+        AlleleEntry(16, "C", "T", (0.3, "ct")),
+    ]
+
+
+@pytest.mark.parametrize(("start", "end", "condition"), [
+    (200, 300, None),
+    (10, 16, "freq > 2.0"),
+])
+def test_in_region_rows_is_exhausted_for_absent_and_all_filtered(
+    repeated_alleles: AlleleScore,
+    start: int, end: int, condition: str | None,
+) -> None:
+    """A generator that yields nothing -- not ``None`` -- for a region no
+    row overlaps and for one whose every row the filter rejected."""
+    with repeated_alleles.open() as score:
+        score_filter = (
+            None if condition is None else score.compile_filter(condition))
+        entries = score.get_allele_scores_in_region_rows(
+            "1", start, end, score_filter=score_filter)
+
+        assert entries is not None
+        assert list(entries) == []
+
+
+def test_in_region_rows_yields_only_the_rows_the_filter_keeps(
+    repeated_alleles: AlleleScore,
+) -> None:
+    with repeated_alleles.open() as score:
+        entries = list(score.get_allele_scores_in_region_rows(
+            "1", 10, 16, scores=["freq"],
+            score_filter=score.compile_filter("freq > 0.25")))
+
+    assert entries == [
+        AlleleEntry(10, "A", "C", (0.5,)),
+        AlleleEntry(16, "C", "T", (0.3,)),
+    ]
+
+
+# The four unreduced reads, each called on an EMPTY region (or an allele
+# no row carries) of contig ``1``, so a refusal cannot hide behind data.
+# Calling is all the test does: a generator read must refuse before it is
+# iterated.
+_ROWS_READS = {
+    "for_allele_rows": lambda opened, chrom, **kw: (
+        opened.get_allele_scores_for_allele_rows(chrom, 200, "A", "C", **kw)),
+    "for_allele_row_singular": lambda opened, chrom, **kw: (
+        opened.get_allele_score_for_allele_rows(chrom, 200, "A", "C", **kw)),
+    "in_region_rows": lambda opened, chrom, **kw: (
+        opened.get_allele_scores_in_region_rows(chrom, 200, 300, **kw)),
+    "in_region_row_singular": lambda opened, chrom, **kw: (
+        opened.get_allele_score_in_region_rows(chrom, 200, 300, **kw)),
+}
+
+
+@pytest.mark.parametrize("read", sorted(_ROWS_READS))
+def test_an_unknown_contig_is_refused_by_every_rows_read_on_the_call(
+    repeated_alleles: AlleleScore, read: str,
+) -> None:
+    with repeated_alleles.open() as score, pytest.raises(
+            ValueError, match="not among the available chromosomes"):
+        _ROWS_READS[read](score, "2", **_score_kwarg(read, "freq"))
+
+
+@pytest.mark.parametrize("read", sorted(_ROWS_READS))
+def test_a_foreign_filter_is_refused_by_every_rows_read_on_the_call(
+    repeated_alleles: AlleleScore, tmp_path: pathlib.Path, read: str,
+) -> None:
+    other = build_allele_score_from_resource(
+        an_allele_score()
+        .with_score("freq", "float")
+        .with_data("""
+            chrom  pos_begin  reference  alternative  freq
+            1      10         A          G            0.9
+        """)
+        .build_resource(tmp_path / "other"))
+
+    with repeated_alleles.open() as score, other.open() as other_score:
+        foreign = other_score.compile_filter("freq > 0.15")
+
+        with pytest.raises(ScoreFilterError, match="compiled against"):
+            _ROWS_READS[read](
+                score, "1", score_filter=foreign,
+                **_score_kwarg(read, "freq"))
+
+
+@pytest.mark.parametrize("read", sorted(_ROWS_READS))
+def test_an_unknown_score_is_refused_by_every_rows_read_on_the_call(
+    repeated_alleles: AlleleScore, read: str,
+) -> None:
+    """With the valid ids listed -- the singulars through
+    ``_resolve_single_score``, which passes a named id on to the same
+    check."""
+    with repeated_alleles.open() as score, pytest.raises(
+            ValueError,
+            match=r"score 'nope' is not defined by resource '[^']*'; "
+                  r"it has \['freq', 'id'\]"):
+        _ROWS_READS[read](score, "1", **_score_kwarg(read, "nope"))
+
+
+def _score_kwarg(read: str, score_id: str) -> dict[str, Any]:
+    if read.endswith("_singular"):
+        return {"score": score_id}
+    return {"scores": [score_id]}
+
+
+def test_the_singular_for_allele_read_answers_bare_values(
+    repeated_alleles: AlleleScore,
+) -> None:
+    with repeated_alleles.open() as score:
+        values = score.get_allele_score_for_allele_rows(
+            "1", 10, "A", "C", score="id")
+
+    assert values == ["ac", "ac2"]
+
+
+def test_the_singular_region_read_yields_pos_ref_alt_value(
+    repeated_alleles: AlleleScore,
+) -> None:
+    with repeated_alleles.open() as score:
+        rows = list(score.get_allele_score_in_region_rows(
+            "1", 10, 16, score="freq"))
+
+    assert rows == [(10, "A", "C", 0.2), (10, "A", "C", 0.5),
+                    (16, "C", "T", 0.3)]
+
+
+@pytest.mark.parametrize("read", [
+    "for_allele_row_singular", "in_region_row_singular"])
+def test_a_singular_rows_read_refuses_no_score_on_a_multi_score_resource(
+    repeated_alleles: AlleleScore, read: str,
+) -> None:
+    with repeated_alleles.open() as score, pytest.raises(
+            ValueError,
+            match=r"defines \['freq', 'id'\]; a singular read can resolve "
+                  r"score=None only when there is exactly one"):
+        _ROWS_READS[read](score, "1")
+
+
+def test_a_singular_rows_read_needs_no_score_on_a_single_score_resource(
+    tmp_path: pathlib.Path,
+) -> None:
+    single = build_allele_score_from_resource(
+        an_allele_score()
+        .with_score("freq", "float")
+        .with_data("""
+            chrom  pos_begin  reference  alternative  freq
+            1      10         A          C            0.2
+        """)
+        .build_resource(tmp_path))
+
+    with single.open() as score:
+        assert score.get_allele_score_for_allele_rows(
+            "1", 10, "A", "C") == [0.2]
+        assert list(score.get_allele_score_in_region_rows("1", 1, 20)) == [
+            (10, "A", "C", 0.2)]
+
+
+_ROWS_ORACLE_FILTERS = [None, "freq > 0.3", "freq > 2.0"]
+
+
+@pytest.mark.parametrize("condition", _ROWS_ORACLE_FILTERS)
+def test_mem_and_tabix_answer_the_same_for_allele_rows(
+    tmp_path: pathlib.Path, condition: str | None,
+) -> None:
+    """The repeated allele, a shared position with another alt, and an
+    allele no row carries -- unfiltered, filtered to one row, filtered to
+    none -- through both the plural and the singular."""
+    alleles = [
+        (10, "A", "C"), (10, "A", "G"), (10, "A", "T"), (16, "C", "T"),
+        (30, "G", "A"),
+    ]
+    answers = []
+    for tabix in (False, True):
+        score = _oracle_score(tmp_path / f"tabix-{tabix}", tabix=tabix)
+        with score.open() as opened:
+            score_filter = (
+                None if condition is None
+                else opened.compile_filter(condition))
+            answers.append([
+                (
+                    opened.get_allele_scores_for_allele_rows(
+                        "1", pos, ref, alt, score_filter=score_filter),
+                    opened.get_allele_score_for_allele_rows(
+                        "1", pos, ref, alt, score="id",
+                        score_filter=score_filter),
+                )
+                for pos, ref, alt in alleles
+            ])
+
+    mem, indexed = answers
+    assert mem == indexed
+    if condition is None:
+        assert mem[0] == (
+            [(0.2, "ac", True), (0.5, "ac2", False)], ["ac", "ac2"])
+
+
+@pytest.mark.parametrize("condition", _ROWS_ORACLE_FILTERS)
+@pytest.mark.parametrize(("start", "end"), [(10, 16), (17, 39), (1, 100)])
+def test_mem_and_tabix_answer_the_same_in_region_rows(
+    tmp_path: pathlib.Path, condition: str | None, start: int, end: int,
+) -> None:
+    answers = []
+    for tabix in (False, True):
+        score = _oracle_score(tmp_path / f"tabix-{tabix}", tabix=tabix)
+        with score.open() as opened:
+            score_filter = (
+                None if condition is None
+                else opened.compile_filter(condition))
+            plural = list(opened.get_allele_scores_in_region_rows(
+                "1", start, end, score_filter=score_filter))
+            singular = list(opened.get_allele_score_in_region_rows(
+                "1", start, end, score="freq", score_filter=score_filter))
+            answers.append((plural, singular))
+
+    mem, indexed = answers
+    assert mem == indexed
+    if (start, end, condition) == (10, 16, None):
+        assert [entry[:3] for entry in mem[0]] == [
+            (10, "A", "C"), (10, "A", "C"), (10, "A", "G"),
+            (16, "C", "T"), (16, "C", "T")]
