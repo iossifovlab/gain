@@ -234,6 +234,51 @@ task recomputes its whole track. Chunk names, task ids, the writer and
 chunk sharing between run definitions all stay as they were; a whole-run
 bundle simply gets an id spanning its first to its last region.
 
+**Amended by #1325 (2026-09-30): a task binds a *job*, and the binding is
+a context manager; `bin_track` is gone.** This reverses, on purpose, the
+generator shape the #1301 amendment introduced, while keeping everything
+that amendment bought. `Binner.parse_entry` now resolves an entry into
+*jobs* — what one task binds to, each knowing its tracks at parse time —
+and `Binner.bind(job, grr)` returns a context manager whose value answers
+`bin_region(region, bin_size)` with a float64 block of shape
+`(bins of the region, tracks of the job)`. The task function holds the
+binding in a plain `with`, asks for each region of its bundle in turn,
+and saves column *i* of each block to track *i*'s chunk before asking for
+the next — so it is still one resource open per task and one region of
+memory, and a block of any other shape fails the task before any of that
+region's chunks is written. `RunDefinition` carries the jobs; its flat
+track list, which the writer and `/tracks` read, is every job's tracks in
+job order. A `position_score_binner` job holds exactly one track, so
+tracks, their order, task ids, chunk names and the file are unchanged —
+checked byte for byte against the pre-change tool at the default budget,
+1 and 0.
+
+Why the generator went:
+
+- **The lifetime was prose, not type.** A generator holding a resource
+  across its yields is released only when exhausted or closed, and a
+  failed save keeps the exception, whose traceback keeps the suspended
+  generator. So the caller had to wrap it in `contextlib.closing`, and
+  why was explained in two docstrings. A context manager makes the
+  release the `with`'s job, and the type says so.
+- **The `Generator` return type confined every plugin.** `closing` calls
+  `.close()` unconditionally, so the protocol had to name `Generator`:
+  a custom iterator class, or a plain iterator without `close()`, was
+  a type error or an `AttributeError` at the end of the `with`. `bind`
+  may return any context manager, from any class.
+- **Yield order was unenforced.** The caller paired arrays to regions
+  with `zip(..., strict=True)`, which counts but does not order, so a
+  binner yielding out of turn wrote good arrays under the wrong names.
+  The caller now names the region it asks for, so there is no order to
+  keep.
+
+The job, not the track, is the unit because a binner that reads several
+tracks from one resource open (the planned `fragment_score_binner`,
+#1203) needs the task to hand it all of them at once; the caller already
+saves a multi-column block without assuming one track per job.
+`.out-of-scope/binner-lifetime-protocol.md`, which recorded the earlier
+decline of this change pending a second binner kind, is removed with it.
+
 ### The read path is `get_scores_in_bins`, unchanged — decided by measurement (D14)
 
 The binner consumes `PositionScore.get_scores_in_bins` as it stands; it is
