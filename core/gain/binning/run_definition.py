@@ -164,11 +164,17 @@ def _resolve_jobs(
                 f"registered kinds: {', '.join(sorted(kinds))}")
         for job in kinds[kind].parse_entry(label, entry_config, grr):
             # A task is named by its job's first track and writes one
-            # chunk per track, so a job needs at least one.
+            # chunk per track, so a job needs at least one; and the graph
+            # finds the binner by the kind the job names.
             if not job.tracks:
                 raise RunDefinitionError(
                     f"{label}: {kind} resolved the entry into a job with "
                     f"no tracks; every job needs at least one")
+            if job.binner != kind:
+                raise RunDefinitionError(
+                    f"{label}: {kind} resolved the entry into a job bound "
+                    f"by {job.binner!r}; a job is bound by the kind that "
+                    f"produced it")
             jobs.append((label, job))
     # Naming reads every track of the run at once; the named tracks come
     # back in the order they went in, so each job takes its own back.

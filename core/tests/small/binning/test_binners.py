@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import numpy as np
+import pytest
 import pytest_mock
 from gain.binning.binners import BinningJob, PositionScoreBinner, Track
 from gain.genomic_resources.genomic_scores.position import PositionScore
@@ -106,6 +107,26 @@ def test_a_binding_closes_the_score_when_the_with_ends(
         assert score.is_open()
 
     assert not score.is_open()
+
+
+def test_a_binding_closes_the_score_when_the_with_fails(
+    repo: GenomicResourceRepo, mocker: pytest_mock.MockerFixture,
+) -> None:
+    # A task that fails mid-bundle -- a chunk it cannot save -- leaves the
+    # binding through an exception, and the score is closed on that path
+    # as on a normal exit.
+    closes = mocker.spy(PositionScore, "close")
+
+    def fail_inside_the_binding() -> None:
+        with PositionScoreBinner.bind(
+                a_job(scores_one("max")), repo) as bound:
+            bound.bin_region(BedRegion("chr1", 1, 10), BIN_SIZE)
+            raise OSError("chunk not saved")
+
+    with pytest.raises(OSError, match="chunk not saved"):
+        fail_inside_the_binding()
+
+    assert closes.call_count == 1
 
 
 def test_a_binding_opens_the_score_once_however_many_regions(

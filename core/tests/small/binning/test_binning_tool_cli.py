@@ -14,7 +14,13 @@ import pytest
 import pytest_mock
 from gain import __version__
 from gain.binning.binners import Binner, BinningJob, Track
-from gain.binning.cli import _bin_chunks, _chunk_path, cli
+from gain.binning.cli import (
+    _bin_chunks,
+    _build_task_graph,
+    _chunk_path,
+    cli,
+)
+from gain.binning.run_definition import RunDefinition
 from gain.genomic_resources import genomic_context as gc_mod
 from gain.genomic_resources.genomic_context_base import (
     GC_REFERENCE_GENOME_KEY,
@@ -26,6 +32,9 @@ from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_resource,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.repository_factory import (
+    build_genomic_resource_repository,
+)
 from gain.genomic_resources.testing.builders import a_position_score
 from gain.utils.regions import BedRegion
 
@@ -803,6 +812,55 @@ def test_a_wrong_shaped_block_fails_the_task_and_writes_no_chunk(
     assert not pathlib.Path(
         _chunk_path(chunk_dir, TRACK, region, 10)).exists()
     assert binding.closed
+
+
+def test_a_task_declares_a_chunk_per_track_of_its_job_and_region(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path,
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A task's declared outputs are what the executor checks to decide
+    # whether it must run again, so they are every chunk the task writes:
+    # one per track of its job and region of its bundle -- a two-track
+    # job's second column included.
+    other = replace(TRACK, name="scores/two", resource_id="scores/two")
+    lone = replace(TRACK, name="scores/one:mean", aggregator="mean")
+    regions = [BedRegion("chr1", 1, 10), BedRegion("chr1", 11, 20)]
+    run = RunDefinition(
+        input_reference_genome="genome", bin_size=10, regions=regions,
+        jobs=[
+            BinningJob(binner="stub_binner", tracks=(TRACK, other)),
+            BinningJob(binner="stub_binner", tracks=(lone,)),
+        ])
+    monkeypatch.setattr(
+        "gain.binning.cli.discover_binner_kinds",
+        lambda: {"stub_binner": a_stub_binner(StubBinding(one_bin_of(1.0)))})
+    work_dir = tmp_path / "work"
+    chunk_dir = str(work_dir / "chunks")
+    # The graph hands its workers the repository's definition, so it is
+    # given one built the way ``--grr-directory`` builds it.
+    grr = build_genomic_resource_repository({
+        "id": "local", "type": "directory", "directory": str(grr_dir)})
+
+    graph = _build_task_graph(run, {
+        "run_definition": str(tmp_path / "run.yaml"),
+        "work_dir": str(work_dir),
+        "output": str(tmp_path / "out.h5"),
+        "task_budget": 0,
+    }, grr)
+
+    declared = {
+        task.task_id: graph.get_task_desc(task).output_files
+        for task in graph.tasks if task.task_id != "write_hdf5"
+    }
+    assert declared == {
+        "bin_scores_one_s_max_none_bs10_chr1_1_chr1_20": [
+            _chunk_path(chunk_dir, track, region, 10)
+            for region in regions for track in (TRACK, other)
+        ],
+        "bin_scores_one_s_mean_none_bs10_chr1_1_chr1_20": [
+            _chunk_path(chunk_dir, lone, region, 10) for region in regions
+        ],
+    }
 
 
 @pytest.mark.parametrize("dtype", [np.int64, np.float32])
