@@ -873,3 +873,29 @@ def test_mem_and_tabix_answer_the_same_in_region_rows(
         assert [entry[:3] for entry in mem[0]] == [
             (10, "A", "C"), (10, "A", "C"), (10, "A", "G"),
             (16, "C", "T"), (16, "C", "T")]
+
+
+@pytest.mark.parametrize("tabix", [False, True])
+def test_an_unstarted_region_rows_read_does_not_cut_short_another(
+    tmp_path: pathlib.Path, tabix: bool,
+) -> None:
+    """Creating a rows generator reads nothing: two made before either is
+    iterated each answer their whole region, on both backends -- as two
+    unstarted ``fetch_records`` generators do."""
+    score = _oracle_score(tmp_path, tabix=tabix)
+    with score.open() as opened:
+        first = opened.get_allele_scores_in_region_rows(
+            "1", 10, 16, scores=["freq"])
+        second = opened.get_allele_score_in_region_rows(
+            "1", 30, 40, score="freq")
+        interleaved = list(first)
+        later = list(second)
+
+    assert interleaved == [
+        AlleleEntry(10, "A", "C", (0.2,)),
+        AlleleEntry(10, "A", "C", (0.5,)),
+        AlleleEntry(10, "A", "G", (0.1,)),
+        AlleleEntry(16, "C", "T", (0.3,)),
+        AlleleEntry(16, "C", "T", (0.3,)),
+    ]
+    assert later == [(40, "G", "A", 0.9)]

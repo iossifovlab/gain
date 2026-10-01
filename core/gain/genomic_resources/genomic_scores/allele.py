@@ -620,6 +620,18 @@ class AlleleScore(GenomicScore):
         every other allele read refuses it: answering ``None`` would make
         a caller's typo indistinguishable from real absent data.
         """
+        self._check_allele_region_request(chrom, score_filter)
+        return self._walk_allele_records(
+            chrom, pos_begin, pos_end, score_filter)
+
+    def _check_allele_region_request(
+        self, chrom: str, score_filter: ScoreFilter | None,
+    ) -> None:
+        """Refuse an unknown contig or a foreign filter; read nothing.
+
+        The checks of :meth:`_selected_allele_records`, separable so a
+        lazy read can run them on the call and defer the walk.
+        """
         if not self.has_chromosome(chrom):
             raise ValueError(
                 f"{chrom} is not among the available chromosomes for "
@@ -627,6 +639,14 @@ class AlleleScore(GenomicScore):
         if score_filter is not None:
             score_filter.require_owner(self)
 
+    def _walk_allele_records(
+        self, chrom: str, pos_begin: int | None, pos_end: int | None,
+        score_filter: ScoreFilter | None,
+    ) -> Iterator[Record] | None:
+        """The walk of :meth:`_selected_allele_records`, request unchecked.
+
+        Starts the read: the peek takes the first record off the table.
+        """
         overlapping = self.fetch_records(chrom, pos_begin, pos_end)
         first = next(overlapping, None)
         if first is None:
@@ -780,9 +800,11 @@ class AlleleScore(GenomicScore):
 
         The REQUEST is checked when this is called; the READING is lazy.  An
         unknown score id, an unknown contig and a filter compiled for
-        another resource are refused before a generator is returned.  As
-        with every region read of a table, one live read per score at a
-        time: materialise what has to outlive the next read.
+        another resource are refused before a generator is returned.  The
+        table is not read until the first ``next()``, so several unstarted
+        generators may be created at once; as with every region read of a
+        table, iterate one at a time -- materialise what has to outlive
+        the next read.
         """
         return self._allele_entries(
             chrom, start, end, scores=scores, score_filter=score_filter)
@@ -838,18 +860,24 @@ class AlleleScore(GenomicScore):
 
         :meth:`_selected_allele_records` -- the walk the folding read
         reduces -- with its absence answer turned into an empty stream.
+        The request is checked here, on the call; the walk itself starts
+        on the first ``next()``, so an unstarted generator holds no read
+        of the table and several may be created before any is iterated.
         """
         score_defs = self._resolve_score_defs(scores)
-        records = self._selected_allele_records(
-            chrom, start, end, score_filter)
-        if records is None:
-            records = iter(())
-        return self._entries_of(records, score_defs)
+        self._check_allele_region_request(chrom, score_filter)
+        return self._entries_of(
+            chrom, start, end, score_filter, score_defs)
 
     def _entries_of(
-        self, records: Iterator[Record], score_defs: list[GenomicScoreDef],
+        self, chrom: str, start: int, end: int,
+        score_filter: ScoreFilter | None,
+        score_defs: list[GenomicScoreDef],
     ) -> Generator[AlleleEntry, None, None]:
-        """Read each record as an :class:`AlleleEntry`."""
+        """Walk the region and read each record as an :class:`AlleleEntry`."""
+        records = self._walk_allele_records(chrom, start, end, score_filter)
+        if records is None:
+            return
         extract = self._extract_value
         for record in records:
             yield AlleleEntry(
