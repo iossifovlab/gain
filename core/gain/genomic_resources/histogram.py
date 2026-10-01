@@ -4,7 +4,9 @@ Currently we support only genomic scores histograms.
 """
 from __future__ import annotations
 
+import gzip
 import importlib.util
+import io
 import json
 import pathlib
 import sys
@@ -151,6 +153,10 @@ class NumberHistogramConfig:
 
 
 DEFAULT_DISPLAYED_VALUES_COUNT = 20
+
+#: The gzip level and suffix of a full histogram stored gzipped (ADR 0032).
+GZIPPED_HISTOGRAM_COMPRESSLEVEL = 6
+GZIPPED_JSON_SUFFIX = ".json.gz"
 
 
 @dataclass
@@ -1102,6 +1108,20 @@ class CategoricalHistogram(Statistic):
         """Render the full histogram as the JSON stored in the resource."""
         return json.dumps(self.to_dict(), indent=2)
 
+    def serialize_gzipped(self) -> bytes:
+        """Render :meth:`serialize`'s JSON as deterministic gzip bytes.
+
+        No timestamp (``mtime=0``), no file name and a fixed level, so the
+        same histogram gives the same bytes and md5 on every rebuild.
+        """
+        buffer = io.BytesIO()
+        with gzip.GzipFile(
+            filename="", mode="wb", fileobj=buffer,
+            compresslevel=GZIPPED_HISTOGRAM_COMPRESSLEVEL, mtime=0,
+        ) as gzfile:
+            gzfile.write(self.serialize().encode("utf-8"))
+        return buffer.getvalue()
+
     def serialize_truncated(self) -> str:
         """Serialize the truncated sidecar form of this histogram.
 
@@ -1306,11 +1326,17 @@ def load_histogram(
 ) -> Histogram:
     """Load and return a histogram in a resource.
 
-    On an error or missing histogram, an appropriate NullHistogram is returned.
+    A ``.json.gz`` file is gzipped JSON.  On an error or missing
+    histogram, an appropriate NullHistogram is returned.
     """
+    gzipped = filename.endswith(GZIPPED_JSON_SUFFIX)
     try:
-        with resource.open_raw_file(filename) as infile:
-            content = infile.read()
+        if gzipped:
+            with resource.open_raw_file(filename, mode="rb") as infile:
+                content = gzip.decompress(infile.read()).decode("utf-8")
+        else:
+            with resource.open_raw_file(filename) as infile:
+                content = infile.read()
     except FileNotFoundError:
         # Handled, not fatal: a null histogram is returned.  So no
         # traceback -- during a repair run this is an expected consequence
@@ -1325,7 +1351,7 @@ def load_histogram(
         ))
     if filename.endswith(".yaml"):
         hist_data = yaml.safe_load(content)
-    elif filename.endswith(".json"):
+    elif gzipped or filename.endswith(".json"):
         hist_data = json.loads(content)
     else:
         logger.error(

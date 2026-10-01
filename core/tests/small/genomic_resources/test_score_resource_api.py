@@ -33,6 +33,12 @@ ALLOWED_PUBLIC_METHODS = {
     "get_all_scores",
     "get_score_definition",
     "get_histogram_filename",
+    # The names a statistics build writes a score's histogram under -- the
+    # plain and gzipped full files and the truncated sidecar (gain#1733).
+    # Both families' builds save through them.
+    "get_plain_histogram_filename",
+    "get_gzipped_histogram_filename",
+    "get_truncated_histogram_filename",
     # What the DEFINITION says the histogram is -- the stated block or the
     # value type's default -- shared by both families since both carry a
     # ``hist_conf`` (gain#1025).  A catalogue fact, read without statistics.

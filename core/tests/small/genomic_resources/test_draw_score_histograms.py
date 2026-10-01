@@ -6,7 +6,10 @@ import pathlib
 import pytest
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.draw_score_histograms import main
-from gain.genomic_resources.histogram import NullHistogram
+from gain.genomic_resources.histogram import (
+    CategoricalHistogram,
+    NullHistogram,
+)
 from gain.genomic_resources.repository import GR_CONF_FILE_NAME
 from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
@@ -144,6 +147,42 @@ def test_draws_categorical_histogram(tmp_path: pathlib.Path) -> None:
     main(["-R", str(tmp_path), "-r", "scores/effect"])
 
     assert image.exists()
+
+
+PLOT_WHAT_IT_WAS_GIVEN = """
+def plot(outfile, histogram, score_id, small_desc, large_desc):
+    outfile.write(
+        f"{len(histogram.raw_values)} truncated={histogram.truncated}"
+        .encode())
+"""
+
+
+def test_redraws_a_custom_plot_from_a_gzipped_full_histogram(
+        tmp_path: pathlib.Path) -> None:
+    """A categorical score past the limit stores its full histogram as
+    ``.json.gz``; the custom ``plot_function`` still gets all of it."""
+    past_limit = CategoricalHistogram.UNIQUE_VALUES_LIMIT + 50
+    data_rows = "\n".join(
+        f"1 {10 + i} {10 + i} v{i:03d}" for i in range(past_limit))
+    a_grr().with_resource(
+        "scores/cells",
+        a_position_score()
+        .with_score("cell", "str")
+        .with_histogram({
+            "type": "categorical", "value_order": [],
+            "plot_function": "plot.py:plot"})
+        .with_data("chrom pos_begin pos_end cell\n" + data_rows),
+    ).build_repo(tmp_path)
+    (tmp_path / "scores/cells/plot.py").write_text(PLOT_WHAT_IT_WAS_GIVEN)
+    statistics = tmp_path / "scores/cells/statistics"
+    build_statistics_without_images(tmp_path, "scores/cells")
+    assert (statistics / "histogram_cell.json.gz").exists()
+    assert not (statistics / "histogram_cell.json").exists()
+
+    main(["-R", str(tmp_path), "-r", "scores/cells"])
+
+    assert (statistics / "histogram_cell.png").read_bytes() == \
+        f"{past_limit} truncated=False".encode()
 
 
 def test_skips_score_with_null_histogram(tmp_path: pathlib.Path) -> None:
