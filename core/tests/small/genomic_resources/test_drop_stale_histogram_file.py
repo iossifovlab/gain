@@ -8,7 +8,8 @@ import pathlib
 
 import pytest
 from gain.genomic_resources.histogram import drop_stale_histogram_file
-from gain.genomic_resources.testing import build_filesystem_test_resource
+from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.testing.builders import a_basic_resource
 
 STALE = "statistics/histogram_x.json"
 DVC_WARNING = (
@@ -16,12 +17,12 @@ DVC_WARNING = (
     f"run 'dvc remove {STALE}.dvc' to drop it")
 
 
-def a_resource_with(tmp_path: pathlib.Path, *files: str) -> None:
-    (tmp_path / "genomic_resource.yaml").write_text("type: basic\n")
+def a_resource_with(
+        tmp_path: pathlib.Path, *files: str) -> GenomicResource:
+    builder = a_basic_resource()
     for name in files:
-        path = tmp_path / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("{}\n")
+        builder = builder.with_file(name, "{}\n")
+    return builder.build_resource(tmp_path)
 
 
 def files_of(tmp_path: pathlib.Path) -> set[str]:
@@ -35,8 +36,7 @@ def files_of(tmp_path: pathlib.Path) -> set[str]:
 
 def test_a_pointer_without_its_blob_is_reported_and_kept(
         tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture) -> None:
-    a_resource_with(tmp_path, f"{STALE}.dvc")
-    resource = build_filesystem_test_resource(tmp_path)
+    resource = a_resource_with(tmp_path, f"{STALE}.dvc")
     before = files_of(tmp_path)
 
     drop_stale_histogram_file(resource, STALE)
@@ -47,8 +47,7 @@ def test_a_pointer_without_its_blob_is_reported_and_kept(
 
 def test_a_pulled_dvc_tracked_file_is_reported_and_kept(
         tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture) -> None:
-    a_resource_with(tmp_path, STALE, f"{STALE}.dvc")
-    resource = build_filesystem_test_resource(tmp_path)
+    resource = a_resource_with(tmp_path, STALE, f"{STALE}.dvc")
     before = files_of(tmp_path)
 
     drop_stale_histogram_file(resource, STALE)
@@ -59,8 +58,7 @@ def test_a_pulled_dvc_tracked_file_is_reported_and_kept(
 
 def test_an_untracked_file_is_deleted_quietly(
         tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture) -> None:
-    a_resource_with(tmp_path, STALE)
-    resource = build_filesystem_test_resource(tmp_path)
+    resource = a_resource_with(tmp_path, STALE)
     before = files_of(tmp_path)
 
     drop_stale_histogram_file(resource, STALE)
@@ -71,8 +69,7 @@ def test_an_untracked_file_is_deleted_quietly(
 
 def test_a_missing_file_is_a_silent_no_op(
         tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture) -> None:
-    a_resource_with(tmp_path)
-    resource = build_filesystem_test_resource(tmp_path)
+    resource = a_resource_with(tmp_path)
     before = files_of(tmp_path)
 
     drop_stale_histogram_file(resource, STALE)
