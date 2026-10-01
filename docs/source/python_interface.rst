@@ -67,7 +67,7 @@ and printed.
     from gain.grr import build_genomic_resource_repository, build_reference_genome_from_resource_id
 
     grr = build_genomic_resource_repository()
-    genome =build_reference_genome_from_resource_id("hg38/genomes/GRCh38-hg38", grr).open()
+    genome = build_reference_genome_from_resource_id("hg38/genomes/GRCh38-hg38", grr).open()
 
     # Define canonical chromosomes
     canonical_chroms = {f"chr{i}" for i in range(1, 23)}
@@ -141,12 +141,12 @@ combined to extract and visualize signal over a biologically meaningful region.
 
     grr = build_genomic_resource_repository()
 
-    gene_models =build_gene_models_from_resource_id("hg38/gene_models/MANE/1.5", grr).load()
+    gene_models = build_gene_models_from_resource_id("hg38/gene_models/MANE/1.5", grr).load()
     tx = gene_models.gene_models_by_gene_name(GENE_NAME)[0]
     chrom, start, end = tx.chrom, tx.tx[0], tx.tx[1]
     print(f"{GENE_NAME} is on {chrom}, from position {start} to {end}.")
 
-    score =build_score_from_resource_id("hg38/scores/phastCons100way", grr).open()
+    score = build_score_from_resource_id("hg38/scores/phastCons100way", grr).open()
 
     xs = []
     ys = []

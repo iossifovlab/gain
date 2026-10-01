@@ -71,12 +71,8 @@ EXPECTED: dict[str, str] = {
 
 
 def test_all_is_exactly_the_public_surface() -> None:
-    """A name added to or dropped from ``__all__`` fails here."""
+    """A name added to, dropped from or repeated in ``__all__`` fails here."""
     assert sorted(gain.grr.__all__) == sorted(EXPECTED)
-
-
-def test_all_has_no_duplicates() -> None:
-    assert len(gain.grr.__all__) == len(set(gain.grr.__all__))
 
 
 @pytest.mark.parametrize("name", sorted(EXPECTED))
