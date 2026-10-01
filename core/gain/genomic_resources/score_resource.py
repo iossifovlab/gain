@@ -28,6 +28,7 @@ from typing import Any, ClassVar
 from urllib.parse import quote
 
 from gain.genomic_resources.histogram import (
+    GZIPPED_JSON_SUFFIX,
     NUMBER_HISTOGRAM_VALUE_TYPES,
     Histogram,
     HistogramConfig,
@@ -184,13 +185,54 @@ class ScoreResource[ScoreDefT: ScoreDef](ResourceConfigValidationMixin):
             return (hist.min_value, hist.max_value)
         return None
 
-    def get_histogram_filename(self, score_id: str) -> str:
-        """Return the histogram filename for a score."""
+    def get_plain_histogram_filename(self, score_id: str) -> str:
+        """Return the uncompressed full-histogram filename for a score.
+
+        ``statistics/histogram_<id>.json``, or the legacy ``.yaml`` when
+        the manifest lists one.  This is the name every histogram within
+        ``UNIQUE_VALUES_LIMIT`` is stored under; its truncated sidecar is
+        derived from it.
+        """
         self._guard_score_id(score_id)
         filename = f"statistics/histogram_{score_id}.yaml"
         if filename in self.resource.get_manifest():
             return filename
         return f"statistics/histogram_{score_id}.json"
+
+    def get_gzipped_histogram_filename(self, score_id: str) -> str:
+        """Return the gzipped full-histogram filename for a score.
+
+        A categorical histogram past ``UNIQUE_VALUES_LIMIT`` is stored
+        under this name, next to its plain truncated sidecar (ADR 0032).
+        """
+        self._guard_score_id(score_id)
+        return f"statistics/histogram_{score_id}{GZIPPED_JSON_SUFFIX}"
+
+    def get_truncated_histogram_filename(self, score_id: str) -> str:
+        """Return the truncated-sidecar filename for a score.
+
+        Derived from the plain histogram name whichever encoding the full
+        histogram is stored in, so the sidecar stays where every gain
+        release looks for it.
+        """
+        return truncated_histogram_filename(
+            self.get_plain_histogram_filename(score_id))
+
+    def get_histogram_filename(self, score_id: str) -> str:
+        """Return the filename the full histogram of a score is read from.
+
+        The truncated sidecar decides the encoding: when the manifest lists
+        the sidecar and the gzipped full histogram, that is the file;
+        otherwise it is the plain one (see
+        :meth:`get_plain_histogram_filename`).
+        """
+        plain = self.get_plain_histogram_filename(score_id)
+        manifest = self.resource.get_manifest()
+        gzipped = self.get_gzipped_histogram_filename(score_id)
+        if truncated_histogram_filename(plain) in manifest \
+                and gzipped in manifest:
+            return gzipped
+        return plain
 
     def get_score_histogram(
         self, score_id: str, *, truncated: bool = False,
@@ -218,7 +260,7 @@ class ScoreResource[ScoreDefT: ScoreDef](ResourceConfigValidationMixin):
         if isinstance(hist_conf, NullHistogramConfig):
             return NullHistogram(hist_conf)
         hist_filename = self.get_histogram_filename(score_id)
-        sidecar_filename = truncated_histogram_filename(hist_filename)
+        sidecar_filename = self.get_truncated_histogram_filename(score_id)
         if sidecar_filename in self.resource.get_manifest():
             if truncated:
                 # A summary is acceptable, never required: a manifested
