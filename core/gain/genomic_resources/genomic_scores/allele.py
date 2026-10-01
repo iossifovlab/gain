@@ -407,8 +407,8 @@ class AlleleScore(GenomicScore):
     def multiplicity(self) -> AlleleScore.Multiplicity:
         """How many table rows one allele key may have.
 
-        A declaration only, so far: no read consults it yet (gain#1752,
-        gain#1753, gain#1755 do).
+        The allele statistics build reads it: on a ``one`` resource it
+        reports the first allele key that several rows hold.
         """
         return self._multiplicity
 

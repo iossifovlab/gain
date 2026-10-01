@@ -136,15 +136,20 @@ def clean_deprecation_notices() -> None:
 
 LEGACY_VOCABULARY_MARKER = "legacy_vocabulary"
 
+_LEGACY_NOTICE_SENTENCE = \
+    f"stops being accepted in GAIn {LEGACY_VOCABULARY_REMOVAL_RELEASE}"
+
 
 class _DeprecationNoticeRecorder(logging.Handler):
     """Collect the legacy-vocabulary deprecation notices of one test.
 
-    Recognises a notice by the removal release it names, which every one of
-    them carries by construction -- ``warn_deprecated_spelling`` and
-    ``warn_retired_config_key`` render it into the message, and a notice
+    Recognises a notice by the sentence naming its removal release, which
+    every one of them carries by construction -- ``warn_deprecated_spelling``
+    and ``warn_retired_config_key`` render it into the message, and a notice
     that did not say when the spelling stops being accepted would be a
-    defect in its own right.
+    defect in its own right.  The whole sentence rather than the bare
+    release: the allele-multiplicity warning names the same release as the
+    one that enforces it, and is no legacy-vocabulary notice.
     """
 
     def __init__(self) -> None:
@@ -153,7 +158,7 @@ class _DeprecationNoticeRecorder(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         message = record.getMessage()
-        if LEGACY_VOCABULARY_REMOVAL_RELEASE in message:
+        if _LEGACY_NOTICE_SENTENCE in message:
             self.notices.append(message)
 
 
