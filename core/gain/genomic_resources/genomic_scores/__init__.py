@@ -63,7 +63,7 @@ gain#1210 then laid out as this package is, one module per kind -- nor
 the decomposition of the :class:`~.base.GenomicScore` class itself, which
 is gain#1027 and is deliberately sequenced after this split.
 """
-from .allele import AlleleAggregate, AlleleScore, allele_key
+from .allele import AlleleAggregate, AlleleEntry, AlleleScore, allele_key
 from .base import (
     DEFAULT_VALUE_ARRAYS_BATCH_SIZE,
     GenomicScore,
@@ -93,6 +93,7 @@ from .records import (
 __all__ = [
     "DEFAULT_VALUE_ARRAYS_BATCH_SIZE",
     "AlleleAggregate",
+    "AlleleEntry",
     "AlleleRecordArrays",
     "AlleleScore",
     "FragmentAggregate",

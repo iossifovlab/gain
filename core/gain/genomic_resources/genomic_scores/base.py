@@ -609,11 +609,10 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         ``None`` means "all the scores this resource has", which a singular
         method can honour only when there is exactly one.
 
-        Here rather than on the one kind that calls it today: the rule is
-        about what a SINGULAR read can resolve, which is a property of the
-        score rather than of the positions it is read at, and the fragment
-        and allele planes reach for it as they grow singular reads of their
-        own.  Until they do, ``PositionScore`` is its only caller.
+        Here rather than on one kind: the rule is about what a SINGULAR
+        read can resolve, which is a property of the score rather than of
+        the positions it is read at, and the position, fragment and allele
+        planes' singular reads all resolve their ``score`` through it.
         """
         if score is not None:
             return score
