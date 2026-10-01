@@ -107,8 +107,8 @@ is the direct one. An allele score is in one of two modes,
 and :meth:`~gain.genomic_resources.genomic_scores.AlleleScore.alleles_mode`;
 the reads themselves do not consult it. The mode tells the allele score
 annotator how to route a ``VCFAllele``: on a ``substitutions`` resource only a
-substitution is matched exactly, and an indel is reduced over the bases it
-covers; on an ``alleles`` resource every allele is matched exactly.
+substitution is matched exactly, and any other allele (insertion, deletion,
+complex) is reduced over the bases it covers; on an ``alleles`` resource every allele is matched exactly.
 
 :class:`~gain.genomic_resources.genomic_scores.FragmentScore` reads intervals.
 Its method names say exactly which relation to the query region they use —

@@ -345,7 +345,7 @@ That applies to every comparison, including ``!=``: a line carrying no ``AF`` is
 
 **allele attribute**
 
-In addition to score columns, ``source: allele`` is a virtual attribute that returns the matched allele keys as a list of ``chrom:pos:ref:alt`` strings. It lists more than one key only when the annotatable is aggregated over a region -- in ``region`` mode, for a non-``VCFAllele`` annotatable, or for an indel on a ``substitutions`` resource -- where multiple alleles can be matched. The keys are distinct and come in the order the lines were first met -- the resource's own genomic order. A line whose reference or alternative is absent contributes a bare ``chrom:pos`` key.
+In addition to score columns, ``source: allele`` is a virtual attribute that returns the matched allele keys as a list of ``chrom:pos:ref:alt`` strings. It lists more than one key only when the annotatable is aggregated over a region -- in ``region`` mode, for a non-``VCFAllele`` annotatable, or for an allele other than a substitution on a ``substitutions`` resource -- where multiple alleles can be matched. The keys are distinct and come in the order the lines were first met -- the resource's own genomic order. A line whose reference or alternative is absent contributes a bare ``chrom:pos`` key.
 
 .. code:: yaml
 

@@ -750,10 +750,10 @@ class AlleleScoreBuilder(_TableScoreBuilder):
     The resource it emits declares no ``allele_score_mode`` and the
     builder has no knob for it, so it always reads in the default
     ``alleles`` mode.  The allele score annotator routes on that mode --
-    on a ``substitutions`` resource an indel is region-folded rather than
-    matched exactly -- so a fixture that needs a ``substitutions``
-    resource cannot come from this builder; write its
-    ``genomic_resource.yaml`` by hand.
+    on a ``substitutions`` resource any allele other than a substitution
+    is region-folded rather than matched exactly -- so a fixture that
+    needs a ``substitutions`` resource cannot come from this builder;
+    write its ``genomic_resource.yaml`` by hand.
     """
 
     SCORE_TYPE: ClassVar[str] = "allele_score"
