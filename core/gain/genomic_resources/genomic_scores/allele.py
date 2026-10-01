@@ -481,11 +481,13 @@ class AlleleScore(GenomicScore):
         *,
         score_filter: ScoreFilter | None = None,
     ) -> Record | None:
-        """Return the record matching this allele exactly, or None.
+        """Return the first record overlapping ``pos`` with this ref/alt.
 
-        Exact on all four of chrom, position, ref and alt: several records
-        share a position, one per ref/alt pair, so the nucleotides are what
-        pick between them.
+        Exact on ref and alt among the records the table returns for
+        ``pos``, NOT on the position: a record starting earlier whose span
+        reaches ``pos`` matches, and the first match in file order wins.
+        :meth:`get_allele_scores_for_allele_rows` matches the position as
+        well, so on such a table the two answer different rows.
 
         ``score_filter`` -- from :meth:`GenomicScore.compile_filter` -- is
         applied to the matched record, and an allele it rejects reads as
@@ -776,6 +778,10 @@ class AlleleScore(GenomicScore):
         two apart.  An unknown score id, an unknown contig and a filter
         compiled for another resource are refused when this is called.
         Materialised: a point holds a handful of rows.
+
+        Exact on the position as well as the nucleotides: a row starting
+        earlier whose span reaches ``pos`` is not this allele, where
+        :meth:`fetch_allele_scores` matches it.
 
         The region walk of :meth:`get_allele_scores_in_region_rows` at the
         one position.  The requested values are read only off rows

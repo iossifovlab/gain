@@ -643,6 +643,34 @@ def test_for_allele_rows_does_not_answer_a_row_starting_elsewhere(
     assert rows == [(0.2,)]
 
 
+@pytest.mark.parametrize("tabix", [False, True])
+def test_the_two_point_reads_differ_on_a_row_spanning_the_position(
+    tmp_path: pathlib.Path, tabix: bool,
+) -> None:
+    """``fetch_allele_scores`` matches ref/alt among the rows overlapping
+    10, so the 8-12 row, first in the file, is its answer; the rows read
+    is exact on the position too and answers only the row AT 10.  Pinned
+    so the difference is a recorded one while both reads exist."""
+    builder = (
+        an_allele_score()
+        .with_score("freq", "float")
+        .with_data("""
+            chrom  pos_begin  pos_end  reference  alternative  freq
+            1      8          12       A          C            0.7
+            1      10         10       A          C            0.2
+        """))
+    if tabix:
+        builder = builder.with_tabix()
+    score = build_allele_score_from_resource(builder.build_resource(tmp_path))
+
+    with score.open() as opened:
+        legacy = opened.fetch_allele_scores("1", 10, "A", "C")
+        rows = opened.get_allele_scores_for_allele_rows("1", 10, "A", "C")
+
+    assert legacy == {"freq": 0.7}
+    assert rows == [(0.2,)]
+
+
 def test_in_region_rows_yields_one_entry_per_row_in_position_order(
     repeated_alleles: AlleleScore,
 ) -> None:
