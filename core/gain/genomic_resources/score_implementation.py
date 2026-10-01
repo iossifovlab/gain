@@ -30,7 +30,6 @@ from gain.genomic_resources.histogram import (
     NullHistogram,
     drop_stale_histogram_file,
     plot_histogram,
-    truncated_histogram_filename,
 )
 from gain.genomic_resources.repository import (
     GR_INDEX_SCORE_FIELDS,
@@ -103,23 +102,36 @@ def save_and_plot_histograms(
     a histogram now within the limit, the image of a ``NullHistogram``,
     all three of a score absent from ``histograms`` -- is deleted
     rather than left to be served as current.  So is every histogram
-    file of a score id ``score_definitions`` no longer holds.
+    file of a score id ``score_definitions`` no longer holds.  The
+    exception is a gzipped full histogram (``histogram_<id>.json.gz``):
+    nothing here deletes one yet (gain#1734).
+
+    A categorical histogram past ``UNIQUE_VALUES_LIMIT`` is written as
+    deterministic gzipped JSON next to its plain truncated sidecar; every
+    other histogram as plain JSON (ADR 0032).  A full histogram left in the
+    other encoding by an earlier build is not deleted.  Readers usually
+    skip it, because the sidecar decides which encoding loads.  A
+    DVC-tracked sidecar that cannot be dropped, though, makes a stale
+    ``.json.gz`` load after a rebuild back within the limit.  ADR 0032
+    lists these cases.
     """
     proto = resource.proto
     for score_id, histogram in histograms.items():
-        hist_filename = score.get_histogram_filename(score_id)
-        with proto.open_raw_file(
-            resource,
-            hist_filename,
-            mode="wt",
-        ) as outfile:
-            outfile.write(histogram.serialize())
-        sidecar_filename = truncated_histogram_filename(hist_filename)
+        sidecar_filename = score.get_truncated_histogram_filename(score_id)
         if (
             isinstance(histogram, CategoricalHistogram)
             and histogram.unique_values
                 > CategoricalHistogram.UNIQUE_VALUES_LIMIT
         ):
+            # Decided from the histogram in hand, never from the stored
+            # manifest: a first build past the limit has no sidecar
+            # listed yet (ADR 0032).
+            with proto.open_raw_file(
+                resource,
+                score.get_gzipped_histogram_filename(score_id),
+                mode="wb",
+            ) as outfile:
+                outfile.write(histogram.serialize_gzipped())
             with proto.open_raw_file(
                 resource,
                 sidecar_filename,
@@ -127,6 +139,12 @@ def save_and_plot_histograms(
             ) as outfile:
                 outfile.write(histogram.serialize_truncated())
         else:
+            with proto.open_raw_file(
+                resource,
+                score.get_plain_histogram_filename(score_id),
+                mode="wt",
+            ) as outfile:
+                outfile.write(histogram.serialize())
             # A sidecar from an earlier build whose histogram has since
             # shrunk below the limit (or stopped being categorical)
             # would otherwise be served as current by truncated= loads.
@@ -151,20 +169,21 @@ def save_and_plot_histograms(
         # A score the build dropped -- its definition resolves to a
         # null histogram config -- writes nothing, so an earlier
         # build's files would be served as current.
-        hist_filename = score.get_histogram_filename(score_id)
         for filename in (
-            hist_filename,
-            truncated_histogram_filename(hist_filename),
+            score.get_plain_histogram_filename(score_id),
+            score.get_truncated_histogram_filename(score_id),
             score.get_histogram_image_filename(score_id),
         ):
             drop_stale_histogram_file(resource, filename)
     _drop_orphaned_histogram_files(resource, score)
 
 
-#: Every name a score-histogram file takes, with ``{}`` for the score id:
-#: both serialisations (legacy ``.yaml``, current ``.json``), their
-#: truncated sidecars, and the image.  No other statistic writes under
-#: ``statistics/histogram_``.
+#: The score-histogram file names the orphan sweep reconciles, with ``{}``
+#: for the score id: the plain serialisations (legacy ``.yaml``, current
+#: ``.json``), their truncated sidecars, and the image.  The gzipped full
+#: histogram, ``statistics/histogram_{}.json.gz``, is not listed yet, so an
+#: orphaned one is left in place (gain#1734).  No other statistic writes
+#: under ``statistics/histogram_``.
 _HISTOGRAM_FILE_TEMPLATES = (
     "statistics/histogram_{}.json",
     "statistics/histogram_{}.yaml",

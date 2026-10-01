@@ -7,6 +7,7 @@ from itertools import combinations
 from typing import Any
 
 from gain.binning.binners import (
+    BinningJob,
     RunDefinitionError,
     Track,
     check_keys,
@@ -24,12 +25,20 @@ BINS_KEYS = frozenset({"bin_size", "regions"})
 
 @dataclass(frozen=True)
 class RunDefinition:
-    """A parsed run definition with every query resolved."""
+    """A parsed run definition with every query resolved.
+
+    ``jobs`` are what the tasks bind to; ``tracks`` are the output's
+    columns, every job's tracks in job order.
+    """
 
     input_reference_genome: str
     bin_size: int
     regions: list[BedRegion]
-    tracks: list[Track]
+    jobs: list[BinningJob]
+
+    @property
+    def tracks(self) -> list[Track]:
+        return [track for job in self.jobs for track in job.tracks]
 
 
 def parse_run_definition(
@@ -51,7 +60,7 @@ def parse_run_definition(
         input_reference_genome=genome.resource_id,
         bin_size=_resolve_bin_size(bins.get("bin_size")),
         regions=_resolve_regions(bins.get("regions"), genome),
-        tracks=_resolve_tracks(config.get("binners"), grr),
+        jobs=_resolve_jobs(config.get("binners"), grr),
     )
 
 
@@ -134,12 +143,14 @@ def _refuse_overlapping_regions(
                     f"bins.regions[{later}] {notations[later]!r} overlap")
 
 
-def _resolve_tracks(binners: Any, grr: GenomicResourceRepo) -> list[Track]:
+def _resolve_jobs(
+    binners: Any, grr: GenomicResourceRepo,
+) -> list[BinningJob]:
     if not isinstance(binners, list) or not binners:
         raise RunDefinitionError(
             "binners must be a non-empty list of binner entries")
     kinds = discover_binner_kinds()
-    tracks: list[tuple[str, Track]] = []
+    jobs: list[tuple[str, BinningJob]] = []
     for index, entry in enumerate(binners):
         label = f"binners[{index}]"
         if not isinstance(entry, dict) or len(entry) != 1:
@@ -151,10 +162,28 @@ def _resolve_tracks(binners: Any, grr: GenomicResourceRepo) -> list[Track]:
             raise RunDefinitionError(
                 f"{label}: unknown binner kind {kind!r}; "
                 f"registered kinds: {', '.join(sorted(kinds))}")
-        tracks.extend(
-            (label, track)
-            for track in kinds[kind].parse_entry(label, entry_config, grr))
-    return _name_tracks(tracks)
+        for job in kinds[kind].parse_entry(label, entry_config, grr):
+            # A task is named by its job's first track and writes one
+            # chunk per track, so a job needs at least one; and the graph
+            # finds the binner by the kind the job names.
+            if not job.tracks:
+                raise RunDefinitionError(
+                    f"{label}: {kind} resolved the entry into a job with "
+                    f"no tracks; every job needs at least one")
+            if job.binner != kind:
+                raise RunDefinitionError(
+                    f"{label}: {kind} resolved the entry into a job bound "
+                    f"by {job.binner!r}; a job is bound by the kind that "
+                    f"produced it")
+            jobs.append((label, job))
+    # Naming reads every track of the run at once; the named tracks come
+    # back in the order they went in, so each job takes its own back.
+    named = iter(_name_tracks([
+        (label, track) for label, job in jobs for track in job.tracks]))
+    return [
+        replace(job, tracks=tuple(next(named) for _ in job.tracks))
+        for _, job in jobs
+    ]
 
 
 def _name_tracks(tracks: list[tuple[str, Track]]) -> list[Track]:
