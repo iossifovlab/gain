@@ -1398,19 +1398,21 @@ def drop_stale_histogram_file(
 ) -> None:
     """Delete a histogram file an earlier build left in ``resource``.
 
-    A file that is not there is not an error, since a score that never
-    had statistics has nothing to drop.  A DVC-tracked file is left in
-    place with a warning: deleting it alone leaves a pointer the manifest
-    build re-adds an entry from, for a file that is gone.
+    A DVC-tracked file -- one with a ``.dvc`` pointer beside it -- is left
+    in place with a warning, whether or not its blob is pulled: deleting
+    the blob alone leaves a pointer the manifest build re-adds an entry
+    from, for a file that is gone, and a pointer-only checkout still
+    carries that stale entry.  A file that is not there at all is not an
+    error, since a score that never had statistics has nothing to drop.
     """
     proto = resource.proto
-    if not proto.file_exists(resource, filename):
-        return
     if proto.file_exists(resource, f"{filename}{DVC_SUFFIX}"):
         logger.warning(
             "stale <%s> of resource <%s> is DVC-tracked; left in place, "
             "run 'dvc remove %s%s' to drop it",
             filename, resource.resource_id, filename, DVC_SUFFIX)
+        return
+    if not proto.file_exists(resource, filename):
         return
     assert isinstance(proto, ReadWriteRepositoryProtocol)
     proto.delete_resource_file(resource, filename)
