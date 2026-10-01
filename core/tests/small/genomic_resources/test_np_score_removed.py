@@ -27,9 +27,13 @@ by ``test_allele_score_mode_defaults_to_alleles`` and
 ``test_allele_score_mode_substitutions_config`` in ``test_allele_score.py``.
 They are the reason those two behaviours are not re-asserted here: if
 either changed, the refusal below would be handing out a migration that
-does not work, and those tests fail first.
+does not work, and those tests fail first.  What the mode *does* to an
+annotation is pinned here, at the end, because it is the half of the
+advice a holder actually notices: following it keeps an indel's
+``np_score``-era region fold (gain#1748).
 """
 import pytest
+from gain.annotation.annotatable import VCFAllele
 from gain.annotation.annotation_config import (
     AnnotationConfigurationError,
 )
@@ -165,3 +169,64 @@ def test_constructing_an_allele_score_from_a_np_score_resource_is_refused(
     message = str(excinfo.value)
     assert "write 'allele_score' instead" in message
     assert "allele_score_mode: substitutions" in message
+
+
+def _migrated_as_the_refusal_advises(*, with_mode_key: bool) -> dict:
+    """The retired resource, rewritten the way the refusal tells a holder.
+
+    Its data gains a deletion row whose own value (0.01) differs from the
+    fold over the bases the deletion covers (``max`` = 0.03), so the two
+    reads of that deletion cannot be mistaken for each other.
+    """
+    replacement = "type: allele_score"
+    if with_mode_key:
+        replacement += "\n        allele_score_mode: substitutions"
+    config = _RETIRED_NP_SCORE_RESOURCE[GR_CONF_FILE_NAME].replace(
+        "type: np_score", replacement)
+    assert config != _RETIRED_NP_SCORE_RESOURCE[GR_CONF_FILE_NAME]
+    return {
+        GR_CONF_FILE_NAME: config,
+        "data.mem": """
+            chrom  pos_begin reference  alternative  s1
+            1      10        A          G            0.02
+            1      10        A          C            0.03
+            1      10        AT         A            0.01
+        """,
+    }
+
+
+def _annotate_the_deletion(resource: dict) -> object:
+    repo = build_inmemory_test_repository({"migrated": resource})
+    pipeline = load_pipeline_from_yaml("""
+        - allele_score:
+            resource_id: migrated
+            attributes:
+            - source: cadd_raw
+              aggregator: max
+    """, repo)
+    with pipeline.open() as work_pipeline:
+        return work_pipeline.annotate(
+            VCFAllele("1", 10, "AT", "A"))["cadd_raw"]
+
+
+def test_the_advised_migration_keeps_np_score_indel_annotation() -> None:
+    """Following the refusal's advice keeps what ``np_score`` answered.
+
+    A ``np_score`` resource read in substitutions mode, and its annotator
+    region-folded every allele that is not a substitution.  The migrated
+    resource, carrying ``allele_score_mode: substitutions``, must give a
+    deletion that same fold -- not the exact match an ``alleles`` resource
+    gives it.
+    """
+    assert _annotate_the_deletion(
+        _migrated_as_the_refusal_advises(with_mode_key=True)) == 0.03
+
+
+def test_a_bare_rename_changes_the_indel_answer() -> None:
+    """The control for the test above: the mode key is what keeps it.
+
+    Swapping only the type string reads in alleles mode, which matches the
+    deletion exactly -- the silent change the refusal warns about.
+    """
+    assert _annotate_the_deletion(
+        _migrated_as_the_refusal_advises(with_mode_key=False)) == 0.01

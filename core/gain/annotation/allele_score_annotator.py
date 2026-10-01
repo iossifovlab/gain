@@ -45,14 +45,21 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
 
     Operates in one of two modes, selected by the ``mode`` parameter:
 
-    - ``allele`` (**default**): performs an exact chrom/pos/ref/alt lookup and
-      returns the single matching line's scores.  The annotatable must be a
-      ``VCFAllele``; other types receive an empty result.
+    - ``allele`` (**default**): a ``VCFAllele`` the resource keys as a line
+      of its own gets an exact chrom/pos/ref/alt lookup and the single
+      matching line's scores.  Which alleles those are is the resource's
+      ``allele_score_mode``: every ``VCFAllele`` on an ``alleles``
+      resource, only a substitution on a ``substitutions`` one.  Any other
+      ``VCFAllele`` -- an indel or complex allele on a ``substitutions``
+      resource -- takes the ``region`` path over the bases it covers,
+      subject to ``region_length_cutoff``, as does every annotatable that
+      is not a ``VCFAllele``.
 
     - ``region``: the score reduces all allele lines that overlap the
       annotatable's span, in one streaming walk
       (``AlleleScore.get_allele_scores_in_region_agg``).  Works with any
-      ``Annotatable`` (``VCFAllele``, ``Region``, CNV, …).  An aggregator
+      ``Annotatable`` (``VCFAllele``, ``Region``, CNV, …), and folds every
+      ``VCFAllele`` whatever the resource's mode.  An aggregator
       must be defined for every score attribute, either in the attribute
       config or as the score's ``aggregator`` default in the resource YAML;
       an attribute with neither -- only a ``bool`` score can be in that
@@ -65,11 +72,12 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
     (``is_default=False``)
     that is synthesised rather than read from the data file.
 
-    - In ``allele`` mode: returns ``["chrom:pos:ref:alt"]`` for the matched
+    - On an exact match: returns ``["chrom:pos:ref:alt"]`` for the matched
       line.
-    - In ``region`` mode: returns the distinct ``"chrom:pos:ref:alt"``
-      strings of the lines that pass the optional ``allele_filter``, in the
-      order the lines were first met -- the resource's own genomic order.
+    - On a region fold, in either mode: returns the distinct
+      ``"chrom:pos:ref:alt"`` strings of the lines that pass the optional
+      ``allele_filter``, in the order the lines were first met -- the
+      resource's own genomic order.
 
     Optionally append score values to each allele string with
     ``include_attributes``.  The string's format is the score's,
@@ -126,9 +134,13 @@ variant frequencies, etc.
 
 **Mode** (``mode`` parameter, applies to ``VCFAllele`` inputs only):
 
-- ``allele`` (default): exact chrom/pos/ref/alt match.
+- ``allele`` (default): routed by the resource's ``allele_score_mode``.
+  On an ``alleles`` resource every allele is an exact chrom/pos/ref/alt
+  match.  On a ``substitutions`` resource only a substitution is; an
+  insertion, deletion or complex allele aggregates the allele lines over
+  the bases it covers.
 - ``region``: aggregates scores for all allele lines overlapping the
-  annotatable's span.
+  annotatable's span, whatever the resource's mode.
 
 Non-``VCFAllele`` annotatables always use region aggregation.
 
@@ -265,22 +277,39 @@ Non-``VCFAllele`` annotatables always use region aggregation.
             reduced=lambda attr: attr is not self.allele_attribute,
             otherwise=lambda _attr: list(aggregate.allele_keys or ()))
 
+    def _matched_exactly(self, allele: VCFAllele) -> bool:
+        """Tell whether the resource keys ``allele`` as a line of its own.
+
+        Every allele on an ``alleles`` resource; only a substitution on a
+        ``substitutions`` one.  The score's reads are mode-blind, so this
+        is the one place the resource's mode is honoured.
+        """
+        if self.allele_score.alleles_mode():
+            return True
+        return allele.type == Annotatable.Type.SUBSTITUTION
+
     def _do_annotate(
         self, annotatable: Annotatable,
         context: dict[str, Any],  # ruff: ignore[unused-method-argument]
     ) -> AnnotatedValues:
-        """Dispatch annotation based on annotatable type and mode.
+        """Route the annotatable to the exact match or the region fold.
 
-        For VCFAllele: mode selects between exact-match and region aggregation.
-        For all other annotatables: always use region aggregation.
+        A ``VCFAllele`` in ``allele`` mode goes where the resource's
+        ``allele_score_mode`` says it can be matched (gain#1748): every
+        allele on an ``alleles`` resource, only a substitution on a
+        ``substitutions`` one.  The rest -- and a ``VCFAllele`` in
+        ``region`` mode, an explicit override -- is region-folded.
+        Everything except that override is subject to
+        ``region_length_cutoff`` on the fold.
         """
         if not self.allele_score.has_chromosome(annotatable.chromosome):
             return self._empty_result()
 
         if isinstance(annotatable, VCFAllele):
-            if self.mode == "allele":
+            if self.mode == "region":
+                return self._annotate_region(annotatable)
+            if self._matched_exactly(annotatable):
                 return self._annotate_allele(annotatable)
-            return self._annotate_region(annotatable)
 
         if len(annotatable) > self._region_length_cutoff:
             return self._empty_result()

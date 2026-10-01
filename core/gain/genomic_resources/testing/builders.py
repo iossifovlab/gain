@@ -751,13 +751,13 @@ class AlleleScoreBuilder(_TableScoreBuilder):
     ``type: np_score``.  It was retired with the type itself in 2026.8.5
     (gain#920): a builder can only produce resources GAIn still reads.
 
-    Its fixtures moved here unchanged apart from the type.  None needed
-    ``allele_score_mode: substitutions`` to keep behaving the same, even
-    though the mode default differs between the two spellings -- nothing
-    in gain reads ``AlleleScore.mode`` outside ``substitutions_mode()``
-    and ``alleles_mode()``, and no migrated fixture consults either.  The
-    mode hazard the removal warns about is real for a GRR holder whose
-    own code asks; it was inert in this suite.
+    The two spellings differ in their mode default: ``np_score`` read in
+    ``substitutions`` mode, ``allele_score`` reads in ``alleles`` mode.
+    The allele score annotator routes on that mode -- on a
+    ``substitutions`` resource an indel is region-folded rather than
+    matched exactly -- so a fixture that annotates indels and wants the
+    ``np_score`` behaviour must state
+    ``allele_score_mode: substitutions``.
     """
 
     SCORE_TYPE: ClassVar[str] = "allele_score"

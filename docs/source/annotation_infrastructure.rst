@@ -269,9 +269,9 @@ The ``allele_score_annotator`` operates in one of two modes, selected by the ``m
    * - Mode
      - Description
    * - ``allele`` (default)
-     - Performs an exact ``chrom/pos/ref/alt`` lookup.
+     - Performs an exact ``chrom/pos/ref/alt`` lookup for a ``VCFAllele`` the resource keys as a line of its own, and aggregates over its span otherwise.
 
-       The annotatable must be a ``VCFAllele``. Other annotatable types fall back to ``region`` mode.
+       Which alleles those are is the resource's ``allele_score_mode``: on an ``alleles`` resource every ``VCFAllele`` is matched exactly; on a ``substitutions`` resource only a substitution is, and an insertion, deletion or complex allele is aggregated over the bases it covers, as in ``region`` mode, subject to ``region_length_cutoff``. Other annotatable types always use ``region`` mode.
    * - ``region``
      - Finds all allele lines that overlap the annotatable's span and aggregates their scores.
 
@@ -345,7 +345,7 @@ That applies to every comparison, including ``!=``: a line carrying no ``AF`` is
 
 **allele attribute**
 
-In addition to score columns, ``source: allele`` is a virtual attribute that returns the matched allele keys as a list of ``chrom:pos:ref:alt`` strings. It is only meaningful in ``region`` mode (or for ``VCFAllele`` inputs with ``mode: region``), where multiple alleles can be matched. The keys are distinct and come in the order the lines were first met -- the resource's own genomic order. A line whose reference or alternative is absent contributes a bare ``chrom:pos`` key.
+In addition to score columns, ``source: allele`` is a virtual attribute that returns the matched allele keys as a list of ``chrom:pos:ref:alt`` strings. It lists more than one key only when the annotatable is aggregated over a region -- in ``region`` mode, for a non-``VCFAllele`` annotatable, or for an indel on a ``substitutions`` resource -- where multiple alleles can be matched. The keys are distinct and come in the order the lines were first met -- the resource's own genomic order. A line whose reference or alternative is absent contributes a bare ``chrom:pos`` key.
 
 .. code:: yaml
 
