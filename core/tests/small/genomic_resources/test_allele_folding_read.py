@@ -762,6 +762,24 @@ def test_a_region_rows_read_refuses_a_backwards_record(
     assert str(excinfo.value) == _INVERTED_SPAN_MESSAGE
 
 
+@pytest.mark.parametrize("read", [
+    lambda opened: opened.get_allele_scores_for_allele_rows(
+        "1", 6, "A", "G"),
+    lambda opened: opened.get_allele_score_for_allele_rows("1", 6, "A", "G"),
+])
+def test_a_point_rows_read_never_receives_a_backwards_record(
+    backwards_record: AlleleScore, read: Any,
+) -> None:
+    """``[]`` at the record's own begin: the table does not count the span
+    6-3 as overlapping 6, so the point read never sees the record and has
+    no inverted-span check of its own.  A backend that started returning
+    it would turn this red -- and the point read would need the check."""
+    with backwards_record.open() as opened:
+        rows = read(opened)
+
+    assert rows == []
+
+
 # The four unreduced reads, each called on an EMPTY region (or an allele
 # no row carries) of contig ``1``, so a refusal cannot hide behind data.
 # Calling is all the test does: a generator read must refuse before it is

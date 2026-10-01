@@ -774,8 +774,9 @@ class AlleleScore(GenomicScore):
         Materialised: a point holds a handful of rows.
 
         The region walk of :meth:`get_allele_scores_in_region_rows` at the
-        one position, matched on the record BEFORE a value is read: a row
-        of another allele there costs no extraction.
+        one position.  The requested values are read only off rows
+        matching the allele; ``score_filter``, being part of that shared
+        walk, is still evaluated on every row overlapping the position.
         """
         score_defs = self._resolve_score_defs(scores)
         self._check_allele_region_request(chrom, score_filter)
