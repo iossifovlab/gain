@@ -783,15 +783,11 @@ class AlleleScore(GenomicScore):
         if records is None:
             return []
         extract = self._extract_value
-        rows: list[tuple[ScoreValue, ...]] = []
-        for record in records:
-            if (record[POS_BEGIN], record[REF], record[ALT]) != (
-                    pos, ref, alt):
-                continue
-            _allele_pos(record)  # refuses an inverted span
-            rows.append(
-                tuple(extract(record, score_def) for score_def in score_defs))
-        return rows
+        return [
+            tuple(extract(record, score_def) for score_def in score_defs)
+            for record in records
+            if (record[POS_BEGIN], record[REF], record[ALT]) == (pos, ref, alt)
+        ]
 
     def get_allele_scores_in_region_rows(
         self, chrom: str, start: int, end: int,
