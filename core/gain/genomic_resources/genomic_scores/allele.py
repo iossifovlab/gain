@@ -96,8 +96,8 @@ class AlleleEntry(NamedTuple):
     """
 
     pos: int
-    ref: str
-    alt: str
+    ref: str | None
+    alt: str | None
     values: tuple[ScoreValue, ...]
 
 
@@ -772,13 +772,26 @@ class AlleleScore(GenomicScore):
         two apart.  An unknown score id, an unknown contig and a filter
         compiled for another resource are refused when this is called.
         Materialised: a point holds a handful of rows.
+
+        The region walk of :meth:`get_allele_scores_in_region_rows` at the
+        one position, matched on the record BEFORE a value is read: a row
+        of another allele there costs no extraction.
         """
-        return [
-            entry.values
-            for entry in self.get_allele_scores_in_region_rows(
-                chrom, pos, pos, scores=scores, score_filter=score_filter)
-            if entry.pos == pos and entry.ref == ref and entry.alt == alt
-        ]
+        score_defs = self._resolve_score_defs(scores)
+        self._check_allele_region_request(chrom, score_filter)
+        records = self._walk_allele_records(chrom, pos, pos, score_filter)
+        if records is None:
+            return []
+        extract = self._extract_value
+        rows: list[tuple[ScoreValue, ...]] = []
+        for record in records:
+            if (record[POS_BEGIN], record[REF], record[ALT]) != (
+                    pos, ref, alt):
+                continue
+            _allele_pos(record)  # refuses an inverted span
+            rows.append(
+                tuple(extract(record, score_def) for score_def in score_defs))
+        return rows
 
     def get_allele_scores_in_region_rows(
         self, chrom: str, start: int, end: int,
@@ -836,7 +849,9 @@ class AlleleScore(GenomicScore):
         *,
         score: str | None = None,
         score_filter: ScoreFilter | None = None,
-    ) -> Generator[tuple[int, str, str, ScoreValue], None, None]:
+    ) -> Generator[
+        tuple[int, str | None, str | None, ScoreValue], None, None,
+    ]:
         """Yield ``(pos, ref, alt, value)`` per row overlapping a region.
 
         The singular form of :meth:`get_allele_scores_in_region_rows`,

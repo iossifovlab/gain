@@ -691,6 +691,77 @@ def test_in_region_rows_yields_only_the_rows_the_filter_keeps(
     ]
 
 
+@pytest.mark.parametrize("tabix", [False, True])
+def test_in_region_rows_yields_a_row_starting_before_the_region(
+    tmp_path: pathlib.Path, tabix: bool,
+) -> None:
+    """OVERLAPPING, not starting in: a row at 8 whose span reaches 12 is
+    yielded for 10-16 at its own position, as the folding read folds it."""
+    builder = (
+        an_allele_score()
+        .with_score("freq", "float")
+        .with_data("""
+            chrom  pos_begin  pos_end  reference  alternative  freq
+            1      8          12       A          C            0.7
+            1      10         10       A          G            0.2
+        """))
+    if tabix:
+        builder = builder.with_tabix()
+    score = build_allele_score_from_resource(builder.build_resource(tmp_path))
+
+    with score.open() as opened:
+        entries = list(opened.get_allele_scores_in_region_rows("1", 10, 16))
+        aggregate = opened.get_allele_scores_in_region_agg(
+            "1", 10, 16,
+            queries=[ScoreAggregationQuery("freq", "list")], allele_keys=())
+
+    assert entries == [
+        AlleleEntry(8, "A", "C", (0.7,)),
+        AlleleEntry(10, "A", "G", (0.2,)),
+    ]
+    assert aggregate == AlleleAggregate(
+        ([0.7, 0.2],), ("1:8:A:C", "1:10:A:G"))
+
+
+@pytest.fixture
+def backwards_record(tmp_path: pathlib.Path) -> AlleleScore:
+    """A zero-based ``5 3`` row: begin 6, end 3 -- an inverted span."""
+    return build_allele_score_from_resource(
+        an_allele_score()
+        .with_score("s", "float")
+        .with_zero_based()
+        .with_data("""
+            chrom  pos_begin  pos_end  reference  alternative  s
+            1      5          3        A          G            0.5
+        """)
+        .build_resource(tmp_path))
+
+
+_INVERTED_SPAN_MESSAGE = (
+    "The resource record 1:6-3 A->G has a region with end 3 smaller than "
+    "the beginning 6.")
+
+
+@pytest.mark.parametrize("read", [
+    lambda opened: list(opened.get_allele_scores_in_region_rows("1", 1, 100)),
+    lambda opened: list(opened.get_allele_score_in_region_rows("1", 1, 100)),
+])
+def test_a_region_rows_read_refuses_a_backwards_record(
+    backwards_record: AlleleScore, read: Any,
+) -> None:
+    """The rule every allele read applies to a record it reads -- the
+    whole message, since it is built from five positional arguments.
+
+    The region reads only: a point read at 6 never receives the record,
+    whose span 6-3 the table does not count as overlapping 6.
+    """
+    with backwards_record.open() as opened, \
+            pytest.raises(OSError) as excinfo:
+        read(opened)
+
+    assert str(excinfo.value) == _INVERTED_SPAN_MESSAGE
+
+
 # The four unreduced reads, each called on an EMPTY region (or an allele
 # no row carries) of contig ``1``, so a refusal cannot hide behind data.
 # Calling is all the test does: a generator read must refuse before it is
