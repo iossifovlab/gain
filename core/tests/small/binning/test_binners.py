@@ -44,6 +44,18 @@ def test_a_track_bins_to_one_float64_value_per_grid_bin_nan_where_uncovered(
     np.testing.assert_array_equal(values, [1.0, 1.0, np.nan, 2.0])
 
 
+def test_a_sum_track_adds_each_bin_by_base_pair(
+    repo: GenomicResourceRepo,
+) -> None:
+    # 1.0 over each of 1-10 and 11-20, nothing in 21-30, 2.0 over the
+    # five covered positions of 31-40.
+    values = one_region(
+        scores_one("sum"), BedRegion("chr1", 1, 40), repo)
+
+    assert values.dtype == np.float64
+    np.testing.assert_array_equal(values, [10.0, 10.0, np.nan, 10.0])
+
+
 def test_a_replacement_stands_in_for_every_uncovered_position(
     repo: GenomicResourceRepo,
 ) -> None:

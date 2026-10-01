@@ -3,9 +3,11 @@
 from dataclasses import fields
 
 import numpy
+import pytest
 from gain.genomic_resources.aggregators import (
     AGGREGATOR_CLASS_DICT,
     NUMERIC_ONLY_AGGREGATORS,
+    Aggregator,
     AggregatorDefinition,
     BoolAggregator,
     ConcatAggregator,
@@ -351,3 +353,46 @@ def test_numeric_aggregators_appear_first_in_dict() -> None:
         i for i, k in enumerate(keys) if k not in NUMERIC_ONLY_AGGREGATORS
     ]
     assert max(numeric_indices) < min(non_numeric_indices)
+
+
+def _fresh(name: str) -> Aggregator:
+    """A freshly built ``name``, a parametrized one with its default."""
+    aggregator_class = AGGREGATOR_CLASS_DICT[name]
+    if aggregator_class.parametrized:
+        return Aggregator.build(f"{name}({aggregator_class.default_parameter})")
+    return Aggregator.build(name)
+
+
+def _add_sample(agg: Aggregator) -> None:
+    """Values every registered aggregator accepts, one of them weighted."""
+    agg.add(3)
+    agg.add(None)
+    agg.add(5, count=4)
+    agg.add(2)
+
+
+@pytest.mark.parametrize("name", list(AGGREGATOR_CLASS_DICT))
+def test_clear_returns_every_aggregator_to_its_fresh_state(name: str) -> None:
+    # ``Aggregator.__eq__`` compares finals only, so the whole instance
+    # state is compared: state ``clear()`` forgot but ``get_final()``
+    # happens not to read would otherwise go unnoticed.
+    agg = _fresh(name)
+    _add_sample(agg)
+
+    agg.clear()
+
+    assert vars(agg) == vars(_fresh(name))
+
+
+@pytest.mark.parametrize("name", list(AGGREGATOR_CLASS_DICT))
+def test_a_cleared_aggregator_refolds_like_a_fresh_one(name: str) -> None:
+    agg = _fresh(name)
+    _add_sample(agg)
+    agg.clear()
+    _add_sample(agg)
+    fresh = _fresh(name)
+    _add_sample(fresh)
+
+    assert agg.get_final() == fresh.get_final()
+    assert agg.get_used_count() == fresh.get_used_count()
+    assert agg.get_total_count() == fresh.get_total_count()

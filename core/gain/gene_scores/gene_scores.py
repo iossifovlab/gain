@@ -13,7 +13,6 @@ from gain import logging
 from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.histogram import (
     CategoricalHistogramConfig,
-    Histogram,
     NullHistogramConfig,
     NumberHistogramConfig,
     build_default_histogram_conf,
@@ -341,99 +340,6 @@ class GeneScore(ScoreResource[GeneScoreDef]):
                 },
             }},
         }
-
-
-@dataclass
-class ScoreDesc:
-    """Class used to represent a score description."""
-
-    resource_id: str
-    score_id: str
-    column_name: str
-    value_type: str
-
-    hist: Histogram
-    description: str
-    help: str
-    small_values_desc: str | None
-    large_values_desc: str | None
-
-
-class GeneScoresDb:
-    """
-    Helper class used to load all defined gene scores.
-
-    Used by Web interface.
-    """
-
-    def __init__(self, gene_scores: list[GeneScore]):
-        super().__init__()
-        self.score_descs = {}
-        self.gene_scores = {}
-        for gene_score in gene_scores:
-            self.gene_scores[gene_score.resource.get_id()] = gene_score
-            for score_desc in GeneScoresDb.build_descs_from_score(gene_score):
-                self.score_descs[score_desc.score_id] = score_desc
-
-    @staticmethod
-    def build_descs_from_score(
-        gene_score: GeneScore,
-    ) -> list[ScoreDesc]:
-        """Build score descriptions from score."""
-        result = []
-        for score_id, score_def in gene_score.score_definitions.items():
-            help_doc = gene_score.build_score_help(score_id)
-            result.append(ScoreDesc(
-                resource_id=gene_score.resource.resource_id,
-                score_id=score_id,
-                column_name=score_def.column_name,
-                value_type=score_def.value_type,
-                hist=gene_score.get_score_histogram(score_id),
-                description=score_def.desc,
-                help=help_doc,
-                small_values_desc=score_def.small_values_desc,
-                large_values_desc=score_def.large_values_desc,
-            ))
-        return result
-
-    def get_score_ids(self) -> list[str]:
-        """Return a list of the IDs of all the gene scores contained."""
-        return sorted(self.score_descs.keys())
-
-    def get_gene_score_ids(self) -> list[str]:
-        """Return a list of the IDs of all the gene scores contained."""
-        return sorted(self.gene_scores.keys())
-
-    def get_gene_scores(self) -> list[GeneScore]:
-        """Return a list of all the gene scores contained in the DB."""
-        return list(self.gene_scores.values())
-
-    def get_scores(self) -> list[ScoreDesc]:
-        return list(self.score_descs.values())
-
-    def get_gene_score(self, score_id: str) -> GeneScore | None:
-        """Return a given gene score."""
-        if score_id not in self.gene_scores:
-            return None
-        assert self.gene_scores[score_id].df is not None
-        return self.gene_scores[score_id]
-
-    def get_score_desc(self, score_id: str) -> ScoreDesc | None:
-        if score_id not in self.score_descs:
-            return None
-        return self.score_descs[score_id]
-
-    def __getitem__(self, score_id: str) -> ScoreDesc:
-        if score_id not in self.score_descs:
-            raise ValueError(f"score {score_id} not found")
-
-        return self.score_descs[score_id]
-
-    def __contains__(self, score_id: str) -> bool:
-        return score_id in self.score_descs
-
-    def __len__(self) -> int:
-        return len(self.score_descs)
 
 
 _INMEMORY_CACHE: dict[tuple[str, str, str], GeneScore] = {}

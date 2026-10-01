@@ -472,6 +472,34 @@ def test_a_malformed_entry_is_a_parse_error_naming_what_is_wrong(
     assert fragment in str(excinfo.value)
 
 
+@pytest.mark.parametrize("aggregator", ["sum", "product"])
+def test_a_type_preserving_numeric_aggregator_is_accepted(
+    repo: GenomicResourceRepo, genome: ReferenceGenome, aggregator: str,
+) -> None:
+    run = parse_one_entry(
+        {"resource_query": "scores/one", "aggregator": aggregator},
+        repo, genome)
+
+    assert [(t.name, t.aggregator) for t in run.tracks] == [
+        ("scores/one", aggregator)]
+
+
+@pytest.mark.parametrize("aggregator", ["mode", "concatenate"])
+def test_an_aggregator_that_may_not_produce_a_number_is_refused_listing_sum(
+    repo: GenomicResourceRepo, genome: ReferenceGenome, aggregator: str,
+) -> None:
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_one_entry(
+            {"resource_query": "scores/one", "aggregator": aggregator},
+            repo, genome)
+
+    message = str(excinfo.value)
+    assert f"aggregator {aggregator!r} does not produce a number" in message
+    listed = message.rsplit("use one of ", 1)[1].split(", ")
+    assert {"sum", "product"} <= set(listed)
+    assert "mode" not in listed
+
+
 @pytest.mark.parametrize("bins,fragment", [
     ({"bin_size": 0}, "bin_size"),
     ({"bin_size": "10"}, "bin_size"),

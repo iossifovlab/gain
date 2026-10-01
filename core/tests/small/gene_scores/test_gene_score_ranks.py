@@ -1,12 +1,9 @@
-# pylint: disable=W0621,C0114,C0116,W0212,W0613,W0104
+# pylint: disable=W0621,C0114,C0116,W0212,W0613
 
 import textwrap
 
 import pytest
-from gain.gene_scores.gene_scores import (
-    GeneScoresDb,
-    build_gene_score_from_resource,
-)
+from gain.gene_scores.gene_scores import build_gene_score_from_resource
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GenomicResourceRepo,
@@ -76,51 +73,6 @@ def scores_repo() -> GenomicResourceRepo:
             """),
         },
     })
-
-
-@pytest.fixture
-def gene_scores_db(scores_repo: GenomicResourceRepo) -> GeneScoresDb:
-    resources = [
-        scores_repo.get_resource("LGD_rank"),
-        scores_repo.get_resource("RVIS_rank"),
-    ]
-    gene_scores = [
-        build_gene_score_from_resource(resource) for resource in resources
-    ]
-    return GeneScoresDb(gene_scores)
-
-
-def test_scores_rvis_rank(gene_scores_db: GeneScoresDb) -> None:
-    assert gene_scores_db["RVIS_rank"] is not None
-
-    rvis = gene_scores_db.get_gene_score("RVIS_rank")
-    assert rvis is not None
-    assert rvis.df is not None
-
-    assert "RVIS_rank" in rvis.df.columns
-
-
-def test_scores_has_rvis_rank(gene_scores_db: GeneScoresDb) -> None:
-    assert "RVIS_rank" in gene_scores_db
-
-
-def test_missing_gene_score(gene_scores_db: GeneScoresDb) -> None:
-    with pytest.raises(ValueError, match="score bad_score not found"):
-        gene_scores_db["bad_score"]
-
-
-def test_loaded_scores(gene_scores_db: GeneScoresDb) -> None:
-    assert len(gene_scores_db) == 2
-
-
-def test_gene_scores_ids(gene_scores_db: GeneScoresDb) -> None:
-    assert gene_scores_db.get_gene_score_ids() == ["LGD_rank", "RVIS_rank"]
-
-
-def test_gene_scores(gene_scores_db: GeneScoresDb) -> None:
-    gene_scores = gene_scores_db.get_scores()
-    assert sorted(gs.score_id for gs in gene_scores) == \
-        ["LGD_rank", "RVIS_rank"]
 
 
 def test_create_score_from_repository(
