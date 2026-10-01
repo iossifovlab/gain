@@ -24,7 +24,7 @@ from __future__ import annotations
 import fnmatch
 from abc import abstractmethod
 
-from gain.genomic_resources.dvc import DVC_SUFFIX
+from gain.genomic_resources.dvc import dvc_sidecar_target
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
     Histogram,
@@ -216,7 +216,7 @@ def _drop_orphaned_histogram_files(
         for template in _HISTOGRAM_FILE_TEMPLATES
         for score_id in score.score_definitions}
     present = {
-        entry.name.removesuffix(DVC_SUFFIX)
+        dvc_sidecar_target(entry.name)
         for entry in proto.collect_resource_entries(resource)}
     for name in sorted(present - owned):
         if any(fnmatch.fnmatchcase(name, pattern)
