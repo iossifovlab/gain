@@ -1076,11 +1076,10 @@ class Quota(models.Model):
         reaches the row (gain#750). It is also what lets one statement serve
         every row, since nothing written depends on the row.
 
-        One UPDATE per table rather than a save per row (gain#807): a
-        per-row walk loaded the whole table into memory and, inside the
-        commands' transaction, held each row it had refreshed locked until
-        the last one was written. Writing only the period's own columns
-        keeps the rule in the class docstring (gain#768): nothing is read,
+        The statement loads no rows, so the table is never materialised and
+        a caller's transaction holds the row locks only for this UPDATE and
+        whatever follows it. Writing only the period's own columns keeps
+        the rule in the class docstring (gain#768): nothing is read,
         so nothing stale can be written back over a consumption's deduction
         or an admin's extra-unit grant committed meanwhile.
         """
