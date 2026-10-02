@@ -1,55 +1,32 @@
 # GAIn Monorepo — Agent Guide
 
-This file provides guidance to Claude Code when working
-with code in this repository.
+GAIn (Genomic Annotation Infrastructure) is the annotation engine and genomic resource framework used by GPF (Genotypes and Phenotypes in Families): a Python 3.12 uv workspace whose members are `core` (package `gain`), `web_api`, and the `demo_annotator` / `vep_annotator` / `spliceai_annotator` plugins. Stack: DuckDB 1.5, dask, pandas 2.2, numpy 2.2, pyarrow ≥18, pysam 0.23, pydantic 2.8, lark 1.2 (GRR search grammar), fsspec / s3fs; dev: ruff 0.16, mypy 1.15, pylint, pytest + pytest-xdist, pytestarch.
 
-## Project Overview
+## Project map
 
-GAIn (Genomic Annotation Infrastructure) is the
-annotation engine and genomic resource framework used by
-the GPF (Genotypes and Phenotypes in Families) system.
-This repository hosts `core` plus a set of
-annotator plugins.
+- `core/gain/` — the `gain` package
+  - `annotation/` — pipeline engine, annotator base classes, built-in annotators, config parsing
+  - `genomic_resources/` — Genomic Resource Repository (GRR): repository hierarchy, resource implementations (`implementations/`), tabular backends (`genomic_position_table/`: tabix, BigWig, VCF, in-memory), `gene_models/`, `statistics/`, fsspec protocol, genomic context; `testing/` holds the fixture builders
+  - `effect_annotation/` — variant effect prediction
+  - `gene_scores/`, `gene_sets/` — gene-level score and gene set collection resources
+  - `binning/` — `binning_tool`: bin position scores into a fixed genome grid
+  - `grr/` — the short public import path for scripts and notebooks that use a GRR
+  - `task_graph/` — DAG task orchestration; `dask/` — named cluster configuration
+  - `templates/` — Jinja2 environment for the GRR info pages; `testing/` — study-import fixture modules; `utils/`
+- `core/tests/small/` (unit, the CI default) and `core/tests/integration/` (external services, long runtime); `core/tests/.test_grr/` is the http fixture tree
+- `web_api/` — `web_annotation` + `admin_panel` (Django); `web_ui/` — Angular; `web_e2e/` — Playwright against the deployed stack; `web_infra/` — compose files per host
+- `info_pages_e2e/` — Playwright for the GRR info pages' client-side JS, fully offline
+- `spliceai_annotator/`, `vep_annotator/`, `demo_annotator/` — Docker-based annotator plugins
+- `docs/` — Sphinx user docs (`docs/source/`, published at <https://iossifovlab.com/gaindocs/>); `docs/adr/` — internal Architecture Decision Records; `CONTEXT.md` — domain language
+- `scripts/` — repo-root scripts (`conda_env.py` and friends; linted with `core`); `test_fixtures/mini-GRR`; `typings/`; `conda-builder/`
+- Config at the **repo root**: `ruff.toml` (line-length 80, py312), `mypy.ini`, `pylintrc`, `pre-commit`, `pre-push`, `docker-compose.yaml`, `environment.yml` (generated)
+- CLIs from `core`: `grr_manage`, `grr_browse`, `annotate_tabular` / `annotate_vcf` / `annotate_doc`, `annotate_variant_effects` / `annotate_variant_effects_vcf`
 
-## Environment Setup
+<important if="you are setting up or repairing a development environment">
 
-Two supported workflows — pick one.
+Two supported workflows; pick one.
 
-### Conda/Mamba
-
-```bash
-mamba env create --name gain --file ./environment.yml
-mamba env update --name gain --file ./dev-environment.yml
-conda activate gain
-
-pip install -e core
-pip install -e demo_annotator     # optional
-pip install -e vep_annotator      # optional
-mamba env update --name gain \
-    --file ./spliceai_annotator/spliceai-environment.yml
-pip install -e spliceai_annotator # optional
-```
-
-`environment.yml` is generated from the gain-core and
-gain-web-api pyprojects by `scripts/conda_env.py` — never
-edit it by hand; `core/tests/test_conda_deps.py` fails when
-it is stale. `spliceai_annotator/spliceai-environment.yml`
-is generated the same way from the spliceai plugin's runtime
-deps and dev tools (`onnx`, `tf2onnx`), installed on top;
-demo and vep add nothing beyond the core files and get no
-file.
-
-### uv workspace
-
-The repo root is a virtual `gain-monorepo` project
-(`[tool.uv] package = false`) that coordinates a
-`[tool.uv.workspace]` of five members: `core`, `web_api`,
-`demo_annotator`, `vep_annotator`, `spliceai_annotator`.
-Runtime deps live in each member's pyproject; dev tools
-live in each member's own `dev` dependency group.
-`uv.lock` is committed. Default `uv sync` installs only
-`gain-core` + `gain-web-api`; the annotator
-plugins are workspace members but optional.
+uv (the repo root is a virtual `gain-monorepo` project coordinating the workspace; runtime deps live in each member's pyproject, dev tools in each member's `dev` group; `uv.lock` is committed):
 
 ```bash
 uv sync                              # core + web_api only
@@ -58,743 +35,151 @@ uv sync --package gain-spliceai-annotator --group dev   # just one
 source .venv/bin/activate   # optional; `uv run` works without activation
 ```
 
-## Commands
-
-### Testing
+Conda/Mamba:
 
 ```bash
-# Run a single test file
-cd core && pytest -v tests/small/path/to/test_file.py
-
-# Run a test module
-cd core && pytest -v tests/small/module/
-
-# Run GAIn tests in parallel
-cd core && pytest -v -n 10 tests/
+mamba env create --name gain --file ./environment.yml
+mamba env update --name gain --file ./dev-environment.yml
+conda activate gain
+pip install -e core
+pip install -e demo_annotator     # optional
+pip install -e vep_annotator      # optional
+mamba env update --name gain --file ./spliceai_annotator/spliceai-environment.yml
+pip install -e spliceai_annotator # optional
 ```
 
-Test markers in `core/pytest.ini`: `grr_rw`,
-`grr_local`, `grr_full`, `grr_http`, `grr_tabix`.
+`environment.yml`, `dev-environment.yml` and `spliceai_annotator/spliceai-environment.yml` are generated by `scripts/conda_env.py`; never edit them by hand (`core/tests/test_conda_deps.py` fails when they are stale). demo and vep get no file.
+</important>
 
-All tests run with `PYTHONHASHSEED=0`.
+<important if="you are changing a dependency in any pyproject.toml">
 
-The GRR info pages' client-side JavaScript is not
-covered by pytest — gain-core's CI image has no JS
-runtime. It is driven in a browser by `info_pages_e2e`,
-which needs its fixture pages generated first:
+Run `python scripts/conda_env.py` from the repo root and commit whichever of `environment.yml`, `dev-environment.yml` and `spliceai_annotator/spliceai-environment.yml` it changed, with the change.
+</important>
+
+<important if="you are running or writing tests">
 
 ```bash
-uv run python info_pages_e2e/generate_fixtures.py \
-    info_pages_e2e/fixtures
-cd info_pages_e2e && npm ci && npx playwright test
+cd core && pytest -v tests/small/path/to/test_file.py   # one file
+cd core && pytest -v tests/small/module/                # one module
+cd core && pytest -v -n 10 tests/                       # everything, parallel
 ```
 
-No server and no network: every request the pages make is
-answered from disk inside `page.route`, out of the
-generated fixtures and the two vendored CDN packages, and
-anything else is aborted. See `info_pages_e2e/README.md`.
+- All tests run with `PYTHONHASHSEED=0`. Markers in `core/pytest.ini`: `grr_rw`, `grr_local`, `grr_full`, `grr_http`, `grr_tabix`; tests carrying `grr_rw` / `grr_full` / `grr_http` / `grr_tabix` are parametrized across GRR protocols (inmemory, file, s3, http); enable the last two with `--enable-s3-testing` / `--enable-http-testing`.
+- Architecture tests in `core/tests/` use `pytestarch` to enforce the package's internal structure.
+- Backend text that the `web_e2e` specs pin is checked without the stack by `web_api/web_annotation/tests/test_e2e_backend_pins.py`. Rewording a registered message, or adding a sentence-shaped pin it cannot render, fails the `web_api` suite naming the spec: fix spec and backend in the same PR. The module docstring and `web_e2e/README.md` say how to register or allow-list a pin.
+</important>
 
-**Backend text the `web_e2e` specs pin is checked without
-the stack** by
-`web_api/web_annotation/tests/test_e2e_backend_pins.py`,
-which renders each registered message through the real code
-path and compares both ways (#1357, after #1353). Rewording
-a message it registers, or adding a sentence-shaped pin it
-cannot render, fails the `web_api` suite naming the spec —
-fix spec and backend in the same PR. The module docstring
-and `web_e2e/README.md` say how to register or allow-list a
-pin.
+<important if="you are writing a test that needs a genomic resource or a GRR fixture">
 
-### Linting and Type Checking
+Where a builder exists for the resource type, use the fluent builders in `gain.genomic_resources.testing.builders` rather than a hand-rolled `genomic_resource.yaml` next to a `setup_tabix` / `setup_directories` call. Pattern: `core/tests/small/genomic_resources/genomic_position_table/test_overlapping_intervals.py`.
 
-Run these from `core/`, as CI does — the `core` image's
-WORKDIR is `/workspace/core`, and `gain` is `core/gain`.
+- Factories in `builders.py`: `a_position_score`, `an_allele_score`, `a_fragment_score`, `a_bigwig_score`, `a_vcf_info_score`, `a_gene_score`, `a_reference_genome`, `a_basic_resource`, `a_grr`. Compose with `a_grr().with_resource(id, builder).build_repo(tmp_path)`; `build_resource(tmp_path)` is the single-resource shorthand; `a_grr().with_public_url(url)` advertises a mirror.
+- Six factories live in sibling modules of `gain.genomic_resources.testing`, one each: `a_data_frame` (`data_frame_builder`), `an_ann_data` (`ann_data_builder`), `a_gene_models` (`gene_models_builder`), `a_liftover_chain` (`liftover_chain_builder`), `a_gene_set_collection` (`gene_set_collection_builder`), `a_grr_group` (`group_builder`). `builders.py` sits over pylint's 1500-line cap with a suppression, so every new builder goes in its own sibling module that imports the shared realize seam one way; `builders` never imports back and there is no re-export. Each module's docstring documents its knobs and what it deliberately cannot express.
+- Every builder carries the resource `meta:` block via `MetaMixin` (`testing/resource_meta.py`): `with_meta(summary=…, description=…)` accumulates, `with_labels(**labels)` replaces, omit both and no `meta:` key is emitted. A new builder inherits `MetaMixin` and either appends `self.render_meta()` to the config it renders or calls `self.append_meta_into(resource_dir)` after a `setup_*` helper wrote the config.
+- Builders are immutable frozen dataclasses (every `with_*` returns a new builder), and the authored data header is the only description of the columns: the emitted `table:` block names none, and tabix's index columns are derived from the header. That is why "same data, two backends" is a fact and why a hand-written yaml plus an explicit `seq_col=` states the table twice and can drift. `with_header_mode("none"/"list")` realizes a headerless file and still derives everything from the one authored header; `with_missing_header_mode()` deliberately builds the gain#364 misconfiguration.
+- **The coverage gaps are structural.** There is no builder for `annotation_pipeline`, and no `with_*` for `default_annotation` or explicit `chrom` / `pos_begin` column mappings. Hand-rolled yaml is still the majority in `core/tests` and is the correct answer there; the `setup_*` helpers in `gain.genomic_resources.testing` (`setup_directories`, `setup_tabix`, `setup_vcf`, `setup_genome`, `convert_to_tab_separated`, …) are the layer the builders delegate to. Extending the builders is welcome; contorting a fixture to avoid yaml is not.
+- Study-import fixtures (pedigrees, denovo/VCF studies): import the per-dataset modules under `gain.testing` (`t4c8_import`, `acgt_import`, `alla_import`, `foobar_import`), e.g. `from gain.testing.t4c8_import import setup_t4c8_grr`; the package `__init__` is empty.
+</important>
 
-```bash
-# Ruff linting (fast, primary linter)
-cd core && ruff check --fix . ../scripts
-
-# Type checking (slow)
-cd core && mypy --config-file ../mypy.ini gain ../scripts
-
-# Pylint (CI runs this too — see below)
-cd core && pylint --rcfile=../pylintrc gain ../scripts
-```
-
-**`scripts/` directories are linted too, by all three.** A
-project's `scripts/` is a sibling of its package, so naming
-only the package (`mypy spliceai_annotator`) skips it while
-`ruff check .` does not — CI adds `scripts` to the mypy and
-pylint targets of every project that has one (#1327). The
-repo-root `scripts/` belongs to no project, so the `core`
-stage carries it, as `../scripts` above. For the other
-projects the CI-matching local run is the package *and*
-`scripts`, from the project directory:
-`cd spliceai_annotator && mypy spliceai_annotator scripts`,
-`pylint --rcfile=pylintrc spliceai_annotator scripts`. Run
-mypy from the project directory specifically: there the
-package resolves as source, whereas from anywhere else it
-resolves to the installed distribution, which ships no
-`py.typed` and reports `import-untyped` instead.
-
-Config: `ruff.toml` (line-length: 80, target: py312),
-`mypy.ini`, `pylintrc` — all at the **repo root**, hence
-the explicit `--config-file` / `--rcfile`. Ruff needs no
-flag: it searches upward and finds `ruff.toml` on its own.
-
-**Suppress ruff with `# ruff: ignore[rule-name]`, not
-`# noqa`.** Ruff 0.16 deprecated both spellings this repo
-used to rely on — `# noqa: ARG002` comments and rule *codes*
-in `ruff.toml` selectors — and reports them as
-`noqa-comments` / `rule-codes-in-selectors`. The whole tree
-was converted in one pass, so a new `# noqa` is now the odd
-one out and CI will flag it. The rule *name* is what goes in
-the brackets (`unused-method-argument`, not `ARG002`); the
-old code is kept in a trailing comment beside each
-`ruff.toml` entry so grepping this file for a code quoted in
-an old commit or issue still lands on the right row.
-
-Three things to know about the new spelling. Ruff parses the
-literal text `# noqa` wherever it appears in a comment, so
-prose *mentioning* a directive emits an "Invalid `# noqa`
-directive" warning — write "the E402 directive", not the
-directive itself. Ruff's own fixer drops a trailing
-suppression when it reformats the statement under it to
-multiple lines; `web_api/web_annotation/asgi.py` is where
-that bit us. And `ruff --fix` on a `noqa-comments` finding
-is not safe to commit as-is when the old comment sat near
-the right margin: rule *names* are much longer than the
-codes they replace, so the rewritten line can run past
-pylint's `max-line-length=79`. Ruff exempts its own
-suppression comments from the line limit, pylint does not —
-the fixer's output turned three ruff findings into two
-`C0301` in #1108. Split the signature and put the
-suppression on the argument's own line instead, the idiom
-`genomic_context_cli.py` and `basic_resource_impl.py` use.
-
-**Two modules sit at exactly pylint's 1500-line cap**, so
-*any* line added to them turns the build UNSTABLE on `C0302`
-— including a comment. `web_api/web_annotation/models.py` is
-one (a five-line comment here took it to 1505 and broke CI).
-Ruff honours prose *after* the directive on the same line
-(`# ruff: ignore[rule] -- why`), which is how a suppression
-in these files keeps its reason at zero added lines. Anything
-that genuinely needs the space wants the module split, or a
-deliberate `# pylint: disable=too-many-lines` — there is
-precedent in `genomic_resources/testing/builders.py`.
-
-The cwd matters, and the two tools disagree about why:
-`mypy gain` reads `gain` as a *path*, so it fails from the
-root (`can't read file 'gain'`), while `pylint gain` reads
-it as an installed *module* and works from either. Passing
-`mypy.ini` explicitly is what makes the local run match CI
-— without it, mypy finds no config from `core/` (there is
-no `core/mypy.ini`) and silently falls back to defaults
-looser than the ones CI enforces.
-
-**CI runs three Python linters, not two.** The `Jenkinsfile`
-lint stage runs **ruff + mypy + pylint** on each package and
-its `scripts/` (plus eslint + stylelint for `web_ui`), and any finding from
-any of them marks the build **UNSTABLE**. Running only
-`ruff` + `mypy` locally is *not* enough to predict the lint
-stage — always run `pylint --rcfile=../pylintrc gain` from
-`core/` before committing too. A common pylint-only catch
-ruff/mypy miss:
-`C0103` on a module-level `UPPER_CASE` constant that is
-*reassigned* (e.g. inside a `try`/`except`), which pylint then
-treats as a snake_case variable — assign such constants
-exactly once.
-
-**After changing any pyproject dependency**, run
-`python scripts/conda_env.py` from the repo root and commit
-the regenerated `environment.yml` with it.
-
-### Git hooks
-
-```bash
-cp pre-commit pre-push .git/hooks/
-```
-
-The pre-commit hook runs `ruff check` (ignoring FIX
-warnings) on staged `.py` files. It sees only what you
-staged, so it cannot catch a file the branch never touched.
-
-The pre-push hook runs ruff over the **whole tree** at the
-version `uv.lock` pins (via `uvx`, so no venv is needed)
-and refuses the push on any finding. It takes well under a
-second. It exists for the local-rebase case below — a
-mechanical sweep verified clean, then rebased onto commits
-that reintroduced what it swept. It runs ruff only: pylint
-over the whole tree is minutes, and a hook that slow gets
-bypassed, so pylint's whole-tree invariants (the module
-line cap above) are still yours to re-check. Neither hook
-covers the merge-time gap described under "Merging a PR" —
-nothing local can, because the merge happens on GitHub.
-
-### Merging a PR
-
-**Merge only when the PR is up to date with `master` and
-its branch build is green on that tip.** Check with
-`gh pr view <n> --json mergeStateStatus`: if it says
-`BEHIND`, update the branch (rebase, or merge `master` in),
-push, and wait for the *new* branch build. The previous
-green does not carry over. GitHub's merge — squash and
-rebase-merge alike — replays the branch onto whatever
-`master` is at that moment, and Jenkins builds the PR's
-*head*, so a behind-master PR lands a tree nobody built.
-The first build of that tree is the `master` build, and
-the whole-tree lint invariants (a fresh `# noqa` after the
-0.16 conversion, a module tipped over the 1500-line cap)
-are exactly what a clean-looking replay breaks: #1108 was
-a PR eight commits behind, rebase-merged with its check
-green, and `master` went UNSTABLE on two files the branch
-had never touched. `master` is not protected, so this is a
-rule to follow, not a button GitHub greys out (#1437
-tracks enforcing it).
-
-The same invariant applies one step earlier. After
-**every** rebase of a repo-wide mechanical sweep — a ruff
-bump, a suppression conversion, line-cap work — re-run the
-tool over the **entire tree**, not over the commit's file
-list: the file that breaks is by construction one the
-branch did not touch, so "re-check what I changed" cannot
-find it. The `max-module-lines` tip-overs (#928, #1007)
-were this shape; #1108 was the merge-time one above, and
-the two differ only in who did the rebase. The pre-push
-hook does the ruff half of this for you.
-
-**Merge without `--delete-branch`.** The three branch-scoped
-downstream jobs (`gain-web-e2e`, `gain-core-integration`,
-`gain-conda-integration`)
-are triggered from the root `Jenkinsfile`'s *last* stages
-with `wait: false`, and resolve the branch at their own
-start time — minutes later. `gain-web-e2e` additionally
-loads its pipeline *definition* from the branch (on
-purpose, so a `Jenkinsfile.e2e` change is testable on the
-branch that introduces it — #272), so a branch deleted at
-merge time kills it before any stage exists: a ~1s red
-build that ran nothing and cannot classify itself (#489).
-
-The root `Jenkinsfile` skips the trigger when it can see
-the branch is already gone, but it cannot cover a deletion
-that lands after the trigger fires, while the downstream
-job is still queued. Letting the branch outlive the merge
-by a few minutes is what actually closes the window.
-
-`delete_branch_on_merge` is deliberately **false** on
-`iossifovlab/gain` — leave it that way. Prune merged
-branches in a periodic sweep instead, reviewing the list
-before deleting:
-
-```bash
-git fetch --prune
-# Review first — this is the list that would be deleted.
-git branch -r --merged origin/master \
-    | sed 's|origin/||' \
-    | grep -vE '^\s*(master|HEAD)\b'
-# Then delete them.
-git branch -r --merged origin/master \
-    | sed 's|origin/||' \
-    | grep -vE '^\s*(master|HEAD)\b' \
-    | xargs -r -n1 git push origin --delete
-```
-
-### Documentation (`docs/`)
-
-The Sphinx user docs (rendered at
-<https://iossifovlab.com/gaindocs/>) live in `docs/`. The
-build pulls an auto-generated module tree from `core/gain`,
-and it runs `sphinx-build -W`: any Sphinx warning or docutils
-error — including one from a docstring under `core/gain` —
-fails `build_docs.sh` and turns the branch red in CI (#1220).
-
-```bash
-# Install Sphinx toolchain
-uv sync --group docs
-
-# Build HTML + tarball
-bash docs/build_docs.sh
-open docs/build/html/index.html
-```
-
-The Jenkinsfile has `Build docs` (every branch) and
-`Deploy docs` (master only, ansible to iossifovlab.com).
-Pre-move history lives in `iossifovlab/gpf_documentation`.
-
-#### Do NOT edit `docs/source/changes.rst` in a feature PR
-
-**Release notes are written after a release, not before it.**
-A bugfix or feature branch must leave
-`docs/source/changes.rst` untouched — do not add an entry
-under `unreleased`, and do not create that section. The
-release notes for a version are composed once, when that
-version is cut.
-
-This is the rule even though `git log` shows plenty of
-past commits that did edit it alongside their code — those
-predate the convention and are not the precedent to copy.
-Every unreleased-section edit on a feature branch is also a
-guaranteed rebase conflict with every other branch in
-flight, since they all append to the same list.
-
-Describe the user-visible change in the PR body instead;
-that is what the release notes get composed from.
-
-### Test Infrastructure (Docker)
-
-Some tests require external services. Start them with:
+<important if="you are running tests that need S3 or an HTTP GRR">
 
 ```bash
 docker compose up -d
 ```
 
-Every image is public, so no registry login is needed.
+Every image is public. `docker-compose.yaml` defines **s3** (RustFS, host port 29000, console `http://localhost:29001/rustfs/console/`, credentials `minioadmin/minioadmin`, bucket `test-bucket` created by the one-shot `s3-setup` service; found through `S3_HOST`, default `localhost:29000`; its LastModified precision differs between a listing and a HEAD like MinIO's, and the s3 timestamp tests depend on that, gain#1708) and **Apache httpd** (port 28080, serves `core/tests/.test_grr/` for `grr_http`; the fixture finds that directory relative to the `gain` package, which is the source tree only under an editable install, so a run against an installed `gain` sets `HTTP_GRR_DIR`, the way `HTTP_HOST` names the server; the conda-integration job does).
+</important>
 
-Services defined in `docker-compose.yaml`:
-- **s3** — RustFS, the S3-compatible object store for
-  the S3 storage tests (host port 29000, console at
-  `http://localhost:29001/rustfs/console/`); credentials
-  `minioadmin/minioadmin`, bucket `test-bucket`, which
-  the one-shot `s3-setup` service creates. The test
-  helpers find it through `S3_HOST` (`host` or
-  `host:port`, default `localhost:29000`). Its
-  LastModified precision differs between a listing and
-  a HEAD, the same way MinIO's does, and the s3
-  timestamp tests depend on that (gain#1708)
-- **Apache httpd** (port 28080) — HTTP fixture server
-  for `grr_http` tests; serves
-  `core/tests/.test_grr/`. The http fixture finds that
-  directory relative to the `gain` package, which is the
-  source tree only under an editable install; a run
-  against an *installed* `gain` sets `HTTP_GRR_DIR` to the
-  directory Apache actually serves (the conda-integration
-  job does), the way `HTTP_HOST` names the server.
+<important if="you are changing the GRR info pages' client-side JavaScript or their templates">
 
-## Architecture
+pytest does not cover it (the CI image has no JS runtime). Generate the fixtures, then run the offline Playwright suite; every request is answered from disk inside `page.route` and anything else is aborted (see `info_pages_e2e/README.md`):
 
-### Architecture Decision Records
+```bash
+uv run python info_pages_e2e/generate_fixtures.py info_pages_e2e/fixtures
+cd info_pages_e2e && npm ci && npx playwright test
+```
+</important>
 
-`docs/adr/` records decisions that shaped this
-codebase — what was chosen, why it was scoped that
-way, and what it cost. **Read the relevant ADR before
-changing or extending the area it covers**; it is
-where the reasoning lives that is otherwise spread
-across issue threads and commit messages. See
-`docs/adr/README.md` for the convention, including how
-ADRs divide labour with the module-header "ledger"
-docstrings that some `__init__.py` files carry.
+<important if="you are about to commit, or want to predict the CI lint stage">
 
-These are internal records and sit deliberately
-outside `docs/source/`, which is the published GAIn
-documentation site.
+CI runs **ruff + mypy + pylint** on each package *and its `scripts/`* (plus eslint + stylelint for `web_ui`); any finding from any of them marks the build UNSTABLE. Run all three from `core/`, as CI does (its WORKDIR is `/workspace/core`):
 
-### Domain language
+```bash
+cd core && ruff check --fix . ../scripts
+cd core && mypy --config-file ../mypy.ini gain ../scripts
+cd core && pylint --rcfile=../pylintrc gain ../scripts
+```
 
-`CONTEXT.md` at the repo root records the terms this
-project uses for its own domain, and the ambiguities
-that have actually caused bugs — which of two things
-"searching by label" means, and what "the label is not
-present in this GRR" can each be. It is grown a term at
-a time as ambiguities are resolved, not maintained as a
-complete glossary. **Check it before naming a concept
-in an issue or a docstring**; an ADR explains why a
-decision was made, `CONTEXT.md` fixes what the words in
-it mean.
+- The repo-root `scripts/` belongs to no project, so the `core` stage carries it. For the other projects run the package *and* `scripts` from the project directory, e.g. `cd spliceai_annotator && mypy spliceai_annotator scripts` and `pylint --rcfile=pylintrc spliceai_annotator scripts` (#1327).
+- cwd matters: `mypy gain` reads `gain` as a path and fails from the root, and without `--config-file ../mypy.ini` it silently falls back to defaults looser than CI's (there is no `core/mypy.ini`). `pylint gain` reads an installed module and works from either. Run mypy from the project directory specifically: elsewhere the package resolves to the installed distribution, which ships no `py.typed`, and reports `import-untyped`.
+- Pylint-only catch ruff and mypy miss: `C0103` on a module-level `UPPER_CASE` constant that is reassigned (e.g. in `try`/`except`); assign such constants once.
+- Install the hooks with `cp pre-commit pre-push .git/hooks/`. pre-commit runs `ruff check` on staged `.py` files only. pre-push runs ruff over the **whole tree** at the version `uv.lock` pins (via `uvx`, no venv needed) and refuses the push on any finding; it is ruff only, so pylint's whole-tree invariants (the module line cap below) stay yours to re-check.
+</important>
 
-### Docstrings describe the present, not the past
+<important if="you are adding or editing a ruff suppression, or touching a module near pylint's 1500-line cap">
 
-**A class or method docstring says what the code does
-now. It does not narrate how it got that way.** No
-"renamed from X", no "this used to be a generator", no
-"the try/except went with it", no benchmark numbers from
-the change that produced the current shape, no "#239
-examined and rejected this". That history is real and
-worth keeping — it just belongs somewhere a reader is
-not forced through it to learn what a method returns.
+- Spell suppressions `# ruff: ignore[rule-name]` with the rule *name* (`unused-method-argument`, not `ARG002`). Ruff 0.16 deprecated the `# noqa` spelling and rule codes in `ruff.toml` selectors; the tree was converted in one pass, and CI flags a new old-style comment. The old code is kept in a trailing comment beside each `ruff.toml` entry for grepping.
+- Ruff parses the literal directive text wherever it appears in a comment, so prose *mentioning* one emits an "Invalid directive" warning: write "the E402 directive". Ruff's fixer drops a trailing suppression when it reformats the statement under it (`web_api/web_annotation/asgi.py` bit us). `ruff --fix` on a `noqa-comments` finding can push the line past pylint's `max-line-length=79`, because names are longer than codes and pylint does not exempt suppression comments (#1108); split the signature and put the suppression on the argument's own line, as `genomic_context_cli.py` and `basic_resource_impl.py` do.
+- **Two modules sit at exactly the 1500-line cap**, `web_api/web_annotation/models.py` is one: *any* added line, a comment included, turns the build UNSTABLE on `C0302`. `# ruff: ignore[rule] -- why` keeps a suppression's reason at zero added lines. Anything that needs the space wants a module split or a deliberate `# pylint: disable=too-many-lines` (precedent: `genomic_resources/testing/builders.py`).
+</important>
 
-Where each thing goes:
+<important if="you are rebasing, merging, or deleting a branch">
+
+- **Merge only when the PR is up to date with `master` and its branch build is green on that tip.** `gh pr view <n> --json mergeStateStatus` saying `BEHIND` means update the branch, push, and wait for the *new* build: GitHub replays the branch onto the current `master`, Jenkins built the PR's *head*, so a behind-master PR lands a tree nobody built, and the whole-tree lint invariants are what a clean-looking replay breaks (#1108: eight commits behind, check green, `master` UNSTABLE on two files the branch never touched). `master` is not protected (#1437), so this is a rule, not a button.
+- After **every** rebase of a repo-wide mechanical sweep (ruff bump, suppression conversion, line-cap work) re-run the tool over the **entire tree**, not the commit's file list: the file that breaks is one the branch did not touch (#928, #1007). The pre-push hook does the ruff half.
+- **Merge without `--delete-branch`.** The branch-scoped downstream jobs (`gain-web-e2e`, `gain-core-integration`, `gain-conda-integration`) are triggered from the root `Jenkinsfile`'s last stages with `wait: false` and resolve the branch at their own start, minutes later; `gain-web-e2e` also loads its pipeline definition from the branch (#272), so a branch deleted at merge time gives a ~1s red build that ran nothing (#489). `delete_branch_on_merge` is deliberately **false** on `iossifovlab/gain`; leave it. Prune merged branches in a periodic sweep, reviewing first:
+
+```bash
+git fetch --prune
+git branch -r --merged origin/master | sed 's|origin/||' | grep -vE '^\s*(master|HEAD)\b'                                   # review
+git branch -r --merged origin/master | sed 's|origin/||' | grep -vE '^\s*(master|HEAD)\b' | xargs -r -n1 git push origin --delete   # delete
+```
+</important>
+
+<important if="you are editing anything under docs/ or a docstring under core/gain">
+
+The Sphinx build pulls an auto-generated module tree from `core/gain` and runs `sphinx-build -W`: any warning or docutils error, including one from a docstring, fails `build_docs.sh` and turns the branch red (#1220). `Build docs` runs on every branch, `Deploy docs` on master only. Pre-move history lives in `iossifovlab/gpf_documentation`.
+
+```bash
+uv sync --group docs
+bash docs/build_docs.sh && open docs/build/html/index.html
+```
+</important>
+
+<important if="you are on a feature or bugfix branch and tempted to touch docs/source/changes.rst">
+
+Do not. Release notes are composed once, when the version is cut; a branch leaves `changes.rst` untouched and adds no `unreleased` section (past commits that did are not the precedent, and every such edit is a guaranteed rebase conflict). Describe the user-visible change in the PR body; the notes are composed from there.
+</important>
+
+<important if="you are changing or extending an area that has an ADR, or naming a concept in an issue or docstring">
+
+- `docs/adr/` records what was chosen, why it was scoped that way, and what it cost. **Read the relevant ADR before changing the area it covers**; `docs/adr/README.md` has the convention, including how ADRs divide labour with the module-header "ledger" docstrings some `__init__.py` files carry. ADRs are internal and sit outside `docs/source/`.
+- `CONTEXT.md` fixes what the words mean: the terms this project uses and the ambiguities that have caused bugs (which of two things "searching by label" means; what "the label is not present in this GRR" can each be). It is grown a term at a time. **Check it before naming a concept.**
+</important>
+
+<important if="you are writing or editing a class or method docstring">
+
+A docstring says what the code does *now*; it does not narrate how it got that way: no "renamed from X", no "used to be a generator", no benchmark numbers from the change, no "#239 rejected this". Where each thing goes:
 
 | Content | Home |
 | --- | --- |
-| What it does, what it requires, what it returns, how to call it | the docstring |
+| What it does, requires, returns, how to call it | the docstring |
 | Why the code has this shape; a rejected alternative | an ADR (`docs/adr/`) |
 | A name that changed or vanished on a package's public surface | that package's `__init__.py` ledger |
 | What changed in this commit and why | the commit message |
 | The measurement that justified a change | the ADR, or the PR body |
 
-The test: read the docstring as someone who has never
-seen the old code. Every sentence that still earns its
-place is about the code in front of them. A sentence
-that only makes sense if you knew the previous version
-is history — cut it, and put it in the commit message.
+Test: read it as someone who never saw the old code; a sentence that only makes sense if you knew the previous version is history, cut it. Applies to new and edited docstrings; do not rewrite untouched ones in an unrelated PR.
+</important>
 
-This is a rule for *new and edited* docstrings. Many
-existing ones predate it and still carry their history;
-rewriting them wholesale is not the job of an unrelated
-PR, but a docstring you are already editing should come
-out the far side following the rule.
+<important if="you are adding an annotator, a resource type, a genomic-context provider, or a binner">
 
-Why: the history accretes. A method whose docstring
-grows a paragraph per change ends up costing more to
-read than the implementation, and its oldest paragraphs
-quietly stop being true — the reader cannot tell which
-sentences describe the code and which describe a version
-that no longer exists. `git log -p` and `git blame`
-never go stale and cost nothing to carry.
+Extensibility is by Python entry points declared in `core/pyproject.toml`:
 
-### Package Structure
+1. `gain.genomic_resources.plugins` — genomic context providers (DefaultRepository, CLI, CLIAnnotation)
+2. `gain.genomic_resources.implementations` — position/allele scores, liftover chain, genome, gene models, fragment score (config type `fragment_score`, legacy `cnv_collection` also accepted), annotation pipeline, gene score, gene set collection
+3. `gain.annotation.annotators` — all built-in annotator types (score, effect, gene set, liftover, normalize allele, fragment score with the same two config names, chrom mapping, gene score, simple effect, debug)
+4. `gain.binning.binners` — the binning tool's binners
 
-- **`core/`** — GAIn (Genomic Annotation
-  Infrastructure): annotation engine, genomic resources,
-  effect annotation, task graph, gene scores/sets.
-  Python package: `gain`.
-- **`spliceai_annotator/`**,
-  **`vep_annotator/`**,
-  **`demo_annotator/`** — external annotation
-  plugins (Docker-based)
-
-### Plugin System
-
-GAIn uses Python entry points for extensibility.
-
-**Defined in `core/pyproject.toml`:**
-
-1. **`gain.genomic_resources.plugins`** — genomic
-   context providers (DefaultRepository, CLI,
-   CLIAnnotation)
-2. **`gain.genomic_resources.implementations`** —
-   position/allele scores, liftover chain, genome,
-   gene models, fragment score (config type
-   `fragment_score`, legacy `cnv_collection` also
-   accepted), annotation pipeline, gene score,
-   gene set collection
-3. **`gain.annotation.annotators`** — all built-in
-   annotator types (score, effect, gene set, liftover,
-   normalize allele, fragment score (config name
-   `fragment_score`, legacy `cnv_collection` also
-   accepted), chrom mapping, gene score, simple
-   effect, debug)
-
-Annotator plugins in this repo register additional
-annotators via their own entry points.
-
-### GAIn Submodules (`core/gain/`)
-
-- **`annotation/`** — annotation pipeline engine,
-  annotator base classes, all built-in annotators,
-  processing pipeline, annotation config parsing
-- **`genomic_resources/`** — Genomic Resource Repository
-  (GRR): repository hierarchy (cached, group, factory),
-  resource implementations, fsspec protocol, genomic
-  context system. Sub-packages:
-  - `gene_models/` — gene model parsing and
-    serialization
-  - `genomic_position_table/` — tabular data backends
-    (tabix, BigWig, VCF, in-memory)
-  - `implementations/` — resource type implementations
-    (scores, genome, gene models, liftover, fragment
-    score, annotation pipeline)
-  - `statistics/` — resource statistics (min/max)
-- **`effect_annotation/`** — variant effect prediction
-  (effect types, effect gene/transcript annotation)
-- **`task_graph/`** — DAG-based task orchestration
-- **`gene_scores/`** — gene-level score resources and
-  implementations
-- **`gene_sets/`** — gene set collection resources and
-  implementations
-- **`dask/`** — dask named cluster configuration
-- **`testing/`** — test fixture helpers for study import
-  (acgt, alla, foobar, t4c8 datasets)
-- **`utils/`** — shared utilities (fs_utils, helpers)
-
-### Test Structure
-
-`core` uses a `tests/small/` vs `tests/integration/`
-split:
-- `tests/small/` — unit/fast tests (default for
-  development and CI)
-- `tests/integration/` — tests requiring external
-  services or longer runtime
-
-Key conftest patterns:
-- **`grr_scheme` parametrization** — tests tagged with
-  `grr_rw`, `grr_full`, `grr_http`, `grr_tabix` markers
-  are automatically parametrized across GRR protocols
-  (inmemory, file, s3, http). Enable S3/HTTP with
-  `--enable-s3-testing` / `--enable-http-testing`.
-- Architecture tests in `core/tests/` use
-  `pytestarch` to enforce the package's internal
-  structure.
-
-### Test data — prefer the builders
-
-**Where a builder exists for the resource type, build
-test resources with the fluent builders in
-`gain.genomic_resources.testing.builders` rather than
-hand-rolling a `genomic_resource.yaml` string next to a
-`setup_tabix`/`setup_directories` call.**
-
-```python
-from gain.genomic_resources.testing.builders import (
-    a_grr, a_position_score,
-)
-
-res = (
-    a_position_score()
-    .with_score("phastCons", "float")
-    .with_data("""
-        chrom  pos_begin  pos_end  phastCons
-        1      10         12       0.1
-    """)
-    .with_tabix()          # omit -> plain .txt table
-    .build_resource(tmp_path)
-)
-```
-
-Factories: `a_position_score`, `an_allele_score`,
-`a_fragment_score`, `a_bigwig_score`, `a_vcf_info_score`,
-`a_gene_score`, `a_reference_genome`, `a_basic_resource`,
-`a_grr`. Compose a
-multi-resource repo with
-`a_grr().with_resource(id, builder).build_repo(tmp_path)`;
-`build_resource(tmp_path)` is the single-resource
-shorthand.
-
-Every builder also carries the resource-level `meta:`
-block — `with_meta(summary=…, description=…)` and
-`with_labels(**labels)` — through the shared
-`MetaMixin` in
-`gain.genomic_resources.testing.resource_meta`, so a
-test can assert on `resource.get_summary()` /
-`get_description()` / `get_labels()` without
-hand-rolling yaml. Label keys are passed through
-verbatim (the `with_chrom_mapping` precedent) and the
-mapping is deep-copied; `with_meta` accumulates across
-calls, `with_labels` replaces. Omit both and no `meta:`
-key is emitted at all. A NEW builder gets this by
-inheriting `MetaMixin` and either appending
-`self.render_meta()` to the config text it renders or
-calling `self.append_meta_into(resource_dir)` after a
-`setup_*` helper wrote the config for it (the
-reference-genome path).
-
-**Six factories are NOT in `builders.py`** — import
-each from its own sibling module:
-`a_data_frame` from
-`gain.genomic_resources.testing.data_frame_builder`,
-`an_ann_data` from `…testing.ann_data_builder`,
-`a_gene_models` from `…testing.gene_models_builder`,
-`a_liftover_chain` from `…testing.liftover_chain_builder`,
-`a_gene_set_collection` from
-`…testing.gene_set_collection_builder`,
-and `a_grr_group` from `…testing.group_builder`.
-`builders.py` is ~1800 lines against pylint's
-`max-module-lines=1500`, which it carries a
-`too-many-lines` suppression for — so each new builder
-lives in a sibling module that imports the shared
-single-realize seam one way rather than growing a module
-that is already over the limit; `builders` does not
-import back, and there is no re-export. The resource
-builders compose into `a_grr().with_resource(...)` like
-any other builder; `a_grr_group` composes whole `a_grr()`
-builders instead — see below.
-
-**Repository-level shapes.**
-`a_grr().with_public_url(url)` advertises a public
-mirror, so a test asserting on `get_public_url()` names
-only the url it varies. It is threaded straight through
-`build_filesystem_test_protocol` to `build_fsspec_protocol`,
-so there is ONE construction path whether or not a url is
-advertised — the repository type and the realized files
-are the same either way.
-
-The advertised url folds into the derived protocol *id*,
-because `public_url` is part of a protocol's identity and
-a rebuild that would repoint it is refused — two GRRs over
-one root advertising different mirrors are therefore two
-protocols, as with `read_only`. A group child cannot do
-that (its id is the `repository_id` callers look up by),
-so it takes the url into its *directory* instead — the
-other half of the memo key. Both spellings are
-canonicalized first, so a trailing separator does not
-split one address into two.
-
-`a_grr_group().with_child(id, a_grr()…)` composes a group
-whose children each carry their own resources and their
-own `public_url` — the shape production deploys, and the
-one that proves an address resolves per owning child
-rather than from a single base url. Each child realizes
-into its own `root/child_id`, so two children may carry
-the *same* resource id, and each is built through its own
-`a_grr()` — so a fixture does not change shape by being
-composed into a group. Its `build_repo` returns the plain
-`GenomicResourceRepo` seam: a group is not one protocol.
-
-Both forms also drive `build_definition`, so a CLI tool
-handed a `--grr` file gets the same GRR the in-process
-repository describes. A test whose subject *is* a
-hand-written definition spelling (a `directory` with a
-trailing separator, say) still states the definition
-itself — the builders take a `pathlib.Path`, which
-normalizes that away.
-
-`a_gene_models` authors transcripts ONCE, in gain's own
-1-based inclusive coordinates, and `with_format` decides
-which of the seven registered interchange formats
-(`default`, `refflat`, `refseq`, `ccds`, `knowngene`,
-`ucscgenepred`, `gtf` — exported as
-`GENE_MODELS_FORMATS`) they are written down in. The
-half-open shift the UCSC-derived formats need is the
-renderer's job, not the test author's, and the emitted
-config always names the format the data was actually
-rendered in — `setup_gene_models` writes a literal
-`format: "None"` when its `fileformat` is left unset, so
-the builder always states one. Knobs:
-`with_transcript(tr_name, exons=…, gene=…, chrom=…,
-strand=…, cds=…)` (`gene` defaults to the transcript
-name, `cds` omitted means non-coding),
-`with_format` and `with_no_genes()` (the empty case,
-realized by `setup_empty_gene_models`; it combines with
-neither of the other two and says so). Two of the seven
-formats — `ccds` and `knowngene` — have a single name
-column, so a gene label distinct from the transcript
-name cannot survive being written in them; that is the
-format, not the builder.
-
-`a_data_frame`'s knobs are
-`with_data` / `with_raw_content` (verbatim
-text or bytes, for `parameters:` shapes and compressed
-tables a whitespace block cannot
-express), `with_format` (`csv`/`tsv`/`excel`, filename
-follows), `with_file`, `with_parameters`,
-`with_declared_format` (config only — how you build an
-unknown or mismatched format) and
-`without_file_key` / `without_format_key`. It
-deliberately exposes no expected DataFrame: it parses the
-authored block with pandas to realize xlsx, so handing
-that frame back as an oracle would be circular on the
-separator and dtype axes a `data_frame` test varies.
-
-`a_liftover_chain` writes a gzipped UCSC chain file through
-`setup_gzip`. A bare builder carries one `+` strand chain
-shifting `chr1` by 10 (`chr1:5` lifts to `chr1:15`).
-`with_chain(block)` authors one whitespace-separated chain
-block — header line plus alignment lines — and each call
-adds one, replacing the default. `with_chrom_prefix(
-variant_coordinates=…, target_coordinates=…)` emits the
-schema's `chrom_prefix:` block, each side an
-`add_prefix`/`del_prefix` mapping; that and `filename` are
-the only type-specific config keys. The chain also reads
-the `source_genome` / `target_genome` labels, which
-`with_labels` declares.
-
-`a_gene_set_collection` realizes the `directory` format:
-one file per set under `GeneSets/`, named after the set,
-holding its name, its description and one gene per line.
-A bare builder carries one set, `main_candidates`
-(`POGZ`, `CHD8`, `ANK2`). `with_gene_set(name, desc,
-genes=…)` authors one set — each call adds one, replacing
-the default — so the set names, the file names and the
-config all come from that one declaration. `with_id`
-(default `main`), `with_web_label` and
-`with_web_format_str` set the remaining config keys; the
-two `web_*` keys are emitted only when declared. A value
-that would not read back as declared — a set name that is
-not one file name or repeats another (ignoring case), a
-description or gene that is not one stripped line — is a
-`ResourceValidationError`. The
-`map` and `gmt` formats are not covered. The next builder
-added should follow the same sibling-module pattern
-rather than grow `builders.py`.
-
-**That list is the whole of the coverage — the gaps are
-large and structural, not an oversight to work around.**
-There is no builder for
-`annotation_pipeline`, and no
-`with_*` for
-`default_annotation` or explicit
-`chrom`/`pos_begin` `column_name`/`column_index`
-mappings. Hand-rolled yaml is still the majority in
-`core/tests` and is the correct answer for all of the
-above — if you cannot find a factory for your resource
-type, it very likely does not exist. Extending the
-builders is welcome; contorting a fixture to avoid yaml
-is not.
-
-Why this is the default where it applies, not a style
-preference:
-- **The config and the data cannot drift, because the
-  authored data header is the only description of the
-  columns.** The emitted `table:` block names no columns
-  at all (just `filename`/`format`, plus `zero_based` /
-  `chrom_mapping` when asked); the declared scores
-  render the `scores:` block, and tabix's
-  `seq_col`/`start_col`/`end_col` are derived from the
-  data header (`end_col = start_col` when there is no
-  `pos_end`). A hand-written yaml plus an explicit
-  `seq_col=…` states the same table twice, and a test
-  whose two statements drift apart usually still passes
-  — it just stops testing what it says it does.
-  `with_header_mode("none"/"list")` is the one knob that
-  moves the column description into the config — it
-  realizes a *headerless* data file — and it still
-  derives the config's `column_index:` mappings (or
-  `header:` list) and the tabix index columns from that
-  same authored header, so there is still only one
-  declaration. `with_missing_header_mode()` deliberately
-  realizes the gain#364 misconfiguration (headerless
-  file, no `header_mode` key); the resource it builds
-  does not open.
-- **Builders are immutable** (frozen dataclasses; every
-  `with_*` returns a NEW builder), so a shared base can
-  be specialised per variation without leaking state.
-  This is what makes "same data, two backends" a fact
-  rather than a promise: derive both from one base and
-  let `with_tabix()` be the only difference — see
-  `core/tests/small/genomic_resources/genomic_position_table/test_overlapping_intervals.py`.
-- The `setup_*` helpers in
-  `gain.genomic_resources.testing`
-  (`setup_directories`, `setup_tabix`, `setup_vcf`,
-  `setup_genome`, `convert_to_tab_separated`, …) are the
-  layer the builders delegate to. Reach for them
-  directly only for a shape no builder covers, or when
-  the malformed/handwritten config *is* the thing under
-  test.
-
-For study-import fixtures (pedigrees, denovo/VCF
-studies) use the per-dataset **modules** under
-`gain.testing` — `t4c8_import`, `acgt_import`,
-`alla_import`, `foobar_import` — rather than assembling
-a study by hand. `gain/testing/__init__.py` is empty, so
-import the module, not the package:
-`from gain.testing.t4c8_import import setup_t4c8_grr`.
-
-### CLI Tools
-
-**core CLIs:**
-- `grr_manage` — genomic resource repository management
-- `grr_browse` — GRR browser
-- `annotate_tabular` / `annotate_vcf` / `annotate_doc`
-  — annotation tools
-- `annotate_variant_effects` /
-  `annotate_variant_effects_vcf` — effect annotation
-
-## Key Dependencies
-
-- **Python 3.12**
-- **DuckDB 1.5**
-- **dask** — parallel computing
-- **pandas 2.2**, **numpy 2.2**, **pyarrow >=18** — data
-  analysis
-- **pysam 0.23** — SAM/BAM file handling
-- **pydantic 2.8** — data validation
-- **lark 1.2** — parsing (GRR search grammar)
-- **fsspec / s3fs** — filesystem abstraction + S3 access
-- Dev: **ruff 0.16**, **mypy 1.15**, **pytest**,
-  **pytest-xdist**, **pytestarch**
-
-
-<!-- SPECKIT START -->
-For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan
-<!-- SPECKIT END -->
+Annotator plugins in this repo register additional annotators through their own entry points.
+</important>
