@@ -1,4 +1,4 @@
-"""``binning_tool``: bin position scores into a fixed genome grid.
+"""``binning_tool``: bin genomic scores into a fixed genome grid.
 
 One task per (job, bundle of consecutive regions) writes a column chunk
 per track and region as a ``.npy`` vector in the work directory; one
@@ -12,9 +12,11 @@ from __future__ import annotations
 import argparse
 import datetime
 import functools
+import hashlib
 import json
 import os
 import sys
+import urllib.parse
 from contextlib import chdir
 from typing import Any
 
@@ -73,8 +75,8 @@ TASK_BUDGET = 50_000_000
 
 def _build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Bin position scores into a fixed genome grid, "
-        "writing one HDF5 file with a bins x tracks matrix.")
+        description="Bin position and fragment scores into a fixed "
+        "genome grid, writing one HDF5 file with a bins x tracks matrix.")
     parser.add_argument(
         "run_definition",
         help="the run definition (YAML): bins and binner entries")
@@ -181,7 +183,8 @@ def _print_plan(run: RunDefinition, task_budget: int) -> None:
     print("tracks:")
     for track in run.tracks:
         print(
-            f"  {track.name}\t{track.resource_id}\t{track.score_id}\t"
+            f"  {track.name}\t{','.join(track.resource_ids)}\t"
+            f"{track.score_id}\t"
             f"{track.aggregator}")
     print(f"regions: {len(run.regions)}")
     print(f"bins: {sum(_bin_count(r, run.bin_size) for r in run.regions)}")
@@ -249,14 +252,35 @@ def _build_task_graph(
     return graph
 
 
+def _digest(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
 def _track_stem(track: Track, bin_size: int) -> str:
-    """Everything but the region that decides a track's chunk values."""
-    resource = track.resource_id.replace("/", "_")
+    """Everything but the region that decides a track's chunk values.
+
+    One resource is named by its id; a pooled track's resources, which
+    may number hundreds, by their count and a digest of the list.  A
+    group is folded in URL-quoted, so any value is a safe file name and
+    the groups of one job never share a chunk; the kind's ``parameters``
+    by a digest.  A position-score track has neither, and its stem is
+    what it always was.
+    """
+    if len(track.resource_ids) == 1:
+        resource = track.resource_ids[0].replace("/", "_")
+    else:
+        resource = (
+            f"pool{len(track.resource_ids)}"
+            f"-{_digest(','.join(track.resource_ids))}")
     replacement = track.none_value_replacement
-    return (
+    stem = (
         f"{resource}_{track.score_id}_{track.aggregator}"
-        f"_{'none' if replacement is None else replacement}"
-        f"_bs{bin_size}")
+        f"_{'none' if replacement is None else replacement}")
+    if track.group:
+        stem += f"_g{urllib.parse.quote(track.group, safe='')}"
+    if track.parameters:
+        stem += f"_p{_digest(track.parameters)}"
+    return f"{stem}_bs{bin_size}"
 
 
 def _chunk_path(
@@ -404,14 +428,23 @@ def _bins_table(run: RunDefinition, counts: list[int]) -> npt.NDArray[Any]:
 
 
 def _tracks_table(tracks: list[Track]) -> npt.NDArray[Any]:
+    """The ``/tracks`` table, one row per column of ``/values``.
+
+    ``resource_ids`` is the comma-separated list of the resources a
+    track was computed from, in resource-id order -- one id for every
+    track that is not pooled -- and ``group`` the track's group, empty
+    for a position-score track.  A resource id never holds a comma.
+    """
     text = h5py.string_dtype(encoding="utf-8")
     return np.array(
         [
-            (t.name, t.resource_id, t.score_id, t.aggregator,
+            (t.name, ",".join(t.resource_ids), t.group, t.score_id,
+             t.aggregator,
              np.nan if t.none_value_replacement is None
              else t.none_value_replacement)
             for t in tracks
         ],
         dtype=[
-            ("name", text), ("resource_id", text), ("score_id", text),
+            ("name", text), ("resource_ids", text), ("group", text),
+            ("score_id", text),
             ("aggregator", text), ("none_value_replacement", "<f8")])

@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import argparse
+import datetime
 import pathlib
 import shutil
 import textwrap
@@ -35,14 +36,18 @@ from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
-from gain.genomic_resources.testing.builders import a_position_score
+from gain.genomic_resources.testing.builders import (
+    a_fragment_score,
+    a_position_score,
+)
 from gain.utils.regions import BedRegion
 
 # A track for the chunk-writing task, which names chunks after it and
 # hands it to the binner.  Which binner kind produced it does not reach
 # the task -- the graph has already resolved the kind to a class.
 TRACK = Track(
-    name="scores/one", resource_id="scores/one", score_id="s",
+    name="scores/one", resource_ids=("scores/one",), group="",
+        score_id="s",
     aggregator="max", none_value_replacement=None,
     binner="stub_binner")
 JOB = BinningJob(binner="stub_binner", tracks=(TRACK,))
@@ -172,14 +177,15 @@ def test_tracks_describes_each_column_with_its_provenance(
         tracks = h5["tracks"][()]
 
     assert list(tracks.dtype.names) == [
-        "name", "resource_id", "score_id", "aggregator",
+        "name", "resource_ids", "group", "score_id", "aggregator",
         "none_value_replacement"]
     assert [
-        (row["name"], row["resource_id"], row["score_id"], row["aggregator"])
+        (row["name"], row["resource_ids"], row["group"], row["score_id"],
+         row["aggregator"])
         for row in tracks
     ] == [
-        (b"scores/one", b"scores/one", b"s", b"max"),
-        (b"scores/two", b"scores/two", b"t", b"mean"),
+        (b"scores/one", b"scores/one", b"", b"s", b"max"),
+        (b"scores/two", b"scores/two", b"", b"t", b"mean"),
     ]
     np.testing.assert_array_equal(
         tracks["none_value_replacement"], [np.nan, np.nan])
@@ -750,7 +756,7 @@ def test_a_task_saves_column_i_of_a_block_to_track_i(
     # A job may hold several tracks; the block has one column each, and
     # each column goes to its own track's chunk.
     chunk_dir = str(tmp_path)
-    other = replace(TRACK, name="scores/two", resource_id="scores/two")
+    other = replace(TRACK, name="scores/two", resource_ids=("scores/two",))
     job = BinningJob(binner="stub_binner", tracks=(TRACK, other))
     region = BedRegion("chr1", 1, 20)
     binding = StubBinding(lambda _region: np.array(
@@ -822,7 +828,7 @@ def test_a_task_declares_a_chunk_per_track_of_its_job_and_region(
     # whether it must run again, so they are every chunk the task writes:
     # one per track of its job and region of its bundle -- a two-track
     # job's second column included.
-    other = replace(TRACK, name="scores/two", resource_id="scores/two")
+    other = replace(TRACK, name="scores/two", resource_ids=("scores/two",))
     lone = replace(TRACK, name="scores/one:mean", aggregator="mean")
     regions = [BedRegion("chr1", 1, 10), BedRegion("chr1", 11, 20)]
     run = RunDefinition(
@@ -1055,3 +1061,174 @@ def test_force_recomputes_every_chunk(
 
     np.testing.assert_array_equal(
         read_matrix(output)[:, 0], [9.0, 9.0, 9.0, 9.0, NAN, NAN, NAN, NAN])
+
+
+# A pooled grouped fragment entry over frags/s1 and frags/s2, an unpooled
+# plain one over frags/s1, and a position score: one matrix.
+MIXED_RUN_DEFINITION = textwrap.dedent("""
+    input_reference_genome: genome
+    bins:
+      bin_size: 10
+      regions: ["chr1:1-40", chr2]
+    binners:
+    - fragment_score_binner:
+        resource_query: "frags/*"
+        group:
+          cell_score_id: cell
+          cell_meta_column: barcode
+          group_meta_column: class
+        meta:
+          resource_id: meta/cells
+          filter:
+          - column: sample_id
+            label: sample_id
+    - fragment_score_binner:
+        resource_query: frags/s1
+        pool: false
+    - position_score_binner:
+        resource_query: scores/one
+""")
+
+# Columns frags/*:B, frags/*:T, frags/s1:all, scores/one.  Fragments
+# counted per class of their sample's rows, pooled; frags/s2 has no chr2,
+# whose rows are frags/s1's fragments alone (see the conftest).
+MIXED_EXPECTED_VALUES = [
+    [2.0, 1.0, 2.0, 1.0],
+    [0.0, 3.0, 2.0, 1.0],
+    [0.0, 0.0, 0.0, NAN],
+    [0.0, 1.0, 1.0, 2.0],
+    [1.0, 0.0, 1.0, NAN],
+    [0.0, 0.0, 0.0, NAN],
+    [0.0, 0.0, 0.0, NAN],
+    [0.0, 0.0, 0.0, NAN],
+]
+
+
+@pytest.fixture
+def mixed_run_definition(output: pathlib.Path) -> pathlib.Path:
+    return write_run_definition(output, MIXED_RUN_DEFINITION)
+
+
+def test_fragment_and_position_tracks_share_one_file_and_its_bins(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path,
+    mixed_run_definition: pathlib.Path, output: pathlib.Path,
+) -> None:
+    binning_tool(mixed_run_definition, grr_dir, output)
+
+    with h5py.File(output, "r") as h5:
+        values = h5["values"][()]
+        bins = h5["bins"][()]
+    np.testing.assert_array_equal(values, MIXED_EXPECTED_VALUES)
+    assert [tuple(row) for row in bins] == [
+        (b"chr1", 1, 10), (b"chr1", 11, 20),
+        (b"chr1", 21, 30), (b"chr1", 31, 40),
+        (b"chr2", 1, 10), (b"chr2", 11, 20),
+        (b"chr2", 21, 30), (b"chr2", 31, 40),
+    ]
+
+
+def test_tracks_records_each_track_s_group_and_resources(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path,
+    mixed_run_definition: pathlib.Path, output: pathlib.Path,
+) -> None:
+    # A pooled track lists every resource it was computed from, in id
+    # order; an unpooled and a position-score track one, with no comma.
+    # Only a position-score track has an empty group.
+    binning_tool(mixed_run_definition, grr_dir, output)
+
+    with h5py.File(output, "r") as h5:
+        tracks = h5["tracks"][()]
+    assert "resource_id" not in tracks.dtype.names
+    assert [
+        (row["name"], row["group"], row["resource_ids"], row["score_id"],
+         row["aggregator"])
+        for row in tracks
+    ] == [
+        (b"frags/*:B", b"B", b"frags/s1,frags/s2", b"", b"sum"),
+        (b"frags/*:T", b"T", b"frags/s1,frags/s2", b"", b"sum"),
+        (b"frags/s1:all", b"all", b"frags/s1", b"", b"sum"),
+        (b"scores/one", b"", b"scores/one", b"s", b"max"),
+    ]
+
+
+def test_dry_run_lists_every_track_s_resources(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path,
+    mixed_run_definition: pathlib.Path, output: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    binning_tool(mixed_run_definition, grr_dir, output, "--dry-run")
+
+    out = capsys.readouterr().out
+    assert "frags/*:B\tfrags/s1,frags/s2\t\tsum" in out
+    assert "frags/s1:all\tfrags/s1\t\tsum" in out
+    assert "scores/one\tscores/one\ts\tmax" in out
+    assert "tasks: 3" in out
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("budget", [(), ("--task-budget", "0")])
+def test_a_mixed_file_is_byte_for_byte_the_same_whatever_the_budget(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path,
+    mixed_run_definition: pathlib.Path, output: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch, budget: tuple[str, ...],
+) -> None:
+    # With the creation time held still, nothing else in the file may
+    # depend on how the work was cut: one task per region (budget 1)
+    # against one per job.
+    class Frozen(datetime.datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> "Frozen":
+            return cls(2026, 10, 2, tzinfo=tz)
+
+    monkeypatch.setattr("gain.binning.cli.datetime.datetime", Frozen)
+    binning_tool(mixed_run_definition, grr_dir, output, "--task-budget", "1")
+    cut = output.read_bytes()
+    output.unlink()
+
+    binning_tool(mixed_run_definition, grr_dir, output, *budget)
+
+    assert output.read_bytes() == cut
+    np.testing.assert_array_equal(read_matrix(output), MIXED_EXPECTED_VALUES)
+
+
+def test_a_rerun_reuses_the_finished_fragment_chunks(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path,
+    mixed_run_definition: pathlib.Path, output: pathlib.Path,
+) -> None:
+    # Both fragment resources change underneath the tool between the
+    # runs; the rerun's chunks are done, so the matrix is the first's.
+    binning_tool(mixed_run_definition, grr_dir, output, "--keep-work-dir")
+    first = read_matrix(output)
+    output.unlink()
+    for resource in ("frags/s1", "frags/s2"):
+        shutil.rmtree(grr_dir / resource)
+        a_fragment_score().with_score("cell", "str") \
+            .with_score("count", "int").with_labels(sample_id="S1") \
+            .with_tabix().with_data("""
+                chrom  pos_begin  pos_end  cell  count
+                chr1   1          2        AAA   9
+                chr2   1          2        AAA   9
+            """).realize_into(grr_dir / resource)
+
+    binning_tool(mixed_run_definition, grr_dir, output, "--keep-work-dir")
+
+    np.testing.assert_array_equal(read_matrix(output), first)
+    np.testing.assert_array_equal(first, MIXED_EXPECTED_VALUES)
+
+
+def test_the_groups_of_a_job_are_chunks_of_their_own(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path,
+    mixed_run_definition: pathlib.Path, output: pathlib.Path,
+) -> None:
+    # A group is part of a chunk's name, URL-quoted, and so is a digest
+    # of what else decides a fragment track's values; a pooled track's
+    # resources are named by their count and a digest.
+    binning_tool(mixed_run_definition, grr_dir, output, "--keep-work-dir")
+
+    names = work_dir_names(output, "chunks/*_chr1_1_40.npy")
+    assert len(names) == 4
+    assert names[0].startswith("frags_s1__sum_none_gall_p")
+    assert names[1].startswith("pool2-")
+    assert "__sum_none_gB_p" in names[1]
+    assert "__sum_none_gT_p" in names[2]
+    assert names[3] == "scores_one_s_max_none_bs10_chr1_1_40.npy"

@@ -10,14 +10,52 @@ from gain.genomic_resources.reference_genome import (
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing.builders import (
+    a_fragment_score,
     a_grr,
     a_position_score,
     a_reference_genome,
 )
+from gain.genomic_resources.testing.data_frame_builder import a_data_frame
 
 CHR1_LENGTH = 100
 CHR2_LENGTH = 40
 SHORT_CHR1_LENGTH = 50
+
+#: Two samples' fragments, ``frags/s1`` and ``frags/s2`` -- the shape of a
+#: single-cell fragment file: ``cell``, the barcode every fragment
+#: carries, and ``count``, the read pairs behind it.  ``frags/s2`` has no
+#: chr2.  Each carries its ``sample_id`` label, which the metadata
+#: table's ``sample_id`` column is filtered by.
+S1_FRAGMENTS = """
+    chrom  pos_begin  pos_end  cell  count
+    chr1   3          12       AAA   2
+    chr1   10         25       BBB   5
+    chr1   11         14       CCC   1
+    chr1   15         40       AAA   3
+    chr1   33         34       DDD   4
+    chr2   5          9        BBB   6
+"""
+S2_FRAGMENTS = """
+    chrom  pos_begin  pos_end  cell  count
+    chr1   4          8        AAA   7
+    chr1   12         20       EEE   1
+    chr1   16         22       EEE   4
+    chr1   35         50       EEE   2
+"""
+#: The cell metadata of both samples, and of a third no fragment resource
+#: names.  In S1, AAA is T and BBB is B; CCC's class is empty and DDD is
+#: not in the table at all, so their fragments reach no track.  In S2 the
+#: barcode AAA is a different cell, of class B.  S3's row brings a class,
+#: X, that only an unfiltered table would show.  Written verbatim: a
+#: whitespace block has no spelling for an empty cell.
+CELL_META = """sample_id,barcode,class
+S1,AAA,T
+S1,BBB,B
+S1,CCC,
+S2,AAA,B
+S2,EEE,T
+S3,BBB,X
+"""
 
 
 @pytest.fixture
@@ -34,7 +72,9 @@ def repo(grr_dir: pathlib.Path) -> GenomicResourceRepo:
     aggregator is ``max``.  ``scores/two`` covers 1-10 with 4.0 and
     declares ``mean``.  ``other/three`` is a third position score kept
     outside the ``scores/`` prefix so that a glob can be seen to exclude
-    it.
+    it.  ``frags/s1``, ``frags/s2`` and ``meta/cells`` are two samples'
+    fragment scores and their cell metadata table (see ``S1_FRAGMENTS``,
+    ``S2_FRAGMENTS`` and ``CELL_META``).
     """
     grr = (
         a_grr()
@@ -84,6 +124,20 @@ def repo(grr_dir: pathlib.Path) -> GenomicResourceRepo:
                            chrom  pos_begin  pos_end  v
                            chr1   1          10       lo
                        """))
+        .with_resource("frags/s1", a_fragment_score()
+                       .with_score("cell", "str")
+                       .with_score("count", "int")
+                       .with_labels(sample_id="S1")
+                       .with_tabix()
+                       .with_data(S1_FRAGMENTS))
+        .with_resource("frags/s2", a_fragment_score()
+                       .with_score("cell", "str")
+                       .with_score("count", "int")
+                       .with_labels(sample_id="S2")
+                       .with_tabix()
+                       .with_data(S2_FRAGMENTS))
+        .with_resource("meta/cells", a_data_frame()
+                       .with_raw_content(CELL_META))
     )
     return grr.build_repo(grr_dir)
 

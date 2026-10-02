@@ -13,7 +13,8 @@ BIN_SIZE = 10
 def scores_one(aggregator: str, replacement: float | None = None) -> Track:
     """scores/one: 1.0 over chr1:1-20, 2.0 over chr1:31-35, nothing else."""
     return Track(
-        name="scores/one", resource_id="scores/one", score_id="s",
+        name="scores/one", resource_ids=("scores/one",), group="",
+        score_id="s",
         aggregator=aggregator, none_value_replacement=replacement,
         binner="position_score_binner")
 
