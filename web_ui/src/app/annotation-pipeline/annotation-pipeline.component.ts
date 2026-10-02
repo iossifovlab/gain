@@ -102,6 +102,12 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   public disableActions: boolean;
   public invalidPipelineName = false;
   public pipelinesLoaded = false;
+  // Set when isConfigValid ran while the pipeline list was loading and so
+  // sent nothing; the load's completion validates the editor's text then.
+  private validationPendingOnLoad = false;
+  // Set once a pipeline list has been loaded (from the server or the cache).
+  // Until then a refetch is still the initial load and selects as one.
+  private pipelineListEverLoaded = false;
   public editorInstance: Monaco.editor.IStandaloneCodeEditor;
   public editorWidth: number;
   public downloadDocLink: string;
@@ -250,8 +256,9 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
           this.reconnectionSubscription.unsubscribe();
           this.reconnectionSubscription = this.socketNotificationsService.reopenConnection().subscribe({
             next: () => {
-              // Reconnected - refetch pipelines to catch up on missed notifications
-              this.getPipelines();
+              // Reconnected - refetch pipelines to catch up on missed
+              // notifications, keeping whatever the editor holds.
+              this.refreshPipelines();
               this.setupPipelineWebSocketConnection();
             },
             error: (e) => console.error('Reconnection failed:', e)
@@ -288,7 +295,20 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     }
   }
 
-  private getPipelines(defaultPipelineId: string = ''): void {
+  /**
+   * Reload the pipeline list without touching the editor: its text, the
+   * selected pipeline and the temporary pipeline stay as they are, whether
+   * the user cleared the editor, typed into it, or left a pipeline selected.
+   * If no list had loaded by the time the refetch answers (the initial GET
+   * failed), this is still the initial load and selects the first pipeline
+   * as one. That is decided when the answer lands, not when it is sent: a
+   * refetch sent during the initial load can answer after it.
+   */
+  private refreshPipelines(): void {
+    this.getPipelines('', true);
+  }
+
+  private getPipelines(defaultPipelineId: string = '', isRefresh = false): void {
     if (
       this.pipelineStateService.loadedWhileLoggedIn() === this.isUserLoggedIn &&
       !defaultPipelineId &&
@@ -297,6 +317,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
       this.pipelines = this.pipelineStateService.pipelines();
       this.filteredPipelines = this.pipelines;
       this.pipelinesLoaded = true;
+      this.pipelineListEverLoaded = true;
       this.restoreState();
       return;
     }
@@ -308,8 +329,12 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
         this.filteredPipelines = this.pipelines;
         this.pipelineStateService.pipelines.set(pipelines);
         this.pipelineStateService.loadedWhileLoggedIn.set(this.isUserLoggedIn);
+        const keepEditorState = isRefresh && this.pipelineListEverLoaded;
         this.pipelinesLoaded = true;
-        if (defaultPipelineId) {
+        this.pipelineListEverLoaded = true;
+        if (keepEditorState) {
+          this.rebindSelectedPipeline();
+        } else if (defaultPipelineId) {
           // Post-saveAs path. onPipelineClick would reset
           // currentPipelineText to the GET-response's stale (pre-edit)
           // content, silently dropping any user edits that landed in
@@ -340,10 +365,29 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
             this.onPipelineClick(firstPipeline);
           }
         }
+        this.runValidationPendingOnLoad();
       },
       error: () => {
         this.disableActions = false;
       }});
+  }
+
+  private runValidationPendingOnLoad(): void {
+    if (this.validationPendingOnLoad) {
+      this.validationPendingOnLoad = false;
+      this.isConfigValid();
+    }
+  }
+
+  /** Point the selection at the freshly loaded copy of the same pipeline. */
+  private rebindSelectedPipeline(): void {
+    if (!this.selectedPipeline) {
+      return;
+    }
+    const reloaded = this.pipelines.find(p => p.id === this.selectedPipeline.id);
+    if (reloaded) {
+      this.selectedPipeline = reloaded;
+    }
   }
 
   private selectPipelineAfterSave(pipeline: Pipeline): void {
@@ -417,8 +461,10 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
 
   public isConfigValid(): void {
     if (!this.pipelinesLoaded) {
+      this.validationPendingOnLoad = true;
       return;
     }
+    this.validationPendingOnLoad = false;
     this.markConfigDirty();
 
     this.pipelineValidationSubscription.unsubscribe();
@@ -483,6 +529,8 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     }
     this.configError = '';
     this.validationUnavailable = '';
+    // The text a pending validation was for is being replaced.
+    this.validationPendingOnLoad = false;
     this.pipelineStateService.isConfigValid.set(true);
     this.selectedPipeline = pipeline;
     this.pipelineStateService.selectedPipelineId.set(pipeline.id);
@@ -656,6 +704,11 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     this.pipelineStateService.currentPipelineText.set('');
     this.dropdownControl.setValue('');
     this.clearTemporaryPipeline();
+    // Validate the cleared text directly. The editor reports the change
+    // through ngModelChange only once monaco has loaded; a clear that lands
+    // before then reaches the editor silently. When it does report, the
+    // debounce folds both into one request.
+    this.onConfigChanged();
   }
 
   private areThereUnsavedChanges(): boolean {

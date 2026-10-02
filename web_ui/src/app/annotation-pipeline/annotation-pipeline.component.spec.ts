@@ -891,6 +891,149 @@ describe('AnnotationPipelineComponent', () => {
     expect(component.isPipelineChanged()).toBe(false);
   });
 
+  // Arm one websocket drop and reconnect; the returned function fires it.
+  function armReconnect(): () => void {
+    const notifications = new Subject<PipelineNotification>();
+    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications')
+      .mockReturnValueOnce(notifications.asObservable())
+      .mockReturnValueOnce(new Subject<PipelineNotification>().asObservable());
+    const reconnected = new Subject<void>();
+    jest.spyOn(socketNotificationsServiceMock, 'reopenConnection')
+      .mockReturnValueOnce(reconnected.asObservable());
+    return () => {
+      notifications.error(new Event('network error'));
+      reconnected.next();
+    };
+  }
+
+  it('New pipeline validates the cleared editor without waiting for the editor to report the change (#693)', () => {
+    // Until monaco has loaded, the editor only stores the text it is given
+    // and later loads it without reporting a change, so the clear must start
+    // its own validation. The test bed's editor reports nothing either.
+    jest.useFakeTimers();
+    try {
+      component.ngOnInit();
+      const validateSpy = jest.spyOn(jobsServiceMock, 'validatePipelineConfig');
+
+      component.clearPipeline();
+      jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+
+      expect(validateSpy).toHaveBeenCalledTimes(1);
+      expect(validateSpy).toHaveBeenCalledWith('');
+      expect(pipelineStateService.isConfigValid()).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('a reconnect-driven pipeline-list refetch keeps an editor cleared by New pipeline (#693)', () => {
+    const reconnect = armReconnect();
+    component.ngOnInit();
+    expect(component.selectedPipeline.id).toBe('id1');
+    component.clearPipeline();
+    // The cached list was loaded under another identity, so the refetch
+    // goes to the server rather than restoring from the cache.
+    pipelineStateService.loadedWhileLoggedIn.set(!component.isUserLoggedIn);
+
+    reconnect();
+
+    expect(component.currentPipelineText).toBe('');
+    expect(component.selectedPipeline).toBeNull();
+    expect(pipelineStateService.currentPipelineText()).toBe('');
+    expect(pipelineStateService.selectedPipelineId()).toBe('');
+  });
+
+  it('a reconnect refetch sent during the initial load keeps an editor cleared before it answers (#693)', () => {
+    // The refetch is sent while the initial GET is still in flight, but its
+    // answer lands after the initial load selected a pipeline and the user
+    // cleared the editor: whether to keep the editor is an answer-time call.
+    pipelineStateService.pipelines.set([]);
+    const reconnect = armReconnect();
+    const initialLoad = new Subject<Pipeline[]>();
+    const refetch = new Subject<Pipeline[]>();
+    jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
+      .mockReturnValueOnce(initialLoad.asObservable())
+      .mockReturnValueOnce(refetch.asObservable());
+    const fresh = TestBed.createComponent(AnnotationPipelineComponent).componentInstance;
+    fresh.ngOnInit();
+    reconnect();
+    initialLoad.next(mockPipelines);
+    initialLoad.complete();
+    expect(fresh.selectedPipeline.id).toBe('id1');
+    fresh.clearPipeline();
+
+    refetch.next(mockPipelines);
+    refetch.complete();
+
+    expect(fresh.currentPipelineText).toBe('');
+    expect(fresh.selectedPipeline).toBeNull();
+    expect(pipelineStateService.currentPipelineText()).toBe('');
+    expect(pipelineStateService.selectedPipelineId()).toBe('');
+  });
+
+  it('a reconnect-driven refetch selects the first pipeline when the initial load failed (#693)', () => {
+    // The page opened while the backend was down: the initial GET errored,
+    // nothing was ever loaded, and the reconnect refetch is what recovers it.
+    pipelineStateService.pipelines.set([]);
+    const reconnect = armReconnect();
+    jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
+      .mockReturnValueOnce(throwError(() => new Error('backend restarting')));
+    const freshFixture = TestBed.createComponent(AnnotationPipelineComponent);
+    const fresh = freshFixture.componentInstance;
+    fresh.ngOnInit();
+    expect(fresh.selectedPipeline).toBeFalsy();
+
+    reconnect();
+
+    expect(fresh.selectedPipeline.id).toBe('id1');
+    expect(fresh.currentPipelineText).toBe('content1');
+  });
+
+  it('sends a validation suppressed during a pipeline-list reload once the reload completes (#693)', () => {
+    jest.useFakeTimers();
+    try {
+      const reconnect = armReconnect();
+      component.ngOnInit();
+      pipelineStateService.loadedWhileLoggedIn.set(!component.isUserLoggedIn);
+      const reloaded = new Subject<Pipeline[]>();
+      jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
+        .mockReturnValueOnce(reloaded.asObservable());
+      reconnect();
+      const validateSpy = jest.spyOn(jobsServiceMock, 'validatePipelineConfig');
+
+      component.currentPipelineText = 'typed during the reload';
+      component.onConfigChanged();
+      jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+      expect(validateSpy).not.toHaveBeenCalled();
+      component.currentPipelineText = 'typed during the reload, then more';
+      reloaded.next(mockPipelines);
+      reloaded.complete();
+
+      expect(validateSpy).toHaveBeenCalledTimes(1);
+      expect(validateSpy).toHaveBeenCalledWith('typed during the reload, then more');
+      expect(pipelineStateService.isConfigValid()).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('drops a validation suppressed during the initial load when the load selects the first pipeline (#693)', () => {
+    pipelineStateService.pipelines.set([]);
+    component.currentPipelineText = '';
+    const initialPipelines = new Subject<Pipeline[]>();
+    jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
+      .mockReturnValueOnce(initialPipelines.asObservable());
+    const validateSpy = jest.spyOn(jobsServiceMock, 'validatePipelineConfig');
+    component.ngOnInit();
+    component.isConfigValid();
+
+    initialPipelines.next(mockPipelines);
+    initialPipelines.complete();
+
+    expect(component.currentPipelineText).toBe('content1');
+    expect(validateSpy).not.toHaveBeenCalled();
+  });
+
   it('saveAs preserves a user edit that lands during the post-save pipelines refresh (tb-348)', () => {
     // Regression test for tb-348 / H8 race: after savePipeline returns, the
     // post-save GET /api/pipelines is in flight. If the user edits the
