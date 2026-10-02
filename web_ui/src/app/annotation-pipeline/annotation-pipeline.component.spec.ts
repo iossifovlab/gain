@@ -1082,6 +1082,27 @@ describe('AnnotationPipelineComponent', () => {
     expect(pipelineStateService.selectedPipelineId()).toBe('id2');
   });
 
+  it('a failed initial load does not mark the list loaded or validate the next edit (#1779)', () => {
+    jest.useFakeTimers();
+    try {
+      pipelineStateService.pipelines.set([]);
+      jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
+        .mockReturnValueOnce(throwError(() => new Error('backend down')));
+      const fresh = TestBed.createComponent(AnnotationPipelineComponent).componentInstance;
+      fresh.ngOnInit();
+      const validateSpy = jest.spyOn(jobsServiceMock, 'validatePipelineConfig');
+
+      fresh.currentPipelineText = 'typed after the failed initial load';
+      fresh.onConfigChanged();
+      jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+
+      expect(validateSpy).not.toHaveBeenCalled();
+      expect(fresh.pipelinesLoaded).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('drops a validation suppressed during the initial load when the load selects the first pipeline (#693)', () => {
     pipelineStateService.pipelines.set([]);
     component.currentPipelineText = '';
