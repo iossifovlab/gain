@@ -44,7 +44,7 @@ from gain.genomic_resources.testing.builders import (
 )
 from gain.task_graph.graph import TaskDesc, TaskGraph
 
-from .conftest import dvc_sidecar
+from .conftest import keep_under_dvc
 
 
 class SomeTestImplementation(GenomicResourceImplementation):
@@ -1085,8 +1085,7 @@ def test_stats_rebuild_leaves_a_dvc_tracked_orphan_whole(
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
     statistics = tmp_path / "statistics"
     data = (statistics / "histogram_old.json").read_bytes()
-    (statistics / "histogram_old.json.dvc").write_text(
-        dvc_sidecar("histogram_old.json", data))
+    keep_under_dvc(statistics / "histogram_old.json")
     drop_everything_but_statistics(tmp_path)
     float_scores(tmp_path, "new")
 
@@ -1104,9 +1103,7 @@ def test_stats_rebuild_reports_a_dvc_pointer_whose_blob_is_not_pulled(
     float_scores(tmp_path, "old")
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
     statistics = tmp_path / "statistics"
-    data = (statistics / "histogram_old.json").read_bytes()
-    (statistics / "histogram_old.json.dvc").write_text(
-        dvc_sidecar("histogram_old.json", data))
+    keep_under_dvc(statistics / "histogram_old.json")
     cli_manage(["repo-repair", "-R", str(tmp_path), "-j", "1"])
     (statistics / "histogram_old.json").unlink()
     drop_everything_but_statistics(tmp_path)

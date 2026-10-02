@@ -132,7 +132,14 @@ highly compressible, and nothing about it needs to stay human-diffable.
     the sidecar is kept with a warning, but the old `.json.gz` is dropped,
     so a reader at this version loads the plain file the rebuild wrote.
 
-  One case remains:
+  Two cases remain:
+  - **Legacy `.yaml`, within the limit, rebuilt past it:** the kept
+    `histogram_<id>.yaml` still holds the under-limit histogram. A release
+    from before this decision reads only the plain encoding, which for this
+    resource is that `.yaml`, so its full load returns the stale histogram
+    as current. A reader at this version is unaffected: the sidecar and the
+    `.json.gz` are in the manifest, so it loads the `.json.gz`. The case
+    lasts until the resource moves off `.yaml` naming.
   - **Rebuilt past the limit by an older release:** that release rewrites
     the plain file and the sidecar but never touches the `.json.gz`, so a
     reader at this version loads the stale `.json.gz`. Only a rebuild by a

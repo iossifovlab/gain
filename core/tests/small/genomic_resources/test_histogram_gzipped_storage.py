@@ -23,7 +23,7 @@ from gain.genomic_resources.score_resource import ScoreResource
 from gain.genomic_resources.testing import build_filesystem_test_repository
 from gain.genomic_resources.testing.builders import a_position_score
 
-from .conftest import dvc_sidecar, leave_as_a_pointer
+from .conftest import keep_under_dvc, leave_as_a_pointer
 from .test_cli_stats import (
     A_NUMBER_HISTOGRAM,
     CATEGORIES_PAST_LIMIT,
@@ -41,13 +41,6 @@ GZIP_MAGIC = b"\x1f\x8b"
 
 def statistics_of(tmp_path: pathlib.Path) -> pathlib.Path:
     return tmp_path / "statistics"
-
-
-def keep_under_dvc(payload: pathlib.Path) -> None:
-    """Put a ``.dvc`` pointer beside ``payload``, so a rebuild that
-    finds it stale reports it and leaves it in place."""
-    payload.with_name(payload.name + ".dvc").write_text(
-        dvc_sidecar(payload.name, payload.read_bytes()))
 
 
 def test_past_limit_build_writes_a_gzipped_full_histogram(

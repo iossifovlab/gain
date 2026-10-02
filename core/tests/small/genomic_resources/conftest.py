@@ -709,11 +709,17 @@ def dvc_sidecar(path: str, content: bytes | str) -> str:
     """)
 
 
+def keep_under_dvc(payload: pathlib.Path) -> None:
+    """Put a ``.dvc`` pointer beside ``payload``, so a rebuild that
+    finds it stale reports it and leaves it in place."""
+    payload.with_name(payload.name + ".dvc").write_text(
+        dvc_sidecar(payload.name, payload.read_bytes()))
+
+
 def leave_as_a_pointer(payload: pathlib.Path) -> None:
     """Replace ``payload`` with the ``.dvc`` sidecar that describes it:
     an unpulled DVC checkout of the same resource."""
-    payload.with_name(payload.name + ".dvc").write_text(
-        dvc_sidecar(payload.name, payload.read_bytes()))
+    keep_under_dvc(payload)
     payload.unlink()
 
 
