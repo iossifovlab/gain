@@ -21,6 +21,7 @@ from gain.genomic_resources.repository import (
     GR_SQLITE_META_FILE_NAME,
     GenomicResource,
     GenomicResourceRepo,
+    Manifest,
 )
 from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
@@ -872,6 +873,17 @@ def test_stats_rebuild_below_limit_removes_the_stale_sidecar(
         tmp_path / ".MANIFEST").read_text()
 
 
+def manifest_histogram_files(tmp_path: pathlib.Path) -> list[str]:
+    """Name every score-histogram entry of ``.MANIFEST``, like
+    :func:`histogram_files` names the ones on disk."""
+    names = Manifest.from_file_content(
+        (tmp_path / ".MANIFEST").read_text()).names()
+    return sorted(
+        name.removeprefix("statistics/") for name in names
+        if name.startswith((
+            "statistics/histogram_", "statistics/truncated/histogram_")))
+
+
 def a_float_score(
     tmp_path: pathlib.Path,
     histogram: dict[str, Any],
@@ -1019,14 +1031,9 @@ def test_stats_rebuild_after_a_score_removal_drops_its_sidecar_too(
 
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
-    # The removed score's gzipped full histogram is not reconciled yet
-    # (gain#1734); everything else of it is gone.
-    assert [
-        name for name in histogram_files(tmp_path)
-        if name != "histogram_cell.json.gz"] == [
-        "histogram_kept.json", "histogram_kept.png"]
-    assert "truncated/histogram_cell" not in (
-        tmp_path / ".MANIFEST").read_text()
+    expected = ["histogram_kept.json", "histogram_kept.png"]
+    assert histogram_files(tmp_path) == expected
+    assert manifest_histogram_files(tmp_path) == expected
 
 
 def test_stats_rebuild_drops_a_removed_score_whose_id_extends_a_kept_one(

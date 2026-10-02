@@ -117,24 +117,24 @@ highly compressible, and nothing about it needs to stay human-diffable.
   When no plain file is present, that load raises the same `HistogramError`
   it raises today for a full histogram whose DVC blob is not pulled. That is
   the compatibility cost, and it falls only on full loads.
-- Until gain#1734 lands, a rebuild that crosses the limit leaves the other
-  encoding's file behind, and removing a score leaves its `.json.gz`. Three
-  cases follow from that:
+- Every rebuild drops the full histogram the earlier build left in the other
+  encoding, and removing a score (or nulling its histogram config) drops its
+  `.json.gz` with the rest of its files (gain#1734). The deletion goes
+  through `drop_stale_histogram_file`, so a DVC-tracked leftover is reported
+  and kept, not deleted. For full loads that closes two cases:
   - **Within the limit, rebuilt past it:** the earlier plain
-    `histogram_<id>.json` is still there. An older release's full load
-    returns that stale file as current instead of raising. A reader at this
-    version loads the `.json.gz`.
+    `histogram_<id>.json` is dropped, so an older release's full load raises
+    rather than returning that stale file as current. A DVC-tracked one is
+    reported instead, for the curator to `dvc remove`.
   - **Past the limit, rebuilt within it, with a DVC-tracked sidecar:**
-    `drop_stale_histogram_file` leaves the sidecar in place with a warning,
-    so the sidecar and the old `.json.gz` stay listed. A reader at this
-    version then loads the stale `.json.gz` rather than the plain file the
-    rebuild wrote.
+    the sidecar is kept with a warning, but the old `.json.gz` is dropped,
+    so a reader at this version loads the plain file the rebuild wrote.
+
+  One case remains:
   - **Rebuilt past the limit by an older release:** that release rewrites
     the plain file and the sidecar but never touches the `.json.gz`, so a
-    reader at this version loads the stale `.json.gz`.
-
-  gain#1734 closes the first two by dropping the other encoding on every
-  rebuild. The third persists after it: only a rebuild by a release that
-  has gain#1734 drops the `.json.gz` an older release's rebuild left.
+    reader at this version loads the stale `.json.gz`. Only a rebuild by a
+    release that has gain#1734 drops the `.json.gz` an older release's
+    rebuild left.
 - Nothing outside `ScoreResource` names the full histogram file; a new
   reader must go through `get_histogram_filename` / `get_score_histogram`.
