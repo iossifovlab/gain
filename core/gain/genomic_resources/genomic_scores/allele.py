@@ -963,7 +963,7 @@ class AlleleScore(GenomicScore):
                     "to its genomic_resource.yaml",
                     allele=(chrom, pos, ref, alt))
             resource_types.warn_undeclared_allele_multiplicity(
-                logger, found_in=self.resource_id)
+                logger, found_in=self.resource.get_full_id())
         record = next(select_records(self, [record], score_filter), None)
         if record is None:
             return None

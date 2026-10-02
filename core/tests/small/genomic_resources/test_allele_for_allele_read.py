@@ -290,6 +290,25 @@ def test_a_many_resource_checks_the_request_first(
             _READS[read](score, "1", score_id="nope")
 
 
+@pytest.mark.parametrize("read", sorted(_READS))
+def test_a_many_resource_refuses_a_foreign_filter_first(
+    tmp_path: pathlib.Path, tabix: bool, read: str,
+) -> None:
+    """A filter compiled for another resource is the caller's error too,
+    reported ahead of the declaration -- as a ``ScoreFilterError``, not an
+    ``AlleleMultiplicityError``."""
+    declared = _score(
+        tmp_path / "many", _UNIQUE_ROWS, tabix=tabix, multiplicity="many")
+    other = _score(tmp_path / "other", _UNIQUE_ROWS, tabix=tabix,
+                   resource_id="scores/other")
+
+    with declared.open() as score, other.open() as other_score:
+        foreign = other_score.compile_filter("freq > 0.15")
+
+        with pytest.raises(ScoreFilterError, match="compiled against"):
+            _READS[read](score, "1", score_id="freq", score_filter=foreign)
+
+
 # ---------------------------------------------------------------------------
 # An undeclared duplicate: two rows hold ``1:10:A:C`` on a resource that
 # declares (by default) one row per allele.  Before
@@ -374,6 +393,54 @@ def test_each_offending_resource_gets_its_own_warning(
     assert len(warnings) == 2
     assert "'scores/one'" in warnings[0]
     assert "'scores/two'" in warnings[1]
+
+
+def test_two_duplicated_alleles_of_one_resource_warn_once(
+    tmp_path: pathlib.Path, tabix: bool, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Once per resource, not per allele: however the allele might come
+    to be spelled in the message, a second duplicated allele of the same
+    resource must not announce again."""
+    score = _score(tmp_path, """
+        chrom  pos_begin  reference  alternative  freq  id
+        1      10         A          C            0.2   ac
+        1      10         A          C            0.5   ac2
+        1      16         C          T            0.3   ct
+        1      16         C          T            0.4   ct2
+    """, tabix=tabix)
+
+    with score.open() as opened:
+        opened.get_allele_scores_for_allele("1", 10, "A", "C")
+        opened.get_allele_scores_for_allele("1", 16, "C", "T")
+
+    assert len(_multiplicity_warnings(caplog)) == 1
+
+
+def test_each_version_of_a_resource_gets_its_own_warning(
+    tmp_path: pathlib.Path, tabix: bool, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Named by full id: a repository may hold several versions of one
+    resource, each its own config to fix, so each is announced."""
+    repo = (
+        a_grr()
+        .with_resource(
+            "scores/alleles(1.0)", _builder(_REPEATED_ROWS, tabix=tabix))
+        .with_resource(
+            "scores/alleles(2.0)", _builder(_REPEATED_ROWS, tabix=tabix))
+        .build_repo(tmp_path))
+    versions = [
+        build_allele_score_from_resource(
+            repo.get_resource("scores/alleles", f"={version}"))
+        for version in ("1.0", "2.0")]
+
+    for built in versions:
+        with built.open() as score:
+            score.get_allele_scores_for_allele("1", 10, "A", "C")
+
+    warnings = _multiplicity_warnings(caplog)
+    assert len(warnings) == 2
+    assert "'scores/alleles(1.0)'" in warnings[0]
+    assert "'scores/alleles(2.0)'" in warnings[1]
 
 
 @pytest.mark.parametrize(("condition", "expected"), [
