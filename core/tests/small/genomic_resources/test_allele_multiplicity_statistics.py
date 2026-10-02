@@ -132,6 +132,25 @@ def test_an_enforced_repeated_key_fails_the_allele_statistic(
     assert not resource.file_exists(ALLELE_STATISTICS_FILE)
 
 
+@pytest.mark.usefixtures("enforced")
+def test_an_enforced_repeated_key_writes_no_statistic_at_all(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Not only alleles.json: the histograms are written by the same last
+    # task, after it, and must not land beside a refused allele statistic.
+    # The chrom lengths are an earlier stage's, true whatever the rows.
+    _realize(_allele_score(_REPEATED_TABLE), tmp_path)
+
+    with pytest.raises(SystemExit):
+        _build(tmp_path)
+
+    statistics = tmp_path / _RESOURCE_ID / "statistics"
+    written = sorted(
+        str(path.relative_to(statistics))
+        for path in statistics.rglob("*") if path.is_file())
+    assert written == ["chrom_lengths.json"]
+
+
 def _warned_allele(
     tmp_path: pathlib.Path,
     caplog: pytest.LogCaptureFixture,
@@ -292,6 +311,31 @@ def test_a_key_straddling_a_batch_boundary_is_repeated(
         chr1   20         A          G            0.2
         chr1   20         A          G            0.3
         chr1   30         G          A            0.4
+    """
+
+    [warning] = _warned_allele(tmp_path, caplog, data, tabix=tabix)
+
+    assert "chr1:20:A:G" in warning
+    assert "2 rows" in warning
+
+
+@pytest.mark.usefixtures("batch_size")
+@pytest.mark.parametrize("tabix", [True, False])
+def test_the_reported_key_keeps_its_own_count_when_its_pair_recurs(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+    tabix: bool,
+) -> None:
+    # A>G again at chr1:30, more often, in the same region: a separate key
+    # whose rows must not be counted as the chr1:20 key's.
+    data = """
+        chrom  pos_begin  reference  alternative  score
+        chr1   20         A          G            0.1
+        chr1   20         A          G            0.2
+        chr1   30         A          G            0.3
+        chr1   30         A          G            0.4
+        chr1   30         A          G            0.5
+        chr1   30         A          G            0.6
     """
 
     [warning] = _warned_allele(tmp_path, caplog, data, tabix=tabix)

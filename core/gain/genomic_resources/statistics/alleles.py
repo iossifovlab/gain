@@ -1326,7 +1326,11 @@ def _check_allele_multiplicity(
     Only a resource declaring one row per allele carries a repeated key
     to report.  Before the enforcement release it is one warning and the
     build goes on; from that release on it is an
-    :class:`AlleleMultiplicityError`, raised before anything is written.
+    :class:`AlleleMultiplicityError`, raised before any allele statistic
+    is written.  The scan's last task saves the histograms after this, so
+    they are not written either; an allele score has no coverage or
+    fragment statistic to be saved ahead of it.  What a refused rebuild
+    leaves is the previous build's files, untouched.
     """
     repeated = statistics.repeated_allele()
     if repeated is None:
