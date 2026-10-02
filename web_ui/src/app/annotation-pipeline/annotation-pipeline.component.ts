@@ -303,6 +303,9 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
    * failed), this is still the initial load and selects the first pipeline
    * as one. That is decided when the answer lands, not when it is sent: a
    * refetch sent during the initial load can answer after it.
+   * If the refetch fails after a list has loaded, the component keeps working
+   * on that list: the editor and selection stay as they are, and a validation
+   * deferred while the GET was in flight is sent with the current text.
    */
   private refreshPipelines(): void {
     this.getPipelines('', true);
@@ -369,6 +372,11 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
       },
       error: () => {
         this.disableActions = false;
+        if (this.pipelineListEverLoaded) {
+          // A failed refetch: keep working on the list already loaded.
+          this.pipelinesLoaded = true;
+          this.runValidationPendingOnLoad();
+        }
       }});
   }
 
