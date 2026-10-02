@@ -33,6 +33,8 @@ from typing import IO, Any, NamedTuple
 
 import numpy as np
 
+from gain import logging
+from gain.genomic_resources import resource_types
 from gain.genomic_resources.allele_classification import (
     ALLELE_BASES,
     AlleleClass,
@@ -45,6 +47,7 @@ from gain.genomic_resources.genomic_position_table.record import (
     Record,
 )
 from gain.genomic_resources.genomic_scores import (
+    AlleleMultiplicityError,
     AlleleRecordArrays,
     AlleleScore,
     GenomicScore,
@@ -78,6 +81,8 @@ from gain.genomic_resources.statistics.record_validation import (
 )
 from gain.genomic_resources.statistics.region_fold import merge_regions
 from gain.utils.chromosome_order import natural_chromosome_key
+
+logger = logging.getLogger(__name__)
 
 ALLELE_STATISTICS_FILE = "statistics/alleles.json"
 #: The ``format_version`` ``serialize`` stamps.
@@ -388,11 +393,164 @@ def _deserialized_matrix(
     }
 
 
+class RepeatedAllele(NamedTuple):
+    """An allele key held by several rows, and how many rows hold it."""
+
+    chrom: str
+    pos: int
+    ref: str | None
+    alt: str | None
+    rows: int
+
+    def error(self, resource_id: str) -> AlleleMultiplicityError:
+        """The refusal of a resource declaring ``allele_multiplicity: one``."""
+        return AlleleMultiplicityError(
+            resource_id,
+            f"{self.rows} rows hold this allele, but the resource does not "
+            "declare several rows per allele; if that is intended, add the "
+            "line `allele_multiplicity: many` to its genomic_resource.yaml",
+            allele=(self.chrom, self.pos, self.ref, self.alt))
+
+
+#: The longest run of rows at one position :func:`_holds_repeated_key`
+#: compares by shifting; a batch with a longer one is hashed instead.
+_SHIFT_LIMIT = 16
+
+
+def _holds_repeated_key(
+    positions: np.ndarray, refs: np.ndarray, alts: np.ndarray,
+) -> bool:
+    """Whether two of a batch's rows share ``(pos, ref, alt)``.
+
+    The rows are in scan order, so two rows sharing a key sit in one run
+    of rows at one position, at most that run's length apart: comparing
+    each row with the one ``d`` rows later, for ``d`` below the longest
+    run, finds every such pair in a few vectorized steps.  Allele runs
+    are a handful of rows; a batch with a longer one is answered by
+    hashing its keys instead, so the cost stays linear in the batch.
+    """
+    size = int(positions.shape[0])
+    starts = np.flatnonzero(np.diff(positions, prepend=positions[0] - 1))
+    longest = int(np.diff(starts, append=size).max())
+    if longest > _SHIFT_LIMIT:
+        keys = list(zip(
+            positions.tolist(), refs.tolist(), alts.tolist(), strict=True))
+        return len(set(keys)) != size
+    for shift in range(1, longest):
+        if bool((
+                (positions[shift:] == positions[:-shift])
+                & (refs[shift:] == refs[:-shift])
+                & (alts[shift:] == alts[:-shift])).any()):
+            return True
+    return False
+
+
+class _RepeatedKeyTracker:
+    """Finds the first allele key a region's rows repeat, and its row count.
+
+    Fed the rows a region OWNS, in scan order.  Rows within a contig are
+    non-decreasing in position, so a repeated key's rows all sit at one
+    position and only the ``(ref, alt)`` pairs seen at the current
+    position need remembering.  That memory carries from one call to the
+    next, so a key whose rows straddle two batches is still a repeat.
+
+    Once the first repeated key is found its rows are counted until the
+    position moves past it; nothing after that is looked at.
+    """
+
+    def __init__(self) -> None:
+        self._pos: int | None = None
+        self._pairs: Counter[tuple[str | None, str | None]] = Counter()
+        self.first: tuple[int, str | None, str | None] | None = None
+        self.rows = 0
+        self._done = False
+
+    def observe(self, pos: int, ref: str | None, alt: str | None) -> None:
+        """Note one owned row."""
+        if self._done:
+            return
+        if pos != self._pos:
+            if self.first is not None:
+                self._done = True
+                return
+            self._pos = pos
+            self._pairs.clear()
+        pair = (ref, alt)
+        self._pairs[pair] += 1
+        count = self._pairs[pair]
+        if self.first is None:
+            if count > 1:
+                self.first = (pos, ref, alt)
+                self.rows = count
+        elif self.first[1:] == pair:
+            self.rows = count
+
+    def observe_batch(
+        self,
+        positions: np.ndarray,
+        refs: np.ndarray,
+        alts: np.ndarray,
+    ) -> None:
+        """Note a batch of owned rows, in scan order.
+
+        A batch whose rows hold no repeated key -- every batch of a clean
+        resource -- is asked so in one vectorized test, and only its
+        first and last positions' rows are then looked at one by one:
+        the first may continue the position the previous batch ended on,
+        and the last is the position the next batch may continue.  Real
+        allele scores carry several alts at most positions, so walking
+        every row that shares one would walk nearly every row.
+
+        A batch that does hold one has its rows sharing a position with a
+        neighbour looked at one by one, which finds the first repeat; the
+        tracker is done soon after, so that is at most a batch or two per
+        region.
+        """
+        if self._done or not positions.shape[0]:
+            return
+        if not _holds_repeated_key(positions, refs, alts):
+            last = positions.shape[0] - 1
+            first_run = int(np.searchsorted(
+                positions, positions[0], side="right"))
+            last_run = int(np.searchsorted(
+                positions, positions[last], side="left"))
+            edges = np.arange(first_run) if last_run < first_run \
+                else np.concatenate((
+                    np.arange(first_run), np.arange(last_run, last + 1)))
+            self._observe_rows(positions, refs, alts, edges)
+            return
+        shared = positions[1:] == positions[:-1]
+        linked = np.zeros(positions.shape[0], dtype=bool)
+        linked[1:] |= shared
+        linked[:-1] |= shared
+        linked[0] |= bool(positions[0] == self._pos)
+        linked[-1] = True
+        self._observe_rows(positions, refs, alts, np.flatnonzero(linked))
+
+    def _observe_rows(
+        self,
+        positions: np.ndarray,
+        refs: np.ndarray,
+        alts: np.ndarray,
+        rows: np.ndarray,
+    ) -> None:
+        """Note the batch's ``rows``, in order, until the tracker is done."""
+        for pos, ref, alt in zip(
+                positions[rows].tolist(), refs[rows].tolist(),
+                alts[rows].tolist(), strict=True):
+            self.observe(pos, ref, alt)
+            if self._done:
+                return
+
+
 class RegionAlleles:
     """The allele content of one scanned region, accumulated row by row.
 
     Counts each ROW as an allele -- duplicate ``(chrom, pos, ref, alt)``
-    rows are legitimate per-transcript data and each is one allele.
+    rows are legitimate per-transcript data and each is one allele.  Built
+    with ``track_repeats`` -- for a resource declaring
+    ``allele_multiplicity: one`` -- it also notes the first such key among
+    the rows it owns, which :meth:`repeated_allele` reports.
 
     A region owns the rows whose point falls inside it, which is what
     makes the statistic chunk-invariant: the regions of a contig
@@ -410,11 +568,16 @@ class RegionAlleles:
         chrom: str,
         start: int | None,
         end: int | None,
+        *,
+        track_repeats: bool = False,
     ) -> None:
         self.chrom = chrom
         self.start = start
         self.end = end
         self.allele_count = 0
+        # Only on a region of a resource declaring one row per allele.
+        self._repeats: _RepeatedKeyTracker | None = \
+            _RepeatedKeyTracker() if track_repeats else None
         self._class_counts: dict[str, int] = dict.fromkeys(CLASS_NAMES, 0)
         # ``None`` only on a region restored from a file that predates
         # the matrix -- a scanned region always carries one, however
@@ -473,6 +636,18 @@ class RegionAlleles:
             None if self._complex_grid is None
             else dict(self._complex_grid))
 
+    def repeated_allele(self) -> RepeatedAllele | None:
+        """The first allele key this region's rows repeat, if any.
+
+        Only a region built with ``track_repeats`` looks; a region
+        restored from a file carries none.
+        """
+        repeats = self._repeats
+        if repeats is None or repeats.first is None:
+            return None
+        pos, ref, alt = repeats.first
+        return RepeatedAllele(self.chrom, pos, ref, alt, repeats.rows)
+
     def _owns(self, pos: int) -> bool:
         """Whether this region owns the row sitting at ``pos``."""
         return clip_span(pos, pos, self.start, self.end) is not None
@@ -525,6 +700,8 @@ class RegionAlleles:
             return
         self.allele_count += 1
         self._count_pair(ref, alt, 1)
+        if self._repeats is not None:
+            self._repeats.observe(pos, ref, alt)
 
     def add_record(self, record: Record) -> None:
         """Fold one raw record.
@@ -576,6 +753,8 @@ class RegionAlleles:
             alts = alternative[keep]
 
         self.allele_count += int(positions.shape[0])
+        if self._repeats is not None:
+            self._repeats.observe_batch(positions, refs, alts)
         for pair, multiplicity in Counter(
                 zip(refs.tolist(), alts.tolist(), strict=True)).items():
             self._count_pair(*pair, multiplicity)
@@ -585,9 +764,15 @@ class RegionAlleles:
 
         It is the adjacency -- asserted by ``refuse_unmergeable`` -- that
         lets the counts simply add: a row belongs to exactly one of two
-        adjacent regions, so none is counted twice.
+        adjacent regions, so none is counted twice.  It is also why the
+        earlier region's repeated key, when it has one, is the one kept:
+        all rows of a key sit at one position, so each region's count of
+        its own key is complete.
         """
         refuse_unmergeable(_MERGE_FAILURE, self, other)
+        if self.repeated_allele() is None \
+                and other.repeated_allele() is not None:
+            self._repeats = other._repeats
         self.allele_count += other.allele_count
         for name in CLASS_NAMES:
             self._class_counts[name] += \
@@ -648,6 +833,14 @@ class AlleleStatistics(RegionFoldedStatistic[RegionAlleles]):
         ordering that accessor does would be paid and thrown away.
         """
         return _total(region.counts() for region in self._regions.values())
+
+    def repeated_allele(self) -> RepeatedAllele | None:
+        """The resource's first repeated allele key, in genomic order."""
+        for chrom in sorted(self._regions, key=natural_chromosome_key):
+            repeated = self._regions[chrom].repeated_allele()
+            if repeated is not None:
+                return repeated
+        return None
 
     def serialize(self) -> str:
         # One walk of the regions serves the per-chromosome entries and
@@ -1033,7 +1226,10 @@ def region_alleles_for(
     """
     if not ALLELE_STATISTIC.writes_for(score):
         return None
-    return RegionAlleles(chrom, start, end)
+    assert isinstance(score, AlleleScore)
+    return RegionAlleles(
+        chrom, start, end,
+        track_repeats=score.multiplicity is AlleleScore.Multiplicity.ONE)
 
 
 def serves_allele_arrays(score: GenomicScore, score_ids: list[str]) -> bool:
@@ -1182,6 +1378,32 @@ def plot_complex_grid(
     plt.close(figure)
 
 
+def _check_allele_multiplicity(
+    resource_id: str,
+    statistics: AlleleStatistics,
+) -> None:
+    """Warn about, or refuse, a repeated allele key -- once per resource.
+
+    Only a resource declaring one row per allele carries a repeated key
+    to report.  Before the enforcement release it is one warning and the
+    build goes on; from that release on it is an
+    :class:`AlleleMultiplicityError`, raised before any allele statistic
+    is written.  The scan's last task saves the histograms after this, so
+    they are not written either; an allele score has no coverage or
+    fragment statistic to be saved ahead of it.  What a refused rebuild
+    leaves is the previous build's files, untouched.
+    """
+    repeated = statistics.repeated_allele()
+    if repeated is None:
+        return
+    error = repeated.error(resource_id)
+    if resource_types.allele_multiplicity_enforced():
+        raise error
+    logger.warning(
+        "%s. From GAIn %s on this fails the statistics build.",
+        error, resource_types.ALLELE_MULTIPLICITY_ENFORCEMENT_RELEASE)
+
+
 def save_allele_statistics(
     resource: GenomicResource,
     statistics: AlleleStatistics | None,
@@ -1202,6 +1424,7 @@ def save_allele_statistics(
     """
     if statistics is None:
         return
+    _check_allele_multiplicity(resource.resource_id, statistics)
     with resource.open_raw_file(
             ALLELE_STATISTICS_FILE, mode="wt") as outfile:
         outfile.write(statistics.serialize())
