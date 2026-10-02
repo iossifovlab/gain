@@ -45,12 +45,16 @@ def parse_run_definition(
     config: dict[str, Any],
     grr: GenomicResourceRepo,
     genome: ReferenceGenome,
+    base_dir: str | None = None,
 ) -> RunDefinition:
     """Resolve ``config`` against ``grr`` and ``genome``.
 
     Every key is checked: a mistyped key is an error, never a silently
     applied default.  Raises :class:`RunDefinitionError` naming the
-    offending entry.
+    offending entry.  ``base_dir`` is the run-definition file's
+    directory, which a relative path in an entry is read from; a config
+    parsed from memory leaves it unset, and the kinds read such a path
+    from the current directory.
     """
     check_keys("run definition", config, TOP_LEVEL_KEYS)
     bins = config.get("bins")
@@ -60,7 +64,7 @@ def parse_run_definition(
         input_reference_genome=genome.resource_id,
         bin_size=_resolve_bin_size(bins.get("bin_size")),
         regions=_resolve_regions(bins.get("regions"), genome),
-        jobs=_resolve_jobs(config.get("binners"), grr),
+        jobs=_resolve_jobs(config.get("binners"), grr, base_dir),
     )
 
 
@@ -144,7 +148,7 @@ def _refuse_overlapping_regions(
 
 
 def _resolve_jobs(
-    binners: Any, grr: GenomicResourceRepo,
+    binners: Any, grr: GenomicResourceRepo, base_dir: str | None,
 ) -> list[BinningJob]:
     if not isinstance(binners, list) or not binners:
         raise RunDefinitionError(
@@ -162,7 +166,9 @@ def _resolve_jobs(
             raise RunDefinitionError(
                 f"{label}: unknown binner kind {kind!r}; "
                 f"registered kinds: {', '.join(sorted(kinds))}")
-        for job in kinds[kind].parse_entry(label, entry_config, grr):
+        located = {} if base_dir is None else {"base_dir": base_dir}
+        for job in kinds[kind].parse_entry(
+                label, entry_config, grr, **located):
             # A task is named by its job's first track and writes one
             # chunk per track, so a job needs at least one; and the graph
             # finds the binner by the kind the job names.
@@ -181,8 +187,9 @@ def _resolve_jobs(
     named = iter(_name_tracks([
         (label, track) for label, job in jobs for track in job.tracks]))
     return [
-        replace(job, tracks=tuple(next(named) for _ in job.tracks))
-        for _, job in jobs
+        replace(
+            job, tracks=tuple(next(named) for _ in job.tracks), entry=label)
+        for label, job in jobs
     ]
 
 
