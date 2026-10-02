@@ -24,6 +24,7 @@ from __future__ import annotations
 import fnmatch
 from abc import abstractmethod
 
+from gain.genomic_resources.dvc import dvc_sidecar_target
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
     Histogram,
@@ -204,7 +205,9 @@ def _drop_orphaned_histogram_files(
     A score removed from or renamed in ``scores:`` is never visited by the
     per-score reconciliation (gain#1309).  Ownership is matched against
     the names each defined id produces, never parsed out of a filename,
-    and the listing is of the files present, not the stored manifest.
+    and the listing is of the files present, not the stored manifest.  A
+    ``.dvc`` pointer stands for the file it tracks, so an orphan whose
+    blob is not pulled is still found and reported (gain#1732).
     """
     proto = resource.proto
     assert isinstance(proto, ReadWriteRepositoryProtocol)
@@ -212,9 +215,10 @@ def _drop_orphaned_histogram_files(
         template.format(score_id)
         for template in _HISTOGRAM_FILE_TEMPLATES
         for score_id in score.score_definitions}
-    for entry in proto.collect_resource_entries(resource):
-        if entry.name in owned or not any(
-                fnmatch.fnmatchcase(entry.name, pattern)
-                for pattern in _HISTOGRAM_FILE_PATTERNS):
-            continue
-        drop_stale_histogram_file(resource, entry.name)
+    present = {
+        dvc_sidecar_target(entry.name)
+        for entry in proto.collect_resource_entries(resource)}
+    for name in sorted(present - owned):
+        if any(fnmatch.fnmatchcase(name, pattern)
+               for pattern in _HISTOGRAM_FILE_PATTERNS):
+            drop_stale_histogram_file(resource, name)

@@ -1090,6 +1090,31 @@ def test_stats_rebuild_leaves_a_dvc_tracked_orphan_whole(
     assert "statistics/histogram_old.json" in caplog.text
 
 
+def test_stats_rebuild_reports_a_dvc_pointer_whose_blob_is_not_pulled(
+        tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture) -> None:
+    """gain#1732: a pointer-only checkout still carries the stale manifest
+    entry, so the orphan is reported even though its blob is absent."""
+    float_scores(tmp_path, "old")
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    statistics = tmp_path / "statistics"
+    data = (statistics / "histogram_old.json").read_bytes()
+    (statistics / "histogram_old.json.dvc").write_text(
+        dvc_sidecar("histogram_old.json", data))
+    cli_manage(["repo-repair", "-R", str(tmp_path), "-j", "1"])
+    (statistics / "histogram_old.json").unlink()
+    drop_everything_but_statistics(tmp_path)
+    float_scores(tmp_path, "new")
+    caplog.clear()
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    assert (statistics / "histogram_old.json.dvc").exists()
+    assert any(
+        "<statistics/histogram_old.json>" in message
+        and "DVC-tracked" in message
+        for message in caplog.messages)
+
+
 def test_stats_rebuild_keeps_a_defined_scores_legacy_yaml_histogram(
         tmp_path: pathlib.Path) -> None:
     float_scores(tmp_path, "kept")
