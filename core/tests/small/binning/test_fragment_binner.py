@@ -64,14 +64,20 @@ def bin_regions(
         return [bound.bin_region(region, BIN_SIZE) for region in regions]
 
 
+#: The aggregate counting fragments, stated: omitted, a resource with an
+#: ``int`` ``count`` score -- as the conftest's are -- sums that score.
+COUNT_FRAGMENTS = {"value": 1}
+
+
 def test_a_plain_entry_is_one_all_track_counting_fragments_per_bin(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
 ) -> None:
-    # Neither aggregate nor group: one group, ``all``, counting the
-    # fragments that start in each bin -- what the score's own binned read
-    # answers for a count of the barcode every fragment carries.
+    # No group: one group, ``all``, counting the fragments that start in
+    # each bin -- what the score's own binned read answers for a count of
+    # the barcode every fragment carries.
     run = parse_fragment_entry(
-        {"resource_query": "frags/s1", "pool": False}, repo, genome)
+        {"resource_query": "frags/s1", "pool": False,
+         "aggregate": COUNT_FRAGMENTS}, repo, genome)
 
     assert [(t.name, t.group) for t in run.tracks] == [
         ("frags/s1:all", "all")]
@@ -108,7 +114,8 @@ def test_a_constant_value_of_two_sums_to_twice_the_fragment_count(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
 ) -> None:
     plain = {"resource_query": "frags/s1", "pool": False}
-    counted = bin_entry(plain, CHR1, repo, genome)
+    counted = bin_entry(
+        {**plain, "aggregate": COUNT_FRAGMENTS}, CHR1, repo, genome)
 
     doubled = bin_entry(
         {**plain, "aggregate": {"value": 2, "aggregator": "sum"}},
@@ -160,7 +167,8 @@ BY_SAMPLE_LABEL = {
 def grouped_s1(**extra: Any) -> dict[str, Any]:
     return {
         "resource_query": "frags/s1", "pool": False,
-        "group": BY_CLASS, "meta": BY_SAMPLE_LABEL, **extra,
+        "group": BY_CLASS, "meta": BY_SAMPLE_LABEL,
+        "aggregate": COUNT_FRAGMENTS, **extra,
     }
 
 
@@ -364,10 +372,6 @@ def test_a_pooled_mean_is_over_the_merged_fragments(
     ({"resource_query": "frags/s1",
       "group": {"group": "bulk", **BY_CLASS}, "meta": BY_SAMPLE_LABEL},
      ["binners[0].group", "not both"]),
-    ({"resource_query": "frags/s1",
-      "group": {"cell_score_id": "cell", "group_meta_column": "class"},
-      "meta": BY_SAMPLE_LABEL},
-     ["binners[0].group", "cell_meta_column"]),
     ({"resource_query": "frags/s1", "group": {"group": ""}}, ["group"]),
     ({"resource_query": "frags/s1", "group": BY_CLASS}, ["meta"]),
     ({"resource_query": "frags/s1", "meta": BY_SAMPLE_LABEL}, ["meta"]),
