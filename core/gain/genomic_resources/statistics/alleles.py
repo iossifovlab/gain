@@ -412,6 +412,39 @@ class RepeatedAllele(NamedTuple):
             allele=(self.chrom, self.pos, self.ref, self.alt))
 
 
+#: The longest run of rows at one position :func:`_holds_repeated_key`
+#: compares by shifting; a batch with a longer one is hashed instead.
+_SHIFT_LIMIT = 16
+
+
+def _holds_repeated_key(
+    positions: np.ndarray, refs: np.ndarray, alts: np.ndarray,
+) -> bool:
+    """Whether two of a batch's rows share ``(pos, ref, alt)``.
+
+    The rows are in scan order, so two rows sharing a key sit in one run
+    of rows at one position, at most that run's length apart: comparing
+    each row with the one ``d`` rows later, for ``d`` below the longest
+    run, finds every such pair in a few vectorized steps.  Allele runs
+    are a handful of rows; a batch with a longer one is answered by
+    hashing its keys instead, so the cost stays linear in the batch.
+    """
+    size = int(positions.shape[0])
+    starts = np.flatnonzero(np.diff(positions, prepend=positions[0] - 1))
+    longest = int(np.diff(starts, append=size).max())
+    if longest > _SHIFT_LIMIT:
+        keys = list(zip(
+            positions.tolist(), refs.tolist(), alts.tolist(), strict=True))
+        return len(set(keys)) != size
+    for shift in range(1, longest):
+        if bool((
+                (positions[shift:] == positions[:-shift])
+                & (refs[shift:] == refs[:-shift])
+                & (alts[shift:] == alts[:-shift])).any()):
+            return True
+    return False
+
+
 class _RepeatedKeyTracker:
     """Finds the first allele key a region's rows repeat, and its row count.
 
@@ -460,12 +493,31 @@ class _RepeatedKeyTracker:
     ) -> None:
         """Note a batch of owned rows, in scan order.
 
-        Only the rows sharing a position with a neighbour can repeat a
-        key, so only they are looked at one by one -- with the batch's
-        first row when it continues the position the previous batch ended
-        on, and its last row, whose position the next batch may continue.
+        A batch whose rows hold no repeated key -- every batch of a clean
+        resource -- is asked so in one vectorized test, and only its
+        first and last positions' rows are then looked at one by one:
+        the first may continue the position the previous batch ended on,
+        and the last is the position the next batch may continue.  Real
+        allele scores carry several alts at most positions, so walking
+        every row that shares one would walk nearly every row.
+
+        A batch that does hold one has its rows sharing a position with a
+        neighbour looked at one by one, which finds the first repeat; the
+        tracker is done soon after, so that is at most a batch or two per
+        region.
         """
         if self._done or not positions.shape[0]:
+            return
+        if not _holds_repeated_key(positions, refs, alts):
+            last = positions.shape[0] - 1
+            first_run = int(np.searchsorted(
+                positions, positions[0], side="right"))
+            last_run = int(np.searchsorted(
+                positions, positions[last], side="left"))
+            edges = np.arange(first_run) if last_run < first_run \
+                else np.concatenate((
+                    np.arange(first_run), np.arange(last_run, last + 1)))
+            self._observe_rows(positions, refs, alts, edges)
             return
         shared = positions[1:] == positions[:-1]
         linked = np.zeros(positions.shape[0], dtype=bool)
@@ -473,7 +525,16 @@ class _RepeatedKeyTracker:
         linked[:-1] |= shared
         linked[0] |= bool(positions[0] == self._pos)
         linked[-1] = True
-        rows = np.flatnonzero(linked)
+        self._observe_rows(positions, refs, alts, np.flatnonzero(linked))
+
+    def _observe_rows(
+        self,
+        positions: np.ndarray,
+        refs: np.ndarray,
+        alts: np.ndarray,
+        rows: np.ndarray,
+    ) -> None:
+        """Note the batch's ``rows``, in order, until the tracker is done."""
         for pos, ref, alt in zip(
                 positions[rows].tolist(), refs[rows].tolist(),
                 alts[rows].tolist(), strict=True):

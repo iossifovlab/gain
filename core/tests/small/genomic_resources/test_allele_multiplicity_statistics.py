@@ -344,6 +344,46 @@ def test_the_reported_key_keeps_its_own_count_when_its_pair_recurs(
     assert "2 rows" in warning
 
 
+def _long_run_table(*, repeated: bool) -> str:
+    # Eighteen distinct insertions at chr1:20 -- a run longer than the
+    # shifted comparison takes -- and, when ``repeated``, the ninth again.
+    alts = [f"A{'C' * length}" for length in range(1, 19)]
+    if repeated:
+        alts.append(alts[8])
+    rows = "\n".join(
+        f"chr1 20 A {alt} 0.{index}" for index, alt in enumerate(alts))
+    return f"""
+        chrom  pos_begin  reference  alternative  score
+        chr1   10         C          T            0.1
+        {rows}
+        chr1   30         G          A            0.5
+    """
+
+
+@pytest.mark.parametrize("tabix", [True, False])
+def test_a_repeat_in_a_long_run_at_one_position_is_found(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+    tabix: bool,
+) -> None:
+    [warning] = _warned_allele(
+        tmp_path, caplog, _long_run_table(repeated=True), tabix=tabix)
+
+    assert "chr1:20:A:ACCCCCCCCC" in warning
+    assert "2 rows" in warning
+
+
+@pytest.mark.parametrize("tabix", [True, False])
+def test_a_long_run_of_distinct_alleles_is_not_repeated(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+    tabix: bool,
+) -> None:
+    assert _warned_allele(
+        tmp_path, caplog, _long_run_table(repeated=False),
+        tabix=tabix) == []
+
+
 @pytest.mark.parametrize("tabix", [True, False])
 def test_a_region_reports_no_key_it_does_not_own(
     tmp_path: pathlib.Path,
