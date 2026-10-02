@@ -60,7 +60,7 @@ import math
 import operator
 import os
 from collections import Counter, defaultdict
-from collections.abc import Generator, Iterable
+from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Any, ClassVar
@@ -161,6 +161,19 @@ def _quoted(names: Iterable[str]) -> str:
     return ", ".join(repr(name) for name in names)
 
 
+def _partition(
+    resources: list[GenomicResource],
+    predicate: Callable[[GenomicResource], bool],
+) -> tuple[list[str], list[str]]:
+    """The ids of ``resources`` that satisfy ``predicate``, and the rest."""
+    chosen: list[str] = []
+    rest: list[str] = []
+    for resource in resources:
+        (chosen if predicate(resource) else rest).append(
+            resource.resource_id)
+    return chosen, rest
+
+
 @dataclass(frozen=True)
 class MetaFilter:
     """One conjunct of a ``meta`` filter: ``column`` equals an operand.
@@ -250,9 +263,6 @@ class CellGrouping:
     group_meta_column: str
     table: MetaTable
     filters: tuple[MetaFilter, ...]
-
-    def load_table(self, grr: GenomicResourceRepo) -> pd.DataFrame:
-        return self.table.load(grr)
 
     def groups_of(
         self, table: pd.DataFrame, resource: GenomicResource,
@@ -388,13 +398,10 @@ class _Aggregate:
         ``int``, else the fragment count; resources pooled into one job
         must agree on which.
         """
-        summed = [r.resource_id for r in resources if _has_int_count(r)]
+        summed, counted = _partition(resources, _has_int_count)
         if not summed:
             return cls(score_id=None, value=1, aggregator="sum")
-        if len(summed) < len(resources):
-            counted = [
-                r.resource_id for r in resources
-                if r.resource_id not in summed]
+        if counted:
             raise RunDefinitionError(
                 f"{label}: the pooled resources disagree on the default "
                 f"aggregate: {_quoted(summed)} have an int "
@@ -869,11 +876,8 @@ class FragmentScoreBinner:
         warnings: list[str] = []
         if constant is None and cell_keys is None:
             # No group given: the label tier decides (F8).
-            labelled = [r.resource_id for r in resources if _is_labelled(r)]
-            if labelled and len(labelled) < len(resources):
-                unlabelled = [
-                    r.resource_id for r in resources
-                    if r.resource_id not in labelled]
+            labelled, unlabelled = _partition(resources, _is_labelled)
+            if labelled and unlabelled:
                 raise RunDefinitionError(
                     f"{label}: the pooled resources disagree on the label "
                     f"{CELL_META_RESOURCE_ID_LABEL!r} that decides their "
@@ -964,7 +968,7 @@ class FragmentScoreBinner:
             grr.get_resource(resource_id) for resource_id in job.resource_ids]
         track_maps = None
         if job.grouping is not None:
-            table = job.grouping.load_table(grr)
+            table = job.grouping.table.load(grr)
             index_of = {
                 track.group: index for index, track in enumerate(job.tracks)}
             track_maps = [

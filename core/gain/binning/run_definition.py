@@ -154,6 +154,7 @@ def _resolve_jobs(
         raise RunDefinitionError(
             "binners must be a non-empty list of binner entries")
     kinds = discover_binner_kinds()
+    located = {} if base_dir is None else {"base_dir": base_dir}
     jobs: list[tuple[str, BinningJob]] = []
     for index, entry in enumerate(binners):
         label = f"binners[{index}]"
@@ -166,7 +167,6 @@ def _resolve_jobs(
             raise RunDefinitionError(
                 f"{label}: unknown binner kind {kind!r}; "
                 f"registered kinds: {', '.join(sorted(kinds))}")
-        located = {} if base_dir is None else {"base_dir": base_dir}
         for job in kinds[kind].parse_entry(
                 label, entry_config, grr, **located):
             # A task is named by its job's first track and writes one
