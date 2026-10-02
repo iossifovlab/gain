@@ -227,6 +227,29 @@ def warn_retired_config_key(
     ))
 
 
+def warn_undeclared_allele_multiplicity(
+    logger: logging.Logger, *, found_in: str,
+) -> None:
+    """Announce an undeclared duplicate allele once per resource.
+
+    ``found_in`` is the full id of an allele score holding several rows
+    for one allele key without declaring ``allele_multiplicity: many``.
+    The message names the resource and the remedy, never the allele: it
+    is the deduplication key, so naming the allele would announce every
+    duplicate rather than every offending resource.  Announced once per
+    process; see ``_announce_once``.
+    """
+    _announce_once(logger, (
+        f"allele score {found_in!r} holds several rows for one allele "
+        "but does not declare several rows per allele, so a read of one "
+        "allele answers the first of them; if that is intended, add the "
+        "line `allele_multiplicity: many` to its genomic_resource.yaml "
+        "and read the rows with get_allele_scores_for_allele_rows or an "
+        f"_agg read.  From GAIn {ALLELE_MULTIPLICITY_ENFORCEMENT_RELEASE} "
+        "on, the read of one allele refuses an undeclared duplicate"
+    ))
+
+
 def _announce_once(logger: logging.Logger, message: str) -> None:
     """Log ``message`` unless this process already has.
 
