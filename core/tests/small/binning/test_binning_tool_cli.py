@@ -1276,6 +1276,24 @@ def test_entries_computing_the_same_track_differently_named_share_its_chunks(
     np.testing.assert_array_equal(values[:, 1], expected)
 
 
+def test_entries_differing_only_in_parameters_compute_their_own_chunks(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
+) -> None:
+    # The tracks agree on resources, group, score and aggregator; only
+    # the constant contribution per fragment tells them apart, so each
+    # must get its own chunks rather than share the other's.
+    binning_tool(
+        write_run_definition(output, fragment_entries(
+            "{resource_query: frags/s1, pool: false}",
+            '{resource_query: "frags/s1*", aggregate: {value: 2}}')),
+        grr_dir, output)
+
+    values = read_matrix(output)
+    assert values.shape == (8, 2)
+    assert values[:, 0].sum() > 0
+    np.testing.assert_array_equal(values[:, 1], 2 * values[:, 0])
+
+
 def test_dry_run_counts_a_task_shared_by_two_entries_once(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
     capsys: pytest.CaptureFixture[str],
