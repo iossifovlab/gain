@@ -1,7 +1,8 @@
 """Binner kinds: how a run-definition entry becomes tracks and values.
 
 Kinds are discovered through the ``gain.binning.binners`` entry-point
-group, so a second kind -- a fragment-score binner, an external plugin --
+group, so a kind -- the position-score binner here, the fragment-score
+binner in :mod:`gain.binning.fragment_binner`, an external plugin --
 registers the way every other gain plugin does, without editing the tool.
 """
 from __future__ import annotations
@@ -73,18 +74,32 @@ class RunDefinitionError(ValueError):
 
 @dataclass(frozen=True)
 class Track:
-    """One column of the output: a score of a resource, reduced one way.
+    """One column of the output: a score of resources, reduced one way.
+
+    ``resource_ids`` are the resources the column is computed from, in
+    resource-id order: one for a position-score track or an unpooled
+    fragment track, every matched resource for a pooled one.  ``group``
+    is the column's group of a grouped kind -- a fragment track's cell
+    class, or ``all`` -- and empty for a position-score track.
 
     ``binner`` names the kind that produces the column; it is not
-    written to the file.
+    written to the file.  ``parameters`` is whatever else a kind needs
+    to say decides the column's values -- a constant contribution, the
+    metadata table and filter that map cells to groups -- as canonical
+    text, empty when the other fields say it all.  It is not written to
+    the file either; it keys the column's chunks, so two run definitions
+    sharing a work directory never share a chunk they compute
+    differently.
     """
 
     name: str
-    resource_id: str
+    resource_ids: tuple[str, ...]
+    group: str
     score_id: str
     aggregator: str
     none_value_replacement: float | None
     binner: str
+    parameters: str = ""
 
 
 @dataclass(frozen=True)
@@ -159,6 +174,63 @@ def check_keys(label: str, config: Any, known: frozenset[str]) -> None:
                 f"{', '.join(sorted(known))}")
 
 
+def match_resources(
+    label: str, config: dict[str, Any], grr: GenomicResourceRepo,
+    resource_type: str,
+) -> list[GenomicResource]:
+    """Resolve an entry's ``resource_query`` into its matches, by id.
+
+    The query is always a repository search -- an exact id is the
+    search that matches one resource -- restricted to ``resource_type``
+    by the search's own type filter, and ordered by resource id, so the
+    track order is deterministic whatever the repository yields.  That
+    filter needs no index of its own (gain#1212).  A ``search_term`` is
+    the full-text index's filter, conjoined with the query (D7), and the
+    one key that needs the index.  An entry matching nothing is an
+    error, never an empty contribution.
+    """
+    query = config.get("resource_query")
+    if not isinstance(query, str) or not query:
+        raise RunDefinitionError(
+            f"{label}: resource_query is required and must be a string")
+    search_term = config.get("search_term")
+    if search_term is not None and not isinstance(search_term, str):
+        raise RunDefinitionError(
+            f"{label}: search_term must be a string, "
+            f"not {search_term!r}")
+    # A blank term is an unset one, as the repository reads it (what a
+    # shell substitutes for a variable never set); settled once here
+    # so the search and the messages below agree.
+    if search_term is not None and not search_term.strip():
+        search_term = None
+    # The search is a generator: the query is checked when it is
+    # made, but the term and the index are checked on the first
+    # draw, so the consumption sits inside the same try.
+    try:
+        found = grr.search_resources(
+            search_term=search_term, resource_query=query,
+            resource_type=resource_type)
+        matches = sorted(
+            found, key=lambda resource: resource.resource_id)
+    except (ResourceQueryParseError, SearchTermError) as err:
+        raise RunDefinitionError(f"{label}: {err}") from err
+    except SearchIndexUnavailableError as err:
+        # The repository's own message carries the remedy; only
+        # which key needed the index is the entry's to add.
+        raise RunDefinitionError(
+            f"{label}: search_term {search_term!r} needs the "
+            f"repository's full-text index: {err}") from err
+    if not matches:
+        # The one deliberate departure from the prototype, which
+        # silently produced no column for a query matching nothing.
+        narrowed = (
+            f" with search_term {search_term!r}" if search_term else "")
+        raise RunDefinitionError(
+            f"{label}: resource_query {query!r}{narrowed} matches no "
+            f"{resource_type} resource")
+    return matches
+
+
 class PositionScoreBinding:
     """One track's score, open for as long as the ``with`` lasts.
 
@@ -226,55 +298,11 @@ class PositionScoreBinner:
     ) -> list[BinningJob]:
         """Resolve one entry's ``resource_query`` into one job per track.
 
-        The query is always a repository search -- an exact id is the
-        search that matches one resource -- restricted to position scores
-        by the search's own ``resource_type`` filter, and ordered by
-        resource id, so the track order is deterministic whatever the
-        repository yields.  That filter needs no index of its own
-        (gain#1212).  A ``search_term`` is the full-text index's filter,
-        conjoined with the query (D7), and the one key that needs the
-        index.
+        The matches are :func:`match_resources`'s, restricted to position
+        scores: one track each, in resource-id order.
         """
         check_keys(label, config, cls.ENTRY_KEYS)
-        query = config.get("resource_query")
-        if not isinstance(query, str) or not query:
-            raise RunDefinitionError(
-                f"{label}: resource_query is required and must be a string")
-        search_term = config.get("search_term")
-        if search_term is not None and not isinstance(search_term, str):
-            raise RunDefinitionError(
-                f"{label}: search_term must be a string, "
-                f"not {search_term!r}")
-        # A blank term is an unset one, as the repository reads it (what a
-        # shell substitutes for a variable never set); settled once here
-        # so the search and the messages below agree.
-        if search_term is not None and not search_term.strip():
-            search_term = None
-        # The search is a generator: the query is checked when it is
-        # made, but the term and the index are checked on the first
-        # draw, so the consumption sits inside the same try.
-        try:
-            found = grr.search_resources(
-                search_term=search_term, resource_query=query,
-                resource_type="position_score")
-            matches = sorted(
-                found, key=lambda resource: resource.resource_id)
-        except (ResourceQueryParseError, SearchTermError) as err:
-            raise RunDefinitionError(f"{label}: {err}") from err
-        except SearchIndexUnavailableError as err:
-            # The repository's own message carries the remedy; only
-            # which key needed the index is the entry's to add.
-            raise RunDefinitionError(
-                f"{label}: search_term {search_term!r} needs the "
-                f"repository's full-text index: {err}") from err
-        if not matches:
-            # The one deliberate departure from the prototype, which
-            # silently produced no column for a query matching nothing.
-            narrowed = (
-                f" with search_term {search_term!r}" if search_term else "")
-            raise RunDefinitionError(
-                f"{label}: resource_query {query!r}{narrowed} matches no "
-                f"position_score resource")
+        matches = match_resources(label, config, grr, "position_score")
         return [
             BinningJob(binner=cls.kind, tracks=(cls._track_of(
                 label, resource,
@@ -294,8 +322,9 @@ class PositionScoreBinner:
         it is left.
         """
         (track,) = job.tracks
+        (resource_id,) = track.resource_ids
         return PositionScoreBinding(
-            track, PositionScore(grr.get_resource(track.resource_id)))
+            track, PositionScore(grr.get_resource(resource_id)))
 
     @classmethod
     def _track_of(
@@ -349,7 +378,8 @@ class PositionScoreBinner:
         assert replacement is None or isinstance(replacement, int | float)
         return Track(
             name=resource.resource_id,
-            resource_id=resource.resource_id,
+            resource_ids=(resource.resource_id,),
+            group="",
             score_id=score_id,
             aggregator=aggregator_name,
             none_value_replacement=replacement,

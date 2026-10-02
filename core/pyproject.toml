@@ -72,6 +72,7 @@ to_gpf_gene_models_format = "gain.genomic_resources.gene_models.to_gpf_gene_mode
 
 [project.entry-points."gain.binning.binners"]
 position_score_binner = "gain.binning.binners:PositionScoreBinner"
+fragment_score_binner = "gain.binning.fragment_binner:FragmentScoreBinner"
 
 [project.entry-points."gain.genomic_resources.plugins"]
 default_grr = "gain.genomic_resources.genomic_context:DefaultRepositoryContextProvider"

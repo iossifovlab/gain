@@ -189,21 +189,24 @@ def _resolve_jobs(
 def _name_tracks(tracks: list[tuple[str, Track]]) -> list[Track]:
     """Give every track a unique name (D10).
 
-    A track is named by its resource id.  When one resource occurs more
-    than once in the expanded list -- two aggregators of one track, side
-    by side -- every member of that group carries ``:<aggregator>``,
-    whichever entry came first.  Two tracks that still share a name (same
-    resource and aggregator, differing at most in their replacement) are
-    refused, naming both entries: nothing in the ``/tracks`` table would
-    tell the columns apart.
+    A track arrives named by its kind: a position-score track by its
+    resource id, a fragment track by its resource id or query and its
+    group.  When one name and group occur more than once in the expanded
+    list -- two aggregators of one track, side by side -- every member of
+    that set carries ``:<aggregator>``, whichever entry came first.  Two
+    tracks that still share a name (same base, group and aggregator,
+    differing at most in what else decides their values) are refused,
+    naming both entries: nothing in the ``/tracks`` table would tell the
+    columns apart.
     """
-    occurrences = Counter(track.resource_id for _, track in tracks)
+    occurrences = Counter(
+        (track.name, track.group) for _, track in tracks)
     named: list[Track] = []
     producers: dict[str, str] = {}
     for label, track in tracks:
         named_track = (
-            replace(track, name=f"{track.resource_id}:{track.aggregator}")
-            if occurrences[track.resource_id] > 1 else track)
+            replace(track, name=f"{track.name}:{track.aggregator}")
+            if occurrences[track.name, track.group] > 1 else track)
         if named_track.name in producers:
             raise RunDefinitionError(
                 f"{producers[named_track.name]} and {label} both produce "

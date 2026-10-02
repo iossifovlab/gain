@@ -41,7 +41,8 @@ def test_an_exact_id_entry_becomes_one_track_named_by_the_resource(
 
     assert run.tracks == [
         Track(
-            name="scores/one", resource_id="scores/one", score_id="s",
+            name="scores/one", resource_ids=("scores/one",), group="",
+            score_id="s",
             aggregator="max", none_value_replacement=None,
             binner="position_score_binner"),
     ]
@@ -126,7 +127,7 @@ def test_search_term_narrows_the_query_on_an_indexed_repository(
         {"resource_query": "scores/*", "search_term": "one"},
         indexed_repo, genome)
 
-    assert [track.resource_id for track in run.tracks] == ["scores/one"]
+    assert [track.resource_ids for track in run.tracks] == [("scores/one",)]
 
 
 def test_a_search_term_that_eliminates_every_match_names_the_term(
@@ -170,7 +171,8 @@ def test_a_blank_search_term_is_no_search_term(
     run = parse_one_entry(
         {"resource_query": "scores/*", "search_term": blank}, repo, genome)
 
-    assert [t.resource_id for t in run.tracks] == ["scores/one", "scores/two"]
+    assert [t.resource_ids for t in run.tracks] == [
+        ("scores/one",), ("scores/two",)]
 
 
 def test_omitted_regions_mean_every_chromosome_in_genome_order(
@@ -268,16 +270,18 @@ def test_an_unknown_binner_kind_is_a_parse_error_listing_the_known_kinds(
     config = {
         "bins": {"bin_size": 10},
         "binners": [
-            {"fragment_score_binner": {"resource_query": "scores/one"}},
+            {"no_such_binner": {"resource_query": "scores/one"}},
         ],
     }
 
     with pytest.raises(RunDefinitionError) as excinfo:
         parse_run_definition(config, repo, genome)
 
-    assert "binners[0]" in str(excinfo.value)
-    assert "fragment_score_binner" in str(excinfo.value)
-    assert "position_score_binner" in str(excinfo.value)
+    message = str(excinfo.value)
+    assert "binners[0]" in message
+    assert "no_such_binner" in message
+    assert "fragment_score_binner" in message
+    assert "position_score_binner" in message
 
 
 STUB_KIND = "stub_binner"
@@ -285,7 +289,8 @@ STUB_KIND = "stub_binner"
 
 def a_stub_track(resource_id: str, aggregator: str) -> Track:
     return Track(
-        name=resource_id, resource_id=resource_id, score_id="s",
+        name=resource_id, resource_ids=(resource_id,), group="",
+        score_id="s",
         aggregator=aggregator, none_value_replacement=None,
         binner=STUB_KIND)
 
@@ -394,10 +399,10 @@ def test_a_resource_matched_by_two_entries_names_both_tracks_by_aggregator(
 
     run = parse_run_definition(config, repo, genome)
 
-    assert [(t.name, t.resource_id, t.aggregator) for t in run.tracks] == [
-        ("scores/one:max", "scores/one", "max"),
-        ("scores/two", "scores/two", "mean"),
-        ("scores/one:min", "scores/one", "min"),
+    assert [(t.name, t.resource_ids, t.aggregator) for t in run.tracks] == [
+        ("scores/one:max", ("scores/one",), "max"),
+        ("scores/two", ("scores/two",), "mean"),
+        ("scores/one:min", ("scores/one",), "min"),
     ]
 
 
