@@ -35,8 +35,11 @@ The shape of the API
 
 Builder functions are the entry points. Each takes a resource id and a
 repository, and returns a typed object that knows how to read that kind of
-resource. All of them, the repository constructors and the types they
-return are imported from one package, ``gain.grr``:
+resource. All of them, the repository constructors and the GAIn types they
+return are imported from one package, ``gain.grr``. The data-frame and
+AnnData loaders return plain pandas and anndata objects, and
+``GenomicContext`` stays in ``gain.genomic_resources.genomic_context``; none
+of these is re-exported:
 
 .. code-block:: python
 
