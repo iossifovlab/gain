@@ -20,8 +20,11 @@ repository can be accessed without providing any arguments:
 gathers, in one place, the functions that connect to a repository, the
 functions that build a typed object from a resource id (a reference genome,
 gene models, a score, a gene score, a gene set collection, a liftover chain,
-a data frame or an AnnData object), and the types those functions return, so
-that a script can annotate its own variables with them. Each name is the same
+a data frame or an AnnData object), and the GAIn types those functions return, so
+that a script can annotate its own variables with them. The data frame and
+AnnData objects are plain pandas and anndata types, and ``GenomicContext``
+stays in ``gain.genomic_resources.genomic_context``; none of them is
+re-exported. Each name is the same
 object as in the GAIn module that defines it; those deeper paths keep
 working.
 
@@ -64,7 +67,10 @@ and printed.
 
 .. code-block:: python
 
-    from gain.grr import build_genomic_resource_repository, build_reference_genome_from_resource_id
+    from gain.grr import (
+        build_genomic_resource_repository,
+        build_reference_genome_from_resource_id,
+    )
 
     grr = build_genomic_resource_repository()
     genome = build_reference_genome_from_resource_id("hg38/genomes/GRCh38-hg38", grr).open()

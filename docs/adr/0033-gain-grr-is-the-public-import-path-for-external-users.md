@@ -49,7 +49,13 @@ each spelled out half a dozen deep paths.
    `AlleleScore`, `FragmentScore`, `GeneScore`, `GeneSetCollection`), so a
    caller can annotate without going back to the deep paths. For
    `gene_models` and `genomic_scores` the names come from the package
-   facade, the path users already know.
+   facade, the path users already know. The coverage is deliberately not
+   total, and the exclusions in 2 win: `get_genomic_context()` returns and
+   `get_grr_from_context()` takes a `GenomicContext`, and the data_frame and
+   ann_data loaders return pandas and anndata objects. None of those types
+   is exported. A caller that annotates them imports `GenomicContext` from
+   `gain.genomic_resources.genomic_context`, and the pandas and anndata
+   types from their own packages.
 6. **Eager imports.** No `__getattr__` laziness. Measured warm on
    2026-10-01: bare python 0.04 s; the reference genome module alone
    0.53 s; every facade module except anndata 1.00 s; all of them 1.75 s.

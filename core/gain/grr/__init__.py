@@ -2,8 +2,9 @@
 
 ``gain.grr`` re-exports, under one short path, the constructors of a
 Genomic Resource Repository, the functions that build a resource object
-from a resource or a resource id, and the types those functions accept and
-return::
+from a resource or a resource id, and the GAIn types those functions accept
+and return, except ``GenomicContext``, which stays in
+``gain.genomic_resources.genomic_context``::
 
     from gain.grr import (
         build_genomic_resource_repository,
