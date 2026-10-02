@@ -850,10 +850,10 @@ class AlleleScore(GenomicScore):
         # The per-kind hook directly, not `values_from_records`: that
         # entry re-checks the contig, and on a tabix table the chromosome
         # list is rebuilt per call -- a cost linear in the contig count,
-        # which `_selected_allele_records` has already paid.  gain#1282 made
-        # this the general shape rather than this read's special case, so
-        # the hook is what runs here and the fold cannot drift from what the
-        # other allele reads mean by a segment.
+        # which `_check_allele_region_request` has already paid.  gain#1282
+        # made this the general shape rather than this read's special case,
+        # so the hook is what runs here and the fold cannot drift from what
+        # the other allele reads mean by a segment.
         values = fold_region_segments(
             self._score_segments(
                 records, self._resolve_score_defs(score_ids)),
