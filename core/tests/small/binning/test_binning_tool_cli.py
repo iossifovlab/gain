@@ -47,7 +47,7 @@ from gain.utils.regions import BedRegion
 # the task -- the graph has already resolved the kind to a class.
 TRACK = Track(
     name="scores/one", resource_ids=("scores/one",), group="",
-        score_id="s",
+    score_id="s",
     aggregator="max", none_value_replacement=None,
     binner="stub_binner")
 JOB = BinningJob(binner="stub_binner", tracks=(TRACK,))
