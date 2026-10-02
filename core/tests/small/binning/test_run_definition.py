@@ -42,7 +42,7 @@ def test_an_exact_id_entry_becomes_one_track_named_by_the_resource(
     assert run.tracks == [
         Track(
             name="scores/one", resource_ids=("scores/one",), group="",
-        score_id="s",
+            score_id="s",
             aggregator="max", none_value_replacement=None,
             binner="position_score_binner"),
     ]
