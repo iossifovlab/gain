@@ -414,7 +414,9 @@ class AlleleScore(GenomicScore):
         :meth:`get_allele_scores_for_allele` and its singular consult
         it: they answer one row, so they refuse a ``many`` resource and
         treat several rows of one allele on a ``one`` resource as a data
-        error.  The ``_rows`` and ``_agg`` reads do not consult it.
+        error.  The ``_rows`` and ``_agg`` reads do not consult it.  The
+        allele statistics build reads it too: on a ``one`` resource it
+        reports the first allele key that several rows hold.
         """
         return self._multiplicity
 
