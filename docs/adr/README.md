@@ -94,6 +94,7 @@ of one decision will drift.
 | [0030](0030-the-description-renders-behind-a-shadow-root-on-purpose.md) | The resource page's description renders behind a shadow root, on purpose | accepted |
 | [0031](0031-declaring-a-config-schema-obliges-a-type-to-run-it.md) | Declaring a config schema obliges a type to run it | accepted |
 | [0032](0032-full-categorical-histograms-past-the-limit-are-gzipped.md) | Full categorical histograms past the limit are gzipped | accepted |
+| [0033](0033-gain-grr-is-the-public-import-path-for-external-users.md) | `gain.grr` is the public import path for external users | accepted |
 
 > **Note:** `0003` was allocated twice, by two changes that landed the same day.
 > "Numbers are never reused" is a rule about not re-issuing a *retired* number;
