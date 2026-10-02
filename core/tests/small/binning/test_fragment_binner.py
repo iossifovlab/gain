@@ -19,6 +19,7 @@ and on chr2 one BBB fragment (count 6) starts in 1-10.  ``frags/s2`` has
 no chr2; on chr1 its AAA (class B in S2) starts at 4 with count 7, and
 its EEE (class T) at 12, 16 and 35 with counts 1, 4 and 2.
 """
+import pathlib
 from collections.abc import Iterator
 from typing import Any
 
@@ -35,7 +36,11 @@ from gain.genomic_resources.aggregators import ScoreAggregationQuery
 from gain.genomic_resources.genomic_scores import FragmentScore
 from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.testing.builders import a_fragment_score, a_grr
+from gain.genomic_resources.testing.data_frame_builder import a_data_frame
 from gain.utils.regions import BedRegion
+
+from tests.small.binning.conftest import CELL_META, S1_FRAGMENTS
 
 BIN_SIZE = 10
 KIND = "fragment_score_binner"
@@ -170,6 +175,29 @@ def test_a_grouped_entry_is_one_track_per_class_of_its_sample(
         ("frags/s1:B", "B"), ("frags/s1:T", "T")]
 
 
+def test_an_empty_class_read_as_pd_na_is_no_group(
+    tmp_path: pathlib.Path, genome: ReferenceGenome,
+) -> None:
+    # A table read with a nullable dtype holds ``pd.NA``, not NaN, in
+    # CCC's empty class cell; it is still missing, so no ``<NA>`` track.
+    repo = (
+        a_grr()
+        .with_resource("frags/s1", a_fragment_score()
+                       .with_score("cell", "str")
+                       .with_score("count", "int")
+                       .with_labels(sample_id="S1")
+                       .with_tabix()
+                       .with_data(S1_FRAGMENTS))
+        .with_resource("meta/cells", a_data_frame()
+                       .with_raw_content(CELL_META)
+                       .with_parameters({"dtype": "string"}))
+    ).build_repo(tmp_path / "nullable")
+
+    run = parse_fragment_entry(grouped_s1(), repo, genome)
+
+    assert [t.group for t in run.tracks] == ["B", "T"]
+
+
 def test_a_grouped_block_counts_each_class_dropping_unmapped_cells(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
 ) -> None:
@@ -246,6 +274,22 @@ def test_a_pooled_entry_is_one_job_named_by_its_query(
     ]
 
 
+@pytest.mark.parametrize("group,expected", [
+    (None, "frags/*:all"), ({"group": "bulk"}, "frags/*:bulk")])
+def test_a_pooled_entry_without_metadata_is_named_by_its_query(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+    group: dict[str, str] | None, expected: str,
+) -> None:
+    entry: dict[str, Any] = {"resource_query": "frags/*"}
+    if group is not None:
+        entry["group"] = group
+
+    run = parse_fragment_entry(entry, repo, genome)
+
+    assert [(t.name, t.resource_ids) for t in run.tracks] == [
+        (expected, ("frags/s1", "frags/s2"))]
+
+
 @pytest.mark.parametrize("aggregate", [
     None, {"score": "count"}, {"score": "count", "aggregator": "count"}])
 def test_a_pooled_count_or_sum_is_the_sum_of_the_per_resource_blocks(
@@ -307,6 +351,11 @@ def test_a_pooled_mean_is_over_the_merged_fragments(
      ["aggregator 'join(,)' does not produce a number"]),
     ({"resource_query": "frags/s1", "aggregate": {"value": "two"}},
      ["value"]),
+    # A YAML list where a name belongs is refused, not an unhashable crash.
+    ({"resource_query": "frags/s1", "aggregate": {"aggregator": ["sum"]}},
+     ["binners[0].aggregate", "aggregator", "['sum']"]),
+    ({"resource_query": "frags/s1", "aggregate": {"score": ["count"]}},
+     ["binners[0].aggregate", "score", "['count']"]),
     ({"resource_query": "frags/s1", "aggregate": {"scor": "count"}},
      ["binners[0].aggregate", "'scor'"]),
     ({"resource_query": "frags/s1",

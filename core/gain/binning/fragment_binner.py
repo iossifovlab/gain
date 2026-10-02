@@ -86,12 +86,13 @@ FILTER_KEYS = frozenset({"column", "value", "label"})
 def _as_text(value: Any) -> str | None:
     """A table cell, a label or a score value as the text it is matched by.
 
-    ``None`` for a missing value -- ``None``, NaN or the empty string --
-    which matches nothing and names no group.  An integral float is
-    written as an int, since a numeric column read with a missing cell
-    is a float column, and its ``2`` must still match a label ``2``.
+    ``None`` for a missing value -- ``None``, NaN, ``pd.NA`` (a cell of
+    a nullable-dtype column) or the empty string -- which matches nothing
+    and names no group.  An integral float is written as an int, since a
+    numeric column read with a missing cell is a float column, and its
+    ``2`` must still match a label ``2``.
     """
-    if value is None:
+    if value is None or value is pd.NA:
         return None
     if isinstance(value, float):
         if math.isnan(value):
@@ -227,7 +228,8 @@ class _Aggregate:
         if "score" in config and "value" in config:
             raise RunDefinitionError(
                 f"{label}: give one of score or value, not both")
-        aggregator = config.get("aggregator", "sum")
+        aggregator = _require_text(
+            label, "aggregator", config.get("aggregator", "sum"))
         if aggregator not in EMPTY_BIN_VALUES:
             raise RunDefinitionError(
                 f"{label}: aggregator {aggregator!r} does not produce a "
@@ -238,7 +240,7 @@ class _Aggregate:
                 raise RunDefinitionError(
                     f"{label}: value must be a number, not {value!r}")
             return cls(score_id=None, value=value, aggregator=aggregator)
-        score_id = config["score"]
+        score_id = _require_text(label, "score", config["score"])
         for resource in matches:
             value_type = _score_type(label, resource, score_id)
             if value_type not in NUMERIC_VALUE_TYPES:
