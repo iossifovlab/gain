@@ -519,6 +519,8 @@ class FragmentScoreBinner:
             parameters["value"] = aggregate.value
         if grouping is not None:
             parameters.update(grouping.parameters)
+        parameters_text = (
+            json.dumps(parameters, sort_keys=True) if parameters else "")
         tracks = tuple(
             Track(
                 name=f"{base}:{group}",
@@ -528,8 +530,7 @@ class FragmentScoreBinner:
                 aggregator=aggregate.aggregator,
                 none_value_replacement=None,
                 binner=cls.kind,
-                parameters=json.dumps(parameters, sort_keys=True)
-                if parameters else "",
+                parameters=parameters_text,
             )
             for group in groups
         )

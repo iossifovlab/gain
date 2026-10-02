@@ -184,8 +184,7 @@ def _print_plan(run: RunDefinition, task_budget: int) -> None:
     for track in run.tracks:
         print(
             f"  {track.name}\t{','.join(track.resource_ids)}\t"
-            f"{track.score_id}\t"
-            f"{track.aggregator}")
+            f"{track.score_id}\t{track.aggregator}")
     print(f"regions: {len(run.regions)}")
     print(f"bins: {sum(_bin_count(r, run.bin_size) for r in run.regions)}")
     bundles = bundle_regions(run.regions, task_budget)
