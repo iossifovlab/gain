@@ -283,16 +283,24 @@ def test_refreshdaily_rolls_back_all_changes_on_failure(
     """A failure partway through leaves no partial resets and no log row."""
     user_quota.set_remaining("daily_jobs", 0)
     user_quota.save()
-    mocker.patch.object(
-        AnonymousUserQuota, "reset_daily",
+    anonymous_quota.set_remaining("daily_jobs", 0)
+    anonymous_quota.save()
+    # The session table is refreshed last of the three, so failing it lands
+    # after the user and anonymous tables have already been refreshed: both
+    # must come back unrefreshed for the failure to prove a rollback.
+    failing = mocker.patch.object(
+        SessionQuota, "refresh_all_daily",
         side_effect=RuntimeError("boom"))
 
     with pytest.raises(RuntimeError, match="boom"):
         call_command("refreshdaily")
 
+    failing.assert_called_once_with()
     user_quota.refresh_from_db()
+    anonymous_quota.refresh_from_db()
     # Rolled back, not refreshed: still no headroom left.
     assert user_quota.remaining("daily_jobs") == 0
+    assert anonymous_quota.remaining("daily_jobs") == 0
     assert DailyQuotaRefreshLog.objects.count() == 0
 
 
@@ -487,16 +495,24 @@ def test_refreshmonthly_rolls_back_all_changes_on_failure(
     """A failure partway through leaves no partial resets and no log row."""
     user_quota.set_remaining("monthly_jobs", 0)
     user_quota.save()
-    mocker.patch.object(
-        AnonymousUserQuota, "reset_monthly",
+    anonymous_quota.set_remaining("monthly_jobs", 0)
+    anonymous_quota.save()
+    # The session table is refreshed last of the three, so failing it lands
+    # after the user and anonymous tables have already been refreshed: both
+    # must come back unrefreshed for the failure to prove a rollback.
+    failing = mocker.patch.object(
+        SessionQuota, "refresh_all_monthly",
         side_effect=RuntimeError("boom"))
 
     with pytest.raises(RuntimeError, match="boom"):
         call_command("refreshmonthly")
 
+    failing.assert_called_once_with()
     user_quota.refresh_from_db()
+    anonymous_quota.refresh_from_db()
     # Rolled back, not refreshed: still no headroom left.
     assert user_quota.remaining("monthly_jobs") == 0
+    assert anonymous_quota.remaining("monthly_jobs") == 0
     assert MonthlyQuotaRefreshLog.objects.count() == 0
 
 
@@ -608,6 +624,35 @@ def test_refresh_writes_each_quota_row_once(
     session_quota: SessionQuota,
     command: str,
 ) -> None:
+    with CaptureQueriesContext(connection) as queries:
+        call_command(command)
+
+    assert _quota_update_count(queries) == 3
+
+
+def _seed_quota_rows(rows_per_table: int) -> None:
+    """Create ``rows_per_table`` rows in each of the three quota tables."""
+    for index in range(rows_per_table):
+        user = User.objects.create_user(
+            f"quota-user-{index}", f"quota-user-{index}@example.com",
+            "secret")
+        UserQuota.objects.create(user=user)
+        AnonymousUserQuota.objects.create(ip=f"10.0.0.{index}")
+        SessionQuota.objects.create(session_id=f"session-{index}")
+
+
+@pytest.mark.parametrize("command", ["refreshdaily", "refreshmonthly"])
+@pytest.mark.parametrize("rows_per_table", [1, 5])
+def test_refresh_issues_one_update_per_quota_table_regardless_of_rows(
+    command: str,
+    rows_per_table: int,
+) -> None:
+    # One bulk UPDATE per table rather than one per row (gain#807): a
+    # per-row walk holds every refreshed row locked until the last one is
+    # written, and loads each whole table into memory first. Seeded at two
+    # sizes so a count that grows with N fails at the larger one.
+    _seed_quota_rows(rows_per_table)
+
     with CaptureQueriesContext(connection) as queries:
         call_command(command)
 

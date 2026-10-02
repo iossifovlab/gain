@@ -37,18 +37,12 @@ class Command(BaseCommand):
                 "Use --force to override.")
             return
 
-        # One transaction for the whole walk, deliberately -- see the note in
-        # ``refreshdaily`` (gain#768, gain#807).
+        # One transaction for the whole refresh, deliberately -- see the note
+        # in ``refreshdaily`` (gain#768, gain#807).
         with transaction.atomic():
-            for user_quota in UserQuota.objects.all():
-                user_quota.reset_monthly()
-
-            for anonymous_quota in AnonymousUserQuota.objects.all():
-                anonymous_quota.reset_monthly()
-
-            for session_quota in SessionQuota.objects.all():
-                session_quota.reset_monthly()
-
+            UserQuota.refresh_all_monthly()
+            AnonymousUserQuota.refresh_all_monthly()
+            SessionQuota.refresh_all_monthly()
             MonthlyQuotaRefreshLog.objects.create()
 
         self.stdout.write("Monthly quota refresh complete.")

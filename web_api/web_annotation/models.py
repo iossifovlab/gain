@@ -906,11 +906,11 @@ class Quota(models.Model):
     counter by reading it first runs inside ``_mutating_stored_row``, which
     re-reads the whole row under a lock -- so the instance is authoritative
     for every column and a full-row save is right there. Spending quota goes
-    through ``_consume``, which owns that lock already. ``reset_daily`` and
-    ``reset_monthly`` take the other route: they zero their counters rather
-    than deriving values from what they read, so they need no lock, and in
-    exchange may write only the columns they themselves set -- see
-    ``_reset``.
+    through ``_consume``, which owns that lock already. ``refresh_all_daily``
+    and ``refresh_all_monthly`` take the other route: they zero their
+    counters in one UPDATE per table rather than deriving values from
+    anything read, so they need no lock, and in exchange write only the
+    columns they themselves set -- see ``_refresh_all``.
     """
     daily_jobs = models.IntegerField(default=0)
     monthly_jobs = models.IntegerField(default=0)
@@ -945,16 +945,16 @@ class Quota(models.Model):
                 "daily_attributes", "monthly_attributes", "extra_attributes"),
         })
 
-    #: The counters ``reset_daily`` refreshes.
+    #: The counters ``refresh_all_daily`` refreshes.
     DAILY_COUNTER_FIELDS: ClassVar[tuple[str, ...]] = tuple(
         daily for daily, _, _ in RESOURCE_FIELDS.values())
 
-    #: The counters ``reset_monthly`` refreshes.
+    #: The counters ``refresh_all_monthly`` refreshes.
     MONTHLY_COUNTER_FIELDS: ClassVar[tuple[str, ...]] = tuple(
         monthly for _, monthly, _ in RESOURCE_FIELDS.values())
 
     #: The extra-unit fields, which belong to neither period and so are
-    #: refreshed by neither reset.
+    #: refreshed by neither refresh.
     EXTRA_UNIT_FIELDS: ClassVar[tuple[str, ...]] = tuple(
         extra for _, _, extra in RESOURCE_FIELDS.values())
 
@@ -1059,47 +1059,43 @@ class Quota(models.Model):
         """Get the maximum number of monthly attributes allowed."""
         return self._max_for("monthly_attributes")
 
-    def _reset(self, fields: tuple[str, ...], stamp_field: str) -> None:
-        """Refresh one period's counters and stamp when it was refreshed.
+    @classmethod
+    def _refresh_all(cls, fields: tuple[str, ...], stamp_field: str) -> None:
+        """Refresh one period on every row of this table, in one UPDATE.
 
         Every counter named in ``fields`` is zeroed -- a refreshed period has
         consumed nothing -- so a counter added to the period's tuple
         refreshes without a second edit here. Counters of the *other* period,
-        and the extra-unit fields, are left untouched; the extras store units
-        remaining and a refresh must not clear a granted balance.
+        and the extra-unit fields, are left out of the UPDATE entirely; the
+        extras store units remaining and a refresh must not clear a granted
+        balance.
 
         Zeroing rather than writing a configured limit is what makes the
-        refresh independent of configuration: it no longer bakes the limit
-        of the moment into the row, so a limit changed after a refresh still
-        reaches the row (gain#750).
+        refresh independent of configuration: it does not bake the limit of
+        the moment into the row, so a limit changed after a refresh still
+        reaches the row (gain#750). It is also what lets one statement serve
+        every row, since nothing written depends on the row.
 
-        Only those columns are written, because only those were derived here.
-        Nothing re-read this instance under a lock, so every other column
-        still holds whatever the read that produced it saw; a full-row save
-        would put all of that back and revert whatever committed in the
-        meantime -- a consumption's deduction, or an admin's extra-unit grant
-        (gain#768). The class docstring states the rule this follows.
-
-        ``update_fields`` requires a row that already exists; every caller
-        operates on a persisted one, which is what #765 made true. It also
-        leaves the instance stale in the columns it declined to write -- no
-        caller re-reads it today, and one that needed to would pair this with
-        ``refresh_from_db`` -- and it raises on an UPDATE that matches no
-        row, so a quota deleted mid-refresh aborts the refresh instead of
-        being silently re-inserted.
+        One UPDATE per table rather than a save per row (gain#807): a
+        per-row walk loaded the whole table into memory and, inside the
+        commands' transaction, held each row it had refreshed locked until
+        the last one was written. Writing only the period's own columns
+        keeps the rule in the class docstring (gain#768): nothing is read,
+        so nothing stale can be written back over a consumption's deduction
+        or an admin's extra-unit grant committed meanwhile.
         """
-        for field in fields:
-            setattr(self, field, 0)
-        setattr(self, stamp_field, timezone.now())
-        self.save(update_fields=(*fields, stamp_field))
+        cls._default_manager.update(
+            **dict.fromkeys(fields, 0), **{stamp_field: timezone.now()})
 
-    def reset_daily(self) -> None:
-        """Reset all daily quota counts."""
-        self._reset(self.DAILY_COUNTER_FIELDS, "last_daily_reset")
+    @classmethod
+    def refresh_all_daily(cls) -> None:
+        """Zero every row's daily counters and stamp ``last_daily_reset``."""
+        cls._refresh_all(cls.DAILY_COUNTER_FIELDS, "last_daily_reset")
 
-    def reset_monthly(self) -> None:
-        """Reset all monthly quota counts."""
-        self._reset(self.MONTHLY_COUNTER_FIELDS, "last_monthly_reset")
+    @classmethod
+    def refresh_all_monthly(cls) -> None:
+        """Zero every row's monthly counters, stamp ``last_monthly_reset``."""
+        cls._refresh_all(cls.MONTHLY_COUNTER_FIELDS, "last_monthly_reset")
 
     def add_units(self) -> None:
         """Grant every resource a further month's worth of extra units.
