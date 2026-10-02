@@ -50,6 +50,7 @@ from gain.utils.stringify import stringify
 
 from ..aggregators import (
     AGGREGATOR_SCHEMA,
+    Aggregator,
     ScoreAggregationQuery,
 )
 from .aggregation import (
@@ -298,6 +299,10 @@ class AlleleScore(GenomicScore):
         get_allele_scores_in_region_agg: Reduce the alleles of a region to
         one value per query -- and their keys -- in one walk, telling
         the same two answers apart
+        get_allele_scores_for_allele_agg: Reduce the rows of one allele to
+        one value per query, telling an allele no row holds apart from one
+        whose rows were all rejected
+        get_allele_score_for_allele_agg: The same for one score
         get_allele_scores_for_allele_rows: Get the values of every row of
         one allele, unreduced
         get_allele_score_for_allele_rows: The same for one score
@@ -823,6 +828,22 @@ class AlleleScore(GenomicScore):
             chrom, start, end, score_filter)
         if records is None:
             return None
+        return self._fold_allele_records(
+            records, requests, aggregators, collector)
+
+    def _fold_allele_records(
+        self,
+        records: Iterator[Record],
+        requests: list[tuple[str, str]],
+        aggregators: list[Aggregator],
+        collector: _AlleleKeyCollector | None,
+    ) -> AlleleAggregate:
+        """Fold the selected records of an ``_agg`` read into its answer.
+
+        The walk-consuming half every allele folding read shares: the
+        records are the ones the filter kept, the request is resolved,
+        and the aggregators are fresh.
+        """
         if collector is not None:
             records = collector(records)
         score_ids = request_score_ids(requests)
@@ -841,6 +862,83 @@ class AlleleScore(GenomicScore):
         return AlleleAggregate(
             tuple(values),
             None if collector is None else collector.keys)
+
+    def get_allele_scores_for_allele_agg(
+        self, chrom: str, pos: int, ref: str, alt: str,
+        *,
+        queries: Sequence[ScoreAggregationQuery] | None = None,
+        allele_keys: Sequence[str] | None = None,
+        score_filter: ScoreFilter | None = None,
+    ) -> AlleleAggregate | None:
+        """Reduce one allele's rows to one value per query, or ``None``.
+
+        Folds exactly the rows :meth:`get_allele_scores_for_allele_rows`
+        answers -- those at ``(chrom, pos, ref, alt)``, exact on the
+        position too, so a row starting earlier whose span reaches ``pos``
+        is not folded -- with the queries, defaults, aggregators, record
+        weight and :class:`AlleleAggregate` of
+        :meth:`get_allele_scores_in_region_agg`.  ``values`` is parallel
+        to the queries; ``queries`` of ``None`` means every score the
+        resource defines, each with its own default aggregator.
+
+        ``None`` is an allele no row holds, judged BEFORE ``score_filter``.
+        Rows the filter rejects in full fold to an empty selection: an
+        :class:`AlleleAggregate` in which each aggregator answers for no
+        rows (``max`` gives ``None``, ``list`` gives ``[]``, ``count``
+        gives ``0``).
+
+        ``allele_keys`` behaves as in the region fold: ``None`` builds no
+        keys, a sequence asks for them, suffixed with those scores.  The
+        answer is the one key ``chrom:pos:ref:alt``, or several when a
+        suffixed score differs across the rows.
+
+        Allowed on both multiplicities and blind to
+        ``allele_score_mode``: on a ``one`` resource it folds the single
+        row.  The request is checked when this is called, before any row
+        is read: an unknown score id, a query with no aggregator to
+        resolve to, a bad aggregator, an unknown contig and a filter
+        compiled for another resource are refused.
+        """
+        requests = self.resolve_aggregation_queries(queries)
+        aggregators = build_region_aggregators(
+            requests, resource_id=self.resource_id)
+        collector = (
+            None if allele_keys is None
+            else self._allele_key_collector(allele_keys))
+        self._check_allele_region_request(chrom, score_filter)
+        matches = self._allele_records(chrom, pos, ref, alt, None)
+        first = next(matches, None)
+        if first is None:
+            return None
+        return self._fold_allele_records(
+            select_records(self, chain([first], matches), score_filter),
+            requests, aggregators, collector)
+
+    def get_allele_score_for_allele_agg(
+        self, chrom: str, pos: int, ref: str, alt: str,
+        *,
+        score: str | None = None,
+        aggregator: str | None = None,
+        score_filter: ScoreFilter | None = None,
+    ) -> AlleleAggregate | None:
+        """Reduce one allele's rows for ONE score, or ``None``.
+
+        The singular form of :meth:`get_allele_scores_for_allele_agg`,
+        which documents the rows folded and the refusals; ``score`` of
+        ``None`` is honoured only when the resource declares exactly one,
+        and ``aggregator`` of ``None`` is that score's default.
+
+        It does not unwrap: it answers the same :class:`AlleleAggregate`,
+        whose ``values`` is a one-element tuple, as
+        :meth:`FragmentScore.get_fragment_score_overlapping_region_agg()
+        <.fragment.FragmentScore.get_fragment_score_overlapping_region_agg>`
+        does.
+        """
+        return self.get_allele_scores_for_allele_agg(
+            chrom, pos, ref, alt,
+            queries=[ScoreAggregationQuery(
+                self._resolve_single_score(score), aggregator)],
+            score_filter=score_filter)
 
     def get_allele_scores_for_allele_rows(
         self, chrom: str, pos: int, ref: str, alt: str,
