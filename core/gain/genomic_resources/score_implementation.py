@@ -111,7 +111,9 @@ def save_and_plot_histograms(
     other histogram as plain JSON (ADR 0032).  The full histogram an
     earlier build left in the other encoding is deleted, so neither a
     release that reads only the plain encoding nor a DVC-tracked sidecar
-    that cannot be dropped serves it as current.  The encoding, and so
+    that cannot be dropped serves it as current -- except a legacy
+    ``histogram_<id>.yaml``, which the sidecar is named after and so
+    must stay for the sidecar to be found.  The encoding, and so
     which file is stale, is decided from the histogram in hand.
 
     Every deletion goes through :func:`drop_stale_histogram_file`: a
@@ -142,9 +144,12 @@ def save_and_plot_histograms(
                 outfile.write(histogram.serialize_truncated())
             # A plain full histogram from an earlier build within the
             # limit would otherwise be loaded as current by releases
-            # that read only the plain encoding.
-            drop_stale_histogram_file(
-                resource, score.get_plain_histogram_filename(score_id))
+            # that read only the plain encoding.  A legacy ``.yaml`` one
+            # is kept: the sidecar just written is named after it, and
+            # without it readers derive ``.json`` names that do not exist.
+            plain_filename = score.get_plain_histogram_filename(score_id)
+            if not plain_filename.endswith(".yaml"):
+                drop_stale_histogram_file(resource, plain_filename)
         else:
             with proto.open_raw_file(
                 resource,

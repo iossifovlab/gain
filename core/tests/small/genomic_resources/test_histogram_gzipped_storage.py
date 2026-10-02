@@ -253,6 +253,32 @@ def test_stats_rebuild_past_the_limit_drops_the_plain_full_histogram(
     assert manifest_histogram_files(tmp_path) == expected
 
 
+def test_stats_rebuild_past_the_limit_over_a_legacy_yaml_still_loads(
+        tmp_path: pathlib.Path) -> None:
+    """The sidecar is named after the legacy ``histogram_<id>.yaml`` the
+    manifest lists; dropping that ``.yaml`` would leave the sidecar and
+    the ``.json.gz`` unreachable once the manifest is rebuilt."""
+    a_categorical_score(tmp_path, CATEGORIES_WITHIN_LIMIT)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    statistics = statistics_of(tmp_path)
+    (statistics / "histogram_cell.json").rename(
+        statistics / "histogram_cell.yaml")
+    cli_manage(["repo-repair", "-R", str(tmp_path), "-j", "1"])
+    drop_everything_but_statistics(tmp_path)
+    a_categorical_score(tmp_path, CATEGORIES_PAST_LIMIT)
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    score = build_score_from_resource(
+        build_filesystem_test_repository(tmp_path).get_resource(""))
+    full = score.get_score_histogram("cell")
+    truncated = score.get_score_histogram("cell", truncated=True)
+    assert isinstance(full, CategoricalHistogram)
+    assert len(full.raw_values) == CATEGORIES_PAST_LIMIT
+    assert isinstance(truncated, CategoricalHistogram)
+    assert truncated.unique_values == CATEGORIES_PAST_LIMIT
+
+
 def test_stats_rebuild_back_within_the_limit_drops_the_gzipped_histogram(
         tmp_path: pathlib.Path) -> None:
     a_categorical_score(tmp_path, CATEGORIES_PAST_LIMIT)

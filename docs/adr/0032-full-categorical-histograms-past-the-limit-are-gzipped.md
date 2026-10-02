@@ -125,7 +125,9 @@ highly compressible, and nothing about it needs to stay human-diffable.
   - **Within the limit, rebuilt past it:** the earlier plain
     `histogram_<id>.json` is dropped, so an older release's full load raises
     rather than returning that stale file as current. A DVC-tracked one is
-    reported instead, for the curator to `dvc remove`.
+    reported instead, for the curator to `dvc remove`. A legacy
+    `histogram_<id>.yaml` is kept: the sidecar is named after it, and
+    dropping it would leave both the sidecar and the `.json.gz` unreachable.
   - **Past the limit, rebuilt within it, with a DVC-tracked sidecar:**
     the sidecar is kept with a warning, but the old `.json.gz` is dropped,
     so a reader at this version loads the plain file the rebuild wrote.
