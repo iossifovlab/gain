@@ -657,3 +657,37 @@ def test_refresh_issues_one_update_per_quota_table_regardless_of_rows(
         call_command(command)
 
     assert _quota_update_count(queries) == 3
+
+
+@pytest.mark.parametrize(
+    ("command", "counters", "stamp_field"),
+    [
+        ("refreshdaily", UserQuota.DAILY_COUNTER_FIELDS, "last_daily_reset"),
+        ("refreshmonthly", UserQuota.MONTHLY_COUNTER_FIELDS,
+         "last_monthly_reset"),
+    ],
+)
+def test_refresh_refreshes_every_row_of_every_quota_table(
+    command: str,
+    counters: tuple[str, ...],
+    stamp_field: str,
+) -> None:
+    # The value tests above each hold a single row, so a bulk UPDATE that
+    # quietly skipped some rows (a stray filter, say) would still pass them
+    # and the one-UPDATE-per-table count. Every row consumes quota and
+    # carries an old stamp, and every one of them must come out refreshed.
+    _seed_quota_rows(5)
+    old_stamp = datetime.datetime(2000, 1, 1, tzinfo=datetime.UTC)
+    models = (UserQuota, AnonymousUserQuota, SessionQuota)
+    for model in models:
+        model.objects.update(
+            **dict.fromkeys(counters, 7), **{stamp_field: old_stamp})
+
+    call_command(command)
+
+    for model in models:
+        rows = list(model.objects.values(*counters, stamp_field))
+        assert len(rows) >= 5
+        for row in rows:
+            assert all(row[field] == 0 for field in counters), row
+            assert row[stamp_field] > old_stamp, row
