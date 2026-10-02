@@ -299,14 +299,16 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
    * Reload the pipeline list without touching the editor: its text, the
    * selected pipeline and the temporary pipeline stay as they are, whether
    * the user cleared the editor, typed into it, or left a pipeline selected.
-   * If no list has loaded yet (the initial GET failed), this is still the
-   * initial load and selects the first pipeline as one.
+   * If no list had loaded by the time the refetch answers (the initial GET
+   * failed), this is still the initial load and selects the first pipeline
+   * as one. That is decided when the answer lands, not when it is sent: a
+   * refetch sent during the initial load can answer after it.
    */
   private refreshPipelines(): void {
-    this.getPipelines('', this.pipelineListEverLoaded);
+    this.getPipelines('', true);
   }
 
-  private getPipelines(defaultPipelineId: string = '', keepEditorState = false): void {
+  private getPipelines(defaultPipelineId: string = '', isRefresh = false): void {
     if (
       this.pipelineStateService.loadedWhileLoggedIn() === this.isUserLoggedIn &&
       !defaultPipelineId &&
@@ -327,6 +329,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
         this.filteredPipelines = this.pipelines;
         this.pipelineStateService.pipelines.set(pipelines);
         this.pipelineStateService.loadedWhileLoggedIn.set(this.isUserLoggedIn);
+        const keepEditorState = isRefresh && this.pipelineListEverLoaded;
         this.pipelinesLoaded = true;
         this.pipelineListEverLoaded = true;
         if (keepEditorState) {
