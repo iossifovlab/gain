@@ -33,22 +33,55 @@ end-to-end examples. This chapter picks up where it stops.
 The shape of the API
 --------------------
 
-Four builder functions are the entry points. Each takes a resource id and a
+Builder functions are the entry points. Each takes a resource id and a
 repository, and returns a typed object that knows how to read that kind of
-resource:
+resource. All of them, the repository constructors and the GAIn types they
+return are imported from one package, ``gain.grr``. The data-frame and
+AnnData loaders return plain pandas and anndata objects, and
+``GenomicContext`` stays in ``gain.genomic_resources.genomic_context``; none
+of these is re-exported:
 
 .. code-block:: python
 
-    from gain.genomic_resources.repository_factory import build_genomic_resource_repository
-    from gain.genomic_resources.reference_genome import build_reference_genome_from_resource_id
-    from gain.genomic_resources.gene_models import build_gene_models_from_resource_id
-    from gain.genomic_resources.genomic_scores import build_score_from_resource_id
+    from gain.grr import (
+        build_gene_models_from_resource_id,
+        build_genomic_resource_repository,
+        build_reference_genome_from_resource_id,
+        build_score_from_resource_id,
+    )
 
     grr = build_genomic_resource_repository()
 
     genome = build_reference_genome_from_resource_id("hg38/genomes/GRCh38-hg38", grr)
     genes = build_gene_models_from_resource_id("hg38/gene_models/MANE/1.5", grr)
     score = build_score_from_resource_id("hg38/scores/phastCons100way", grr)
+
+Every builder comes in two forms, ``*_from_resource_id(resource_id, grr)``
+and ``*_from_resource(resource)`` for a
+:class:`~gain.genomic_resources.repository.GenomicResource` already in hand:
+
+========================  ==============================================  =====================
+Resource                  Builder (``gain.grr``)                          Returns
+========================  ==============================================  =====================
+reference genome          ``build_reference_genome_from_resource_id``     ``ReferenceGenome``
+gene models               ``build_gene_models_from_resource_id``          ``GeneModels``
+liftover chain            ``build_liftover_chain_from_resource_id``       ``LiftoverChain``
+any genomic score         ``build_score_from_resource_id``                ``GenomicScore``
+position score            ``build_position_score_from_resource_id``       ``PositionScore``
+allele score              ``build_allele_score_from_resource_id``         ``AlleleScore``
+fragment score            ``build_fragment_score_from_resource_id``       ``FragmentScore``
+gene score                ``build_gene_score_from_resource_id``           ``GeneScore``
+gene set collection       ``build_gene_set_collection_from_resource_id``  ``GeneSetCollection``
+data frame                ``load_data_frame_from_resource_id``            a pandas DataFrame
+AnnData                   ``load_ann_data_from_resource_id``              an AnnData object
+========================  ==============================================  =====================
+
+``gain.grr`` also exports ``build_genomic_resource_group_repository``,
+``get_default_grr_definition``, ``get_default_grr_definition_path``,
+``get_genomic_context`` and ``get_grr_from_context``, and the
+``GenomicResourceRepo`` and ``GenomicResource`` types. Each name is the same
+object as in the module that defines it, and the chapters below refer to
+those defining modules; importing from either place gives the same thing.
 
 Two conventions run through all of them.
 
