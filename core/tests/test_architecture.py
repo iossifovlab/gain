@@ -579,15 +579,28 @@ def test_the_statistics_implementation_talks_to_the_score_not_its_table(
     )
 
 
-#: The deprecated alias for ``gain.annotation.annotate_tabular``, which
-#: warns from its module body.  Named so the rule below has an anchor
-#: that cannot pass on an empty scan.
-ANNOTATE_COLUMNS_SHIM = "gain.annotation.annotate_columns"
+@functools.cache
+def _package_modules(root: pathlib.Path) -> dict[str, pathlib.Path]:
+    """Every module of the ``gain`` package at ``root``, by dotted name.
+
+    ``root`` is the package directory itself -- the one holding ``gain``'s
+    ``__init__.py`` -- so ``root/annotation/x.py`` is ``gain.annotation.x``.
+    A parameter rather than ``GAIN_SRC`` fixed in, so the derivation below
+    can be shown working on a planted tree as well as the real one.
+    """
+    found = {}
+    for py in root.rglob("*.py"):
+        parts = list(py.relative_to(root).with_suffix("").parts)
+        if parts[-1] == "__init__":
+            parts.pop()
+        found[".".join(["gain", *parts])] = py
+    return found
 
 
 @functools.cache
-def _modules_warning_at_import() -> frozenset[str]:
-    """Dotted names of the ``gain`` modules that warn on import.
+def _modules_warning_at_import(root: pathlib.Path) -> frozenset[str]:
+    """Dotted names of the modules of the package at ``root`` that warn
+    on import.
 
     The subject set of the fence below, read out of the tree rather than
     listed, so a shim added later is covered by the rule that already
@@ -595,19 +608,13 @@ def _modules_warning_at_import() -> frozenset[str]:
     protected that one module, for exactly as long as it existed, and
     gain#1154 deleted it again along with the shim.
 
-    Cached, and the tree is fixed rather than a parameter, for the same
-    reasons as :func:`_imported_modules`: two rules here ask for this
-    set, and every rule sweeps the ``gain`` package.
+    Cached for the same reasons as :func:`_imported_modules`: the fence
+    asks for this set, and every rule sweeps the ``gain`` package.
     """
-    found = set()
-    for py in pathlib.Path(GAIN_SRC).rglob("*.py"):
-        if not _warns_at_import(py.read_text(encoding="utf8")):
-            continue
-        parts = list(py.relative_to(GAIN_SRC).with_suffix("").parts)
-        if parts[-1] == "__init__":
-            parts.pop()
-        found.add(".".join(["gain", *parts]))
-    return frozenset(found)
+    return frozenset(
+        name for name, py in _package_modules(root).items()
+        if _warns_at_import(py.read_text(encoding="utf8"))
+    )
 
 
 def _warns_at_import(source: str) -> bool:
@@ -935,32 +942,62 @@ def test_what_counts_as_a_warning_at_import(
     assert _warns_at_import(source) is at_import
 
 
-def test_the_derived_set_finds_the_shim_it_is_anchored_to() -> None:
-    """The derived set must not be empty, and must name a known shim.
+def test_the_derivation_finds_a_planted_shim(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The derivation picks a module-level warn out of a package tree.
+
+    ``gain`` itself ships no module that warns at import, so the derived
+    set over the real tree is empty -- and an empty set satisfies the
+    fence below just as well as a derivation that finds nothing ever
+    would.  This plants a shim and a plain sibling in a throwaway package
+    and asserts the derivation names the shim, and only the shim.
+    """
+    pkg = tmp_path / "gain"
+    (pkg / "annotation").mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "annotation" / "__init__.py").write_text("")
+    (pkg / "annotation" / "old_name.py").write_text(
+        "import warnings\n"
+        "warnings.warn('gone', DeprecationWarning, stacklevel=2)\n")
+    (pkg / "annotation" / "new_name.py").write_text("def cli() -> None: ...\n")
+
+    derived = _modules_warning_at_import(pkg)
+
+    assert derived == frozenset({"gain.annotation.old_name"})
+
+
+#: A module the sweep must reach in the real tree.  The rule below is
+#: anchored on it rather than on a shim: ``gain`` ships none today, so an
+#: empty derived set is the expected answer and cannot itself show that
+#: the scan looked anywhere.
+SCAN_ANCHOR = "gain.annotation.annotate_tabular"
+
+
+def test_the_warning_scan_reaches_the_gain_package() -> None:
+    """The derivation sweeps the tree the fence is about.
 
     An empty offender list satisfies the fence below just as well when
-    the derived set is empty -- a scan that found no candidates polices
-    nothing and says so in green.  Anchored on ``annotate_columns``,
-    which warns from its module body and is registered as a console
-    script, so it is not going away quietly.
-
-    Stated as ``contains`` rather than ``equals`` so that a shim added
-    later needs no edit here.
+    the scan found no modules at all -- a sweep aimed at the wrong
+    directory polices nothing and says so in green.  Together with
+    :func:`test_the_derivation_finds_a_planted_shim`, which shows the
+    derivation picks a shim out of whatever tree it sweeps, this is what
+    keeps an empty derived set meaning "no shims" rather than "no scan".
     """
-    derived = _modules_warning_at_import()
+    swept = _package_modules(pathlib.Path(GAIN_SRC))
 
-    assert ANNOTATE_COLUMNS_SHIM in derived, (
-        f"the anchor shim is not in the derived set: {sorted(derived)}. "
-        f"If it was removed, anchor this on another module-level "
-        f"DeprecationWarning -- an unanchored rule passes on an empty scan"
+    assert SCAN_ANCHOR in swept, (
+        f"the scan did not reach {SCAN_ANCHOR}: swept {len(swept)} "
+        f"modules under {GAIN_SRC}. If it was renamed, anchor this on "
+        f"another module -- an unanchored rule passes on an empty scan"
     )
 
 
 def test_nothing_in_gain_imports_a_module_that_warns_at_import() -> None:
     """No ``gain`` module imports one whose import warns.
 
-    A deprecated alias kept for outside callers -- ``annotate_columns``
-    is kept for the CLI name -- warns from its module body, so
+    A deprecated alias kept for outside callers -- a renamed module left
+    behind under its old name -- warns from its module body, so
     *importing* it warns.  An in-tree caller makes every process that
     loads that module emit the warning, and pins the shim past the
     release that was meant to remove it.  Nothing goes red on its own:
@@ -980,7 +1017,7 @@ def test_nothing_in_gain_imports_a_module_that_warns_at_import() -> None:
     nothing that ships.  ``web_api`` is fenced by its own copy of the
     rule, for the reason its ``test_architecture.py`` docstring gives.
     """
-    shims = _modules_warning_at_import()
+    shims = _modules_warning_at_import(pathlib.Path(GAIN_SRC))
     offenders = sorted(
         f"{py.relative_to(GAIN_SRC)}: {imported}"
         for py in pathlib.Path(GAIN_SRC).rglob("*.py")
