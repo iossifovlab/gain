@@ -189,7 +189,7 @@ def _print_plan(run: RunDefinition, task_budget: int) -> None:
     print(f"regions: {len(run.regions)}")
     print(f"bins: {sum(_bin_count(r, run.bin_size) for r in run.regions)}")
     bundles = bundle_regions(run.regions, task_budget)
-    print(f"tasks: {len(bundles) * len(run.jobs)}")
+    print(f"tasks: {len(bundles) * len(_distinct_jobs(run))}")
 
 
 def _bin_count(region: BedRegion, bin_size: int) -> int:
@@ -215,8 +215,9 @@ def _build_task_graph(
     os.makedirs(chunk_dir, exist_ok=True)
 
     chunk_tasks = []
+    jobs = _distinct_jobs(run)
     for bundle in bundle_regions(run.regions, args["task_budget"]):
-        for job in run.jobs:
+        for job in jobs:
             paths = [
                 _chunk_path(chunk_dir, track, region, run.bin_size)
                 for region in bundle
@@ -250,6 +251,25 @@ def _build_task_graph(
         output_files=[args["output"]],
     )
     return graph
+
+
+def _distinct_jobs(run: RunDefinition) -> list[BinningJob]:
+    """The jobs that compute something, each once.
+
+    Two entries can name tracks apart yet compute them identically -- an
+    unpooled entry over a resource beside a pooled one matching only it,
+    or two pooled queries matching the same set.  Such jobs have the same
+    chunks, so the first one's task computes them for both, and the
+    writer reads each under every name it was given.
+    """
+    seen: set[tuple[str, ...]] = set()
+    jobs = []
+    for job in run.jobs:
+        stems = tuple(_track_stem(track, run.bin_size) for track in job.tracks)
+        if stems not in seen:
+            seen.add(stems)
+            jobs.append(job)
+    return jobs
 
 
 def _digest(text: str) -> str:

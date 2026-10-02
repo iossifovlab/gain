@@ -1232,3 +1232,57 @@ def test_the_groups_of_a_job_are_chunks_of_their_own(
     assert "__sum_none_gB_p" in names[1]
     assert "__sum_none_gT_p" in names[2]
     assert names[3] == "scores_one_s_max_none_bs10_chr1_1_40.npy"
+
+
+def fragment_entries(*entries: str) -> str:
+    """A run definition of the given fragment entries over chr1 and chr2."""
+    return textwrap.dedent("""
+        input_reference_genome: genome
+        bins:
+          bin_size: 10
+          regions: ["chr1:1-40", chr2]
+        binners:
+    """) + "".join(
+        f"- fragment_score_binner: {entry}\n" for entry in entries)
+
+
+@pytest.mark.parametrize("first, second", [
+    # An unpooled entry and a pooled one matching only that resource.
+    ("{resource_query: frags/s1, pool: false}",
+     '{resource_query: "frags/s1*"}'),
+    # Two pooled entries whose different queries match the same set.
+    ('{resource_query: "frags/*"}', '{resource_query: "frags/s*"}'),
+])
+def test_entries_computing_the_same_track_differently_named_share_its_chunks(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
+    first: str, second: str,
+) -> None:
+    # The two tracks are named apart, so the run definition is valid,
+    # but every input to their values is the same: the run computes the
+    # column once and writes it under both names.
+    alone = output.parent / "alone.h5"
+    binning_tool(
+        write_run_definition(output, fragment_entries(first)),
+        grr_dir, alone)
+    expected = read_matrix(alone)[:, 0]
+
+    binning_tool(
+        write_run_definition(output, fragment_entries(first, second)),
+        grr_dir, output)
+
+    values = read_matrix(output)
+    assert values.shape == (8, 2)
+    np.testing.assert_array_equal(values[:, 0], expected)
+    np.testing.assert_array_equal(values[:, 1], expected)
+
+
+def test_dry_run_counts_a_task_shared_by_two_entries_once(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    binning_tool(
+        write_run_definition(output, fragment_entries(
+            '{resource_query: "frags/*"}', '{resource_query: "frags/s*"}')),
+        grr_dir, output, "--dry-run")
+
+    assert "tasks: 1" in capsys.readouterr().out
