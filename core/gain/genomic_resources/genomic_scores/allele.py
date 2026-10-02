@@ -884,8 +884,9 @@ class AlleleScore(GenomicScore):
         ``None`` is an allele no row holds, judged BEFORE ``score_filter``.
         Rows the filter rejects in full fold to an empty selection: an
         :class:`AlleleAggregate` in which each aggregator answers for no
-        rows (``max`` gives ``None``, ``list`` gives ``[]``, ``count``
-        gives ``0``).
+        rows (``max`` and ``count`` give ``None``, ``list`` gives
+        ``[]``), exactly as the region fold answers an all-filtered
+        region.
 
         ``allele_keys`` behaves as in the region fold: ``None`` builds no
         keys, a sequence asks for them, suffixed with those scores.  The
