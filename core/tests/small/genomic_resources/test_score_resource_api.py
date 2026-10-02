@@ -96,9 +96,12 @@ FORBIDDEN_ON_BASE = {
     "get_fragment_score_starting_in_region",
     "get_fragment_scores_overlapping_region_agg",
     "get_fragment_score_overlapping_region_agg",
-    # The allele kind's logical read plane (gain#1132, gain#1751): the
-    # folding read and the unreduced rows reads, point and region.
+    # The allele kind's logical read plane (gain#1132, gain#1751,
+    # gain#1753): the folding read, the unreduced rows reads, point and
+    # region, and the one-row read of an allele.
     "get_allele_scores_in_region_agg",
+    "get_allele_scores_for_allele",
+    "get_allele_score_for_allele",
     "get_allele_scores_for_allele_rows",
     "get_allele_score_for_allele_rows",
     "get_allele_scores_in_region_rows",

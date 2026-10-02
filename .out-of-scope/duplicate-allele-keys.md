@@ -60,6 +60,17 @@ first-wins resolution is the accepted behaviour. Callers that need the
 transcript dimension must read the underlying table, not ask the allele score to
 adjudicate between rows it was never given the key to distinguish.
 
+> **Superseded at the read by gain#1749 (2026-10-02).** First-wins is no longer
+> the accepted behaviour of a read of one allele. A resource now declares
+> `allele_multiplicity: many` when several rows per allele are intended, and
+> those rows are read through the `_rows` / `_agg` reads. On a resource that
+> does not declare it, `get_allele_scores_for_allele` answers the first row
+> with a warning now, and refuses the duplicate from
+> `ALLELE_MULTIPLICITY_ENFORCEMENT_RELEASE` on (gain#1753). The legacy
+> `fetch_allele_scores` keeps first-wins until gain#1755 removes it. This note
+> is about the read only; the refusal of a *build-time* duplicate rule below is
+> gain#1752's to amend.
+
 ## What is still in scope
 
 The **ordering** rule is unaffected: an allele score's records must not move
