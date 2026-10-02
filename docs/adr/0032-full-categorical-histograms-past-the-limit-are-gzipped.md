@@ -128,11 +128,18 @@ highly compressible, and nothing about it needs to stay human-diffable.
     reported instead, for the curator to `dvc remove`. A legacy
     `histogram_<id>.yaml` is kept: the sidecar is named after it, and
     dropping it would leave both the sidecar and the `.json.gz` unreachable.
-  - **Past the limit, rebuilt within it, with a DVC-tracked sidecar:**
-    the sidecar is kept with a warning, but the old `.json.gz` is dropped,
-    so a reader at this version loads the plain file the rebuild wrote.
+  - **Past the limit, rebuilt within it, with a DVC-tracked sidecar whose
+    `.json.gz` is not tracked:** the sidecar is kept with a warning, but
+    the old `.json.gz` is dropped, so a reader at this version loads the
+    plain file the rebuild wrote.
 
-  Two cases remain:
+  Three cases remain:
+  - **Past the limit, rebuilt within it, with both the sidecar and the
+    `.json.gz` DVC-tracked** (one `dvc add` usually covers both): both are
+    reported and kept, and both stay in the manifest, so a reader at this
+    version loads the stale `.json.gz` rather than the plain file the
+    rebuild wrote. The case lasts until the curator runs `dvc remove` on
+    both pointers and rebuilds the manifest.
   - **Legacy `.yaml`, within the limit, rebuilt past it:** the kept
     `histogram_<id>.yaml` still holds the under-limit histogram. A release
     from before this decision reads only the plain encoding, which for this

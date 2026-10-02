@@ -330,6 +330,36 @@ def test_stats_rebuild_within_the_limit_beside_a_dvc_tracked_sidecar(
     assert hist.unique_values == CATEGORIES_WITHIN_LIMIT
 
 
+def test_stats_rebuild_within_the_limit_beside_dvc_tracked_sidecar_and_gz(
+        tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture) -> None:
+    """A case ADR 0032 leaves open: with both past-limit files under DVC,
+    both are reported and kept, so the full load still picks the stale
+    gzipped histogram until the curator runs ``dvc remove``."""
+    a_categorical_score(tmp_path, CATEGORIES_PAST_LIMIT)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    statistics = statistics_of(tmp_path)
+    keep_under_dvc(statistics / "truncated" / "histogram_cell.json")
+    keep_under_dvc(statistics / "histogram_cell.json.gz")
+    drop_everything_but_statistics(tmp_path)
+    a_categorical_score(tmp_path, CATEGORIES_WITHIN_LIMIT)
+    caplog.clear()
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    for stale in (
+            "statistics/truncated/histogram_cell.json",
+            "statistics/histogram_cell.json.gz"):
+        assert any(
+            f"<{stale}>" in message
+            and f"dvc remove {stale}.dvc" in message
+            for message in caplog.messages), stale
+    score = build_score_from_resource(
+        build_filesystem_test_repository(tmp_path).get_resource(""))
+    hist = score.get_score_histogram("cell")
+    assert isinstance(hist, CategoricalHistogram)
+    assert hist.unique_values == CATEGORIES_PAST_LIMIT
+
+
 def test_stats_rebuild_with_a_null_histogram_config_drops_the_gzipped_files(
         tmp_path: pathlib.Path) -> None:
     a_categorical_score(tmp_path, CATEGORIES_PAST_LIMIT)

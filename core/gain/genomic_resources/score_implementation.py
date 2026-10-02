@@ -113,7 +113,9 @@ def save_and_plot_histograms(
     release that reads only the plain encoding nor a DVC-tracked sidecar
     that cannot be dropped serves it as current -- except a legacy
     ``histogram_<id>.yaml``, which the sidecar is named after and so
-    must stay for the sidecar to be found.  The encoding, and so
+    must stay for the sidecar to be found.  A DVC-tracked ``.json.gz``
+    beside a DVC-tracked sidecar is kept too, and still loaded, until
+    the curator runs ``dvc remove``.  The encoding, and so
     which file is stale, is decided from the histogram in hand.
 
     Every deletion goes through :func:`drop_stale_histogram_file`: a
@@ -161,7 +163,10 @@ def save_and_plot_histograms(
             # shrunk below the limit (or stopped being categorical)
             # would otherwise be served as current by truncated= loads,
             # and its gzipped full histogram by full loads whenever the
-            # sidecar is DVC-tracked and so kept.
+            # sidecar is DVC-tracked and so kept.  When the ``.json.gz``
+            # is DVC-tracked too, both are kept with a warning and full
+            # loads still pick it until the curator runs ``dvc remove``
+            # (ADR 0032).
             drop_stale_histogram_file(resource, sidecar_filename)
             drop_stale_histogram_file(
                 resource, score.get_gzipped_histogram_filename(score_id))
