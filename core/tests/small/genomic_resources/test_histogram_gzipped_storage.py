@@ -322,9 +322,8 @@ def test_stats_rebuild_within_the_limit_beside_a_dvc_tracked_sidecar(
     gzipped histogram over the plain one this build wrote."""
     a_categorical_score(tmp_path, CATEGORIES_PAST_LIMIT)
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
-    sidecar = tmp_path / "statistics" / "truncated" / "histogram_cell.json"
-    (sidecar.parent / "histogram_cell.json.dvc").write_text(
-        dvc_sidecar("histogram_cell.json", sidecar.read_bytes()))
+    keep_under_dvc(
+        statistics_of(tmp_path) / "truncated" / "histogram_cell.json")
     drop_everything_but_statistics(tmp_path)
     a_categorical_score(tmp_path, CATEGORIES_WITHIN_LIMIT)
 
@@ -360,8 +359,7 @@ def test_stats_rebuild_with_a_null_histogram_config_reports_a_dvc_tracked_gz(
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
     statistics = tmp_path / "statistics"
     gzipped = (statistics / "histogram_cell.json.gz").read_bytes()
-    (statistics / "histogram_cell.json.gz.dvc").write_text(
-        dvc_sidecar("histogram_cell.json.gz", gzipped))
+    keep_under_dvc(statistics / "histogram_cell.json.gz")
     drop_everything_but_statistics(tmp_path)
     a_categorical_score(
         tmp_path, CATEGORIES_PAST_LIMIT,
