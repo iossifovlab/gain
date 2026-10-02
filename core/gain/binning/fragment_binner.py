@@ -576,6 +576,7 @@ def _parse_local_table(
         suffix = os.path.splitext(path)[1].lower()
         file_format = {".tsv": "tsv", ".xls": "excel", ".xlsx": "excel"}\
             .get(suffix, "csv")
+    file_format = _require_text(label, "file_format", file_format)
     if file_format not in FILE_FORMATS:
         raise RunDefinitionError(
             f"{label}: file_format must be one of "
@@ -619,7 +620,9 @@ class _Tables:
                     f"not a data_frame")
         try:
             frame = table.load(self.grr)
-        except (OSError, ValueError, BadZipFile) as err:
+        # ImportError: a legacy .xls needs xlrd, which gain does not
+        # depend on.
+        except (OSError, ValueError, BadZipFile, ImportError) as err:
             what = (
                 f"resource {table.resource_id!r} cannot be read as a "
                 f"data_frame" if table.resource_id is not None

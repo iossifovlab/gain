@@ -188,3 +188,36 @@ def test_dry_run_warns_a_local_table_is_not_reproducible_elsewhere(
         f"    warning: the cell metadata table {str(local)!r} is a local "
         f"file; the run is not reproducible elsewhere") in out
     assert not (tmp_path / "bins.h5").exists()
+
+
+def test_a_rerun_regroups_after_its_local_table_is_edited(
+    tmp_path: pathlib.Path, grr_dir: pathlib.Path,
+) -> None:
+    # The local table decides each barcode's track, so editing it between
+    # two runs over one work directory recomputes the chunks: the rerun
+    # equals a fresh run over the edited table, not the first run.
+    definition = run_definition(tmp_path / "defs", LOCAL_META)
+    table = tmp_path / "defs" / "cells.csv"
+    table.write_text(CELL_META)
+    output = tmp_path / "bins.h5"
+    binning_tool(definition, grr_dir, output, "--keep-work-dir")
+    with h5py.File(output, "r") as h5:
+        first = h5["values"][()]
+    # The same two classes, swapped between S1's barcodes.
+    edited = CELL_META.replace("S1,AAA,T", "S1,AAA,B").replace(
+        "S1,BBB,B", "S1,BBB,T")
+    table.write_text(edited)
+    later = table.stat().st_mtime + 10
+    os.utime(table, (later, later))
+    fresh_definition = run_definition(tmp_path / "fresh", LOCAL_META)
+    (tmp_path / "fresh" / "cells.csv").write_text(edited)
+    binning_tool(fresh_definition, grr_dir, tmp_path / "fresh.h5")
+
+    binning_tool(definition, grr_dir, output, "--keep-work-dir")
+
+    with h5py.File(tmp_path / "fresh.h5", "r") as h5:
+        expected = h5["values"][()]
+    with h5py.File(output, "r") as h5:
+        rerun = h5["values"][()]
+    assert not np.array_equal(expected, first, equal_nan=True)
+    np.testing.assert_array_equal(rerun, expected)

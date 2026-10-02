@@ -575,3 +575,39 @@ def test_an_unreadable_local_table_is_refused_naming_the_file(
     message = str(excinfo.value)
     assert repr(str(tmp_path / "absent.csv")) in message
     assert "'frags/s1'" in message
+
+
+def test_a_legacy_xls_table_is_refused_naming_the_file(
+    tmp_path: pathlib.Path, genome: ReferenceGenome,
+) -> None:
+    # A legacy (OLE2) .xls needs a reader gain does not depend on.
+    repo = build_repo(tmp_path, ("frags/s1", fragments(
+        **{SAMPLE_ID_LABEL: "S1"})))
+    legacy = tmp_path / "cells.xls"
+    legacy.write_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\0" * 504)
+
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse({"resource_query": "frags/s1", "group": {}, "meta": {
+            "file_name": "cells.xls", "filter": BY_SAMPLE}},
+            repo, genome, base_dir=str(tmp_path))
+
+    message = str(excinfo.value)
+    assert repr(str(legacy)) in message
+    assert "'frags/s1'" in message
+
+
+def test_a_file_format_that_is_not_text_is_refused_naming_the_entry(
+    tmp_path: pathlib.Path, genome: ReferenceGenome,
+) -> None:
+    repo = build_repo(tmp_path, ("frags/s1", fragments(
+        **{SAMPLE_ID_LABEL: "S1"})))
+    write_cell_meta(tmp_path, "csv")
+
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse({"resource_query": "frags/s1", "group": {}, "meta": {
+            "file_name": "cells.csv", "file_format": ["csv"],
+            "filter": BY_SAMPLE}}, repo, genome, base_dir=str(tmp_path))
+
+    message = str(excinfo.value)
+    assert message.startswith("binners[0]")
+    assert "file_format" in message

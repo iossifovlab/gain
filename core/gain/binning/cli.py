@@ -250,6 +250,10 @@ def _build_task_graph(
     kinds = discover_binner_kinds()
     graph = TaskGraph()
     graph.input_files.append(args["run_definition"])
+    # A local metadata table decides which track each barcode reaches,
+    # yet its path alone names the chunks: as an input of every task, an
+    # edit to it recomputes them instead of reusing the old grouping.
+    graph.input_files.extend(_local_files(run))
     chunk_dir = os.path.join(args["work_dir"], "chunks")
     os.makedirs(chunk_dir, exist_ok=True)
 
