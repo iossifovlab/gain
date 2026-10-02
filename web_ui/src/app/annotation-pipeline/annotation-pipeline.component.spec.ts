@@ -1017,6 +1017,71 @@ describe('AnnotationPipelineComponent', () => {
     }
   });
 
+  it('validates the next edit after a reconnect-driven refetch fails (#1779)', () => {
+    jest.useFakeTimers();
+    try {
+      const reconnect = armReconnect();
+      component.ngOnInit();
+      pipelineStateService.loadedWhileLoggedIn.set(!component.isUserLoggedIn);
+      jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
+        .mockReturnValueOnce(throwError(() => new Error('backend restarting')));
+      reconnect();
+      const validateSpy = jest.spyOn(jobsServiceMock, 'validatePipelineConfig');
+
+      component.currentPipelineText = 'typed after the failed refetch';
+      component.onConfigChanged();
+      jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+
+      expect(validateSpy).toHaveBeenCalledTimes(1);
+      expect(validateSpy).toHaveBeenCalledWith('typed after the failed refetch');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('sends a validation suppressed during a failing pipeline-list refetch once the error lands (#1779)', () => {
+    jest.useFakeTimers();
+    try {
+      const reconnect = armReconnect();
+      component.ngOnInit();
+      pipelineStateService.loadedWhileLoggedIn.set(!component.isUserLoggedIn);
+      const refetch = new Subject<Pipeline[]>();
+      jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
+        .mockReturnValueOnce(refetch.asObservable());
+      reconnect();
+      const validateSpy = jest.spyOn(jobsServiceMock, 'validatePipelineConfig');
+      component.currentPipelineText = 'typed during the refetch';
+      component.onConfigChanged();
+      jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+      expect(validateSpy).not.toHaveBeenCalled();
+      component.currentPipelineText = 'typed during the refetch, then more';
+
+      refetch.error(new Error('backend restarting'));
+      jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+
+      expect(validateSpy).toHaveBeenCalledTimes(1);
+      expect(validateSpy).toHaveBeenCalledWith('typed during the refetch, then more');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('a failed reconnect-driven refetch leaves the editor and the selection as they were (#1779)', () => {
+    const reconnect = armReconnect();
+    component.ngOnInit();
+    component.onPipelineClick(mockPipelines[1]);
+    component.currentPipelineText = 'edited before the refetch';
+    pipelineStateService.loadedWhileLoggedIn.set(!component.isUserLoggedIn);
+    jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
+      .mockReturnValueOnce(throwError(() => new Error('backend restarting')));
+
+    reconnect();
+
+    expect(component.currentPipelineText).toBe('edited before the refetch');
+    expect(component.selectedPipeline.id).toBe('id2');
+    expect(pipelineStateService.selectedPipelineId()).toBe('id2');
+  });
+
   it('drops a validation suppressed during the initial load when the load selects the first pipeline (#693)', () => {
     pipelineStateService.pipelines.set([]);
     component.currentPipelineText = '';
