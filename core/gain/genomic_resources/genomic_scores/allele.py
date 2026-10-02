@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import copy
 import enum
-import logging
 from collections.abc import Callable, Generator, Iterator, Sequence
 from dataclasses import dataclass
 from itertools import chain
@@ -21,6 +20,7 @@ from typing import (
     NamedTuple,
 )
 
+from gain import logging
 from gain.genomic_resources import resource_types
 from gain.genomic_resources.genomic_position_table.record import (
     ALT,
