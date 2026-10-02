@@ -891,6 +891,21 @@ describe('AnnotationPipelineComponent', () => {
     expect(component.isPipelineChanged()).toBe(false);
   });
 
+  // Arm one websocket drop and reconnect; the returned function fires it.
+  function armReconnect(): () => void {
+    const notifications = new Subject<PipelineNotification>();
+    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications')
+      .mockReturnValueOnce(notifications.asObservable())
+      .mockReturnValueOnce(new Subject<PipelineNotification>().asObservable());
+    const reconnected = new Subject<void>();
+    jest.spyOn(socketNotificationsServiceMock, 'reopenConnection')
+      .mockReturnValueOnce(reconnected.asObservable());
+    return () => {
+      notifications.error(new Event('network error'));
+      reconnected.next();
+    };
+  }
+
   it('New pipeline validates the cleared editor without waiting for the editor to report the change (#693)', () => {
     // Until monaco has loaded, the editor only stores the text it is given
     // and later loads it without reporting a change, so the clear must start
@@ -912,13 +927,7 @@ describe('AnnotationPipelineComponent', () => {
   });
 
   it('a reconnect-driven pipeline-list refetch keeps an editor cleared by New pipeline (#693)', () => {
-    const notifications = new Subject<PipelineNotification>();
-    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications')
-      .mockReturnValueOnce(notifications.asObservable())
-      .mockReturnValueOnce(new Subject<PipelineNotification>().asObservable());
-    const reconnected = new Subject<void>();
-    jest.spyOn(socketNotificationsServiceMock, 'reopenConnection')
-      .mockReturnValueOnce(reconnected.asObservable());
+    const reconnect = armReconnect();
     component.ngOnInit();
     expect(component.selectedPipeline.id).toBe('id1');
     component.clearPipeline();
@@ -926,8 +935,7 @@ describe('AnnotationPipelineComponent', () => {
     // goes to the server rather than restoring from the cache.
     pipelineStateService.loadedWhileLoggedIn.set(!component.isUserLoggedIn);
 
-    notifications.error(new Event('network error'));
-    reconnected.next();
+    reconnect();
 
     expect(component.currentPipelineText).toBe('');
     expect(component.selectedPipeline).toBeNull();
@@ -940,13 +948,7 @@ describe('AnnotationPipelineComponent', () => {
     // answer lands after the initial load selected a pipeline and the user
     // cleared the editor: whether to keep the editor is an answer-time call.
     pipelineStateService.pipelines.set([]);
-    const notifications = new Subject<PipelineNotification>();
-    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications')
-      .mockReturnValueOnce(notifications.asObservable())
-      .mockReturnValueOnce(new Subject<PipelineNotification>().asObservable());
-    const reconnected = new Subject<void>();
-    jest.spyOn(socketNotificationsServiceMock, 'reopenConnection')
-      .mockReturnValueOnce(reconnected.asObservable());
+    const reconnect = armReconnect();
     const initialLoad = new Subject<Pipeline[]>();
     const refetch = new Subject<Pipeline[]>();
     jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
@@ -954,8 +956,7 @@ describe('AnnotationPipelineComponent', () => {
       .mockReturnValueOnce(refetch.asObservable());
     const fresh = TestBed.createComponent(AnnotationPipelineComponent).componentInstance;
     fresh.ngOnInit();
-    notifications.error(new Event('network error'));
-    reconnected.next();
+    reconnect();
     initialLoad.next(mockPipelines);
     initialLoad.complete();
     expect(fresh.selectedPipeline.id).toBe('id1');
@@ -974,13 +975,7 @@ describe('AnnotationPipelineComponent', () => {
     // The page opened while the backend was down: the initial GET errored,
     // nothing was ever loaded, and the reconnect refetch is what recovers it.
     pipelineStateService.pipelines.set([]);
-    const notifications = new Subject<PipelineNotification>();
-    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications')
-      .mockReturnValueOnce(notifications.asObservable())
-      .mockReturnValueOnce(new Subject<PipelineNotification>().asObservable());
-    const reconnected = new Subject<void>();
-    jest.spyOn(socketNotificationsServiceMock, 'reopenConnection')
-      .mockReturnValueOnce(reconnected.asObservable());
+    const reconnect = armReconnect();
     jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
       .mockReturnValueOnce(throwError(() => new Error('backend restarting')));
     const freshFixture = TestBed.createComponent(AnnotationPipelineComponent);
@@ -988,8 +983,7 @@ describe('AnnotationPipelineComponent', () => {
     fresh.ngOnInit();
     expect(fresh.selectedPipeline).toBeFalsy();
 
-    notifications.error(new Event('network error'));
-    reconnected.next();
+    reconnect();
 
     expect(fresh.selectedPipeline.id).toBe('id1');
     expect(fresh.currentPipelineText).toBe('content1');
@@ -998,20 +992,13 @@ describe('AnnotationPipelineComponent', () => {
   it('sends a validation suppressed during a pipeline-list reload once the reload completes (#693)', () => {
     jest.useFakeTimers();
     try {
-      const notifications = new Subject<PipelineNotification>();
-      jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications')
-        .mockReturnValueOnce(notifications.asObservable())
-        .mockReturnValueOnce(new Subject<PipelineNotification>().asObservable());
-      const reconnected = new Subject<void>();
-      jest.spyOn(socketNotificationsServiceMock, 'reopenConnection')
-        .mockReturnValueOnce(reconnected.asObservable());
+      const reconnect = armReconnect();
       component.ngOnInit();
       pipelineStateService.loadedWhileLoggedIn.set(!component.isUserLoggedIn);
       const reloaded = new Subject<Pipeline[]>();
       jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
         .mockReturnValueOnce(reloaded.asObservable());
-      notifications.error(new Event('network error'));
-      reconnected.next();
+      reconnect();
       const validateSpy = jest.spyOn(jobsServiceMock, 'validatePipelineConfig');
 
       component.currentPipelineText = 'typed during the reload';

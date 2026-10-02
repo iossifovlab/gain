@@ -94,8 +94,7 @@ class EditorTrafficLog {
     @typescript-eslint/no-explicit-any */
     const state = await this.page.evaluate(() => {
       const editors = (window as any).monaco?.editor?.getEditors?.() ?? [];
-      const lengths: number[] = editors.map((e: any) => (e.getValue() as string).length);
-      return lengths;
+      return editors.map((e: any) => (e.getValue() as string).length) as number[];
     }).catch((error: unknown) => `unreadable (${String(error)})`);
     /* eslint-enable */
     const shown = typeof state === 'string'
