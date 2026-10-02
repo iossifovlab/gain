@@ -105,6 +105,9 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   // Set when isConfigValid ran while the pipeline list was loading and so
   // sent nothing; the load's completion validates the editor's text then.
   private validationPendingOnLoad = false;
+  // Set once a pipeline list has been loaded (from the server or the cache).
+  // Until then a refetch is still the initial load and selects as one.
+  private pipelineListEverLoaded = false;
   public editorInstance: Monaco.editor.IStandaloneCodeEditor;
   public editorWidth: number;
   public downloadDocLink: string;
@@ -296,9 +299,11 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
    * Reload the pipeline list without touching the editor: its text, the
    * selected pipeline and the temporary pipeline stay as they are, whether
    * the user cleared the editor, typed into it, or left a pipeline selected.
+   * If no list has loaded yet (the initial GET failed), this is still the
+   * initial load and selects the first pipeline as one.
    */
   private refreshPipelines(): void {
-    this.getPipelines('', true);
+    this.getPipelines('', this.pipelineListEverLoaded);
   }
 
   private getPipelines(defaultPipelineId: string = '', keepEditorState = false): void {
@@ -310,6 +315,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
       this.pipelines = this.pipelineStateService.pipelines();
       this.filteredPipelines = this.pipelines;
       this.pipelinesLoaded = true;
+      this.pipelineListEverLoaded = true;
       this.restoreState();
       return;
     }
@@ -322,6 +328,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
         this.pipelineStateService.pipelines.set(pipelines);
         this.pipelineStateService.loadedWhileLoggedIn.set(this.isUserLoggedIn);
         this.pipelinesLoaded = true;
+        this.pipelineListEverLoaded = true;
         if (keepEditorState) {
           this.rebindSelectedPipeline();
         } else if (defaultPipelineId) {

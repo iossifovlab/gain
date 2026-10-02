@@ -935,6 +935,31 @@ describe('AnnotationPipelineComponent', () => {
     expect(pipelineStateService.selectedPipelineId()).toBe('');
   });
 
+  it('a reconnect-driven refetch selects the first pipeline when the initial load failed (#693)', () => {
+    // The page opened while the backend was down: the initial GET errored,
+    // nothing was ever loaded, and the reconnect refetch is what recovers it.
+    pipelineStateService.pipelines.set([]);
+    const notifications = new Subject<PipelineNotification>();
+    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications')
+      .mockReturnValueOnce(notifications.asObservable())
+      .mockReturnValueOnce(new Subject<PipelineNotification>().asObservable());
+    const reconnected = new Subject<void>();
+    jest.spyOn(socketNotificationsServiceMock, 'reopenConnection')
+      .mockReturnValueOnce(reconnected.asObservable());
+    jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
+      .mockReturnValueOnce(throwError(() => new Error('backend restarting')));
+    const freshFixture = TestBed.createComponent(AnnotationPipelineComponent);
+    const fresh = freshFixture.componentInstance;
+    fresh.ngOnInit();
+    expect(fresh.selectedPipeline).toBeFalsy();
+
+    notifications.error(new Event('network error'));
+    reconnected.next();
+
+    expect(fresh.selectedPipeline.id).toBe('id1');
+    expect(fresh.currentPipelineText).toBe('content1');
+  });
+
   it('sends a validation suppressed during a pipeline-list reload once the reload completes (#693)', () => {
     jest.useFakeTimers();
     try {
