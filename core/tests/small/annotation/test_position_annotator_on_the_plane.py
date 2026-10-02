@@ -364,7 +364,7 @@ def test_a_region_starting_below_one_is_refused_rather_than_answered(
     ``None`` becoming one.
 
     Worth pinning because it is reachable, not theoretical: ``Region``
-    is happy to be constructed this way, and ``annotate_columns`` builds
+    is happy to be constructed this way, and ``annotate_tabular`` builds
     regions with a bare ``int()`` of the start column, so a 0-based or
     BED-derived input produces one.
 

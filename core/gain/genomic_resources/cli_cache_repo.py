@@ -8,7 +8,7 @@ The annotation pipeline can come from:
   - the positional ``pipeline`` argument — a file path or a GRR resource
     id of type ``annotation_pipeline``. This is supplied by the standard
     ``CLIAnnotationContextProvider`` (the same mechanism
-    ``annotate_columns`` / ``annotate_vcf`` use).
+    ``annotate_tabular`` / ``annotate_vcf`` use).
   - ``-i / --instance`` — when the ``GPFInstanceContextProvider`` plugin
     is installed, this resolves to the pipeline of the configured GPF
     instance.
