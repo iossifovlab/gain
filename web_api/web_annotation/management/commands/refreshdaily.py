@@ -38,30 +38,24 @@ class Command(BaseCommand):
             )
             return
 
-        # One transaction for the whole walk, deliberately (gain#768).
+        # One transaction for the whole refresh, deliberately (gain#768).
         #
-        # The row updates and the log row below must commit together: were
-        # they to commit separately, a crash mid-walk would leave rows
-        # refreshed with no log row, so the next run -- cron, or an admin on
-        # the reset-quota page -- refreshes them a second time and discards
-        # everything consumed in between. `rolls_back_all_changes_on_failure`
-        # pins that. The price is that each row stays locked until the last
-        # one is refreshed, so a consumption touching an already-refreshed
-        # row waits for the command rather than for a single UPDATE.
+        # The table updates and the log row below must commit together: were
+        # they to commit separately, a crash partway through would leave
+        # tables refreshed with no log row, so the next run -- cron, or an
+        # admin on the reset-quota page -- refreshes them a second time and
+        # discards everything consumed in between.
+        # `rolls_back_all_changes_on_failure` pins that. Each table is
+        # refreshed by a single UPDATE (gain#807), so the rows stay locked
+        # only for the remaining tables' UPDATEs and the log insert, not for
+        # a walk over every row.
         #
         # Note the already-ran guard above is read outside this transaction,
-        # so it is not serialised by it. Narrowing the lock hold without
-        # giving up the atomicity is gain#807.
+        # so it is not serialised by it.
         with transaction.atomic():
-            for user_quota in UserQuota.objects.all():
-                user_quota.reset_daily()
-
-            for anonymous_quota in AnonymousUserQuota.objects.all():
-                anonymous_quota.reset_daily()
-
-            for session_quota in SessionQuota.objects.all():
-                session_quota.reset_daily()
-
+            UserQuota.refresh_all_daily()
+            AnonymousUserQuota.refresh_all_daily()
+            SessionQuota.refresh_all_daily()
             DailyQuotaRefreshLog.objects.create()
 
         self.stdout.write("Daily quota refresh complete.")

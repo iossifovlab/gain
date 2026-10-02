@@ -775,8 +775,7 @@ import the module, not the package:
 - `grr_manage` — genomic resource repository management
 - `grr_browse` — GRR browser
 - `annotate_tabular` / `annotate_vcf` / `annotate_doc`
-  — annotation tools (`annotate_columns` is a deprecated
-  alias of `annotate_tabular`)
+  — annotation tools
 - `annotate_variant_effects` /
   `annotate_variant_effects_vcf` — effect annotation
 

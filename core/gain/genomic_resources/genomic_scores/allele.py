@@ -20,6 +20,8 @@ from typing import (
     NamedTuple,
 )
 
+from gain import logging
+from gain.genomic_resources import resource_types
 from gain.genomic_resources.genomic_position_table.record import (
     ALT,
     CHROM,
@@ -64,6 +66,8 @@ from .records import (
     AlleleRecordArrays,
     _key_column_array,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -407,8 +411,12 @@ class AlleleScore(GenomicScore):
     def multiplicity(self) -> AlleleScore.Multiplicity:
         """How many table rows one allele key may have.
 
-        A declaration only, so far: no read consults it yet (gain#1752,
-        gain#1753, gain#1755 do).
+        :meth:`get_allele_scores_for_allele` and its singular consult
+        it: they answer one row, so they refuse a ``many`` resource and
+        treat several rows of one allele on a ``one`` resource as a data
+        error.  The ``_rows`` and ``_agg`` reads do not consult it.  The
+        allele statistics build reads it too: on a ``one`` resource it
+        reports the first allele key that several rows hold.
         """
         return self._multiplicity
 
@@ -865,15 +873,122 @@ class AlleleScore(GenomicScore):
         """
         score_defs = self._resolve_score_defs(scores)
         self._check_allele_region_request(chrom, score_filter)
-        records = self._walk_allele_records(chrom, pos, pos, score_filter)
-        if records is None:
-            return []
         extract = self._extract_value
         return [
             tuple(extract(record, score_def) for score_def in score_defs)
-            for record in records
-            if (record[POS_BEGIN], record[REF], record[ALT]) == (pos, ref, alt)
+            for record in self._allele_records(
+                chrom, pos, ref, alt, score_filter)
         ]
+
+    def _allele_records(
+        self, chrom: str, pos: int, ref: str, alt: str,
+        score_filter: ScoreFilter | None,
+    ) -> Iterator[Record]:
+        """The rows at exactly ``(chrom, pos, ref, alt)``, in file order.
+
+        The point walk every per-allele read of the plane reduces:
+        :meth:`_walk_allele_records` at the one position, kept to the rows
+        whose own position and nucleotides are the allele's.  A row
+        starting earlier whose span reaches ``pos`` is not this allele.
+        The request is unchecked; the caller has checked it.
+        """
+        records = self._walk_allele_records(chrom, pos, pos, score_filter)
+        if records is None:
+            return iter(())
+        return (
+            record for record in records
+            if (record[POS_BEGIN], record[REF], record[ALT]) == (pos, ref, alt)
+        )
+
+    def get_allele_scores_for_allele(
+        self, chrom: str, pos: int, ref: str, alt: str,
+        *,
+        scores: Sequence[str] | None = None,
+        score_filter: ScoreFilter | None = None,
+    ) -> tuple[ScoreValue, ...] | None:
+        """Return the values of one allele's only row, or ``None``.
+
+        The row at exactly ``(chrom, pos, ref, alt)``, its values parallel
+        to ``scores`` -- every score the resource defines, in definition
+        order, when ``scores`` is ``None``.  The walk and the match are
+        those of :meth:`get_allele_scores_for_allele_rows`: exact on the
+        position too, so a row starting earlier whose span reaches ``pos``
+        is not this allele.  ``None`` is an allele no row holds, or one
+        whose row ``score_filter`` rejects.  ``allele_score_mode`` is not
+        consulted.
+
+        An answer of one row is what the resource's
+        :attr:`multiplicity` promises:
+
+        - a resource declaring ``allele_multiplicity: many`` is refused
+          with :class:`AlleleMultiplicityError` before anything is read;
+          its rows are read through the ``_rows`` reads, or reduced by an
+          ``_agg`` read;
+        - on a ``one`` resource, several rows holding the allele are a
+          data error.  The rows are counted BEFORE ``score_filter``, so a
+          filter hiding one of them does not hide the error.  Once
+          :func:`~gain.genomic_resources.resource_types.allele_multiplicity_enforced`
+          answers true, that is an :class:`AlleleMultiplicityError`
+          naming the resource and the allele.  Until then, the first row
+          is answered -- filtered as a lone row would be, so a filter
+          rejecting it answers ``None`` -- and the resource is warned
+          about once per process.
+
+        The request is checked first, when this is called: an unknown
+        score id, an unknown contig and a filter compiled for another
+        resource are refused, on any resource, ahead of the ``many``
+        refusal.
+        """
+        score_defs = self._resolve_score_defs(scores)
+        self._check_allele_region_request(chrom, score_filter)
+        if self.multiplicity is AlleleScore.Multiplicity.MANY:
+            raise AlleleMultiplicityError(
+                self.resource_id,
+                "declares allele_multiplicity: many, so one allele may "
+                "hold several rows and a read answering one row cannot "
+                "answer it; read every row with "
+                "get_allele_scores_for_allele_rows, or reduce them with "
+                "an _agg read")
+        matches = self._allele_records(chrom, pos, ref, alt, None)
+        record = next(matches, None)
+        if record is None:
+            return None
+        if next(matches, None) is not None:
+            if resource_types.allele_multiplicity_enforced():
+                raise AlleleMultiplicityError(
+                    self.resource_id,
+                    "several rows hold this allele, but the resource does "
+                    "not declare several rows per allele; if that is "
+                    "intended, add the line `allele_multiplicity: many` "
+                    "to its genomic_resource.yaml",
+                    allele=(chrom, pos, ref, alt))
+            resource_types.warn_undeclared_allele_multiplicity(
+                logger, found_in=self.resource.get_full_id())
+        record = next(select_records(self, [record], score_filter), None)
+        if record is None:
+            return None
+        extract = self._extract_value
+        return tuple(extract(record, score_def) for score_def in score_defs)
+
+    def get_allele_score_for_allele(
+        self, chrom: str, pos: int, ref: str, alt: str,
+        *,
+        score: str | None = None,
+        score_filter: ScoreFilter | None = None,
+    ) -> ScoreValue | None:
+        """Return one score's value at one allele's only row, or ``None``.
+
+        The singular form of :meth:`get_allele_scores_for_allele`, which
+        documents the row answered and the refusals; ``score`` of ``None``
+        is honoured only when the resource declares exactly one.
+        """
+        values = self.get_allele_scores_for_allele(
+            chrom, pos, ref, alt,
+            scores=[self._resolve_single_score(score)],
+            score_filter=score_filter)
+        if values is None:
+            return None
+        return values[0]
 
     def get_allele_scores_in_region_rows(
         self, chrom: str, start: int, end: int,

@@ -291,19 +291,39 @@ def _dynamically_imported_names(call: ast.Call) -> set[str]:
 #: imported package rather than by walking up from this file: the CI
 #: image lays ``core/gain`` and ``web_api`` out differently from the
 #: checkout, and a path that missed would derive an empty set and police
-#: nothing.  ``test_the_derived_set_finds_the_shim_it_is_anchored_to`` is
-#: what would go red if it ever missed.
+#: nothing.  ``test_the_warning_scan_reaches_the_gain_package`` is what
+#: would go red if it ever missed.
 GAIN_PKG = pathlib.Path(gain.__file__).parent
 
-#: The deprecated alias for ``gain.annotation.annotate_tabular``, which
-#: warns from its module body.  Named so the rule below has an anchor
-#: that cannot pass on an empty scan.
-ANNOTATE_COLUMNS_SHIM = "gain.annotation.annotate_columns"
+#: A module the sweep must reach in ``gain``.  The rule below is anchored
+#: on it rather than on a shim: ``gain`` ships none today, so an empty
+#: derived set is the expected answer and cannot itself show that the
+#: scan looked anywhere.
+SCAN_ANCHOR = "gain.annotation.annotate_tabular"
 
 
 @functools.cache
-def _modules_warning_at_import() -> frozenset[str]:
-    """Dotted names of the ``gain`` modules that warn on import.
+def _package_modules(root: pathlib.Path) -> dict[str, pathlib.Path]:
+    """Every module of the ``gain`` package at ``root``, by dotted name.
+
+    ``root`` is the package directory itself -- the one holding ``gain``'s
+    ``__init__.py`` -- so ``root/annotation/x.py`` is ``gain.annotation.x``.
+    A parameter rather than ``GAIN_PKG`` fixed in, so the derivation below
+    can be shown working on a planted tree as well as the real one.
+    """
+    found = {}
+    for py in root.rglob("*.py"):
+        parts = list(py.relative_to(root).with_suffix("").parts)
+        if parts[-1] == "__init__":
+            parts.pop()
+        found[".".join(["gain", *parts])] = py
+    return found
+
+
+@functools.cache
+def _modules_warning_at_import(root: pathlib.Path) -> frozenset[str]:
+    """Dotted names of the modules of the package at ``root`` that warn
+    on import.
 
     The subject set of the fence below, read out of the tree rather than
     listed, so a shim added to ``gain`` later is covered by the rule that
@@ -311,18 +331,13 @@ def _modules_warning_at_import() -> frozenset[str]:
     it protected that one module, for exactly as long as it existed, and
     gain#1154 deleted it again along with the shim.
 
-    Cached because two rules here ask for the set, and deriving it reads
-    and parses every module in the ``gain`` package.
+    Cached because deriving it reads and parses every module in the
+    ``gain`` package.
     """
-    found = set()
-    for py in GAIN_PKG.rglob("*.py"):
-        if not _warns_at_import(py.read_text(encoding="utf8")):
-            continue
-        parts = list(py.relative_to(GAIN_PKG).with_suffix("").parts)
-        if parts[-1] == "__init__":
-            parts.pop()
-        found.add(".".join(["gain", *parts]))
-    return frozenset(found)
+    return frozenset(
+        name for name, py in _package_modules(root).items()
+        if _warns_at_import(py.read_text(encoding="utf8"))
+    )
 
 
 def _warns_at_import(source: str) -> bool:
@@ -655,30 +670,56 @@ def test_what_counts_as_a_warning_at_import() -> None:
         f"the predicate disagrees with the table on: {wrong}")
 
 
-def test_the_derived_set_finds_the_shim_it_is_anchored_to() -> None:
-    """The derived set must not be empty, and must name a known shim.
+def test_the_derivation_finds_a_planted_shim(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The derivation picks a module-level warn out of a package tree.
+
+    ``gain`` itself ships no module that warns at import, so the derived
+    set over the real tree is empty -- and an empty set satisfies the
+    fence below just as well as a derivation that finds nothing ever
+    would.  This plants a shim and a plain sibling in a throwaway package
+    and asserts the derivation names the shim, and only the shim.
+    """
+    pkg = tmp_path / "gain"
+    (pkg / "annotation").mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "annotation" / "__init__.py").write_text("")
+    (pkg / "annotation" / "old_name.py").write_text(
+        "import warnings\n"
+        "warnings.warn('gone', DeprecationWarning, stacklevel=2)\n")
+    (pkg / "annotation" / "new_name.py").write_text("def cli() -> None: ...\n")
+
+    derived = _modules_warning_at_import(pkg)
+
+    assert derived == frozenset({"gain.annotation.old_name"})
+
+
+def test_the_warning_scan_reaches_the_gain_package() -> None:
+    """The derivation sweeps the ``gain`` package this project builds on.
 
     An empty offender list satisfies the fence below just as well when
-    the derived set is empty -- and here that is the likelier accident of
-    the two, because the set is derived from a tree in *another* project.
-    ``GAIN_PKG`` resolving somewhere unexpected would be silent without
-    this.
+    the scan found no modules at all -- and here that is the likelier
+    accident, because the tree is in *another* project.  ``GAIN_PKG``
+    resolving somewhere unexpected would be silent without this.
+    Together with :func:`test_the_derivation_finds_a_planted_shim`, it
+    keeps an empty derived set meaning "no shims" rather than "no scan".
     """
-    derived = _modules_warning_at_import()
+    swept = _package_modules(GAIN_PKG)
 
-    assert ANNOTATE_COLUMNS_SHIM in derived, (
-        f"the anchor shim is not in the derived set: {sorted(derived)}. "
-        f"Either GAIN_PKG no longer points at the gain package, or the "
-        f"shim is gone and this needs anchoring on another module-level "
-        f"DeprecationWarning -- an unanchored rule passes on an empty scan"
+    assert SCAN_ANCHOR in swept, (
+        f"the scan did not reach {SCAN_ANCHOR}: swept {len(swept)} "
+        f"modules under {GAIN_PKG}. Either GAIN_PKG no longer points at "
+        f"the gain package, or the module was renamed and this needs "
+        f"another anchor -- an unanchored rule passes on an empty scan"
     )
 
 
 def test_no_web_api_module_imports_a_module_that_warns_at_import() -> None:
     """No module here imports one whose import warns.
 
-    A deprecated alias kept for outside callers -- ``annotate_columns``
-    is kept for the CLI name -- warns from its module body, so
+    A deprecated alias kept for outside callers -- a renamed module left
+    behind under its old name -- warns from its module body, so
     *importing* it warns.  An in-tree caller makes every process that
     loads that module emit the warning, and pins the shim past the
     release meant to remove it, with nothing going red: the import
@@ -691,7 +732,7 @@ def test_no_web_api_module_imports_a_module_that_warns_at_import() -> None:
     the same split as the Markdown rule above: this project's CI image is
     the only one that contains it.
     """
-    shims = _modules_warning_at_import()
+    shims = _modules_warning_at_import(GAIN_PKG)
     offenders = sorted(
         f"{py.relative_to(WEB_API_SRC)}: {imported}"
         for py in WEB_API_SRC.rglob("*.py")

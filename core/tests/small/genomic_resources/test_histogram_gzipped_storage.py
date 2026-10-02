@@ -3,6 +3,9 @@
 
 gain#1733: the full file stays the complete record, only its encoding
 changes; the plain truncated sidecar decides which encoding a reader loads.
+
+gain#1734: a rebuild drops the full histogram left in the other encoding,
+and a removed or nulled score's ``.json.gz`` with the rest of its files.
 """
 import gzip
 import json
@@ -18,7 +21,9 @@ from gain.genomic_resources.histogram import (
 )
 from gain.genomic_resources.score_resource import ScoreResource
 from gain.genomic_resources.testing import build_filesystem_test_repository
+from gain.genomic_resources.testing.builders import a_position_score
 
+from .conftest import keep_under_dvc, leave_as_a_pointer
 from .test_cli_stats import (
     A_NUMBER_HISTOGRAM,
     CATEGORIES_PAST_LIMIT,
@@ -27,6 +32,8 @@ from .test_cli_stats import (
     a_categorical_score_past_limit,
     a_float_score,
     drop_everything_but_statistics,
+    histogram_files,
+    manifest_histogram_files,
 )
 
 GZIP_MAGIC = b"\x1f\x8b"
@@ -181,9 +188,11 @@ def test_get_score_histogram_without_a_sidecar_ignores_a_leftover_gzip(
         tmp_path: pathlib.Path) -> None:
     """The sidecar decides: a rebuild within the limit drops the sidecar
     and writes the plain file, so the plain file is what loads even while
-    the earlier ``.json.gz`` is still present and manifested."""
+    the earlier ``.json.gz`` is still present and manifested -- kept
+    because it is DVC-tracked."""
     a_categorical_score(tmp_path, CATEGORIES_PAST_LIMIT)
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    keep_under_dvc(statistics_of(tmp_path) / "histogram_cell.json.gz")
     drop_everything_but_statistics(tmp_path)
     a_categorical_score(tmp_path, CATEGORIES_WITHIN_LIMIT)
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
@@ -201,9 +210,11 @@ def test_get_score_histogram_with_a_sidecar_ignores_a_leftover_plain_file(
         tmp_path: pathlib.Path) -> None:
     """The sidecar decides: a rebuild past the limit writes the sidecar and
     the ``.json.gz``, so the ``.json.gz`` is what loads even while the
-    earlier within-limit plain file is still present and manifested."""
+    earlier within-limit plain file is still present and manifested --
+    kept because it is DVC-tracked."""
     a_categorical_score(tmp_path, CATEGORIES_WITHIN_LIMIT)
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    keep_under_dvc(statistics_of(tmp_path) / "histogram_cell.json")
     drop_everything_but_statistics(tmp_path)
     a_categorical_score(tmp_path, CATEGORIES_PAST_LIMIT)
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
@@ -216,3 +227,231 @@ def test_get_score_histogram_with_a_sidecar_ignores_a_leftover_plain_file(
     assert not hist.truncated
     assert hist.raw_values == {
         f"v{i:03d}": 1 for i in range(CATEGORIES_PAST_LIMIT)}
+
+
+def test_stats_rebuild_past_the_limit_drops_the_plain_full_histogram(
+        tmp_path: pathlib.Path) -> None:
+    a_categorical_score(tmp_path, CATEGORIES_WITHIN_LIMIT)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    assert "histogram_cell.json" in histogram_files(tmp_path)
+    drop_everything_but_statistics(tmp_path)
+    a_categorical_score(tmp_path, CATEGORIES_PAST_LIMIT)
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    expected = [
+        "histogram_cell.json.gz", "histogram_cell.png",
+        "truncated/histogram_cell.json"]
+    assert histogram_files(tmp_path) == expected
+    assert manifest_histogram_files(tmp_path) == expected
+
+
+def test_stats_rebuild_past_the_limit_over_a_legacy_yaml_still_loads(
+        tmp_path: pathlib.Path) -> None:
+    """The sidecar is named after the legacy ``histogram_<id>.yaml`` the
+    manifest lists; dropping that ``.yaml`` would leave the sidecar and
+    the ``.json.gz`` unreachable once the manifest is rebuilt."""
+    a_categorical_score(tmp_path, CATEGORIES_WITHIN_LIMIT)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    statistics = statistics_of(tmp_path)
+    (statistics / "histogram_cell.json").rename(
+        statistics / "histogram_cell.yaml")
+    cli_manage(["repo-repair", "-R", str(tmp_path), "-j", "1"])
+    drop_everything_but_statistics(tmp_path)
+    a_categorical_score(tmp_path, CATEGORIES_PAST_LIMIT)
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    score = build_score_from_resource(
+        build_filesystem_test_repository(tmp_path).get_resource(""))
+    full = score.get_score_histogram("cell")
+    truncated = score.get_score_histogram("cell", truncated=True)
+    assert isinstance(full, CategoricalHistogram)
+    assert len(full.raw_values) == CATEGORIES_PAST_LIMIT
+    assert isinstance(truncated, CategoricalHistogram)
+    assert truncated.unique_values == CATEGORIES_PAST_LIMIT
+
+
+def test_stats_rebuild_back_within_the_limit_drops_the_gzipped_histogram(
+        tmp_path: pathlib.Path) -> None:
+    a_categorical_score(tmp_path, CATEGORIES_PAST_LIMIT)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    assert "histogram_cell.json.gz" in histogram_files(tmp_path)
+    drop_everything_but_statistics(tmp_path)
+    a_categorical_score(tmp_path, CATEGORIES_WITHIN_LIMIT)
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    expected = ["histogram_cell.json", "histogram_cell.png"]
+    assert histogram_files(tmp_path) == expected
+    assert manifest_histogram_files(tmp_path) == expected
+
+
+def test_stats_rebuild_past_the_limit_reports_a_dvc_tracked_plain_histogram(
+        tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture) -> None:
+    """A pointer-only checkout: the plain histogram's blob is not pulled,
+    so only its ``.dvc`` pointer stands for it."""
+    a_categorical_score(tmp_path, CATEGORIES_WITHIN_LIMIT)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    statistics = tmp_path / "statistics"
+    leave_as_a_pointer(statistics / "histogram_cell.json")
+    pointer = (statistics / "histogram_cell.json.dvc").read_text()
+    drop_everything_but_statistics(tmp_path)
+    a_categorical_score(tmp_path, CATEGORIES_PAST_LIMIT)
+    caplog.clear()
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    assert (statistics / "histogram_cell.json.dvc").read_text() == pointer
+    assert any(
+        "<statistics/histogram_cell.json>" in message
+        and "dvc remove statistics/histogram_cell.json.dvc" in message
+        for message in caplog.messages)
+
+
+def test_stats_rebuild_within_the_limit_beside_a_dvc_tracked_sidecar(
+        tmp_path: pathlib.Path) -> None:
+    """The kept sidecar must not make the full load pick the stale
+    gzipped histogram over the plain one this build wrote."""
+    a_categorical_score(tmp_path, CATEGORIES_PAST_LIMIT)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    keep_under_dvc(
+        statistics_of(tmp_path) / "truncated" / "histogram_cell.json")
+    drop_everything_but_statistics(tmp_path)
+    a_categorical_score(tmp_path, CATEGORIES_WITHIN_LIMIT)
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    assert not (tmp_path / "statistics" / "histogram_cell.json.gz").exists()
+    score = build_score_from_resource(
+        build_filesystem_test_repository(tmp_path).get_resource(""))
+    hist = score.get_score_histogram("cell")
+    assert isinstance(hist, CategoricalHistogram)
+    assert hist.unique_values == CATEGORIES_WITHIN_LIMIT
+
+
+def test_stats_rebuild_within_the_limit_beside_dvc_tracked_sidecar_and_gz(
+        tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture) -> None:
+    """A case ADR 0032 leaves open: with both past-limit files under DVC,
+    both are reported and kept, so the full load still picks the stale
+    gzipped histogram until the curator runs ``dvc remove``."""
+    a_categorical_score(tmp_path, CATEGORIES_PAST_LIMIT)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    statistics = statistics_of(tmp_path)
+    keep_under_dvc(statistics / "truncated" / "histogram_cell.json")
+    keep_under_dvc(statistics / "histogram_cell.json.gz")
+    drop_everything_but_statistics(tmp_path)
+    a_categorical_score(tmp_path, CATEGORIES_WITHIN_LIMIT)
+    caplog.clear()
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    for stale in (
+            "statistics/truncated/histogram_cell.json",
+            "statistics/histogram_cell.json.gz"):
+        assert any(
+            f"<{stale}>" in message
+            and f"dvc remove {stale}.dvc" in message
+            for message in caplog.messages), stale
+    score = build_score_from_resource(
+        build_filesystem_test_repository(tmp_path).get_resource(""))
+    hist = score.get_score_histogram("cell")
+    assert isinstance(hist, CategoricalHistogram)
+    assert hist.unique_values == CATEGORIES_PAST_LIMIT
+
+
+def test_stats_rebuild_with_a_null_histogram_config_drops_the_gzipped_files(
+        tmp_path: pathlib.Path) -> None:
+    a_categorical_score(tmp_path, CATEGORIES_PAST_LIMIT)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    assert "histogram_cell.json.gz" in histogram_files(tmp_path)
+    drop_everything_but_statistics(tmp_path)
+    a_categorical_score(
+        tmp_path, CATEGORIES_PAST_LIMIT,
+        {"type": "null", "reason": "turned off"})
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    assert histogram_files(tmp_path) == []
+    assert manifest_histogram_files(tmp_path) == []
+
+
+def test_stats_rebuild_with_a_null_histogram_config_reports_a_dvc_tracked_gz(
+        tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture) -> None:
+    a_categorical_score(tmp_path, CATEGORIES_PAST_LIMIT)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    statistics = tmp_path / "statistics"
+    gzipped = (statistics / "histogram_cell.json.gz").read_bytes()
+    keep_under_dvc(statistics / "histogram_cell.json.gz")
+    drop_everything_but_statistics(tmp_path)
+    a_categorical_score(
+        tmp_path, CATEGORIES_PAST_LIMIT,
+        {"type": "null", "reason": "turned off"})
+    caplog.clear()
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    assert (statistics / "histogram_cell.json.gz").read_bytes() == gzipped
+    assert any(
+        "<statistics/histogram_cell.json.gz>" in message
+        and "DVC-tracked" in message
+        for message in caplog.messages)
+
+
+def categorical_scores(tmp_path: pathlib.Path, *score_ids: str) -> None:
+    """Realize a tabix position score with one categorical column per id,
+    each past ``UNIQUE_VALUES_LIMIT``."""
+    builder = a_position_score()
+    for score_id in score_ids:
+        builder = (
+            builder.with_score(score_id, "str")
+            .with_histogram(
+                {"type": "categorical", "value_order": []},
+                score_id=score_id))
+    data_rows = "\n".join(
+        f"1 {10 + i} {10 + i} " + " ".join(f"v{i:03d}" for _ in score_ids)
+        for i in range(CATEGORIES_PAST_LIMIT))
+    (
+        builder
+        .with_data(
+            "chrom pos_begin pos_end " + " ".join(score_ids) + "\n"
+            + data_rows)
+        .with_tabix()
+        .build_resource(tmp_path)
+    )
+
+
+def test_stats_rebuild_after_a_score_removal_reports_a_dvc_tracked_gz(
+        tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture) -> None:
+    categorical_scores(tmp_path, "kept", "cell")
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    statistics = tmp_path / "statistics"
+    leave_as_a_pointer(statistics / "histogram_cell.json.gz")
+    pointer = (statistics / "histogram_cell.json.gz.dvc").read_text()
+    drop_everything_but_statistics(tmp_path)
+    categorical_scores(tmp_path, "kept")
+    caplog.clear()
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    assert (statistics / "histogram_cell.json.gz.dvc").read_text() == pointer
+    assert any(
+        "<statistics/histogram_cell.json.gz>" in message
+        and "DVC-tracked" in message
+        for message in caplog.messages)
+
+
+def test_stats_rebuild_keeps_the_gz_of_a_kept_id_prefixing_a_removed_one(
+        tmp_path: pathlib.Path) -> None:
+    categorical_scores(tmp_path, "a", "a_b")
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    drop_everything_but_statistics(tmp_path)
+    categorical_scores(tmp_path, "a")
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    expected = [
+        "histogram_a.json.gz", "histogram_a.png",
+        "truncated/histogram_a.json"]
+    assert histogram_files(tmp_path) == expected
+    assert manifest_histogram_files(tmp_path) == expected
