@@ -109,10 +109,13 @@ class BinningJob:
     ``binner`` names the kind that binds it, which is how the task graph
     finds the binner.  ``tracks`` are the job's columns, in order; the
     block a binding returns for a region has one column per track.
+    ``entry`` labels the run-definition entry the job was resolved from
+    (``binners[2]``), set when the run definition is parsed.
     """
 
     binner: str
     tracks: tuple[Track, ...]
+    entry: str = ""
 
 
 class BoundBinner(Protocol):
@@ -137,11 +140,15 @@ class Binner(Protocol):
     @classmethod
     def parse_entry(
         cls, label: str, config: dict[str, Any], grr: GenomicResourceRepo,
+        *, base_dir: str | None = None,
     ) -> list[BinningJob]:
         """Resolve one run-definition entry into jobs.
 
         The entry's tracks are the jobs' tracks, in order.
         ``label`` names the entry in error messages (``binners[2]``).
+        ``base_dir`` is the run definition's directory, passed only when
+        the run definition was read from a file; a kind that reads a
+        local file resolves a relative path against it.
         Raises :class:`RunDefinitionError` for an entry that cannot be
         resolved, an entry matching nothing included.
         """
@@ -295,6 +302,8 @@ class PositionScoreBinner:
     @classmethod
     def parse_entry(
         cls, label: str, config: dict[str, Any], grr: GenomicResourceRepo,
+        *,
+        base_dir: str | None = None,  # ruff: ignore[unused-class-method-argument]
     ) -> list[BinningJob]:
         """Resolve one entry's ``resource_query`` into one job per track.
 

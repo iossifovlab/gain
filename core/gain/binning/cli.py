@@ -32,6 +32,7 @@ from gain.binning.binners import (
     Track,
     discover_binner_kinds,
 )
+from gain.binning.fragment_binner import FragmentBinningJob
 from gain.binning.run_definition import (
     RunDefinition,
     RunDefinitionError,
@@ -94,8 +95,10 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         "default a working directory the tool created is removed)")
     parser.add_argument(
         "--dry-run", action="store_true", default=False,
-        help="resolve every query, print the track list and the region, "
-        "bin and task counts, and write nothing")
+        help="resolve every query, print the track list, the region, "
+        "bin and task counts and, per fragment entry, its resources, "
+        "metadata tables, group and track counts and warnings, and "
+        "write nothing")
     parser.add_argument(
         "--task-budget", type=int, default=TASK_BUDGET, metavar="BP",
         help="how many bases of consecutive regions one task bins; a "
@@ -141,7 +144,9 @@ def cli(argv: list[str] | None = None) -> None:
     try:
         genome = _resolve_genome(config, grr)
         with genome:
-            run = parse_run_definition(config, grr, genome)
+            run = parse_run_definition(
+                config, grr, genome,
+                base_dir=os.path.dirname(args["run_definition"]))
     except RunDefinitionError as err:
         print(f"{args['run_definition']}: {err}", file=sys.stderr)
         sys.exit(1)
@@ -189,6 +194,41 @@ def _print_plan(run: RunDefinition, task_budget: int) -> None:
     print(f"bins: {sum(_bin_count(r, run.bin_size) for r in run.regions)}")
     bundles = bundle_regions(run.regions, task_budget)
     print(f"tasks: {len(bundles) * len(_distinct_jobs(run))}")
+    _print_fragment_entries(run)
+
+
+def _print_fragment_entries(run: RunDefinition) -> None:
+    """Per fragment entry: what it matched, read and produces.
+
+    The resources, the metadata tables (resource ids, or the absolute
+    paths of local files), the group and track counts, and every
+    warning its resolution raised.
+    """
+    entries: dict[str, list[FragmentBinningJob]] = {}
+    for job in run.jobs:
+        if isinstance(job, FragmentBinningJob):
+            entries.setdefault(job.entry, []).append(job)
+    for entry, jobs in entries.items():
+        resources = sorted({r for job in jobs for r in job.resource_ids})
+        tables = sorted({
+            job.grouping.table.name for job in jobs
+            if job.grouping is not None})
+        groups = {track.group for job in jobs for track in job.tracks}
+        print(f"{entry}: {jobs[0].binner}")
+        print(f"    resources: {', '.join(resources)}")
+        print(f"    tables: {', '.join(tables) or 'none'}")
+        print(f"    groups: {len(groups)}")
+        print(f"    tracks: {sum(len(job.tracks) for job in jobs)}")
+        for warning in dict.fromkeys(
+                w for job in jobs for w in job.warnings):
+            print(f"    warning: {warning}")
+
+
+def _local_files(run: RunDefinition) -> list[str]:
+    """Every distinct local metadata file the run reads, in job order."""
+    return list(dict.fromkeys(
+        path for job in run.jobs if isinstance(job, FragmentBinningJob)
+        for path in job.local_files))
 
 
 def _bin_count(region: BedRegion, bin_size: int) -> int:
@@ -210,6 +250,10 @@ def _build_task_graph(
     kinds = discover_binner_kinds()
     graph = TaskGraph()
     graph.input_files.append(args["run_definition"])
+    # A local metadata table decides which track each barcode reaches,
+    # yet its path alone names the chunks: as an input of every task, an
+    # edit to it recomputes them instead of reusing the old grouping.
+    graph.input_files.extend(_local_files(run))
     chunk_dir = os.path.join(args["work_dir"], "chunks")
     os.makedirs(chunk_dir, exist_ok=True)
 
@@ -418,6 +462,25 @@ def _write_hdf5(
         h5.attrs["gain_version"] = __version__
         h5.attrs["created"] = datetime.datetime.now(
             datetime.UTC).isoformat(timespec="seconds")
+        _record_local_files(h5, _local_files(run))
+
+
+def _record_local_files(h5: h5py.File, paths: list[str]) -> None:
+    """Root attributes naming each local file the run read (F7).
+
+    A local file is not in the repository, so the output is reproducible
+    only where the same file is: its absolute path, size in bytes and
+    modification time (UTC, ISO 8601) say which file that was.
+    """
+    if not paths:
+        return
+    stats = [os.stat(path) for path in paths]
+    h5.attrs["metadata_files"] = paths
+    h5.attrs["metadata_file_sizes"] = [stat.st_size for stat in stats]
+    h5.attrs["metadata_file_mtimes"] = [
+        datetime.datetime.fromtimestamp(stat.st_mtime, datetime.UTC)
+        .isoformat()
+        for stat in stats]
 
 
 def _bins_table(run: RunDefinition, counts: list[int]) -> npt.NDArray[Any]:
