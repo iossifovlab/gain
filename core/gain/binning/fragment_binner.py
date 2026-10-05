@@ -98,6 +98,7 @@ from gain.genomic_resources.genomic_scores.aggregation import (
 )
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
+    CategoricalHistogramConfig,
     HistogramError,
     NullHistogram,
     NullHistogramConfig,
@@ -836,7 +837,15 @@ def _value_groups(
             f"{whose}: its full histogram, which lists the groups, cannot "
             f"be read: {err}; {rebuild}") from err
     if isinstance(histogram, NullHistogram):
-        if "Too many unique values" in histogram.reason:
+        # The statistics scan stores a null histogram for a categorical
+        # config only when its values pass the cap, which only a config
+        # without enforce_type has; with no stored file, none was built.
+        # An unreadable stored file lands here too, and the rebuild the
+        # message asks for replaces it as well.
+        if isinstance(config, CategoricalHistogramConfig) \
+                and not config.enforce_type \
+                and resource.file_exists(
+                    score.get_histogram_filename(score_id)):
             raise RunDefinitionError(
                 f"{whose} has more distinct values than the default "
                 f"categorical histogram keeps "
