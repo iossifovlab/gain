@@ -3316,9 +3316,9 @@ def test_zero_based_authored_in_vcf_config_warns_through_schema(
         with score:
             # Coordinate/read behavior unchanged: the VCF row authored at POS
             # 10 still reads 1-based at 10, the ignored zero_based key aside.
-            assert score.fetch_allele_scores("chr1", 10, "A", "T") == {
-                "score": pytest.approx(0.1),
-            }
+            assert score.get_allele_scores_for_allele(
+                "chr1", 10, "A", "T",
+                scores=["score"]) == pytest.approx((0.1,))
 
     warnings = [
         r.message for r in caplog.records if r.levelname == "WARNING"

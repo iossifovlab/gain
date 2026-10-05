@@ -151,9 +151,10 @@ def test_clinvar_fetch_scores(
     scores: list[str],
     expected: list[str | int | None],
 ) -> None:
-    result = vcf_info_clinvar\
+    values = vcf_info_clinvar\
         .open()\
-        .fetch_allele_scores(chrom, pos, ref, alt, scores)
+        .get_allele_scores_for_allele(chrom, pos, ref, alt, scores=scores)
+    result = None if values is None else dict(zip(scores, values, strict=True))
     assert result == expected
 
 
@@ -439,5 +440,7 @@ def test_gnomad_vcf_fetch_rscores(
     scores: list[str],
     expected: list | None,
 ) -> None:
-    result = vcf_info_gnomad.fetch_allele_scores(chrom, pos, ref, alt, scores)
+    values = vcf_info_gnomad.get_allele_scores_for_allele(
+        chrom, pos, ref, alt, scores=scores)
+    result = None if values is None else dict(zip(scores, values, strict=True))
     assert result == expected

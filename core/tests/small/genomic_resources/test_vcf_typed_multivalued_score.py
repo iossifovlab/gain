@@ -107,9 +107,10 @@ def _read(
     score: AlleleScore, pos: int, fields: list[str], alt: str = "T",
 ) -> dict[str, ScoreValue]:
     """The scores of the ``A>alt`` allele at ``pos``, which must exist."""
-    scores = score.fetch_allele_scores("chr1", pos, "A", alt, fields)
-    assert scores is not None
-    return scores
+    values = score.get_allele_scores_for_allele(
+        "chr1", pos, "A", alt, scores=fields)
+    assert values is not None
+    return dict(zip(fields, values, strict=True))
 
 
 def test_an_unbounded_integer_field_typed_str_reads_the_joined_text(

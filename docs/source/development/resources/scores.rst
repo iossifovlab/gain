@@ -100,8 +100,12 @@ Reading alleles and fragments
 
 :class:`~gain.genomic_resources.genomic_scores.AlleleScore` adds reads that
 take a reference and an alternative as well as a position —
-:meth:`~gain.genomic_resources.genomic_scores.AlleleScore.fetch_allele_scores`
-is the direct one. An allele score is in one of two modes,
+:meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_scores_for_allele`
+answers one allele's row, and its siblings
+:meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_scores_for_allele_rows`
+and
+:meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_scores_for_allele_agg`
+answer every row of an allele, unreduced or reduced. An allele score is in one of two modes,
 ``substitutions`` or ``alleles``, reported by
 :meth:`~gain.genomic_resources.genomic_scores.AlleleScore.substitutions_mode`
 and :meth:`~gain.genomic_resources.genomic_scores.AlleleScore.alleles_mode`;

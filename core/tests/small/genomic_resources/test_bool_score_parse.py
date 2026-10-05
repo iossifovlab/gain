@@ -202,8 +202,8 @@ def test_a_vcf_flag_declared_bool_in_config_still_reads_presence_as_true(
     """
     score = _dbsnp_shaped_flag_score(tmp_path).open()
 
-    assert score.fetch_allele_scores("chr1", 5, "A", "T", ["RV"]) == \
-        {"RV": True}
+    assert score.get_allele_scores_for_allele(
+        "chr1", 5, "A", "T", scores=["RV"]) == (True,)
 
 
 def test_an_absent_vcf_flag_reads_false(tmp_path: pathlib.Path) -> None:
@@ -221,8 +221,8 @@ def test_an_absent_vcf_flag_reads_false(tmp_path: pathlib.Path) -> None:
     """
     score = _dbsnp_shaped_flag_score(tmp_path).open()
 
-    assert score.fetch_allele_scores("chr1", 6, "A", "T", ["RV"]) == \
-        {"RV": False}
+    assert score.get_allele_scores_for_allele(
+        "chr1", 6, "A", "T", scores=["RV"]) == (False,)
 
 
 def test_a_bool_columns_categorical_histogram_counts_both_values(

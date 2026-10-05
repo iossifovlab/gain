@@ -64,6 +64,9 @@ FORBIDDEN_ON_BASE = {
     # ``fetch_region`` above so the names cannot come back on the base.
     "fetch_region_segment_scores", "fetch_region_values",
     "fetch_allele_scores", "fetch_fragment_scores",
+    # The allele reads removed from ``AlleleScore`` by gain#1755, pinned
+    # like ``fetch_region`` so they cannot come back on the base.
+    "fetch_allele_records",
     # Both contig accessors: the ordered list, and the membership predicate
     # gain#1304 split out of it.  A gene score is keyed by gene symbol and has
     # no contigs at all, so neither is a catalogue-plane concern -- and the
