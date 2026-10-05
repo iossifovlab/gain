@@ -6,11 +6,15 @@ changes; the plain truncated sidecar decides which encoding a reader loads.
 
 gain#1734: a rebuild drops the full histogram left in the other encoding,
 and a removed or nulled score's ``.json.gz`` with the rest of its files.
+
+gain#1735: a written ``.json.gz`` without a ``.dvc`` pointer beside it is
+reported, so the curator moves it into DVC.
 """
 import gzip
 import json
 import pathlib
 import time
+from collections.abc import Callable
 
 import pytest
 from gain.genomic_resources.cli import cli_manage
@@ -455,3 +459,108 @@ def test_stats_rebuild_keeps_the_gz_of_a_kept_id_prefixing_a_removed_one(
         "truncated/histogram_a.json"]
     assert histogram_files(tmp_path) == expected
     assert manifest_histogram_files(tmp_path) == expected
+
+
+RESOURCE_ID = "fragments_res"
+GZIPPED = "statistics/histogram_cell.json.gz"
+
+
+def untracked_warnings(
+        caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Return the warnings that a written file is not DVC-tracked."""
+    return [
+        record.getMessage() for record in caplog.records
+        if record.levelname == "WARNING"
+        and "is not DVC-tracked" in record.getMessage()]
+
+
+def test_past_limit_build_without_a_pointer_warns_to_dvc_add_the_gz(
+        tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture) -> None:
+    a_categorical_score_past_limit(tmp_path / RESOURCE_ID)
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    [message] = untracked_warnings(caplog)
+    assert f"<{RESOURCE_ID}>" in message
+    assert f"<{GZIPPED}>" in message
+    assert f"'dvc add {GZIPPED}'" in message
+
+
+def test_past_limit_rebuild_beside_a_pointer_does_not_warn(
+        tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture) -> None:
+    resource = tmp_path / RESOURCE_ID
+    a_categorical_score(resource, CATEGORIES_PAST_LIMIT)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+    gzipped = resource / GZIPPED
+    first_build = gzipped.read_bytes()
+    keep_under_dvc(gzipped)
+    drop_everything_but_statistics(resource)
+    a_categorical_score(resource, CATEGORIES_PAST_LIMIT + 1)
+    caplog.clear()
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    assert gzipped.read_bytes() != first_build
+    assert untracked_warnings(caplog) == []
+
+
+def test_past_limit_build_ignored_by_gitignore_alone_still_warns(
+        tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture) -> None:
+    """``.gitignore`` without a pointer keeps the file out of the manifest,
+    so full loads fail: the pointer alone decides (gain#1735 triage)."""
+    resource = tmp_path / RESOURCE_ID
+    a_categorical_score_past_limit(resource)
+    (resource / "statistics").mkdir()
+    (resource / "statistics" / ".gitignore").write_text(
+        "/histogram_cell.json.gz\n")
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    [message] = untracked_warnings(caplog)
+    assert f"<{GZIPPED}>" in message
+
+
+def test_two_past_limit_scores_warn_once_for_each_gz(
+        tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture) -> None:
+    categorical_scores(tmp_path / RESOURCE_ID, "cell", "donor")
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    messages = untracked_warnings(caplog)
+    assert len(messages) == 2
+    for score_id in ("cell", "donor"):
+        gzipped = f"statistics/histogram_{score_id}.json.gz"
+        assert sum(f"<{gzipped}>" in m for m in messages) == 1, gzipped
+
+
+@pytest.mark.parametrize("realize", [
+    pytest.param(
+        lambda path: a_categorical_score(path, CATEGORIES_WITHIN_LIMIT),
+        id="within-limit-categorical"),
+    pytest.param(
+        lambda path: a_float_score(path, A_NUMBER_HISTOGRAM),
+        id="number"),
+])
+def test_build_of_a_plain_histogram_does_not_warn(
+        tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
+        realize: Callable[[pathlib.Path], None]) -> None:
+    resource = tmp_path / RESOURCE_ID
+    realize(resource)
+
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    assert list((resource / "statistics").glob("histogram_*.json"))
+    assert untracked_warnings(caplog) == []
+
+
+def test_repair_past_the_limit_succeeds_and_lists_the_unpointed_gz(
+        tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture) -> None:
+    resource = tmp_path / RESOURCE_ID
+    a_categorical_score_past_limit(resource)
+
+    cli_manage(["repo-repair", "-R", str(tmp_path), "-j", "1"])
+
+    assert len(untracked_warnings(caplog)) == 1
+    manifest = (resource / ".MANIFEST").read_text()
+    assert "statistics/histogram_cell.json.gz" in manifest
+    assert "statistics/truncated/histogram_cell.json" in manifest
