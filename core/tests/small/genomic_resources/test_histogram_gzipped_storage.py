@@ -14,7 +14,6 @@ import gzip
 import json
 import pathlib
 import time
-from collections.abc import Callable
 
 import pytest
 from gain.genomic_resources.cli import cli_manage
@@ -27,7 +26,7 @@ from gain.genomic_resources.score_resource import ScoreResource
 from gain.genomic_resources.testing import build_filesystem_test_repository
 from gain.genomic_resources.testing.builders import a_position_score
 
-from .conftest import keep_under_dvc, leave_as_a_pointer
+from .conftest import captured_warnings, keep_under_dvc, leave_as_a_pointer
 from .test_cli_stats import (
     A_NUMBER_HISTOGRAM,
     CATEGORIES_PAST_LIMIT,
@@ -45,6 +44,18 @@ GZIP_MAGIC = b"\x1f\x8b"
 
 def statistics_of(tmp_path: pathlib.Path) -> pathlib.Path:
     return tmp_path / "statistics"
+
+
+RESOURCE_ID = "fragments_res"
+GZIPPED = "statistics/histogram_cell.json.gz"
+
+
+def untracked_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Only the warnings that a written ``.json.gz`` has no ``.dvc``
+    pointer, selected on the phrase each of them carries."""
+    return [
+        message for message in captured_warnings(caplog)
+        if "is not DVC-tracked" in message]
 
 
 def test_past_limit_build_writes_a_gzipped_full_histogram(
@@ -87,7 +98,7 @@ def histogram_files_of(tmp_path: pathlib.Path) -> set[str]:
 
 
 def test_within_limit_build_writes_the_plain_full_histogram_only(
-        tmp_path: pathlib.Path) -> None:
+        tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture) -> None:
     a_categorical_score(tmp_path, CATEGORIES_WITHIN_LIMIT)
 
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
@@ -100,10 +111,11 @@ def test_within_limit_build_writes_the_plain_full_histogram_only(
     )
     assert (statistics_of(tmp_path) / "histogram_cell.json").read_text() \
         == json.dumps(expected.to_dict(), indent=2)
+    assert untracked_warnings(caplog) == []
 
 
 def test_number_build_writes_the_plain_full_histogram_only(
-        tmp_path: pathlib.Path) -> None:
+        tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture) -> None:
     a_float_score(tmp_path, A_NUMBER_HISTOGRAM)
 
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
@@ -113,6 +125,7 @@ def test_number_build_writes_the_plain_full_histogram_only(
     content = (statistics_of(tmp_path) / "histogram_score.json").read_text()
     assert content == json.dumps(json.loads(content), indent=2)
     assert json.loads(content)["bars"] == [1, 0, 1, 1]
+    assert untracked_warnings(caplog) == []
 
 
 def an_over_limit_histogram() -> CategoricalHistogram:
@@ -461,19 +474,6 @@ def test_stats_rebuild_keeps_the_gz_of_a_kept_id_prefixing_a_removed_one(
     assert manifest_histogram_files(tmp_path) == expected
 
 
-RESOURCE_ID = "fragments_res"
-GZIPPED = "statistics/histogram_cell.json.gz"
-
-
-def untracked_warnings(
-        caplog: pytest.LogCaptureFixture) -> list[str]:
-    """Return the warnings that a written file is not DVC-tracked."""
-    return [
-        record.getMessage() for record in caplog.records
-        if record.levelname == "WARNING"
-        and "is not DVC-tracked" in record.getMessage()]
-
-
 def test_past_limit_build_without_a_pointer_warns_to_dvc_add_the_gz(
         tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture) -> None:
     a_categorical_score_past_limit(tmp_path / RESOURCE_ID)
@@ -510,8 +510,8 @@ def test_past_limit_build_ignored_by_gitignore_alone_still_warns(
     so full loads fail: the pointer alone decides (gain#1735 triage)."""
     resource = tmp_path / RESOURCE_ID
     a_categorical_score_past_limit(resource)
-    (resource / "statistics").mkdir()
-    (resource / "statistics" / ".gitignore").write_text(
+    statistics_of(resource).mkdir()
+    (statistics_of(resource) / ".gitignore").write_text(
         "/histogram_cell.json.gz\n")
 
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
@@ -533,26 +533,6 @@ def test_two_past_limit_scores_warn_once_for_each_gz(
         assert sum(f"<{gzipped}>" in m for m in messages) == 1, gzipped
 
 
-@pytest.mark.parametrize("realize", [
-    pytest.param(
-        lambda path: a_categorical_score(path, CATEGORIES_WITHIN_LIMIT),
-        id="within-limit-categorical"),
-    pytest.param(
-        lambda path: a_float_score(path, A_NUMBER_HISTOGRAM),
-        id="number"),
-])
-def test_build_of_a_plain_histogram_does_not_warn(
-        tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
-        realize: Callable[[pathlib.Path], None]) -> None:
-    resource = tmp_path / RESOURCE_ID
-    realize(resource)
-
-    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
-
-    assert list((resource / "statistics").glob("histogram_*.json"))
-    assert untracked_warnings(caplog) == []
-
-
 def test_repair_past_the_limit_succeeds_and_lists_the_unpointed_gz(
         tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture) -> None:
     resource = tmp_path / RESOURCE_ID
@@ -562,5 +542,5 @@ def test_repair_past_the_limit_succeeds_and_lists_the_unpointed_gz(
 
     assert len(untracked_warnings(caplog)) == 1
     manifest = (resource / ".MANIFEST").read_text()
-    assert "statistics/histogram_cell.json.gz" in manifest
+    assert GZIPPED in manifest
     assert "statistics/truncated/histogram_cell.json" in manifest
