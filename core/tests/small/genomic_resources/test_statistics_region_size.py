@@ -135,13 +135,11 @@ def test_genome_default_region_size_is_one_region_per_contig(
         for desc in impl.create_statistics_build_tasks()
     ]
 
+    # Each contig whole: chrB (20 bp) does not fit beside chrA (32 bp)
+    # in a batch no longer than the longest contig (gain#1788).
     assert task_ids == [
-        "_count_nucleotides_chrA:1",
-        "_merge_chrom_statistics_chrA",
-        "_save_chrom_statistics_chrA",
-        "_count_nucleotides_chrB:1",
-        "_merge_chrom_statistics_chrB",
-        "_save_chrom_statistics_chrB",
+        "_chrom_statistics_batch_chrA",
+        "_chrom_statistics_batch_chrB",
         "_global_statistics",
     ]
 
