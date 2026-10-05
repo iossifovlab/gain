@@ -17,8 +17,16 @@ An entry's keys:
   ``{cell_score_id, cell_meta_column, group_meta_column}``, one track
   per group of a metadata table, which ``meta`` names; each of the three
   keys is optional and defaults to the convention's (below), so
-  ``group: {}`` groups by the convention throughout.  Omitted, the
-  resource's labels decide: a resource carrying
+  ``group: {}`` groups by the convention throughout; or
+  ``{group_score_id: S}``, one track per distinct value of the ``str``
+  score ``S``, read when the entry is resolved from the score's full
+  categorical histogram (its statistics must be built and pulled).
+  Pooled, a value's group is ``<sample_id>:<value>``, by the resource's
+  :data:`SAMPLE_ID_LABEL` label, which every pooled resource must carry,
+  each its own, since one barcode recurs in every sample; unpooled, the
+  bare value.
+  The forms do not mix, and ``meta`` does not go with the last.
+  Omitted, the resource's labels decide: a resource carrying
   :data:`CELL_META_RESOURCE_ID_LABEL` is grouped as with ``group: {}``,
   any other is the one group ``all``.
 - ``aggregate``: ``{score: S, aggregator: A}``, the score's value per
@@ -47,13 +55,15 @@ is omitted), on the one metadata table their ``meta`` names, and (when
 :data:`COUNT_SCORE` score.
 
 A fragment whose barcode is not in the filtered rows, or whose row's
-group is empty, reaches no track; it is counted as dropped, per resource
-and region.  An empty bin holds the fold's empty value -- 0 for
-``count`` and ``sum``, NaN for the others -- and so does every bin of a
-contig a resource lacks.
+group is empty, or whose ``group_score_id`` value is missing or is one
+its resource's histogram does not list, reaches no track; it is counted
+as dropped, per resource and region.  An empty bin holds the fold's
+empty value -- 0 for ``count`` and ``sum``, NaN for the others -- and so
+does every bin of a contig a resource lacks.
 """
 from __future__ import annotations
 
+import gzip
 import heapq
 import json
 import math
@@ -86,6 +96,13 @@ from gain.genomic_resources.genomic_scores import FragmentScore
 from gain.genomic_resources.genomic_scores.aggregation import (
     EMPTY_BIN_VALUES,
     fold_into_bins,
+)
+from gain.genomic_resources.histogram import (
+    CategoricalHistogram,
+    CategoricalHistogramConfig,
+    HistogramError,
+    NullHistogram,
+    NullHistogramConfig,
 )
 from gain.genomic_resources.repository import (
     GenomicResource,
@@ -126,7 +143,9 @@ CELL_GROUP_DEFAULTS = {
     "group_meta_column": CLASS_COLUMN,
 }
 CELL_GROUP_KEYS = frozenset(CELL_GROUP_DEFAULTS)
-GROUP_KEYS = frozenset({"group"}) | CELL_GROUP_KEYS
+#: The key of a raw-value grouping: the ``str`` score whose values group.
+VALUE_GROUP_KEY = "group_score_id"
+GROUP_KEYS = frozenset({"group", VALUE_GROUP_KEY}) | CELL_GROUP_KEYS
 AGGREGATE_KEYS = frozenset({"score", "value", "aggregator"})
 META_SOURCE_KEYS = frozenset({"resource_id", "resource_label", "file_name"})
 META_FILE_KEYS = frozenset({"file_separator", "file_format"})
@@ -301,6 +320,32 @@ class CellGrouping:
         return mapping
 
     @property
+    def score_id(self) -> str:
+        """The fragment score a group is looked up by."""
+        return self.cell_score_id
+
+    @property
+    def dropped_reason(self) -> str:
+        return (
+            "their barcode absent from the cell metadata rows or of no "
+            "group")
+
+    def track_maps(
+        self, grr: GenomicResourceRepo, resources: list[GenomicResource],
+        index_of: dict[str, int],
+    ) -> list[dict[str, int]]:
+        """Per resource, each barcode's track index; the table read once."""
+        table = self.table.load(grr)
+        return [
+            {
+                barcode: index_of[group]
+                for barcode, group in self.groups_of(table, resource).items()
+                if group in index_of
+            }
+            for resource in resources
+        ]
+
+    @property
     def parameters(self) -> dict[str, Any]:
         return {
             "cell_score_id": self.cell_score_id,
@@ -312,6 +357,51 @@ class CellGrouping:
                 for f in self.filters
             ],
         }
+
+
+@dataclass(frozen=True)
+class ValueGrouping:
+    """How a fragment's raw value of a ``str`` score becomes a group.
+
+    The group of a fragment of the job's ``index``-th resource is
+    ``prefixes[index]`` followed by its ``group_score_id`` value -- the
+    resource's ``<sample_id>:`` in a pooled job, nothing in an unpooled
+    one -- when ``values[index]``, the values its histogram lists, has
+    that value, and none otherwise.
+    """
+
+    group_score_id: str
+    prefixes: tuple[str, ...]
+    values: tuple[tuple[str, ...], ...]
+
+    @property
+    def score_id(self) -> str:
+        """The fragment score whose value is the group."""
+        return self.group_score_id
+
+    @property
+    def dropped_reason(self) -> str:
+        return (
+            f"their {self.group_score_id!r} value missing or not among "
+            f"the score's histogram values")
+
+    def track_maps(
+        self,
+        grr: GenomicResourceRepo,  # ruff: ignore[unused-method-argument]
+        resources: list[GenomicResource],
+        index_of: dict[str, int],
+    ) -> list[dict[str, int]]:
+        """Per resource, each of its values' track index."""
+        # pylint: disable=unused-argument
+        assert len(resources) == len(self.prefixes) == len(self.values)
+        return [
+            {value: index_of[prefix + value] for value in values}
+            for prefix, values in zip(self.prefixes, self.values, strict=True)
+        ]
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {VALUE_GROUP_KEY: self.group_score_id}
 
 
 @dataclass(frozen=True)
@@ -330,13 +420,14 @@ class FragmentBinningJob(BinningJob):
     resource_ids: tuple[str, ...] = ()
     score_id: str | None = None
     value: float = 1
-    grouping: CellGrouping | None = None
+    grouping: CellGrouping | ValueGrouping | None = None
     warnings: tuple[str, ...] = ()
 
     @property
     def local_files(self) -> tuple[str, ...]:
         """The local metadata files the job reads, as absolute paths."""
-        if self.grouping is None or self.grouping.table.path is None:
+        if not isinstance(self.grouping, CellGrouping) \
+                or self.grouping.table.path is None:
             return ()
         return (self.grouping.table.path,)
 
@@ -447,27 +538,47 @@ def _is_labelled(resource: GenomicResource) -> bool:
         is not None
 
 
-def _parse_group(
-    label: str, config: Any,
-) -> tuple[str | None, dict[str, str] | None]:
-    """The constant group name, or the cell grouping's three keys.
+@dataclass(frozen=True)
+class _Group:
+    """An entry's ``group``: at most one of its three forms.
 
-    Both ``None`` when the entry gives no ``group``, so that the
-    resources' labels decide.
+    The ``constant`` group name, the metadata grouping's three
+    ``cell_keys``, or the ``value_score`` whose raw values group; all
+    ``None`` when the entry gives no ``group``, so that the resources'
+    labels decide.
     """
-    if config is None:
-        return None, None
-    check_keys(label, config, GROUP_KEYS)
-    cell_keys = CELL_GROUP_KEYS & config.keys()
-    if "group" in config:
-        if cell_keys:
+
+    constant: str | None = None
+    cell_keys: dict[str, str] | None = None
+    value_score: str | None = None
+
+    @classmethod
+    def parse(cls, label: str, config: Any) -> _Group:
+        """Parse an entry's ``group`` block; ``None`` when it is omitted."""
+        if config is None:
+            return cls()
+        check_keys(label, config, GROUP_KEYS)
+        forms = [
+            form for form, keys in (
+                ("group", {"group"}),
+                ("cell_score_id, cell_meta_column and group_meta_column",
+                 CELL_GROUP_KEYS),
+                (VALUE_GROUP_KEY, {VALUE_GROUP_KEY}))
+            if keys & config.keys()]
+        if len(forms) > 1:
+            given = "both" if len(forms) == 2 else "all of"
             raise RunDefinitionError(
-                f"{label}: give either group, or cell_score_id, "
-                f"cell_meta_column and group_meta_column, not both forms")
-        return _require_text(label, "group", config["group"]), None
-    return None, {
-        key: _require_text(label, key, config.get(key, default))
-        for key, default in CELL_GROUP_DEFAULTS.items()}
+                f"{label}: give one form of group -- group; cell_score_id, "
+                f"cell_meta_column and group_meta_column; or "
+                f"{VALUE_GROUP_KEY} -- not {given} {'; '.join(forms)}")
+        if "group" in config:
+            return cls(constant=_require_text(label, "group", config["group"]))
+        if VALUE_GROUP_KEY in config:
+            return cls(value_score=_require_text(
+                label, VALUE_GROUP_KEY, config[VALUE_GROUP_KEY]))
+        return cls(cell_keys={
+            key: _require_text(label, key, config.get(key, default))
+            for key, default in CELL_GROUP_DEFAULTS.items()})
 
 
 def _parse_filters(label: str, config: Any) -> tuple[MetaFilter, ...]:
@@ -699,18 +810,178 @@ def _resolve_grouping(
     return grouping, groups_of
 
 
+def _stored_histogram_type(
+    resource: GenomicResource, filename: str,
+) -> str | None:
+    """The ``config.type`` of a stored histogram file, as written.
+
+    ``None`` when the file is absent or is not a histogram's JSON.
+    """
+    try:
+        with resource.open_raw_file(filename, mode="rb") as infile:
+            content = infile.read()
+        if filename.endswith(".gz"):
+            content = gzip.decompress(content)
+        data = json.loads(content)
+    except (OSError, ValueError):
+        return None
+    config = data.get("config") if isinstance(data, dict) else None
+    kind = config.get("type") if isinstance(config, dict) else None
+    return kind if isinstance(kind, str) else None
+
+
+def _value_groups(
+    label: str, resource: GenomicResource, score_id: str,
+) -> list[str]:
+    """The distinct values of ``resource``'s ``str`` score, sorted.
+
+    Read from the score's full categorical histogram; a histogram that
+    cannot give every value -- absent, unpulled, annulled or truncated --
+    is refused, naming the resource and how to repair it.
+    """
+    whose = f"{label}: resource {resource.resource_id!r} score {score_id!r}"
+    rebuild = (
+        "pull its data (dvc pull), or build its statistics (grr_manage "
+        "repo-stats or resource-stats)")
+    score = FragmentScore(resource)
+    config = score.get_histogram_config(score_id)
+    if isinstance(config, NullHistogramConfig):
+        raise RunDefinitionError(
+            f"{whose}: its definition annuls its histogram "
+            f"({config.reason!r}), so no statistics list its values; "
+            f"declare histogram: {{type: categorical}} on the score and "
+            f"rebuild its statistics")
+    try:
+        histogram = score.get_score_histogram(score_id)
+    except HistogramError as err:
+        raise RunDefinitionError(
+            f"{whose}: its full histogram, which lists the groups, cannot "
+            f"be read: {err}; {rebuild}") from err
+    if isinstance(histogram, NullHistogram):
+        # The statistics scan stores a null histogram for a categorical
+        # config only when its values pass the cap, which only a config
+        # without enforce_type has.  Anything else read back as null --
+        # no stored file, or one the scan did not write -- is rebuilt.
+        if isinstance(config, CategoricalHistogramConfig) \
+                and not config.enforce_type \
+                and _stored_histogram_type(
+                    resource, score.get_histogram_filename(score_id),
+                ) == "null":
+            raise RunDefinitionError(
+                f"{whose} has more distinct values than the default "
+                f"categorical histogram keeps "
+                f"({CategoricalHistogram.UNIQUE_VALUES_LIMIT}): "
+                f"{histogram.reason!r}; declare histogram: {{type: "
+                f"categorical}} on the score and rebuild its statistics")
+        raise RunDefinitionError(
+            f"{whose} has no histogram listing its values: "
+            f"{histogram.reason!r}; {rebuild}")
+    if not isinstance(histogram, CategoricalHistogram):
+        raise RunDefinitionError(
+            f"{whose} has a {histogram.type}, not the categorical "
+            f"histogram listing its values")
+    if histogram.truncated:
+        raise RunDefinitionError(
+            f"{whose}: its histogram is truncated and does not list every "
+            f"value; {rebuild}")
+    return sorted({
+        text for text in map(_as_text, histogram.raw_values)
+        if text is not None})
+
+
+def _resolve_value_grouping(
+    label: str, score_id: str, aggregate: _Aggregate,
+    resources: list[GenomicResource], *, pool: bool,
+) -> tuple[ValueGrouping, list[str]]:
+    """Resolve one job's raw-value grouping, and its sorted groups.
+
+    Pooled, each resource's groups are prefixed with its
+    :data:`SAMPLE_ID_LABEL` label, which each must carry, without a
+    ``:``, so that a group name splits back one way only, and no two
+    may share, so that two resources' cells never reach one track.
+    """
+    group_label = f"{label}.group"
+    prefixes = [""] * len(resources)
+    if pool:
+        sample_ids = [
+            None if isinstance(value, list) else _as_text(value)
+            for value in (
+                r.get_labels().get(SAMPLE_ID_LABEL) for r in resources)]
+        unlabelled = [
+            r.resource_id
+            for r, sample_id in zip(resources, sample_ids, strict=True)
+            if sample_id is None]
+        if unlabelled:
+            raise RunDefinitionError(
+                f"{group_label}: a pooled {VALUE_GROUP_KEY} grouping "
+                f"prefixes each group with the resource's "
+                f"{SAMPLE_ID_LABEL!r} label, which {_quoted(unlabelled)} "
+                f"do not carry as one value; label them, or give "
+                f"pool: false")
+        coloned = [
+            f"{r.resource_id!r} ({sample_id!r})"
+            for r, sample_id in zip(resources, sample_ids, strict=True)
+            if sample_id is not None and ":" in sample_id]
+        if coloned:
+            raise RunDefinitionError(
+                f"{group_label}: a pooled {VALUE_GROUP_KEY} grouping "
+                f"names each group <{SAMPLE_ID_LABEL}>:<value>, so the "
+                f"{SAMPLE_ID_LABEL!r} label may not contain ':'; "
+                f"{', '.join(coloned)} does; relabel it, or give "
+                f"pool: false")
+        sharing: dict[str, list[str]] = {}
+        for resource, sample_id in zip(resources, sample_ids, strict=True):
+            assert sample_id is not None
+            sharing.setdefault(sample_id, []).append(resource.resource_id)
+        shared = [
+            f"{_quoted(ids)} ({sample_id!r})"
+            for sample_id, ids in sharing.items() if len(ids) > 1]
+        if shared:
+            raise RunDefinitionError(
+                f"{group_label}: a pooled {VALUE_GROUP_KEY} grouping "
+                f"keeps samples apart by their {SAMPLE_ID_LABEL!r} label, "
+                f"and {'; '.join(shared)} share one, which would merge "
+                f"their cells into the same tracks; label each resource "
+                f"with its own sample, or give pool: false")
+        prefixes = [f"{sample_id}:" for sample_id in sample_ids]
+    values = []
+    for resource in resources:
+        if score_id == aggregate.score_id:
+            raise RunDefinitionError(
+                f"{group_label}: resource {resource.resource_id!r} score "
+                f"{score_id!r} is the aggregated score; group by another "
+                f"score")
+        value_type = _score_type(group_label, resource, score_id)
+        if value_type != "str":
+            raise RunDefinitionError(
+                f"{group_label}: resource {resource.resource_id!r} score "
+                f"{score_id!r} is of type {value_type!r}; only a str "
+                f"score's values group")
+        values.append(tuple(_value_groups(group_label, resource, score_id)))
+    groups = {
+        prefix + value
+        for prefix, of_resource in zip(prefixes, values, strict=True)
+        for value in of_resource}
+    if not groups:
+        raise RunDefinitionError(
+            f"{group_label}: the {score_id!r} histograms of "
+            f"{_quoted(r.resource_id for r in resources)} list no value")
+    return (
+        ValueGrouping(score_id, tuple(prefixes), tuple(values)),
+        sorted(groups))
+
+
 @dataclass(frozen=True)
 class _Entry:
     """An entry's parsed keys, before the defaults its resources decide.
 
-    ``constant`` and ``cell_keys`` both ``None`` mean no ``group`` was
-    given; ``aggregate`` and ``meta`` ``None``, none was.
+    ``aggregate`` and ``meta`` ``None`` mean none was given.
     """
 
     label: str
+    pool: bool
     aggregate: _Aggregate | None
-    constant: str | None
-    cell_keys: dict[str, str] | None
+    group: _Group
     meta: _MetaSpec | None
     tables: _Tables
 
@@ -722,10 +993,11 @@ class FragmentScoreBinding:
     one-live-read-per-score limit holds however many are pooled.  Each
     resource's barcode-to-track map is built once, when bound.
 
-    With a cell grouping, ``dropped`` maps each (resource id, region)
-    binned so far -- the region as ``chrom:start-stop`` -- to the number
-    of its fragments that reached no track: a barcode absent from the
-    resource's filtered rows, or a row of no group.
+    With a grouping, ``dropped`` maps each (resource id, region) binned
+    so far -- the region as ``chrom:start-stop`` -- to the number of its
+    fragments that reached no track: a barcode absent from the
+    resource's filtered rows, a row of no group, or a grouping-score
+    value that is missing or that the score's histogram does not list.
     """
 
     def __init__(
@@ -767,9 +1039,8 @@ class FragmentScoreBinding:
         folded through :func:`fold_into_bins`, one aggregator per track.
         A resource without the region's contig contributes nothing.
         Every read is drained, or closed on failure, before this returns,
-        so no read outlives the call.  With a cell grouping, each
-        resource's dropped fragments are counted into :attr:`dropped` and
-        logged.
+        so no read outlives the call.  With a grouping, each resource's
+        dropped fragments are counted into :attr:`dropped` and logged.
         """
         dropped = [0] * len(self.scores)
         reads = [
@@ -785,15 +1056,15 @@ class FragmentScoreBinding:
         finally:
             for read in reads:
                 read.close()
-        if self.track_maps is not None:
+        if self.job.grouping is not None:
             where = f"{region.chrom}:{region.start}-{region.stop}"
             for resource_id, count in zip(
                     self.job.resource_ids, dropped, strict=True):
                 self.dropped[resource_id, where] = count
                 logger.info(
-                    "%s %s: %d fragments dropped, their barcode absent "
-                    "from the cell metadata rows or of no group",
-                    resource_id, where, count)
+                    "%s %s: %d fragments dropped, %s",
+                    resource_id, where, count,
+                    self.job.grouping.dropped_reason)
         return block
 
     def _records(
@@ -808,7 +1079,7 @@ class FragmentScoreBinding:
         job = self.job
         scores = [] if job.score_id is None else [job.score_id]
         if job.grouping is not None:
-            scores.append(job.grouping.cell_score_id)
+            scores.append(job.grouping.score_id)
         rows = score.get_fragment_scores_starting_in_region(
             region.chrom, region.start, region.stop, scores=scores)
         track_of = None if self.track_maps is None \
@@ -849,15 +1120,13 @@ class FragmentScoreBinner:
         if not isinstance(pool, bool):
             raise RunDefinitionError(
                 f"{label}: pool must be true or false, not {pool!r}")
-        constant, cell_keys = _parse_group(
-            f"{label}.group", config.get("group"))
         entry = _Entry(
             label=label,
+            pool=pool,
             aggregate=None if config.get("aggregate") is None
             else _Aggregate.parse(
                 f"{label}.aggregate", config["aggregate"], matches),
-            constant=constant,
-            cell_keys=cell_keys,
+            group=_Group.parse(f"{label}.group", config.get("group")),
             meta=None if config.get("meta") is None
             else _MetaSpec.parse(f"{label}.meta", config["meta"], base_dir),
             tables=_Tables(f"{label}.meta", grr))
@@ -875,8 +1144,24 @@ class FragmentScoreBinner:
     ) -> FragmentBinningJob:
         """Resolve the defaults and the grouping of one job's resources."""
         label, aggregate, meta = entry.label, entry.aggregate, entry.meta
-        constant, cell_keys = entry.constant, entry.cell_keys
+        constant, cell_keys = entry.group.constant, entry.group.cell_keys
         warnings: list[str] = []
+        if entry.group.value_score is not None:
+            if meta is not None:
+                raise RunDefinitionError(
+                    f"{label}: meta maps cells to groups, and is not given "
+                    f"with a group of {VALUE_GROUP_KEY}, whose values are "
+                    f"the groups, for "
+                    f"{_quoted(r.resource_id for r in resources)}")
+            if aggregate is None:
+                aggregate = _Aggregate.default(
+                    f"{label}.aggregate", resources)
+            value_grouping, groups = _resolve_value_grouping(
+                label, entry.group.value_score, aggregate, resources,
+                pool=entry.pool)
+            return cls._job_of(
+                tuple(r.resource_id for r in resources), aggregate,
+                value_grouping, groups, base=base, warnings=())
         if constant is None and cell_keys is None:
             # No group given: the label tier decides (F8).
             labelled, unlabelled = _partition(resources, _is_labelled)
@@ -929,7 +1214,8 @@ class FragmentScoreBinner:
     @classmethod
     def _job_of(
         cls, resource_ids: tuple[str, ...], aggregate: _Aggregate,
-        grouping: CellGrouping | None, groups: list[str], *, base: str,
+        grouping: CellGrouping | ValueGrouping | None, groups: list[str],
+        *, base: str,
         warnings: tuple[str, ...],
     ) -> FragmentBinningJob:
         parameters: dict[str, Any] = {}
@@ -971,18 +1257,9 @@ class FragmentScoreBinner:
             grr.get_resource(resource_id) for resource_id in job.resource_ids]
         track_maps = None
         if job.grouping is not None:
-            table = job.grouping.table.load(grr)
-            index_of = {
-                track.group: index for index, track in enumerate(job.tracks)}
-            track_maps = [
-                {
-                    barcode: index_of[group]
-                    for barcode, group in job.grouping.groups_of(
-                        table, resource).items()
-                    if group in index_of
-                }
-                for resource in resources
-            ]
+            track_maps = job.grouping.track_maps(grr, resources, {
+                track.group: index
+                for index, track in enumerate(job.tracks)})
         return FragmentScoreBinding(
             job, [FragmentScore(resource) for resource in resources],
             track_maps)
