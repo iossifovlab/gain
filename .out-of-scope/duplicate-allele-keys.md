@@ -13,8 +13,11 @@ malformed resource.
 > reported. The statistics build and the one-row read
 > `get_allele_scores_for_allele` warn about it now, and both raise
 > `AlleleMultiplicityError` from `ALLELE_MULTIPLICITY_ENFORCEMENT_RELEASE`
-> (`2027.1.0`) on. `fetch_allele_record` and the "first exact match wins"
-> rule described below no longer exist. The body is kept as written: its
+> (`2027.1.0`) on. `fetch_allele_record` no longer exists, and the "first
+> exact match wins" rule described below is no longer the accepted rule: it
+> survives only as the warning-release fallback of the bare read on an
+> undeclared `one` resource, until the enforcement release. The body is kept
+> as written: its
 > sweep of 15.25 billion records is the evidence for which seven resources
 > must declare `many`.
 

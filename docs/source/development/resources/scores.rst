@@ -135,10 +135,12 @@ Every built cell also has a singular form, which drops the ``s`` and takes one
 and
 :meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_score_for_allele_agg`.
 The ``for_allele`` reads return bare value tuples, because the caller already
-knows the allele. The region ``_rows`` read yields one
-:class:`~gain.genomic_resources.genomic_scores.AlleleEntry` per row, a named
-tuple of ``pos``, ``ref``, ``alt`` and ``values``, because there the position
-and the nucleotides are new information. The ``_agg`` reads answer an
+knows the allele. The plural region read
+:meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_scores_in_region_rows`
+yields one :class:`~gain.genomic_resources.genomic_scores.AlleleEntry` per
+row, a named tuple of ``pos``, ``ref``, ``alt`` and ``values``, because there
+the position and the nucleotides are new information; its singular form yields
+a plain ``(pos, ref, alt, value)`` tuple. The ``_agg`` reads answer an
 :class:`~gain.genomic_resources.genomic_scores.AlleleAggregate`, described
 below. The ``reserved`` cells have a name and a meaning but no method yet.
 
@@ -250,8 +252,12 @@ for those covering one point. The distinction matters: summing a score over
 overlapping fragments double-counts a fragment that straddles two adjacent
 query windows, and the ``starting_in`` form is the one that tiles.
 
-The allele and fragment kinds both have an aggregating read that answers off a single walk of the
-region and returns a small record rather than a bare tuple —
+The allele and fragment kinds both have a region fold —
+:meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_scores_in_region_agg`
+and
+:meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_fragment_scores_overlapping_region_agg`
+— that answers off a single walk of the region and returns a small record
+rather than a bare tuple —
 :class:`~gain.genomic_resources.genomic_scores.AlleleAggregate` and
 :class:`~gain.genomic_resources.genomic_scores.FragmentAggregate`. Each
 carries the reduced ``values`` alongside what the walk saw (the matched

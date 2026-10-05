@@ -66,10 +66,12 @@ gain#1748; decision 4 below says how the two keys relate.
    beside the existing `get_allele_scores_in_region_agg`. The singular-plural
    marker already counts scores, so the reduction is a suffix: `_agg` already
    meant "rows folded", `_rows` means "rows unreduced", and the bare name means
-   "exactly one row". The region `_rows` reads yield `AlleleEntry(pos, ref,
-   alt, values)`, a `NamedTuple`, because there the position and nucleotides
-   are new information and positional access would swap `ref` and `alt`. The
-   `for_allele` reads return bare value tuples, because there the locus is the
+   "exactly one row". The plural region read `get_allele_scores_in_region_rows`
+   yields `AlleleEntry(pos, ref, alt, values)`, a `NamedTuple`, because there
+   the position and nucleotides are new information and positional access
+   would swap `ref` and `alt`; its singular form
+   `get_allele_score_in_region_rows` yields a plain `(pos, ref, alt, value)`
+   tuple. The `for_allele` reads return bare value tuples, because there the locus is the
    caller's own argument. `fetch_allele_scores` and `fetch_allele_records`
    were removed without a shim (gain#1755); neither had a caller outside gain.
 
