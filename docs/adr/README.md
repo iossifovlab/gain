@@ -96,6 +96,7 @@ of one decision will drift.
 | [0032](0032-full-categorical-histograms-past-the-limit-are-gzipped.md) | Full categorical histograms past the limit are gzipped | accepted |
 | [0033](0033-gain-grr-is-the-public-import-path-for-external-users.md) | `gain.grr` is the public import path for external users | accepted |
 | [0034](0034-the-allele-plane-reads-a-declared-multiplicity.md) | The allele plane reads a declared multiplicity | accepted |
+| [0035](0035-a-fragment-belongs-to-the-bin-of-its-start.md) | A fragment belongs to the bin of its start, and its grouping is declared | accepted |
 
 > **Note:** `0003` was allocated twice, by two changes that landed the same day.
 > "Numbers are never reused" is a rule about not re-issuing a *retired* number;

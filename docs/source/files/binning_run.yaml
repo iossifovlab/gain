@@ -11,3 +11,7 @@ binners:
 - position_score_binner:
     resource_query: hg38/scores/phyloP100way
     aggregator: max
+- fragment_score_binner:
+    resource_query: hg38/cnv_collections/gnomAD.v4.1_Genome_SV
+    pool: false
+    group: {group_score_id: deletion_duplication}
