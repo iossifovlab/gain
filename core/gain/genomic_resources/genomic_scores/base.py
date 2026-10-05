@@ -571,11 +571,11 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         unknown contig has always been reported from the first record read
         rather than from the call, and there is no eagerness left to
         preserve by structuring this any other way.  That is a property of
-        *this* read rather than a rule for the family: a read that
-        materialises has no generator body to defer a refusal into, and
-        :meth:`AlleleScore.fetch_allele_records()
-        <.allele.AlleleScore.fetch_allele_records>` accordingly refuses from
-        the call.
+        *this* read rather than a rule for the family: the allele reads
+        check their request when called, and
+        :meth:`AlleleScore.get_allele_scores_in_region_agg()
+        <.allele.AlleleScore.get_allele_scores_in_region_agg>` refuses an
+        unknown contig from the call.
         """
         records = self.table.get_records_in_region(chrom, pos_begin, pos_end)
         yield from select_records(self, records, score_filter)
@@ -1417,9 +1417,9 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         empty region (see ``CountAggregator.get_final``).  This method does
         not second-guess any of them.  That is deliberately unlike the
         per-position reads (``get_scores_at_position``,
-        ``fetch_allele_scores``), which answer ``None`` where there is no
-        data -- aggregating nothing is a well-defined question, reading a
-        value where there is none is not.
+        ``get_allele_scores_for_allele``), which answer ``None`` where there
+        is no data -- aggregating nothing is a well-defined question,
+        reading a value where there is none is not.
 
         Values reach the aggregator exactly as the record carried them,
         ``None`` included, because that is what the annotators do (each

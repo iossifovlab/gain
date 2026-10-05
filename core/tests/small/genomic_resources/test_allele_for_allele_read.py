@@ -135,8 +135,8 @@ def test_a_row_starting_earlier_and_spanning_pos_is_not_the_allele(
     tmp_path: pathlib.Path, tabix: bool,
 ) -> None:
     """Agrees with ``get_allele_scores_for_allele_rows``: exact on the
-    position, so the 8-12 row -- first in the file, and the legacy
-    ``fetch_allele_scores`` answer -- is not the allele at 10."""
+    position, so the 8-12 row -- first in the file -- is not the allele
+    at 10."""
     score = _score(tmp_path, """
         chrom  pos_begin  pos_end  reference  alternative  freq  id
         1      8          12       A          C            0.7   span

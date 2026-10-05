@@ -26,6 +26,8 @@ from gain.genomic_resources.aggregators import (
     ScoreAggregationQuery,
 )
 from gain.genomic_resources.genomic_scores import (
+    AlleleAggregate,
+    AlleleScore,
     allele_key,
     build_allele_score_from_resource,
 )
@@ -46,8 +48,14 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
     Operates in one of two modes, selected by the ``mode`` parameter:
 
     - ``allele`` (**default**): a ``VCFAllele`` the resource keys as a line
-      of its own gets an exact chrom/pos/ref/alt lookup and the single
-      matching line's scores.  Which alleles those are is the resource's
+      of its own gets an exact chrom/pos/ref/alt lookup, exact on the
+      position too.  On a resource declaring ``allele_multiplicity: one``
+      -- the default -- that is the allele's only line and its scores
+      (``AlleleScore.get_allele_scores_for_allele``); on a ``many``
+      resource the allele's lines are reduced, each attribute by its
+      aggregator, as a region fold reduces them
+      (``AlleleScore.get_allele_scores_for_allele_agg``).  Which alleles
+      are matched is the resource's
       ``allele_score_mode``: every ``VCFAllele`` on an ``alleles``
       resource, only a substitution on a ``substitutions`` one.  Any other
       ``VCFAllele`` -- an indel or complex allele on a ``substitutions``
@@ -73,7 +81,9 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
     that is synthesised rather than read from the data file.
 
     - On an exact match: returns ``["chrom:pos:ref:alt"]`` for the matched
-      line.
+      line.  On a ``many`` resource, the distinct keys of the allele's
+      lines that pass ``allele_filter`` -- one, or several when an
+      ``include_attributes`` score differs across them.
     - On a region fold, in either mode: returns the distinct
       ``"chrom:pos:ref:alt"`` strings of the lines that pass the optional
       ``allele_filter``, in the order the lines were first met -- the
@@ -177,6 +187,11 @@ Non-``VCFAllele`` annotatables always use region aggregation.
         # `include_attributes` ids.
         self.allele_score.resolve_aggregation_queries(self._region_queries)
         self.allele_score.resolve_allele_key_scores(self.attrs_to_include)
+        # The scores a `one` resource's exact match reads: the score
+        # attributes' and the ones the allele keys are suffixed with.
+        self._exact_scores: list[str] = list(dict.fromkeys(
+            [*self.simple_score_queries, *self.attrs_to_include],
+        )) or self.allele_score.get_all_scores()
 
     def get_attribute_defaults(
         self, spec: AttributeSpec,
@@ -213,20 +228,40 @@ Non-``VCFAllele`` annotatables always use region aggregation.
     def _annotate_allele(
         self, annotatable: VCFAllele,
     ) -> AnnotatedValues:
-        """Return scores for an exact chrom/pos/ref/alt match."""
-        values = self.allele_score.fetch_allele_scores(
+        """Answer an exact chrom/pos/ref/alt match off the allele plane.
+
+        Read by the resource's ``allele_multiplicity``: the allele's only
+        row on a ``one`` resource, its rows folded on a ``many`` one.
+        Either way the match is exact on the position too, so a row
+        starting before ``pos`` whose span reaches it is not the allele.
+        """
+        if self.allele_score.multiplicity is AlleleScore.Multiplicity.MANY:
+            return self._annotate_allele_rows(annotatable)
+        return self._annotate_allele_row(annotatable)
+
+    def _annotate_allele_row(
+        self, annotatable: VCFAllele,
+    ) -> AnnotatedValues:
+        """Answer the only row of one allele on a ``one`` resource.
+
+        The row's values as they stand, nothing folded; ``None`` under
+        every attribute when no row holds the allele or the filter rejects
+        it.
+        """
+        values = self.allele_score.get_allele_scores_for_allele(
             annotatable.chrom,
             annotatable.position,
             annotatable.reference,
             annotatable.alternative,
-            self.simple_score_queries or None,
+            scores=self._exact_scores,
             score_filter=self.allele_filter,
         )
         if values is None:
             return self._empty_result()
         # Widened, because the virtual `allele` attribute below is a LIST of
         # strings and the score's own values are scalars.
-        scores: dict[str, Any] = dict(values)
+        scores: dict[str, Any] = dict(
+            zip(self._exact_scores, values, strict=True))
 
         if self.allele_attribute is not None:
             # The same helper the region read builds its keys with, so
@@ -234,11 +269,57 @@ Non-``VCFAllele`` annotatables always use region aggregation.
             scores[self.allele_attribute.source] = [allele_key(
                 annotatable.chromosome, annotatable.position,
                 annotatable.reference, annotatable.alternative,
-                [scores.get(a) for a in self.attrs_to_include])]
+                [scores[a] for a in self.attrs_to_include])]
 
         # Not ``fold_own_values``: the virtual ``allele`` attribute's
         # key list is the answer, not something to reduce.
         return self._from_sources(scores)
+
+    def _annotate_allele_rows(
+        self, annotatable: VCFAllele,
+    ) -> AnnotatedValues:
+        """Fold the rows of one allele on a ``many`` resource.
+
+        Each score attribute by its own aggregator, resolved as on the
+        region fold; the virtual ``allele`` attribute takes the distinct
+        keys of the rows.  ``None`` under every attribute when no row
+        holds the allele; rows the filter rejects in full are an empty
+        selection, which each aggregator answers for.
+        """
+        aggregate = self.allele_score.get_allele_scores_for_allele_agg(
+            annotatable.chrom, annotatable.position,
+            annotatable.reference, annotatable.alternative,
+            queries=self._region_queries,
+            allele_keys=self._allele_keys_request(),
+            score_filter=self.allele_filter,
+        )
+        return self._from_aggregate(aggregate)
+
+    def _allele_keys_request(self) -> list[str] | None:
+        """What a folding read is asked for keys: ``None`` builds none."""
+        return (
+            self.attrs_to_include
+            if self.allele_attribute is not None else None)
+
+    def _from_aggregate(
+        self, aggregate: AlleleAggregate | None,
+    ) -> AnnotatedValues:
+        """Answer a folding read's aggregate, keyed by attribute name.
+
+        ``None`` is absent data -- no record was there -- and answers
+        ``None`` for every attribute.  An aggregate whose fold saw nothing is
+        different: records were there and the filter rejected them all,
+        so each aggregator has answered for an empty selection and the
+        keys are empty.  The values are paired back over the attributes
+        that built the queries, the ``allele`` attribute taking the keys.
+        """
+        if aggregate is None:
+            return self._empty_result()
+        return self._pair_aggregated(
+            aggregate.values, len(self._region_queries),
+            resource_id=self.allele_score.resource_id,
+            reduced=lambda attr: attr is not self.allele_attribute,
+            otherwise=lambda _attr: list(aggregate.allele_keys or ()))
 
     def _annotate_region(
         self, annotatable: Annotatable,
@@ -256,26 +337,10 @@ Non-``VCFAllele`` annotatables always use region aggregation.
         aggregate = self.allele_score.get_allele_scores_in_region_agg(
             annotatable.chrom, annotatable.position, annotatable.pos_end,
             queries=self._region_queries,
-            allele_keys=(
-                self.attrs_to_include
-                if self.allele_attribute is not None else None),
+            allele_keys=self._allele_keys_request(),
             score_filter=self.allele_filter,
         )
-        # `None` is absent data -- no record overlaps the region -- and
-        # answers `None` for every attribute, as it always has.  An
-        # aggregate whose fold saw nothing is different: records were
-        # there and the filter rejected them all, so each aggregator has
-        # answered for an empty selection and the keys are empty.
-        if aggregate is None:
-            return self._empty_result()
-
-        # Paired back over the same attributes that built the queries, the
-        # `allele` attribute taking the keys.
-        return self._pair_aggregated(
-            aggregate.values, len(self._region_queries),
-            resource_id=self.allele_score.resource_id,
-            reduced=lambda attr: attr is not self.allele_attribute,
-            otherwise=lambda _attr: list(aggregate.allele_keys or ()))
+        return self._from_aggregate(aggregate)
 
     def _matched_exactly(self, allele: VCFAllele) -> bool:
         """Tell whether the resource keys ``allele`` as a line of its own.
