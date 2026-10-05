@@ -4,6 +4,7 @@ import pathlib
 import textwrap
 
 import pytest
+from gain.genomic_resources import resource_types
 from gain.genomic_resources.genomic_position_table import (
     LineBuffer,
 )
@@ -77,7 +78,8 @@ def test_the_simplest_allele_score() -> None:
     score.open()
 
     assert score.get_all_scores() == ["freq"]
-    assert score.fetch_allele_scores("1", 10, "A", "C") == {"freq": 0.03}
+    assert score.get_allele_scores_for_allele(
+        "1", 10, "A", "C", scores=["freq"]) == (0.03,)
 
 
 def test_allele_score_fetch_region() -> None:
@@ -159,10 +161,14 @@ def test_allele_score_missing_alt() -> None:
     })
     score = AlleleScore(res)
     score.open()
-    assert score.fetch_allele_scores("1", 10, "A", "A", ["freq"]) is None
-    assert score.fetch_allele_scores("1", 10, "A", "G", ["freq"]) is None
-    assert score.fetch_allele_scores("1", 10, "A", "T", ["freq"]) is None
-    assert score.fetch_allele_scores("1", 10, "A", "C", ["freq"]) is None
+    assert score.get_allele_scores_for_allele(
+        "1", 10, "A", "A", scores=["freq"]) is None
+    assert score.get_allele_scores_for_allele(
+        "1", 10, "A", "G", scores=["freq"]) is None
+    assert score.get_allele_scores_for_allele(
+        "1", 10, "A", "T", scores=["freq"]) is None
+    assert score.get_allele_scores_for_allele(
+        "1", 10, "A", "C", scores=["freq"]) is None
 
 
 def test_allele_score_mode_defaults_to_alleles() -> None:
@@ -250,7 +256,7 @@ def test_allele_score_fetch_scores_invalid_chromosome() -> None:
     with pytest.raises(
         ValueError, match="not among the available chromosomes",
     ):
-        score.fetch_allele_scores("2", 10, "A", "G")
+        score.get_allele_scores_for_allele("2", 10, "A", "G")
 
 
 def test_allele_score_fetch_region_spanning_record_at_pos_begin() -> None:
@@ -294,9 +300,9 @@ def test_a_region_no_allele_overlaps_reads_as_absent(
     which is what this read exists to tell apart.
     """
     with region_allele_score.open() as score:
-        records = score.fetch_allele_records("1", 200, 300)
+        aggregate = score.get_allele_scores_in_region_agg("1", 200, 300)
 
-    assert records is None
+    assert aggregate is None
 
 
 def test_a_region_reads_every_allele_that_overlaps_it(
@@ -308,25 +314,12 @@ def test_a_region_reads_every_allele_that_overlaps_it(
     while the order they arrive in is the table's, and differs by backend.
     """
     with region_allele_score.open() as score:
-        records = score.fetch_allele_records("1", 10, 16)
+        aggregate = score.get_allele_scores_in_region_agg(
+            "1", 10, 16, allele_keys=())
 
-    assert records is not None
-    assert {(r[POS_BEGIN], r[REF], r[ALT]) for r in records} == {
-        (10, "A", "C"),
-        (10, "A", "G"),
-        (16, "C", "T"),
-    }
-
-
-def test_a_region_read_takes_the_contig_bounds_as_its_default(
-    region_allele_score: AlleleScore,
-) -> None:
-    """``None`` bounds mean the whole contig, as they do for the table."""
-    with region_allele_score.open() as score:
-        records = score.fetch_allele_records("1", None, None)
-
-    assert records is not None
-    assert len(records) == 3
+    assert aggregate is not None
+    assert set(aggregate.allele_keys or ()) == {
+        "1:10:A:C", "1:10:A:G", "1:16:C:T"}
 
 
 def test_a_region_read_refuses_a_contig_the_resource_does_not_have(
@@ -341,30 +334,37 @@ def test_a_region_read_refuses_a_contig_the_resource_does_not_have(
     with region_allele_score.open() as score, pytest.raises(
         ValueError, match="not among the available chromosomes",
     ):
-        score.fetch_allele_records("2", 10, 16)
+        score.get_allele_scores_in_region_agg("2", 10, 16)
 
 
 def test_the_per_allele_read_does_not_leak_the_line_buffer(
-    tmp_path: pathlib.Path,
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The one in-tree consumer that abandons a region read (gain#1120).
+    """The per-allele read abandons its walk on a duplicate row (gain#1120).
 
-    ``_fetch_allele_record`` walks ``fetch_records`` and RETURNS on the first
-    record matching the allele, leaving the generator suspended -- so the
-    tabix backend's buffered read is abandoned once per lookup.  A sweep of
-    every caller of the three region generators found this to be the only such
-    site in the tree, which makes the leak something production allele reads
-    did, not merely something an external caller could do.
+    ``get_allele_scores_for_allele`` walks the rows at the allele's
+    position, and on a ``one`` resource it stops at the SECOND row holding
+    the allele -- that is enough to know the data is in error -- leaving the
+    generator suspended.  So on such data the tabix backend's buffered read
+    is abandoned once per lookup: the leak is something a production
+    allele read does, not merely something an external caller could do.
 
-    Two alleles per position, and each lookup asks for the FIRST of them, so
-    every read really is abandoned holding the second.  Before the buffered
-    paths pruned in a ``finally`` the buffer ended this scan holding one
-    record per lookup.
+    Each position holds the queried allele twice and another allele after
+    it, so every read really is abandoned holding that last row; a read
+    finding the allele once runs the walk to its end and abandons nothing.
+    Before the buffered paths pruned in a ``finally`` the buffer ended this
+    scan holding a position's worth of rows per lookup.
+
+    The duplicates are answered with a warning, pinned here, so that the
+    lookups keep answering once the duplicate becomes an error.
     """
+    monkeypatch.setattr(
+        resource_types, "allele_multiplicity_enforced", lambda: False)
     positions = range(10, 210, 2)
     header = "chrom  pos_begin  reference  alternative  freq"
     rows = "\n".join(
-        f"1  {pos}  A  G  0.1\n1  {pos}  A  C  0.2" for pos in positions)
+        f"1  {pos}  A  G  0.1\n1  {pos}  A  G  0.1\n1  {pos}  A  C  0.2"
+        for pos in positions)
     resource = (
         an_allele_score()
         .with_score("freq", "float")
@@ -375,8 +375,8 @@ def test_the_per_allele_read_does_not_leak_the_line_buffer(
 
     with build_allele_score_from_resource(resource).open() as score:
         for pos in positions:
-            assert score.fetch_allele_scores("1", pos, "A", "G") == \
-                {"freq": 0.1}
+            assert score.get_allele_scores_for_allele(
+                "1", pos, "A", "G", scores=["freq"]) == (0.1,)
 
         retained = score.table.buffered_record_count()
 

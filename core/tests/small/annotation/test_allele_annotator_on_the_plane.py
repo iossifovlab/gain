@@ -30,7 +30,6 @@ from gain.annotation.annotation_config import AnnotationConfigurationError
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
 from gain.annotation.annotator_base import AnnotatedValues
-from gain.genomic_resources.genomic_scores import AlleleScore
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing.builders import (
     a_grr,
@@ -208,20 +207,13 @@ def test_allele_keys_come_in_first_seen_order(
         "chr1:10:A:C:ac,0.2", "chr1:10:A:G:ag,0.1"]}
 
 
-def test_the_annotator_no_longer_materialises_the_region(
-    repo: GenomicResourceRepo, monkeypatch: pytest.MonkeyPatch,
+def test_the_region_path_folds_regions_and_alleles_alike(
+    repo: GenomicResourceRepo,
 ) -> None:
-    """``fetch_allele_records`` is not on the annotation path any more.
+    """Both annotatable shapes that take the region path fold the same way.
 
-    The read that materialised a list per region is what gain#834
-    measured; the annotator reaches the score through the folding read
-    alone, in both modes and for both annotatable shapes that take the
-    region path.
+    A region holding no record answers ``None`` under every attribute.
     """
-    def refuse(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("fetch_allele_records was called")
-
-    monkeypatch.setattr(AlleleScore, "fetch_allele_records", refuse)
     with _pipeline(repo, """
         - source: freq
           name: as_max

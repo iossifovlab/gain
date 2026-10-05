@@ -67,9 +67,9 @@ adjudicate between rows it was never given the key to distinguish.
 > does not declare it, `get_allele_scores_for_allele` answers the first row
 > with a warning now, and refuses the duplicate from
 > `ALLELE_MULTIPLICITY_ENFORCEMENT_RELEASE` on (gain#1753). The legacy
-> `fetch_allele_scores` keeps first-wins until gain#1755 removes it. This note
-> is about the read only; the refusal of a *build-time* duplicate rule below is
-> gain#1752's to amend.
+> `fetch_allele_scores`, which kept first-wins, was removed in gain#1755. This
+> note is about the read only; the refusal of a *build-time* duplicate rule
+> below is gain#1752's to amend.
 
 ## What is still in scope
 

@@ -95,7 +95,7 @@ def test_one_source_asked_twice_answers_twice(alleles: AlleleScore) -> None:
 def test_a_region_no_allele_overlaps_reads_as_absent(
     alleles: AlleleScore,
 ) -> None:
-    """``None`` is absent data, as :meth:`fetch_allele_records` answers it.
+    """``None`` is absent data: no record overlaps the region.
 
     A contig the resource HAS, so what is pinned is the empty region and
     not an unknown chromosome.  Keys were asked for and are not built
@@ -115,8 +115,7 @@ def test_a_filter_rejecting_every_allele_answers_an_empty_selection(
 
     Each aggregator answers for an empty selection -- ``max`` has nothing
     to answer and gives ``None``, ``list`` gives ``[]`` -- and the keys,
-    asked for, are ``()``.  The distinction gain#820 drew for
-    :meth:`fetch_allele_records` survives the move onto a fold.
+    asked for, are ``()``.
     """
     with alleles.open() as score:
         aggregate = score.get_allele_scores_in_region_agg(
@@ -534,9 +533,9 @@ def test_peak_memory_does_not_grow_with_the_number_of_alleles(
 
     ``max`` is deliberate: an aggregator that KEEPS what it is given --
     ``list``, the ``str`` default -- still grows, and that is the
-    aggregator's property rather than the read's.  What the read removes
-    is the materialised record list ``fetch_allele_records`` hands back,
-    which is linear in the region's alleles whatever the aggregator.
+    aggregator's property rather than the read's.  The read itself holds
+    no record list, which would be linear in the region's alleles whatever
+    the aggregator.
 
     The bound is loose on purpose: linear growth is ~10x here, and the
     assertion fails anything above 3x.
@@ -640,34 +639,6 @@ def test_for_allele_rows_does_not_answer_a_row_starting_elsewhere(
     with spanning.open() as score:
         rows = score.get_allele_scores_for_allele_rows("1", 10, "A", "C")
 
-    assert rows == [(0.2,)]
-
-
-@pytest.mark.parametrize("tabix", [False, True])
-def test_the_two_point_reads_differ_on_a_row_spanning_the_position(
-    tmp_path: pathlib.Path, tabix: bool,
-) -> None:
-    """``fetch_allele_scores`` matches ref/alt among the rows overlapping
-    10, so the 8-12 row, first in the file, is its answer; the rows read
-    is exact on the position too and answers only the row AT 10.  Pinned
-    so the difference is a recorded one while both reads exist."""
-    builder = (
-        an_allele_score()
-        .with_score("freq", "float")
-        .with_data("""
-            chrom  pos_begin  pos_end  reference  alternative  freq
-            1      8          12       A          C            0.7
-            1      10         10       A          C            0.2
-        """))
-    if tabix:
-        builder = builder.with_tabix()
-    score = build_allele_score_from_resource(builder.build_resource(tmp_path))
-
-    with score.open() as opened:
-        legacy = opened.fetch_allele_scores("1", 10, "A", "C")
-        rows = opened.get_allele_scores_for_allele_rows("1", 10, "A", "C")
-
-    assert legacy == {"freq": 0.7}
     assert rows == [(0.2,)]
 
 

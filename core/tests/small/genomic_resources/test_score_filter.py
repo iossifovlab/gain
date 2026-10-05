@@ -2,8 +2,9 @@
 import pathlib
 
 import pytest
-from gain.genomic_resources.genomic_position_table.record import ALT, REF
+from gain.genomic_resources.aggregators import ScoreAggregationQuery
 from gain.genomic_resources.genomic_scores import (
+    AlleleAggregate,
     AlleleScore,
     FragmentScore,
     PositionScore,
@@ -247,14 +248,14 @@ def test_a_matched_but_filtered_allele_reads_as_absent(
     with allele_score.open() as score:
         score_filter = score.compile_filter("freq > 0.15")
 
-        kept = score.fetch_allele_scores(
+        kept = score.get_allele_scores_for_allele(
             "1", 10, "A", "C", score_filter=score_filter)
-        rejected = score.fetch_allele_scores(
+        rejected = score.get_allele_scores_for_allele(
             "1", 10, "A", "G", score_filter=score_filter)
-        absent = score.fetch_allele_scores(
+        absent = score.get_allele_scores_for_allele(
             "1", 10, "A", "T", score_filter=score_filter)
 
-    assert kept == {"freq": pytest.approx(0.2)}
+    assert kept == pytest.approx((0.2,))
     # The rejected allele and the one the resource does not carry at all are
     # the same answer, which is the point.
     assert rejected is None
@@ -266,9 +267,9 @@ def test_an_allele_read_without_a_filter_is_unchanged(
 ) -> None:
     """``score_filter=None`` is the whole of the old behaviour."""
     with allele_score.open() as score:
-        scores = score.fetch_allele_scores("1", 10, "A", "G")
+        scores = score.get_allele_scores_for_allele("1", 10, "A", "G")
 
-    assert scores == {"freq": pytest.approx(0.1)}
+    assert scores == pytest.approx((0.1,))
 
 
 @pytest.fixture
@@ -330,12 +331,12 @@ def test_a_negated_clause_reaches_the_allele_read(
     with allele_score.open() as score:
         score_filter = score.compile_filter("not (freq >= 0.15)")
 
-        kept = score.fetch_allele_scores(
+        kept = score.get_allele_scores_for_allele(
             "1", 10, "A", "G", score_filter=score_filter)
-        rejected = score.fetch_allele_scores(
+        rejected = score.get_allele_scores_for_allele(
             "1", 10, "A", "C", score_filter=score_filter)
 
-    assert kept == {"freq": pytest.approx(0.1)}
+    assert kept == pytest.approx((0.1,))
     assert rejected is None
 
 
@@ -350,38 +351,38 @@ def test_the_region_read_drops_the_alleles_the_filter_rejects(
     with allele_score.open() as score:
         score_filter = score.compile_filter("freq > 0.15")
 
-        records = score.fetch_allele_records(
-            "1", 10, 10, score_filter=score_filter)
+        aggregate = score.get_allele_scores_in_region_agg(
+            "1", 10, 10,
+            queries=[ScoreAggregationQuery("freq", "list")],
+            allele_keys=(),
+            score_filter=score_filter)
 
-        assert records is not None
-        kept = [
-            (record[REF], record[ALT],
-             score.get_score_value_from_record(record, "freq"))
-            for record in records
-        ]
-
-    assert kept == [("A", "C", pytest.approx(0.2))]
+    assert aggregate == AlleleAggregate(
+        values=([pytest.approx(0.2)],), allele_keys=("1:10:A:C",))
 
 
 def test_a_region_keeping_no_allele_is_not_a_region_holding_none(
     allele_score: AlleleScore,
 ) -> None:
-    """``[]`` is an empty selection; ``None`` is absent data.
+    """An empty selection is an aggregate; ``None`` is absent data.
 
-    The distinction this read exists for.  Its caller answers differently
+    The distinction the folding read keeps.  Its caller answers differently
     for each -- an empty list of alleles against no allele attribute at all
-    -- and a plain record iterator makes both an empty stream, which is why
-    the region path could not filter inside the fetch before.
+    -- where a plain record iterator makes both an empty stream.
     """
     with allele_score.open() as score:
         score_filter = score.compile_filter("freq > 2.0")
 
-        kept_none = score.fetch_allele_records(
-            "1", 10, 10, score_filter=score_filter)
-        no_records = score.fetch_allele_records(
-            "1", 200, 300, score_filter=score_filter)
+        kept_none = score.get_allele_scores_in_region_agg(
+            "1", 10, 10,
+            queries=[ScoreAggregationQuery("freq", "list")],
+            allele_keys=(), score_filter=score_filter)
+        no_records = score.get_allele_scores_in_region_agg(
+            "1", 200, 300,
+            queries=[ScoreAggregationQuery("freq", "list")],
+            allele_keys=(), score_filter=score_filter)
 
-    assert kept_none == []
+    assert kept_none == AlleleAggregate(values=([],), allele_keys=())
     assert no_records is None
 
 
@@ -391,8 +392,8 @@ def test_the_region_read_refuses_a_filter_of_a_different_score(
 ) -> None:
     """Ownership is checked here as on every other filtered read.
 
-    Refused from the call rather than from the first record: this read
-    answers a list, so there is no generator body to defer it into.
+    Refused from the call rather than from the first record: the folding
+    read checks its request before it reads.
     """
     other = build_allele_score_from_resource(
         an_allele_score()
@@ -408,7 +409,7 @@ def test_the_region_read_refuses_a_filter_of_a_different_score(
         foreign = score.compile_filter("freq > 0.15")
 
         with pytest.raises(ScoreFilterError) as excinfo:
-            other_score.fetch_allele_records(
+            other_score.get_allele_scores_in_region_agg(
                 "1", 10, 10, score_filter=foreign)
 
     assert "compiled against" in str(excinfo.value)
@@ -439,7 +440,7 @@ def test_the_region_read_refuses_a_foreign_filter_on_an_empty_region_too(
         foreign = score.compile_filter("freq > 0.15")
 
         with pytest.raises(ScoreFilterError) as excinfo:
-            other_score.fetch_allele_records(
+            other_score.get_allele_scores_in_region_agg(
                 "1", 200, 300, score_filter=foreign)
 
     assert "compiled against" in str(excinfo.value)

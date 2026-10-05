@@ -18,6 +18,7 @@ from gain.genomic_resources.genomic_position_table.utils import (
     build_genomic_position_table,
 )
 from gain.genomic_resources.genomic_scores import (
+    AlleleEntry,
     AlleleScore,
     FragmentScore,
     PositionScore,
@@ -1257,8 +1258,10 @@ def test_allele_score_reads_back_by_ref_alt(
     )
     score = AlleleScore(res).open()
     assert score.get_all_scores() == ["freq"]
-    assert score.fetch_allele_scores("1", 10, "A", "C") == {"freq": 0.03}
-    assert score.fetch_allele_scores("1", 16, "C", "A") == {"freq": 0.05}
+    assert score.get_allele_scores_for_allele(
+        "1", 10, "A", "C", scores=["freq"]) == (0.03,)
+    assert score.get_allele_scores_for_allele(
+        "1", 16, "C", "A", scores=["freq"]) == (0.05,)
 
 
 def test_allele_score_with_pos_end_range_reads_back(
@@ -1279,9 +1282,14 @@ def test_allele_score_with_pos_end_range_reads_back(
     score = AlleleScore(res).open()
     assert score.table is not None
     assert score.table.pos_end_key == 2
-    # a position inside the [10, 15] span matches the record
-    assert score.fetch_allele_scores("1", 12, "A", "G") == {"cadd_raw": 0.02}
-    assert score.fetch_allele_scores("1", 10, "A", "G") == {"cadd_raw": 0.02}
+    # a region read at a position inside the [10, 15] span meets the
+    # record; a read of one allele is exact on the position
+    assert list(score.get_allele_scores_in_region_rows("1", 12, 12)) == [
+        AlleleEntry(10, "A", "G", (0.02,))]
+    assert score.get_allele_scores_for_allele(
+        "1", 12, "A", "G", scores=["cadd_raw"]) is None
+    assert score.get_allele_scores_for_allele(
+        "1", 10, "A", "G", scores=["cadd_raw"]) == (0.02,)
 
 
 def test_allele_score_with_score_line_matches_with_data(
@@ -1299,8 +1307,10 @@ def test_allele_score_with_score_line_matches_with_data(
         .build_resource(tmp_path)
     )
     score = AlleleScore(typed).open()
-    assert score.fetch_allele_scores("1", 10, "A", "G") == {"cadd_raw": 0.02}
-    assert score.fetch_allele_scores("1", 10, "A", "C") == {"cadd_raw": 0.03}
+    assert score.get_allele_scores_for_allele(
+        "1", 10, "A", "G", scores=["cadd_raw"]) == (0.02,)
+    assert score.get_allele_scores_for_allele(
+        "1", 10, "A", "C", scores=["cadd_raw"]) == (0.03,)
 
 
 def test_allele_score_with_tabix_reads_back(
@@ -1320,8 +1330,10 @@ def test_allele_score_with_tabix_reads_back(
     assert (tmp_path / "data.txt.gz").is_file()
     assert (tmp_path / "data.txt.gz.tbi").is_file()
     score = AlleleScore(res).open()
-    assert score.fetch_allele_scores("1", 10, "A", "G") == {"cadd_raw": 0.02}
-    assert score.fetch_allele_scores("1", 16, "C", "T") == {"cadd_raw": 0.04}
+    assert score.get_allele_scores_for_allele(
+        "1", 10, "A", "G", scores=["cadd_raw"]) == (0.02,)
+    assert score.get_allele_scores_for_allele(
+        "1", 16, "C", "T", scores=["cadd_raw"]) == (0.04,)
 
 
 def test_grr_composes_several_allele_scores(
@@ -1348,9 +1360,11 @@ def test_grr_composes_several_allele_scores(
         .build_repo(tmp_path)
     )
     cadd = AlleleScore(repo.get_resource("scores/cadd")).open()
-    assert cadd.fetch_allele_scores("1", 10, "A", "G") == {"cadd": 0.02}
+    assert cadd.get_allele_scores_for_allele(
+        "1", 10, "A", "G", scores=["cadd"]) == (0.02,)
     allele_score = AlleleScore(repo.get_resource("scores/allele")).open()
-    assert allele_score.fetch_allele_scores("1", 10, "A", "C") == {"freq": 0.03}
+    assert allele_score.get_allele_scores_for_allele(
+        "1", 10, "A", "C", scores=["freq"]) == (0.03,)
 
 
 def test_allele_score_builder_no_score_line_cross_variation_leak(
@@ -1381,9 +1395,11 @@ def test_allele_score_builder_no_score_line_cross_variation_leak(
     score_b = AlleleScore(sibling_b.build_resource(tmp_path / "b")).open()
 
     assert score_a.get_all_scores() == ["sa"]
-    assert score_a.fetch_allele_scores("1", 10, "A", "G") == {"sa": 0.11}
+    assert score_a.get_allele_scores_for_allele(
+        "1", 10, "A", "G", scores=["sa"]) == (0.11,)
     assert score_b.get_all_scores() == ["sb"]
-    assert score_b.fetch_allele_scores("1", 10, "A", "G") == {"sb": 0.99}
+    assert score_b.get_allele_scores_for_allele(
+        "1", 10, "A", "G", scores=["sb"]) == (0.99,)
     # the shared base is untouched by either derivation
     assert base.scores == ()
     assert base.rows == ()
@@ -1407,8 +1423,10 @@ def test_allele_score_builder_no_cross_variation_leak(
     score_a = AlleleScore(sibling_a.build_resource(tmp_path / "a")).open()
     score_b = AlleleScore(sibling_b.build_resource(tmp_path / "b")).open()
 
-    assert score_a.fetch_allele_scores("1", 10, "A", "G") == {"freq": 0.11}
-    assert score_b.fetch_allele_scores("1", 10, "A", "G") == {"freq": 0.99}
+    assert score_a.get_allele_scores_for_allele(
+        "1", 10, "A", "G", scores=["freq"]) == (0.11,)
+    assert score_b.get_allele_scores_for_allele(
+        "1", 10, "A", "G", scores=["freq"]) == (0.99,)
     # the shared base carries neither sibling's data
     assert base.data is None
 
@@ -1851,7 +1869,8 @@ chr1   10  .  A   T   .    .      AF=0.25
     assert (tmp_path / "data.vcf.gz").is_file()
     assert (tmp_path / "data.vcf.gz.tbi").is_file()
     score = AlleleScore(res).open()
-    assert score.fetch_allele_scores("chr1", 10, "A", "T") == {"AF": 0.25}
+    assert score.get_allele_scores_for_allele(
+        "chr1", 10, "A", "T", scores=["AF"]) == (0.25,)
 
 
 def test_vcf_info_score_requires_info_header(tmp_path: pathlib.Path) -> None:
@@ -1896,9 +1915,10 @@ def test_vcf_info_score_with_score_names_a_field_without_a_type(
     amended = AlleleScore(amended_resource).open()
     assert amended.score_definitions["AF"].value_type == \
         header_only.score_definitions["AF"].value_type
-    assert amended.fetch_allele_scores("chr1", 10, "A", "T") == {"AF": 0.25}
-    assert header_only.fetch_allele_scores(
-        "chr1", 10, "A", "T", scores=["AF"]) == {"AF": 0.25}
+    assert amended.get_allele_scores_for_allele(
+        "chr1", 10, "A", "T", scores=["AF"]) == (0.25,)
+    assert header_only.get_allele_scores_for_allele(
+        "chr1", 10, "A", "T", scores=["AF"]) == (0.25,)
 
 
 def test_vcf_info_score_with_score_states_the_type_verbatim(
@@ -1914,7 +1934,8 @@ def test_vcf_info_score_with_score_states_the_type_verbatim(
     assert (entry["id"], entry["type"]) == ("RV", "bool")
     score = AlleleScore(resource).open()
     assert score.score_definitions["RV"].value_type == "bool"
-    assert score.fetch_allele_scores("chr1", 10, "A", "T") == {"RV": True}
+    assert score.get_allele_scores_for_allele(
+        "chr1", 10, "A", "T", scores=["RV"]) == (True,)
 
 
 def test_vcf_info_score_with_score_desc_overrides_the_header_description(
@@ -2005,8 +2026,8 @@ def test_vcf_info_score_amendment_renders_under_the_declared_score(
     [entry] = config["scores"]
     assert entry["id"] == "AF"
     assert entry[key] == value
-    assert AlleleScore(resource).open().fetch_allele_scores(
-        "chr1", 10, "A", "T") == {"AF": 0.25}
+    assert AlleleScore(resource).open().get_allele_scores_for_allele(
+        "chr1", 10, "A", "T", scores=["AF"]) == (0.25,)
 
 
 @pytest.mark.parametrize("score_id, value_type", [
@@ -2576,8 +2597,10 @@ def test_header_mode_none_allele_score_addresses_ref_alt_by_index(
     assert config["table"]["alternative"] == {"column_index": 3}
 
     score = AlleleScore(resource).open()
-    assert score.fetch_allele_scores("1", 10, "A", "G") == {"freq": 0.1}
-    assert score.fetch_allele_scores("1", 10, "A", "C") == {"freq": 0.2}
+    assert score.get_allele_scores_for_allele(
+        "1", 10, "A", "G", scores=["freq"]) == (0.1,)
+    assert score.get_allele_scores_for_allele(
+        "1", 10, "A", "C", scores=["freq"]) == (0.2,)
 
 
 def test_header_mode_none_rejects_a_name_addressed_score() -> None:
@@ -2851,8 +2874,8 @@ def test_vcf_info_score_meta_reads_back_through_the_resource(
 
     assert resource.get_summary() == "a VCF-info score"
     assert resource.get_labels() == {"domain": "variant"}
-    assert AlleleScore(resource).open().fetch_allele_scores(
-        "chr1", 10, "A", "T") == pytest.approx({"score": 0.1})
+    assert AlleleScore(resource).open().get_allele_scores_for_allele(
+        "chr1", 10, "A", "T", scores=["score"]) == pytest.approx((0.1,))
 
 
 def test_data_frame_meta_reads_back_through_the_resource(
