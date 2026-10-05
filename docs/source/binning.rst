@@ -572,10 +572,12 @@ and output are all present does nothing. The chunks are keyed by everything
 in the run definition that decides their values — resources, score,
 aggregator, replacement, group, the fragment entry's grouping and metadata
 settings, bin size and region — so two run definitions sharing a work
-directory share exactly the chunks they compute identically. A rerun does
-not notice that a resource, or a metadata table, has changed underneath
-it; pass ``--force`` to recompute every chunk, for example after a resource
-was updated in the GRR.
+directory share exactly the chunks they compute identically. A local
+metadata file (``meta: {file_name: ...}``) is an input of every task, so
+editing it recomputes the chunks on the next run. A rerun does not notice
+that a resource, or a metadata table read from a ``data_frame`` resource,
+has changed underneath it; pass ``--force`` to recompute every chunk, for
+example after a resource was updated in the GRR.
 
 
 The output file

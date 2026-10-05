@@ -249,8 +249,10 @@ could be added without changing what is decided above.
   the stale value list, and fragments with values the histogram lacks are
   dropped and counted, not added.
 - A run that reads a local metadata file is reproducible only where that
-  file is; the root attributes record it, nothing enforces it. A rerun does
-  not notice a changed table (or a changed resource); `--force` recomputes.
+  file is; the root attributes record it, nothing enforces it. The file is
+  an input of every task, so a rerun after editing it recomputes the
+  chunks. A rerun does not notice a changed resource, or a changed table
+  read from a `data_frame` resource; `--force` recomputes.
 - A future binner kind is expected to answer the same questions this one did,
   in the same places: which bin a record belongs to, what an empty bin
   holds, how its grouping is declared rather than inferred, and what it
