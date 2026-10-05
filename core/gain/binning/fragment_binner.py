@@ -23,7 +23,8 @@ An entry's keys:
   categorical histogram (its statistics must be built and pulled).
   Pooled, a value's group is ``<sample_id>:<value>``, by the resource's
   :data:`SAMPLE_ID_LABEL` label, which every pooled resource must carry,
-  since one barcode recurs in every sample; unpooled, the bare value.
+  each its own, since one barcode recurs in every sample; unpooled, the
+  bare value.
   The forms do not mix, and ``meta`` does not go with the last.
   Omitted, the resource's labels decide: a resource carrying
   :data:`CELL_META_RESOURCE_ID_LABEL` is grouped as with ``group: {}``,
@@ -866,7 +867,8 @@ def _resolve_value_grouping(
 
     Pooled, each resource's groups are prefixed with its
     :data:`SAMPLE_ID_LABEL` label, which each must carry, without a
-    ``:``, so that a group name splits back one way only.
+    ``:``, so that a group name splits back one way only, and no two
+    may share, so that two resources' cells never reach one track.
     """
     group_label = f"{label}.group"
     prefixes = [""] * len(resources)
@@ -897,6 +899,20 @@ def _resolve_value_grouping(
                 f"{SAMPLE_ID_LABEL!r} label may not contain ':'; "
                 f"{', '.join(coloned)} does; relabel it, or give "
                 f"pool: false")
+        sharing: dict[str, list[str]] = {}
+        for resource, sample_id in zip(resources, sample_ids, strict=True):
+            assert sample_id is not None
+            sharing.setdefault(sample_id, []).append(resource.resource_id)
+        shared = [
+            f"{_quoted(ids)} ({sample_id!r})"
+            for sample_id, ids in sharing.items() if len(ids) > 1]
+        if shared:
+            raise RunDefinitionError(
+                f"{group_label}: a pooled {VALUE_GROUP_KEY} grouping "
+                f"keeps samples apart by their {SAMPLE_ID_LABEL!r} label, "
+                f"and {'; '.join(shared)} share one, which would merge "
+                f"their cells into the same tracks; label each resource "
+                f"with its own sample, or give pool: false")
         prefixes = [f"{sample_id}:" for sample_id in sample_ids]
     values = []
     for resource in resources:

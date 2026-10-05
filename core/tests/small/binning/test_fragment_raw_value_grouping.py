@@ -285,6 +285,39 @@ def test_a_pooled_sample_id_with_a_colon_is_refused(
     assert "':'" in message
 
 
+def test_a_sample_id_shared_by_pooled_resources_is_refused(
+    tmp_path: pathlib.Path, genome: ReferenceGenome,
+) -> None:
+    # Both would prefix their barcode ``AAA`` as ``S1:AAA``, merging two
+    # resources' cells into one track.
+    repo = stats_grr(
+        tmp_path, ("frags/a", cells(sample_id="S1")),
+        ("frags/b", cells(sample_id="S1")),
+        ("frags/c", cells(sample_id="S2")))
+
+    message = refusal(
+        {"resource_query": "frags/*", "group": BY_CELL}, repo, genome)
+
+    assert "'frags/a', 'frags/b'" in message
+    assert "'S1'" in message
+    assert "'frags/c'" not in message
+    assert "pool: false" in message
+
+
+def test_unpooled_resources_may_share_a_sample_id(
+    tmp_path: pathlib.Path, genome: ReferenceGenome,
+) -> None:
+    repo = stats_grr(
+        tmp_path, ("frags/a", cells(sample_id="S1")),
+        ("frags/b", cells(sample_id="S1")))
+
+    run = parse({"resource_query": "frags/*", "pool": False,
+                 "group": BY_CELL}, repo, genome)
+
+    assert [t.name for t in run.tracks][:2] == ["frags/a:AAA", "frags/a:BBB"]
+    assert len(run.tracks) == 8
+
+
 def test_an_unpooled_resource_without_a_sample_id_label_has_bare_groups(
     tmp_path: pathlib.Path, genome: ReferenceGenome,
 ) -> None:
