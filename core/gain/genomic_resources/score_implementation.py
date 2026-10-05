@@ -111,8 +111,11 @@ def save_and_plot_histograms(
 
     A categorical histogram past ``UNIQUE_VALUES_LIMIT`` is written as
     deterministic gzipped JSON next to its plain truncated sidecar; every
-    other histogram as plain JSON (ADR 0032).  The full histogram an
-    earlier build left in the other encoding is deleted, so neither a
+    other histogram as plain JSON (ADR 0032).  A written ``.json.gz``
+    with no ``.dvc`` pointer beside it is reported with a warning that
+    names the ``dvc add`` to run; gain never runs DVC.  The full
+    histogram an earlier build left in the other encoding is deleted, so
+    neither a
     release that reads only the plain encoding nor a DVC-tracked sidecar
     that cannot be dropped serves it as current -- except a legacy
     ``histogram_<id>.yaml``, which the sidecar is named after and so
