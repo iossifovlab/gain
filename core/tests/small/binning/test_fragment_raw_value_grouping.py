@@ -250,6 +250,10 @@ def many_cells(*, categorical: bool) -> Any:
     ((("frags/a", cells(sample_id="S1")), ("frags/b", cells())),
      ["'frags/b' do not", "'sample_id'", "pool: false"]),
     ((("frags/a", cells()),), ["'frags/a' do not", "'sample_id'"]),
+    # A list label is not one value: no "['S1', 'S2']:" prefix.
+    ((("frags/a", cells(sample_id="S1")),
+      ("frags/b", cells(sample_id=["S1", "S2"]))),
+     ["'frags/b' do not", "'sample_id'", "one value"]),
 ])
 def test_a_pooled_resource_without_its_sample_id_label_is_refused(
     tmp_path: pathlib.Path, genome: ReferenceGenome,
