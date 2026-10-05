@@ -859,11 +859,16 @@ def _resolve_value_grouping(
     :data:`SAMPLE_ID_LABEL` label, which each must carry.
     """
     group_label = f"{label}.group"
+    prefixes = [""] * len(resources)
     if pool:
+        sample_ids = [
+            None if isinstance(value, list) else _as_text(value)
+            for value in (
+                r.get_labels().get(SAMPLE_ID_LABEL) for r in resources)]
         unlabelled = [
-            r.resource_id for r in resources
-            if _as_text(r.get_labels().get(SAMPLE_ID_LABEL)) is None
-            or isinstance(r.get_labels().get(SAMPLE_ID_LABEL), list)]
+            r.resource_id
+            for r, sample_id in zip(resources, sample_ids, strict=True)
+            if sample_id is None]
         if unlabelled:
             raise RunDefinitionError(
                 f"{group_label}: a pooled {VALUE_GROUP_KEY} grouping "
@@ -871,7 +876,7 @@ def _resolve_value_grouping(
                 f"{SAMPLE_ID_LABEL!r} label, which {_quoted(unlabelled)} "
                 f"do not carry as one value; label them, or give "
                 f"pool: false")
-    prefixes = []
+        prefixes = [f"{sample_id}:" for sample_id in sample_ids]
     values = []
     for resource in resources:
         if score_id == aggregate.score_id:
@@ -885,9 +890,6 @@ def _resolve_value_grouping(
                 f"{group_label}: resource {resource.resource_id!r} score "
                 f"{score_id!r} is of type {value_type!r}; only a str "
                 f"score's values group")
-        prefix = "" if not pool else \
-            f"{_as_text(resource.get_labels()[SAMPLE_ID_LABEL])}:"
-        prefixes.append(prefix)
         values.append(tuple(_value_groups(group_label, resource, score_id)))
     groups = {
         prefix + value
