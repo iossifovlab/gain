@@ -9,6 +9,7 @@ from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_resource,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.testing import build_filesystem_test_repository
 from gain.genomic_resources.testing.builders import (
     a_fragment_score,
     a_grr,
@@ -155,6 +156,21 @@ def indexed_repo(
     """
     cli_manage(["repo-index", "-R", str(grr_dir)])
     return repo
+
+
+@pytest.fixture
+def stats_repo(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path,
+) -> GenomicResourceRepo:
+    """The toy GRR with its statistics built, as ``grr_manage`` builds them.
+
+    Each ``str`` fragment score -- ``cell`` of ``frags/s1`` and
+    ``frags/s2`` -- then has its full categorical histogram.  A repository
+    reads a resource's manifest once, so the GRR is opened anew over the
+    directory the statistics were written into.
+    """
+    cli_manage(["repo-stats", "-R", str(grr_dir), "-j", "1"])
+    return build_filesystem_test_repository(grr_dir)
 
 
 @pytest.fixture
