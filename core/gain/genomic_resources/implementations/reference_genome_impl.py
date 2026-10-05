@@ -11,6 +11,7 @@ import yaml
 from gain import logging
 from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.reference_genome import (
+    ReferenceGenome,
     build_reference_genome_from_resource,
     reference_genome_files,
 )
@@ -23,7 +24,8 @@ from gain.genomic_resources.resource_implementation import (
 )
 from gain.genomic_resources.statistics.base_statistic import Statistic
 from gain.genomic_resources.statistics.percentages import percentages_over
-from gain.task_graph.graph import TaskDesc, TaskGraph
+from gain.task_graph.graph import Task, TaskDesc, TaskGraph
+from gain.utils.regions import check_region_size
 
 logger = logging.getLogger(__name__)
 
@@ -328,6 +330,32 @@ class GenomeStatistic(Statistic):
         )
 
 
+def _pack_contigs(
+    lengths: dict[str, int], capacity: int,
+) -> list[list[str]]:
+    """Pack contigs into batches whose total length is within ``capacity``.
+
+    First-fit decreasing; each batch lists its contigs in genome order, and
+    the batches are ordered by their first contig, so the packing of a
+    genome is deterministic.  ``capacity`` is at least the longest contig.
+    """
+    order = {chrom: index for index, chrom in enumerate(lengths)}
+    batches: list[list[str]] = []
+    free: list[int] = []
+    for chrom in sorted(lengths, key=lambda c: (-lengths[c], order[c])):
+        for index, room in enumerate(free):
+            if lengths[chrom] <= room:
+                batches[index].append(chrom)
+                free[index] -= lengths[chrom]
+                break
+        else:
+            batches.append([chrom])
+            free.append(capacity - lengths[chrom])
+    for batch in batches:
+        batch.sort(key=order.__getitem__)
+    return sorted(batches, key=lambda batch: order[batch[0]])
+
+
 class ReferenceGenomeImplementation(
     GenomicResourceImplementation,
     InfoImplementationMixin,
@@ -398,31 +426,58 @@ class ReferenceGenomeImplementation(
         region_size: int = DEFAULT_STATISTICS_REGION_SIZE,
         grr: GenomicResourceRepo | None = None,  # ruff: ignore[unused-method-argument]
     ) -> list[TaskDesc]:
-        tasks = []
-        chrom_save_tasks = []
+        """One task per batch of whole contigs, plus the split ones'.
 
+        A contig that fits whole into one region is not given tasks of
+        its own: such contigs are packed into batches no longer than the
+        longest contig (nor than ``region_size``), so the critical path
+        stays one longest contig while a scaffold-heavy assembly -- a few
+        thousand contigs -- costs a handful of tasks rather than three
+        per contig (gain#1788).  A contig longer than ``region_size`` is
+        counted region by region and merged and saved by one task.
+        """
+        check_region_size(region_size)
         with self.reference_genome.open():
-            for chrom in self.reference_genome.chromosomes:
-                chrom_tasks, chrom_save_task = self._create_chrom_stats_tasks(
-                    chrom, region_size,
+            lengths = self.reference_genome.get_all_chrom_lengths()
+            capacity = max(lengths.values(), default=0)
+            if region_size > 0:
+                capacity = min(capacity, region_size)
+
+            tasks: list[TaskDesc] = []
+            chrom_tasks: list[Task] = []
+            for chrom, length in lengths.items():
+                if length > capacity:
+                    split_tasks = self._create_split_chrom_stats_tasks(
+                        chrom, region_size)
+                    chrom_tasks.append(split_tasks[-1].task)
+                    tasks.extend(split_tasks)
+            for batch in _pack_contigs(
+                    {chrom: length for chrom, length in lengths.items()
+                     if length <= capacity},
+                    capacity):
+                batch_task = TaskGraph.make_task(
+                    f"{self.resource.resource_id}"
+                    f"_chrom_statistics_batch_{batch[0]}",
+                    ReferenceGenomeImplementation._do_chrom_statistics_batch,
+                    args=[self.resource, batch],
+                    deps=[],
                 )
-                chrom_save_tasks.append(chrom_save_task.task)
-                tasks.extend(chrom_tasks)
+                chrom_tasks.append(batch_task.task)
+                tasks.append(batch_task)
 
         global_task = TaskGraph.make_task(
             f"{self.resource.resource_id}_global_statistics",
             ReferenceGenomeImplementation._do_global_statistic,
-            args=[self.resource, *chrom_save_tasks],
+            args=[self.resource, *chrom_tasks],
             deps=[],
         )
         tasks.append(global_task)
 
         return tasks
 
-    def _create_chrom_stats_tasks(
+    def _create_split_chrom_stats_tasks(
         self, chrom: str, region_size: int,
-    ) -> tuple[list[TaskDesc], TaskDesc]:
-        tasks = []
+    ) -> list[TaskDesc]:
         regions = self.reference_genome.split_into_regions(region_size, chrom)
         tasks = [
             TaskGraph.make_task(
@@ -434,43 +489,66 @@ class ReferenceGenomeImplementation(
             )
             for reg in regions
         ]
-
         merge_task = TaskGraph.make_task(
-            f"{self.resource.resource_id}_merge_chrom_statistics_{chrom}",
-            ReferenceGenomeImplementation._merge_chrom_statistics,
-            args=[t.task for t in tasks],
+            f"{self.resource.resource_id}"
+            f"_merge_and_save_chrom_statistics_{chrom}",
+            ReferenceGenomeImplementation._merge_and_save_chrom_statistics,
+            args=[self.resource, chrom, *[t.task for t in tasks]],
             deps=[],
         )
         tasks.append(merge_task)
-        save_task = TaskGraph.make_task(
-            f"{self.resource.resource_id}_save_chrom_statistics_{chrom}",
-            ReferenceGenomeImplementation._save_chrom_statistic,
-            args=[self.resource, chrom, merge_task.task],
-            deps=[],
-        )
-        tasks.append(save_task)
+        return tasks
 
-        return tasks, save_task
+    @staticmethod
+    def _count_chrom(
+        genome: ReferenceGenome, chrom: str, start: int, end: int | None,
+    ) -> ChromosomeStatistic:
+        statistic = ChromosomeStatistic(chrom)
+        # The base before the region, so the pair across a region
+        # boundary is counted once -- by the region it ends in.
+        prev: str | None = None if start == 1 \
+            else genome.get_sequence(chrom, start - 1, start - 1)
+        for nuc in genome.fetch(
+                chrom, start, end,
+                buffer_size=CHROMOSOME_STATISTIC_FETCH_BUFFER_SIZE):
+            statistic.add_value((prev, nuc))
+            prev = nuc
+        statistic.finish()
+        return statistic
 
     @staticmethod
     def _do_chrom_statistic(
         resource: GenomicResource, chrom: str, start: int, end: int | None,
     ) -> ChromosomeStatistic:
         impl = build_reference_genome_from_resource(resource)
-        statistic = ChromosomeStatistic(chrom)
         with impl.open():
-            if start == 1:
-                prev: str | None = None
-            else:
-                prev = impl.get_sequence(chrom, start - 1, start)
-            for nuc in impl.fetch(
-                    chrom, start, end,
-                    buffer_size=CHROMOSOME_STATISTIC_FETCH_BUFFER_SIZE):
-                statistic.add_value((prev, nuc))
-                prev = nuc
+            return ReferenceGenomeImplementation._count_chrom(
+                impl, chrom, start, end)
 
-        statistic.finish()
-        return statistic
+    @staticmethod
+    def _do_chrom_statistics_batch(
+        resource: GenomicResource, chroms: list[str],
+    ) -> list[ChromosomeStatistic]:
+        """Count and save each of ``chroms`` whole, under one open."""
+        impl = build_reference_genome_from_resource(resource)
+        with impl.open():
+            return [
+                ReferenceGenomeImplementation._save_chrom_statistic(
+                    resource, chrom,
+                    ReferenceGenomeImplementation._count_chrom(
+                        impl, chrom, 1, None))
+                for chrom in chroms
+            ]
+
+    @staticmethod
+    def _merge_and_save_chrom_statistics(
+        resource: GenomicResource, chrom: str,
+        *region_statistics: ChromosomeStatistic,
+    ) -> ChromosomeStatistic:
+        return ReferenceGenomeImplementation._save_chrom_statistic(
+            resource, chrom,
+            ReferenceGenomeImplementation._merge_chrom_statistics(
+                *region_statistics))
 
     @staticmethod
     def _merge_chrom_statistics(
@@ -505,13 +583,17 @@ class ReferenceGenomeImplementation(
 
     @staticmethod
     def _do_global_statistic(
-        resource: GenomicResource, *chrom_save_tasks: ChromosomeStatistic,
+        resource: GenomicResource,
+        *chrom_save_tasks: ChromosomeStatistic | list[ChromosomeStatistic],
     ) -> GenomeStatistic:
         impl = build_reference_genome_from_resource(resource)
         with impl.open():
             statistic = GenomeStatistic(impl.chromosomes)
-            for chrom_statistic in chrom_save_tasks:
-                statistic.add_value(chrom_statistic)
+            for saved in chrom_save_tasks:
+                # A batch task saves several contigs and returns them all.
+                for chrom_statistic in (
+                        saved if isinstance(saved, list) else [saved]):
+                    statistic.add_value(chrom_statistic)
 
             statistic.finish()
 
