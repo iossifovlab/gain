@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import bisect
 import copy
 import itertools
 import json
@@ -335,22 +336,27 @@ def _pack_contigs(
 ) -> list[list[str]]:
     """Pack contigs into batches whose total length is within ``capacity``.
 
-    First-fit decreasing; each batch lists its contigs in genome order, and
-    the batches are ordered by their first contig, so the packing of a
-    genome is deterministic.  ``capacity`` is at least the longest contig.
+    Best-fit decreasing: longest contig first, each into the open batch
+    with the least room that still holds it, found by bisecting the
+    batches kept sorted by room -- O(n log n) in the contigs.  Each batch
+    lists its contigs in genome order, and the batches are ordered by
+    their first contig, so the packing of a genome is deterministic.
+    ``capacity`` is at least the longest contig.
     """
     order = {chrom: index for index, chrom in enumerate(lengths)}
     batches: list[list[str]] = []
-    free: list[int] = []
+    # (room left, batch index), ascending.
+    rooms: list[tuple[int, int]] = []
     for chrom in sorted(lengths, key=lambda c: (-lengths[c], order[c])):
-        for index, room in enumerate(free):
-            if lengths[chrom] <= room:
-                batches[index].append(chrom)
-                free[index] -= lengths[chrom]
-                break
+        length = lengths[chrom]
+        at = bisect.bisect_left(rooms, (length, -1))
+        if at < len(rooms):
+            room, index = rooms.pop(at)
+            batches[index].append(chrom)
         else:
+            room, index = capacity, len(batches)
             batches.append([chrom])
-            free.append(capacity - lengths[chrom])
+        bisect.insort(rooms, (room - length, index))
     for batch in batches:
         batch.sort(key=order.__getitem__)
     return sorted(batches, key=lambda batch: order[batch[0]])
