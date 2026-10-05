@@ -100,10 +100,10 @@ Reading alleles
 
 :class:`~gain.genomic_resources.genomic_scores.AlleleScore` has a plane of
 reads in the same style as the position reads above and the fragment reads
-below. Each read returns a tuple of values parallel to the requested scores,
-takes its locus positionally and everything else as a keyword, and has a
-singular form for one score. The reads sit on a grid: three *loci* (where to
-look) by three *reductions* (what to do with the rows found there).
+below. Each read takes its locus positionally and everything else as a
+keyword, and has a singular form for one score; what it answers depends on its
+reduction, as described after the table. The reads sit on a grid: three *loci*
+(where to look) by three *reductions* (what to do with the rows found there).
 
 .. list-table:: The allele plane
    :header-rows: 1
@@ -134,8 +134,11 @@ Every built cell also has a singular form, which drops the ``s`` and takes one
 :meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_score_in_region_rows`
 and
 :meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_score_for_allele_agg`.
-The ``for_allele`` reads return bare value tuples, because the caller already
-knows the allele. The plural region read
+No ``for_allele`` read carries a locus in its answer, because the caller
+already knows the allele: the bare read answers one tuple of values parallel
+to the requested scores, and its singular form one value; the ``_rows`` read
+answers a list of such tuples, one per row, and its singular form a list of
+values. The plural region read
 :meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_scores_in_region_rows`
 yields one :class:`~gain.genomic_resources.genomic_scores.AlleleEntry` per
 row, a named tuple of ``pos``, ``ref``, ``alt`` and ``values``, because there
@@ -203,8 +206,10 @@ here was filtered out":
      - one entry
      - the fold of one row
    * - Two or more rows on a ``one`` resource
-     - before the enforcement release: the first row and a warning; from it
-       on: :class:`~gain.genomic_resources.genomic_scores.AlleleMultiplicityError`
+     - before the enforcement release: the first row and a warning, with the
+       filter applied to that row alone, so a filter rejecting it gives
+       ``None`` even when it would keep a later row; from it on:
+       :class:`~gain.genomic_resources.genomic_scores.AlleleMultiplicityError`
      - all rows
      - the fold of all rows
    * - Any allele on a ``many`` resource

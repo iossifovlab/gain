@@ -71,8 +71,10 @@ gain#1748; decision 4 below says how the two keys relate.
    the position and nucleotides are new information and positional access
    would swap `ref` and `alt`; its singular form
    `get_allele_score_in_region_rows` yields a plain `(pos, ref, alt, value)`
-   tuple. The `for_allele` reads return bare value tuples, because there the locus is the
-   caller's own argument. `fetch_allele_scores` and `fetch_allele_records`
+   tuple. No `for_allele` read carries a locus in its answer, because there the
+   locus is the caller's own argument: the bare read answers a value tuple, the
+   `_rows` read a list of value tuples (one per row), and the `_agg` read an
+   `AlleleAggregate`. `fetch_allele_scores` and `fetch_allele_records`
    were removed without a shim (gain#1755); neither had a caller outside gain.
 
 2. **Multiplicity is a declared property of the resource.**
@@ -120,7 +122,7 @@ gain#1748; decision 4 below says how the two keys relate.
    | no row for the allele | `None` | empty | `None` |
    | rows exist, the filter rejects all | `None` | empty | an aggregate over an empty selection, not `None` |
    | exactly one row | its values | one entry | fold of one |
-   | 2+ rows on a `one` resource | first row and a warning; raises from the enforcement release | all rows | fold of all |
+   | 2+ rows on a `one` resource | first row (filtered as a lone row, so a filter rejecting it gives `None`) and a warning; raises from the enforcement release | all rows | fold of all |
    | any allele on a `many` resource | raises at the call | all rows | fold of all |
    | unknown contig | raises, as every allele read does | | |
 
