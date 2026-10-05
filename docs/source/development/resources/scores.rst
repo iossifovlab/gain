@@ -164,15 +164,15 @@ call, before reading anything; read every row with ``_rows``, or fold them
 with ``_agg``. On a ``one`` resource, several rows for the allele are a data
 error. The bare read counts the rows before applying the ``score_filter``, so a
 filter that hides one of them does not hide the error. The allele statistics
-build (``grr_manage repo-stats`` or ``repo-repair``) checks the same promise over the whole
-table, and the bare read's own check is the backstop for data that changed
-after its statistics were built. Before GAIn
+build (``grr_manage repo-stats`` or ``repo-repair``) checks the same promise
+over the whole table, and the bare read's own check is the backstop for data
+that changed after its statistics were built. Before GAIn
 ``ALLELE_MULTIPLICITY_ENFORCEMENT_RELEASE`` (``2027.1.0``, in
 ``gain.genomic_resources.resource_types``), both only warn, and the bare read
 answers the first row. From that release on, both raise
 :class:`~gain.genomic_resources.genomic_scores.AlleleMultiplicityError`, and
-the statistics build writes nothing. ``allele_multiplicity_enforced()`` in
-the same module says which applies to the installed version.
+the statistics build writes nothing. ``allele_multiplicity_enforced()`` in the
+same module says which applies to the installed version.
 
 The ``_rows`` and ``_agg`` reads accept either multiplicity. On a ``one``
 resource ``_rows`` answers at most one row, and ``_agg`` folds that one row.

@@ -1387,9 +1387,9 @@ chromosome, position, reference and alternative, may have. ``one``, the default 
 each allele has at most one row. ``many`` means an allele may have several rows, as in a resource with a
 per-transcript dimension that scores each allele once per transcript. Such a resource should declare
 ``allele_multiplicity: many`` and give each of its scores an ``aggregator`` that says how those rows reduce to
-one value. The statistics build (``grr_manage repo-stats`` or ``repo-repair``) checks the declaration against the table, and
-a read of one allele's only row checks it again: a resource that holds several rows for an allele without
-declaring ``many`` is reported with a warning and, from GAIn ``2027.1.0`` on, as an error.
+one value. The statistics build (``grr_manage repo-stats`` or ``repo-repair``) checks the declaration against
+the table, and a read of one allele's only row checks it again: a resource that holds several rows for an
+allele without declaring ``many`` is reported with a warning and, from GAIn ``2027.1.0`` on, as an error.
 
 The scores, ``default_annotation``, and ``meta`` sections are the same as for position scores. The example below shows the beginning of
 a valid ``genomic_resource.yaml`` for an allele score resource:
