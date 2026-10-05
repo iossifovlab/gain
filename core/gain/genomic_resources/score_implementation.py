@@ -115,9 +115,9 @@ def save_and_plot_histograms(
     with no ``.dvc`` pointer beside it is reported with a warning that
     names the ``dvc add`` to run; gain never runs DVC.  The full
     histogram an earlier build left in the other encoding is deleted, so
-    neither a
-    release that reads only the plain encoding nor a DVC-tracked sidecar
-    that cannot be dropped serves it as current -- except a legacy
+    neither a release that reads only the plain encoding nor a
+    DVC-tracked sidecar that cannot be dropped serves it as current --
+    except a legacy
     ``histogram_<id>.yaml``, which the sidecar is named after and so
     must stay for the sidecar to be found.  A DVC-tracked ``.json.gz``
     beside a DVC-tracked sidecar is kept too, and still loaded, until
@@ -220,8 +220,7 @@ def _warn_unless_dvc_tracked(
     if resource.proto.file_exists(resource, f"{filename}{DVC_SUFFIX}"):
         return
     logger.warning(
-        "<%s> of resource <%s> is not DVC-tracked; it is too large for "
-        "git, run 'dvc add %s'",
+        "<%s> of resource <%s> is not DVC-tracked; run 'dvc add %s'",
         filename, resource.resource_id, filename)
 
 
