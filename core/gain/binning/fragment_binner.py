@@ -947,10 +947,11 @@ class FragmentScoreBinding:
     one-live-read-per-score limit holds however many are pooled.  Each
     resource's barcode-to-track map is built once, when bound.
 
-    With a cell grouping, ``dropped`` maps each (resource id, region)
-    binned so far -- the region as ``chrom:start-stop`` -- to the number
-    of its fragments that reached no track: a barcode absent from the
-    resource's filtered rows, or a row of no group.
+    With a grouping, ``dropped`` maps each (resource id, region) binned
+    so far -- the region as ``chrom:start-stop`` -- to the number of its
+    fragments that reached no track: a barcode absent from the
+    resource's filtered rows, a row of no group, or a grouping-score
+    value the score's histogram does not list.
     """
 
     def __init__(
@@ -992,9 +993,8 @@ class FragmentScoreBinding:
         folded through :func:`fold_into_bins`, one aggregator per track.
         A resource without the region's contig contributes nothing.
         Every read is drained, or closed on failure, before this returns,
-        so no read outlives the call.  With a cell grouping, each
-        resource's dropped fragments are counted into :attr:`dropped` and
-        logged.
+        so no read outlives the call.  With a grouping, each resource's
+        dropped fragments are counted into :attr:`dropped` and logged.
         """
         dropped = [0] * len(self.scores)
         reads = [
