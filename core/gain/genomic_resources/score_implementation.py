@@ -22,9 +22,9 @@ edge, whereas a top-level ``gain/scores/`` package would create a cycle.
 from __future__ import annotations
 
 import fnmatch
-import logging
 from abc import abstractmethod
 
+from gain import logging
 from gain.genomic_resources.dvc import DVC_SUFFIX, dvc_sidecar_target
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
