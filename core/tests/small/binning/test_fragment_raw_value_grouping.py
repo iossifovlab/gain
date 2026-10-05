@@ -329,6 +329,27 @@ def test_a_declared_categorical_score_past_the_cap_groups_by_every_value(
         f"S1:c{i:03d}" for i in range(150)]
 
 
+def test_a_score_whose_histogram_is_annulled_is_refused_saying_to_declare_it(
+    tmp_path: pathlib.Path, genome: ReferenceGenome,
+) -> None:
+    # Annulled by the definition: no statistics rebuild can list values.
+    annulled = (
+        a_fragment_score().with_score("cell", "str")
+        .with_histogram({"type": "null", "reason": "annulled"},
+                        score_id="cell")
+        .with_score("count", "int").with_labels(sample_id="S1")
+        .with_tabix().with_data(S1_FRAGMENTS))
+    repo = stats_grr(tmp_path, ("frags/s1", annulled))
+
+    message = refusal({"resource_query": "frags/s1", "group": BY_CELL},
+                      repo, genome)
+
+    assert "'frags/s1'" in message
+    assert "annul" in message
+    assert "histogram: {type: categorical}" in message
+    assert "dvc pull" not in message
+
+
 FULL_HISTOGRAM = "statistics/histogram_cell.json.gz"
 SIDECAR = "statistics/truncated/histogram_cell.json"
 

@@ -99,6 +99,7 @@ from gain.genomic_resources.histogram import (
     CategoricalHistogram,
     HistogramError,
     NullHistogram,
+    NullHistogramConfig,
 )
 from gain.genomic_resources.repository import (
     GenomicResource,
@@ -819,8 +820,16 @@ def _value_groups(
     rebuild = (
         "pull its data (dvc pull), or build its statistics (grr_manage "
         "repo-stats or resource-stats)")
+    score = FragmentScore(resource)
+    config = score.get_histogram_config(score_id)
+    if isinstance(config, NullHistogramConfig):
+        raise RunDefinitionError(
+            f"{whose}: its definition annuls its histogram "
+            f"({config.reason!r}), so no statistics list its values; "
+            f"declare histogram: {{type: categorical}} on the score and "
+            f"rebuild its statistics")
     try:
-        histogram = FragmentScore(resource).get_score_histogram(score_id)
+        histogram = score.get_score_histogram(score_id)
     except HistogramError as err:
         raise RunDefinitionError(
             f"{whose}: its full histogram, which lists the groups, cannot "
