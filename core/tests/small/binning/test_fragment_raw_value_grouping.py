@@ -451,6 +451,8 @@ def test_a_value_outside_the_histogram_is_dropped_and_counted(
                  if "dropped" in r.getMessage()]
     assert "1 fragments dropped" in logged
     assert "'cell' value" in logged
+    # Names both causes: no value at all, and one the histogram lacks.
+    assert "missing or not among" in logged
     assert "cell metadata" not in logged
 
 

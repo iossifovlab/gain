@@ -55,11 +55,11 @@ is omitted), on the one metadata table their ``meta`` names, and (when
 :data:`COUNT_SCORE` score.
 
 A fragment whose barcode is not in the filtered rows, or whose row's
-group is empty, or whose ``group_score_id`` value its resource's
-histogram does not list, reaches no track; it is counted as dropped, per
-resource and region.  An empty bin holds the fold's empty value -- 0 for
-``count`` and ``sum``, NaN for the others -- and so does every bin of a
-contig a resource lacks.
+group is empty, or whose ``group_score_id`` value is missing or is one
+its resource's histogram does not list, reaches no track; it is counted
+as dropped, per resource and region.  An empty bin holds the fold's
+empty value -- 0 for ``count`` and ``sum``, NaN for the others -- and so
+does every bin of a contig a resource lacks.
 """
 from __future__ import annotations
 
@@ -380,8 +380,8 @@ class ValueGrouping:
     @property
     def dropped_reason(self) -> str:
         return (
-            f"their {self.group_score_id!r} value not among the score's "
-            f"histogram values")
+            f"their {self.group_score_id!r} value missing or not among "
+            f"the score's histogram values")
 
     def track_maps(
         self,
@@ -967,7 +967,7 @@ class FragmentScoreBinding:
     so far -- the region as ``chrom:start-stop`` -- to the number of its
     fragments that reached no track: a barcode absent from the
     resource's filtered rows, a row of no group, or a grouping-score
-    value the score's histogram does not list.
+    value that is missing or that the score's histogram does not list.
     """
 
     def __init__(
