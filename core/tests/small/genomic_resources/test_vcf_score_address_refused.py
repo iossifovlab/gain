@@ -163,9 +163,10 @@ def test_an_entry_reads_the_info_field_named_by_its_id(
     """)
 
     with _build(tmp_path).open() as score:
-        values = score.fetch_allele_scores("chr1", 5, "A", "T", ["A"])
+        values = score.get_allele_scores_for_allele(
+            "chr1", 5, "A", "T", scores=["A"])
 
-    assert values == {"A": 1}
+    assert values == (1,)
 
 
 @pytest.mark.parametrize(

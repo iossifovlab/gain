@@ -435,5 +435,5 @@ chr1   10  .  A   T   .    .      scoreA=0.1
     with score, pytest.raises(
             ValueError,
             match="score 'NOPE' is not defined by resource"):
-        score.fetch_allele_scores(
+        score.get_allele_scores_for_allele(
             "chr1", 5000, "A", "T", scores=["NOPE"])

@@ -258,8 +258,8 @@ class AlleleScore(GenomicScore):
         >>> resource = repo.get_resource("cadd_v1_6")
         >>> score = build_score_from_resource(resource)
         >>> with score.open() as score:
-        ...     # Fetch scores for a specific variant
-        ...     values = score.fetch_allele_scores(
+        ...     # Fetch the scores of a specific variant's row
+        ...     values = score.get_allele_scores_for_allele(
         ...         "chr1", 12345, "A", "T"
         ...     )
         ...     # Iterate over the alleles in a region.  The nucleotides
@@ -292,10 +292,9 @@ class AlleleScore(GenomicScore):
         mode: Operating mode (SUBSTITUTIONS or ALLELES)
 
     Key Methods:
-        fetch_allele_scores: Get score values for a specific variant
-        fetch_allele_records: Get the records of a region, filtered, telling
-        a region holding no allele apart from one whose alleles were all
-        rejected
+        get_allele_scores_for_allele: Get the values of one allele's only
+        row, on a resource declaring one row per allele
+        get_allele_score_for_allele: The same for one score
         get_allele_scores_in_region_agg: Reduce the alleles of a region to
         one value per query -- and their keys -- in one walk, telling
         the same two answers apart
@@ -564,126 +563,6 @@ class AlleleScore(GenomicScore):
             yield pos, pos, [
                 extract(record, score_def) for score_def in score_defs]
 
-    def _fetch_allele_record(
-        self, chrom: str, pos: int, ref: str, alt: str,
-        *,
-        score_filter: ScoreFilter | None = None,
-    ) -> Record | None:
-        """Return the first record overlapping ``pos`` with this ref/alt.
-
-        Exact on ref and alt among the records the table returns for
-        ``pos``, NOT on the position: a record starting earlier whose span
-        reaches ``pos`` matches, and the first match in file order wins.
-        :meth:`get_allele_scores_for_allele_rows` matches the position as
-        well, so on such a table the two answer different rows.
-
-        ``score_filter`` -- from :meth:`GenomicScore.compile_filter` -- is
-        applied to the matched record, and an allele it rejects reads as
-        absent: the caller asked for an allele it is not to have, which is
-        the same answer as an allele this resource does not carry.  The
-        filter runs on the RECORD, so a rejected allele costs no value
-        extraction.
-
-        Internal to the allele read: :meth:`fetch_allele_scores` is the
-        per-allele read and hands back values, which is what a caller
-        asking about one allele wants.  A caller that wants the records of a
-        whole region asks :meth:`fetch_allele_records`, or
-        :meth:`GenomicScore.fetch_records` to stream them.
-        """
-        for record in self.fetch_records(
-                chrom, pos, pos, score_filter=score_filter):
-            if record[REF] == ref and record[ALT] == alt:
-                return record
-        return None
-
-    def fetch_allele_scores(
-        self, chrom: str, position: int,
-        reference: str, alternative: str,
-        scores: list[str] | None = None,
-        *,
-        score_filter: ScoreFilter | None = None,
-    ) -> dict[str, ScoreValue] | None:
-        """Fetch score values at specified genomic position and nucleotide.
-
-        ``score_filter`` selects whether this allele is reported at all; an
-        allele it rejects reads as absent, exactly as an unmatched one does.
-        """
-        if not self.has_chromosome(chrom):
-            raise ValueError(
-                f"{chrom} is not among the available chromosomes for "
-                f"NP Score resource {self.resource_id}")
-
-        requested_scores = scores or self.get_all_scores()
-        score_defs = self._resolve_score_defs(requested_scores)
-
-        selected = self._fetch_allele_record(
-            chrom, position, reference, alternative,
-            score_filter=score_filter)
-        if selected is None:
-            return None
-        return dict(zip(
-            requested_scores,
-            self.get_score_values_from_record(selected, score_defs),
-            strict=True))
-
-    def fetch_allele_records(
-        self, chrom: str, pos_begin: int | None, pos_end: int | None,
-        *,
-        score_filter: ScoreFilter | None = None,
-    ) -> list[Record] | None:
-        """Return the allele records overlapping a region, or ``None``.
-
-        ``None`` means no record overlaps the region at all -- absent data.
-        A list means records were there, and holds the ones ``score_filter``
-        accepted, which may be none of them: ``[]`` is an empty selection.
-        The two are different answers and a caller may well report them
-        differently, which is the whole reason this read exists rather than
-        :meth:`GenomicScore.fetch_records()
-        <.base.GenomicScore.fetch_records>` serving the same purpose -- an
-        iterator makes both an empty stream.
-
-        :meth:`FragmentScore.fetch_fragment_scores()
-        <.fragment.FragmentScore.fetch_fragment_scores>` deliberately has no
-        ``None``, and the difference is in the data rather than in taste: a
-        region is spanned by fragments as a matter of course, so "no
-        fragment covers it" is a count of zero.  Allele records sit at
-        points, most of a genome carries none, and a region holding no
-        allele is the same absent data that :meth:`fetch_allele_scores`
-        already answers ``None`` for.
-
-        ``score_filter`` -- from :meth:`GenomicScore.compile_filter()
-        <.base.GenomicScore.compile_filter>` -- is
-        applied inside the read, so a rejected record costs no value
-        extraction and the ownership check covers this path too.
-
-        Records, not values: a caller wants the nucleotides and the position
-        as well as the scores, reads several scores off one record, and may
-        read scores this method was never told about.  Handing back dicts
-        would settle all three for it, and wrongly.  Values come off a
-        record through
-        :meth:`~.base.GenomicScore.get_score_value_from_record`.
-
-        A contig the resource does not have is refused, as the other allele
-        reads refuse it, and refused from the call: answering ``None`` would
-        make a caller's typo indistinguishable from real absent data.  This
-        read materialises, so there is no generator body to defer the
-        refusal into -- unlike :meth:`GenomicScore.fetch_records()
-        <.base.GenomicScore.fetch_records>`, which
-        reports it from the first record read.
-
-        Materialising is what the ``list``/``None`` answer costs: a caller
-        reading a region far larger than it can hold wants the streaming
-        read instead -- or, to reduce the region rather than hold it,
-        :meth:`get_allele_scores_in_region_agg`, which shares this read's
-        two answers and its peek.  Records the filter rejects are never
-        held, though -- only the accepted ones accumulate.
-        """
-        selected = self._selected_allele_records(
-            chrom, pos_begin, pos_end, score_filter)
-        if selected is None:
-            return None
-        return list(selected)
-
     def _selected_allele_records(
         self, chrom: str, pos_begin: int | None, pos_end: int | None,
         score_filter: ScoreFilter | None,
@@ -694,9 +573,8 @@ class AlleleScore(GenomicScore):
         :meth:`_walk_allele_records`: the two halves every allele region read
         is built on, so they cannot come to disagree about the contig
         refusal, filter ownership, which records the filter keeps or their
-        order.  :meth:`fetch_allele_records` and
-        :meth:`get_allele_scores_in_region_agg` take both halves through
-        this method; the unreduced rows reads call them separately, to
+        order.  :meth:`get_allele_scores_in_region_agg` takes both halves
+        through this method; the unreduced rows reads call them separately, to
         check on the call and walk lazily, and answer ``None`` as an empty
         stream.  A step every region read must share belongs in one of the
         halves, not here.
@@ -787,17 +665,16 @@ class AlleleScore(GenomicScore):
     ) -> AlleleAggregate | None:
         """Reduce the alleles in a region to one value per query, or ``None``.
 
-        The kind's folding read (gain#1132): what
-        :meth:`fetch_allele_records` would hand back, already reduced, in
-        ONE walk that holds no record.  ``queries`` of ``None`` means every
-        score the resource defines, each with its own default aggregator;
+        The kind's folding read: the records overlapping the region that
+        ``score_filter`` keeps, reduced in ONE walk that holds no record.
+        ``queries`` of ``None`` means every score the resource defines,
+        each with its own default aggregator;
         a query's own aggregator wins over the default.  An allele line
         is weighed by :meth:`record_weight`, which counts it once.
 
         ``None`` is absent data, judged before ``score_filter`` and with
-        ownership checked first, exactly as :meth:`fetch_allele_records`
-        answers it -- both through :meth:`_selected_allele_records`, which
-        states the contract.  An :class:`AlleleAggregate` whose fold saw
+        ownership checked first, through :meth:`_selected_allele_records`,
+        which states the contract.  An :class:`AlleleAggregate` whose fold saw
         nothing is the other answer: records were there and the filter
         rejected every one, so each aggregator answers for an empty
         selection (``list`` gives ``[]``, ``max`` gives ``None``, ...).
@@ -962,8 +839,7 @@ class AlleleScore(GenomicScore):
         Materialised: a point holds a handful of rows.
 
         Exact on the position as well as the nucleotides: a row starting
-        earlier whose span reaches ``pos`` is not this allele, where
-        :meth:`fetch_allele_scores` matches it.
+        earlier whose span reaches ``pos`` is not this allele.
 
         The region walk of :meth:`get_allele_scores_in_region_rows` at the
         one position.  The requested values are read only off rows

@@ -58,7 +58,7 @@ def test_a_header_only_resource_with_a_per_genotype_field_is_refused(
     with pytest.raises(MalformedResourceError, match=_RESOURCE_ID) as excinfo:
         named_allele_score(
             _HEADER_ONLY, tmp_path, _RESOURCE_ID,
-        ).open().fetch_allele_scores("chr1", 6, "A", "T")
+        ).open().get_allele_scores_for_allele("chr1", 6, "A", "T")
 
     assert "PERGT" in str(excinfo.value)
 
@@ -125,7 +125,8 @@ def test_a_scores_block_omitting_the_field_reads_the_rest(
     """
     score = named_allele_score(_OMITTING_PERGT, tmp_path, _RESOURCE_ID).open()
 
-    assert score.fetch_allele_scores("chr1", 6, "A", "T") == {"CNT": 8}
+    assert score.get_allele_scores_for_allele(
+        "chr1", 6, "A", "T", scores=["CNT"]) == (8,)
 
 
 def test_merging_the_header_back_in_is_refused(
