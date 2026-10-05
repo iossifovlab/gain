@@ -11,7 +11,7 @@
 [#1211](https://github.com/iossifovlab/gain/issues/1211) (the D14 amendment: an absent
 contig is one uncovered run),
 [#1301](https://github.com/iossifovlab/gain/issues/1301) (the D13 amendment: a budget of
-0 or less is one task per track, opening its resource once)
+0 or less is one task per track, opening its resource once),
 [#1742](https://github.com/iossifovlab/gain/issues/1742) (the D2 amendment: the
 `/tracks` layout of the fragment kind, `group` and `resource_ids`, and the
 local-file root attributes; the kind's own semantics are
