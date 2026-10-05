@@ -63,6 +63,7 @@ does every bin of a contig a resource lacks.
 """
 from __future__ import annotations
 
+import gzip
 import heapq
 import json
 import math
@@ -809,6 +810,26 @@ def _resolve_grouping(
     return grouping, groups_of
 
 
+def _stored_histogram_type(
+    resource: GenomicResource, filename: str,
+) -> str | None:
+    """The ``config.type`` of a stored histogram file, as written.
+
+    ``None`` when the file is absent or is not a histogram's JSON.
+    """
+    try:
+        with resource.open_raw_file(filename, mode="rb") as infile:
+            content = infile.read()
+        if filename.endswith(".gz"):
+            content = gzip.decompress(content)
+        data = json.loads(content)
+    except (OSError, ValueError):
+        return None
+    config = data.get("config") if isinstance(data, dict) else None
+    kind = config.get("type") if isinstance(config, dict) else None
+    return kind if isinstance(kind, str) else None
+
+
 def _value_groups(
     label: str, resource: GenomicResource, score_id: str,
 ) -> list[str]:
@@ -839,13 +860,13 @@ def _value_groups(
     if isinstance(histogram, NullHistogram):
         # The statistics scan stores a null histogram for a categorical
         # config only when its values pass the cap, which only a config
-        # without enforce_type has; with no stored file, none was built.
-        # An unreadable stored file lands here too, and the rebuild the
-        # message asks for replaces it as well.
+        # without enforce_type has.  Anything else read back as null --
+        # no stored file, or one the scan did not write -- is rebuilt.
         if isinstance(config, CategoricalHistogramConfig) \
                 and not config.enforce_type \
-                and resource.file_exists(
-                    score.get_histogram_filename(score_id)):
+                and _stored_histogram_type(
+                    resource, score.get_histogram_filename(score_id),
+                ) == "null":
             raise RunDefinitionError(
                 f"{whose} has more distinct values than the default "
                 f"categorical histogram keeps "

@@ -379,6 +379,24 @@ def test_the_cap_is_recognised_however_its_reason_is_worded(
     assert "histogram: {type: categorical}" in message
 
 
+def test_a_stored_file_that_is_no_null_histogram_is_not_the_cap(
+    tmp_path: pathlib.Path, genome: ReferenceGenome,
+) -> None:
+    # Loaded as a NullHistogram ("Invalid histogram type"), but the scan
+    # never wrote it: a broken file, rebuilt rather than declared.
+    repo = stats_grr(tmp_path, ("frags/s1", cells(sample_id="S1")))
+    path = (tmp_path / "custom" / "frags/s1"
+            / "statistics/histogram_cell.json")
+    path.write_text(json.dumps({"config": {"type": "bogus"}}))
+
+    message = refusal({"resource_query": "frags/s1", "group": BY_CELL},
+                      repo, genome)
+
+    assert "'frags/s1'" in message
+    assert "grr_manage repo-stats" in message
+    assert "histogram: {type: categorical}" not in message
+
+
 def test_a_declared_categorical_score_with_a_null_histogram_is_rebuilt(
     tmp_path: pathlib.Path, genome: ReferenceGenome,
 ) -> None:
