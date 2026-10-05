@@ -856,7 +856,8 @@ def _resolve_value_grouping(
     """Resolve one job's raw-value grouping, and its sorted groups.
 
     Pooled, each resource's groups are prefixed with its
-    :data:`SAMPLE_ID_LABEL` label, which each must carry.
+    :data:`SAMPLE_ID_LABEL` label, which each must carry, without a
+    ``:``, so that a group name splits back one way only.
     """
     group_label = f"{label}.group"
     prefixes = [""] * len(resources)
@@ -875,6 +876,17 @@ def _resolve_value_grouping(
                 f"prefixes each group with the resource's "
                 f"{SAMPLE_ID_LABEL!r} label, which {_quoted(unlabelled)} "
                 f"do not carry as one value; label them, or give "
+                f"pool: false")
+        coloned = [
+            f"{r.resource_id!r} ({sample_id!r})"
+            for r, sample_id in zip(resources, sample_ids, strict=True)
+            if sample_id is not None and ":" in sample_id]
+        if coloned:
+            raise RunDefinitionError(
+                f"{group_label}: a pooled {VALUE_GROUP_KEY} grouping "
+                f"names each group <{SAMPLE_ID_LABEL}>:<value>, so the "
+                f"{SAMPLE_ID_LABEL!r} label may not contain ':'; "
+                f"{', '.join(coloned)} does; relabel it, or give "
                 f"pool: false")
         prefixes = [f"{sample_id}:" for sample_id in sample_ids]
     values = []

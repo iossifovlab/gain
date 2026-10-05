@@ -264,6 +264,23 @@ def test_a_pooled_resource_without_its_sample_id_label_is_refused(
         assert fragment in message
 
 
+def test_a_pooled_sample_id_with_a_colon_is_refused(
+    tmp_path: pathlib.Path, genome: ReferenceGenome,
+) -> None:
+    # ``S1`` with value ``A:B`` and ``S1:A`` with value ``B`` would both
+    # be the group ``S1:A:B``: the ``:`` must split one way only.
+    repo = stats_grr(
+        tmp_path, ("frags/a", cells(sample_id="S1")),
+        ("frags/b", cells(sample_id="S1:A")))
+
+    message = refusal(
+        {"resource_query": "frags/*", "group": BY_CELL}, repo, genome)
+
+    assert "'frags/b'" in message
+    assert "'S1:A'" in message
+    assert "':'" in message
+
+
 def test_an_unpooled_resource_without_a_sample_id_label_has_bare_groups(
     tmp_path: pathlib.Path, genome: ReferenceGenome,
 ) -> None:
