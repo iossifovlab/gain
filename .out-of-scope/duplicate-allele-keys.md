@@ -17,9 +17,8 @@ malformed resource.
 > exact match wins" rule described below is no longer the accepted rule: it
 > survives only as the warning-release fallback of the bare read on an
 > undeclared `one` resource, until the enforcement release. The body is kept
-> as written: its
-> sweep of 15.25 billion records is the evidence for which seven resources
-> must declare `many`.
+> as written: its sweep of 15.25 billion records is the evidence for which
+> seven resources must declare `many`.
 
 > **Where the names below now live.** This record was written while the two
 > validators were methods on the score classes, and it names them that way
