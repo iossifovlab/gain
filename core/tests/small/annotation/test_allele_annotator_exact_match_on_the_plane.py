@@ -251,6 +251,24 @@ def test_one_answers_the_bare_row_values(
     assert no_row == {"freq": None, "id": None, "allele": None}
 
 
+def test_one_suffixes_the_key_with_a_score_that_is_no_attribute(
+    one_repo: GenomicResourceRepo,
+) -> None:
+    """The key's suffix is read off the row even when nothing else reads it.
+
+    ``id`` is not an attribute here, only an ``include_attributes`` id, so
+    the row's ``id`` is in the key and nowhere else in the answer.
+    """
+    with _pipeline(one_repo, """
+        - source: freq
+        - source: allele
+          include_attributes: id
+    """) as pipeline:
+        result = pipeline.annotate(VCFAllele("chr1", 10, "A", "C"))
+
+    assert result == {"freq": 0.2, "allele": ["chr1:10:A:C:ac"]}
+
+
 def test_a_row_starting_before_pos_is_not_matched(
     one_repo: GenomicResourceRepo,
 ) -> None:

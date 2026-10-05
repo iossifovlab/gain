@@ -4,6 +4,7 @@ import pathlib
 import textwrap
 
 import pytest
+from gain.genomic_resources import resource_types
 from gain.genomic_resources.genomic_position_table import (
     LineBuffer,
 )
@@ -337,25 +338,33 @@ def test_a_region_read_refuses_a_contig_the_resource_does_not_have(
 
 
 def test_the_per_allele_read_does_not_leak_the_line_buffer(
-    tmp_path: pathlib.Path,
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The one in-tree consumer that abandons a region read (gain#1120).
+    """The per-allele read abandons its walk on a duplicate row (gain#1120).
 
-    ``get_allele_scores_for_allele`` walks the records at the allele's
-    position and RETURNS once it has seen enough of them, leaving the
-    generator suspended -- so the tabix backend's buffered read is abandoned
-    once per lookup, and the leak is something production allele reads
-    would do, not merely something an external caller could do.
+    ``get_allele_scores_for_allele`` walks the rows at the allele's
+    position, and on a ``one`` resource it stops at the SECOND row holding
+    the allele -- that is enough to know the data is in error -- leaving the
+    generator suspended.  So on such data the tabix backend's buffered read
+    is abandoned once per lookup: the leak is something a production
+    allele read does, not merely something an external caller could do.
 
-    Two alleles per position, and each lookup asks for the FIRST of them, so
-    every read really is abandoned holding the second.  Before the buffered
-    paths pruned in a ``finally`` the buffer ended this scan holding one
-    record per lookup.
+    Each position holds the queried allele twice and another allele after
+    it, so every read really is abandoned holding that last row; a read
+    finding the allele once runs the walk to its end and abandons nothing.
+    Before the buffered paths pruned in a ``finally`` the buffer ended this
+    scan holding a position's worth of rows per lookup.
+
+    The duplicates are answered with a warning, pinned here, so that the
+    lookups keep answering once the duplicate becomes an error.
     """
+    monkeypatch.setattr(
+        resource_types, "allele_multiplicity_enforced", lambda: False)
     positions = range(10, 210, 2)
     header = "chrom  pos_begin  reference  alternative  freq"
     rows = "\n".join(
-        f"1  {pos}  A  G  0.1\n1  {pos}  A  C  0.2" for pos in positions)
+        f"1  {pos}  A  G  0.1\n1  {pos}  A  G  0.1\n1  {pos}  A  C  0.2"
+        for pos in positions)
     resource = (
         an_allele_score()
         .with_score("freq", "float")
