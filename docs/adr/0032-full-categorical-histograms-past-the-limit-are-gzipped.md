@@ -56,9 +56,14 @@ highly compressible, and nothing about it needs to stay human-diffable.
    and keeps rendering info pages.
 
 4. **gain warns, and does not `dvc add`.** Whether a gzipped full histogram
-   belongs in DVC is the GRR's policy, so gain never runs DVC. The warning
-   for a gzipped file that is neither DVC-tracked nor git-ignored is
-   planned work (gain#1735); until it lands, gain does not warn.
+   belongs in DVC is the GRR's policy, so gain never runs DVC. A build that
+   writes `histogram_<id>.json.gz` with no `histogram_<id>.json.gz.dvc`
+   pointer beside it logs one warning per file, naming the resource, the
+   file and the `dvc add` command; the build still succeeds (gain#1735).
+   Only the pointer is consulted, never `.gitignore`: the manifest build
+   leaves out a git-ignored file that has no pointer, so a `.json.gz` that
+   `.gitignore` alone covers is unpublished and its full loads fail, and
+   the curator is told about it as well.
 
 5. **The sidecar decides the encoding a reader loads.** All full-histogram
    reads go through `ScoreResource.get_histogram_filename`:

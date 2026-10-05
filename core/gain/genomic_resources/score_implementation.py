@@ -24,7 +24,8 @@ from __future__ import annotations
 import fnmatch
 from abc import abstractmethod
 
-from gain.genomic_resources.dvc import dvc_sidecar_target
+from gain import logging
+from gain.genomic_resources.dvc import DVC_SUFFIX, dvc_sidecar_target
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
     Histogram,
@@ -45,6 +46,8 @@ from gain.genomic_resources.resource_implementation import (
 )
 from gain.genomic_resources.score_resource import ScoreResource
 from gain.task_graph.graph import TaskDesc
+
+logger = logging.getLogger(__name__)
 
 
 class ScoreImplementationBase(
@@ -118,6 +121,10 @@ def save_and_plot_histograms(
     the curator runs ``dvc remove``.  The encoding, and so
     which file is stale, is decided from the histogram in hand.
 
+    A written ``.json.gz`` with no ``.dvc`` pointer beside it is
+    reported with a warning that names the ``dvc add`` to run; gain
+    never runs DVC.
+
     Every deletion goes through :func:`drop_stale_histogram_file`: a
     DVC-tracked file is reported and left in place.
     """
@@ -132,12 +139,14 @@ def save_and_plot_histograms(
             # Decided from the histogram in hand, never from the stored
             # manifest: a first build past the limit has no sidecar
             # listed yet (ADR 0032).
+            gzipped_filename = score.get_gzipped_histogram_filename(score_id)
             with proto.open_raw_file(
                 resource,
-                score.get_gzipped_histogram_filename(score_id),
+                gzipped_filename,
                 mode="wb",
             ) as outfile:
                 outfile.write(histogram.serialize_gzipped())
+            _warn_unless_dvc_tracked(resource, gzipped_filename)
             with proto.open_raw_file(
                 resource,
                 sidecar_filename,
@@ -198,6 +207,22 @@ def save_and_plot_histograms(
         ):
             drop_stale_histogram_file(resource, filename)
     _drop_orphaned_histogram_files(resource, score)
+
+
+def _warn_unless_dvc_tracked(
+    resource: GenomicResource, filename: str,
+) -> None:
+    """Ask the curator to ``dvc add`` a file with no ``.dvc`` pointer.
+
+    gain never runs DVC (ADR 0032).  Only the pointer is consulted: a file
+    that ``.gitignore`` alone covers is left out of the manifest, so its
+    full loads fail, and it is reported like any other.
+    """
+    if resource.proto.file_exists(resource, f"{filename}{DVC_SUFFIX}"):
+        return
+    logger.warning(
+        "<%s> of resource <%s> is not DVC-tracked; run 'dvc add %s'",
+        filename, resource.resource_id, filename)
 
 
 #: The score-histogram file names the orphan sweep reconciles, with ``{}``
