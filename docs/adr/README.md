@@ -95,6 +95,7 @@ of one decision will drift.
 | [0031](0031-declaring-a-config-schema-obliges-a-type-to-run-it.md) | Declaring a config schema obliges a type to run it | accepted |
 | [0032](0032-full-categorical-histograms-past-the-limit-are-gzipped.md) | Full categorical histograms past the limit are gzipped | accepted |
 | [0033](0033-gain-grr-is-the-public-import-path-for-external-users.md) | `gain.grr` is the public import path for external users | accepted |
+| [0034](0034-the-allele-plane-reads-a-declared-multiplicity.md) | The allele plane reads a declared multiplicity | accepted |
 
 > **Note:** `0003` was allocated twice, by two changes that landed the same day.
 > "Numbers are never reused" is a rule about not re-issuing a *retired* number;

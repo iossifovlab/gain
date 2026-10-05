@@ -4,6 +4,20 @@ An allele score will **not** be refused for carrying more than one record with
 the same `(chrom, pos, ref, alt)` key. A repeated key is normal data, not a
 malformed resource.
 
+> **Superseded in part by
+> [ADR 0034](../docs/adr/0034-the-allele-plane-reads-a-declared-multiplicity.md).**
+> Repeated keys are still legitimate, but now the resource declares them: a
+> resource that carries them sets `allele_multiplicity: many`, and reads its
+> rows through the `_rows` and `_agg` reads of the allele plane. A repeated
+> key on a resource left at `allele_multiplicity: one` (the default) is
+> reported. The statistics build and the one-row read
+> `get_allele_scores_for_allele` warn about it now, and both raise
+> `AlleleMultiplicityError` from `ALLELE_MULTIPLICITY_ENFORCEMENT_RELEASE`
+> (`2027.1.0`) on. `fetch_allele_record` and the "first exact match wins"
+> rule described below no longer exist. The body is kept as written: its
+> sweep of 15.25 billion records is the evidence for which seven resources
+> must declare `many`.
+
 > **Where the names below now live.** This record was written while the two
 > validators were methods on the score classes, and it names them that way
 > throughout — `AlleleScore.validate_records` and its array twin. Since

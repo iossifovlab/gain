@@ -95,24 +95,152 @@ value type when the configuration names none.
 is the same reduction applied to a grid of fixed-width bins, which is what a
 genome-browser-style plot wants.
 
-Reading alleles and fragments
------------------------------
+Reading alleles
+---------------
 
-:class:`~gain.genomic_resources.genomic_scores.AlleleScore` adds reads that
-take a reference and an alternative as well as a position —
-:meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_scores_for_allele`
-answers one allele's row, and its siblings
-:meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_scores_for_allele_rows`
+:class:`~gain.genomic_resources.genomic_scores.AlleleScore` has a plane of
+reads in the same style as the position reads above and the fragment reads
+below. Each read returns a tuple of values parallel to the requested scores,
+takes its locus positionally and everything else as a keyword, and has a
+singular form for one score. The reads sit on a grid: three *loci* (where to
+look) by three *reductions* (what to do with the rows found there).
+
+.. list-table:: The allele plane
+   :header-rows: 1
+   :stub-columns: 1
+   :widths: 25 25 25 25
+
+   * - Locus
+     - bare: exactly one row
+     - ``_rows``: unreduced
+     - ``_agg``: folded
+   * - ``for_allele(chrom, pos, ref, alt, *, …)``
+     - :meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_scores_for_allele`
+     - :meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_scores_for_allele_rows`
+     - :meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_scores_for_allele_agg`
+   * - ``at_position(chrom, pos, *, …)``
+     - reserved
+     - reserved
+     - —
+   * - ``in_region(chrom, start, end, *, …)``
+     - reserved
+     - :meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_scores_in_region_rows`
+     - :meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_scores_in_region_agg`
+
+Every built cell also has a singular form, which drops the ``s`` and takes one
+``score``:
+:meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_score_for_allele`,
+:meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_score_for_allele_rows`,
+:meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_score_in_region_rows`
 and
-:meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_scores_for_allele_agg`
-answer every row of an allele, unreduced or reduced. An allele score is in one of two modes,
-``substitutions`` or ``alleles``, reported by
+:meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_score_for_allele_agg`.
+The ``for_allele`` reads return bare value tuples, because the caller already
+knows the allele. The region ``_rows`` read yields one
+:class:`~gain.genomic_resources.genomic_scores.AlleleEntry` per row, a named
+tuple of ``pos``, ``ref``, ``alt`` and ``values``, because there the position
+and the nucleotides are new information. The ``_agg`` reads answer an
+:class:`~gain.genomic_resources.genomic_scores.AlleleAggregate`, described
+below. The ``reserved`` cells have a name and a meaning but no method yet.
+
+.. code-block:: python
+
+    with build_score_from_resource_id("hg38/scores/CADD_v1.7", grr).open() as score:
+        score.get_allele_scores_for_allele("chr1", 69_094, "G", "A")
+        # the values of the allele's only row, or None
+        for entry in score.get_allele_scores_in_region_rows("chr1", 69_094, 69_096):
+            print(entry.pos, entry.ref, entry.alt, entry.values)
+
+**How many rows an allele may have.** Some allele tables have several rows for
+one ``(chrom, pos, ref, alt)``, usually one per transcript. A resource says
+whether it does with the top-level ``allele_multiplicity`` key, ``one`` (the
+default) or ``many``, documented on :ref:`grr-allele-scores` and reported by
+:attr:`~gain.genomic_resources.genomic_scores.AlleleScore.multiplicity`. Only
+the bare reads depend on it. They answer exactly one row, so on a ``many``
+resource they raise
+:class:`~gain.genomic_resources.genomic_scores.AlleleMultiplicityError` at the
+call, before reading anything; read every row with ``_rows``, or fold them
+with ``_agg``. On a ``one`` resource, several rows for the allele are a data
+error. The bare read counts the rows before applying the ``score_filter``, so a
+filter that hides one of them does not hide the error. The allele statistics
+build (``grr_manage repo-stats`` or ``repo-repair``) checks the same promise over the whole
+table, and the bare read's own check is the backstop for data that changed
+after its statistics were built. Before GAIn
+``ALLELE_MULTIPLICITY_ENFORCEMENT_RELEASE`` (``2027.1.0``, in
+``gain.genomic_resources.resource_types``), both only warn, and the bare read
+answers the first row. From that release on, both raise
+:class:`~gain.genomic_resources.genomic_scores.AlleleMultiplicityError`, and
+the statistics build writes nothing. ``allele_multiplicity_enforced()`` in
+the same module says which applies to the installed version.
+
+The ``_rows`` and ``_agg`` reads accept either multiplicity. On a ``one``
+resource ``_rows`` answers at most one row, and ``_agg`` folds that one row.
+
+**What each read answers.** The three reductions answer "nothing here"
+differently, and only the folds tell "nothing here" apart from "everything
+here was filtered out":
+
+.. list-table:: Outcomes, side by side
+   :header-rows: 1
+   :stub-columns: 1
+   :widths: 25 25 20 30
+
+   * - Situation
+     - bare
+     - ``_rows``
+     - ``for_allele_agg``
+   * - No row for the allele
+     - ``None``
+     - empty
+     - ``None``
+   * - Rows exist, the filter rejects all
+     - ``None``
+     - empty
+     - an aggregate over an empty selection, not ``None``
+   * - Exactly one row
+     - its values
+     - one entry
+     - the fold of one row
+   * - Two or more rows on a ``one`` resource
+     - before the enforcement release: the first row and a warning; from it
+       on: :class:`~gain.genomic_resources.genomic_scores.AlleleMultiplicityError`
+     - all rows
+     - the fold of all rows
+   * - Any allele on a ``many`` resource
+     - :class:`~gain.genomic_resources.genomic_scores.AlleleMultiplicityError`,
+       at the call
+     - all rows
+     - the fold of all rows
+   * - Unknown contig
+     - ``ValueError``, raised at the call
+     - ``ValueError``, raised at the call
+     - ``ValueError``, raised at the call
+
+"Empty" is an empty list from
+:meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_scores_for_allele_rows`
+and a generator that yields nothing from
+:meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_scores_in_region_rows`;
+a ``_rows`` read never answers ``None``. The region fold answers like the
+``for_allele`` fold: ``None`` when no row overlaps the region, and an aggregate
+over an empty selection when the filter rejected every row. In that aggregate
+each aggregator answers for no rows: ``max`` gives ``None`` and ``list`` gives
+``[]``.
+
+**The mode is the annotator's, not the reads'.** An allele score also declares
+``allele_score_mode``, ``substitutions`` or ``alleles``, reported by
 :meth:`~gain.genomic_resources.genomic_scores.AlleleScore.substitutions_mode`
-and :meth:`~gain.genomic_resources.genomic_scores.AlleleScore.alleles_mode`;
-the reads themselves do not consult it. The mode tells the allele score
-annotator how to route a ``VCFAllele``: on a ``substitutions`` resource only a
+and :meth:`~gain.genomic_resources.genomic_scores.AlleleScore.alleles_mode`.
+No read of the plane consults it: an exact-allele read answers an indel's own
+row, or ``None``, on either kind of resource. The mode tells the allele score
+annotator how to route a ``VCFAllele``. On a ``substitutions`` resource only a
 substitution is matched exactly, and any other allele (insertion, deletion,
-complex) is reduced over the bases it covers; on an ``alleles`` resource every allele is matched exactly.
+complex) is reduced over the bases it covers; on an ``alleles`` resource every
+allele is matched exactly. The annotator reads ``allele_multiplicity`` too: it
+matches an allele with the bare read on a ``one`` resource and with
+:meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_scores_for_allele_agg`
+on a ``many`` resource, folding each attribute with its aggregator.
+
+Reading fragments
+-----------------
 
 :class:`~gain.genomic_resources.genomic_scores.FragmentScore` reads intervals.
 Its method names say exactly which relation to the query region they use —
@@ -122,7 +250,7 @@ for those covering one point. The distinction matters: summing a score over
 overlapping fragments double-counts a fragment that straddles two adjacent
 query windows, and the ``starting_in`` form is the one that tiles.
 
-Both kinds have an aggregating read that answers off a single walk of the
+The allele and fragment kinds both have an aggregating read that answers off a single walk of the
 region and returns a small record rather than a bare tuple —
 :class:`~gain.genomic_resources.genomic_scores.AlleleAggregate` and
 :class:`~gain.genomic_resources.genomic_scores.FragmentAggregate`. Each
@@ -244,6 +372,14 @@ API
 
 .. autoclass:: AlleleAggregate
    :members:
+
+.. autoclass:: AlleleEntry
+   :members:
+
+.. autoclass:: AlleleMultiplicityError
+   :members:
+
+.. autofunction:: allele_key
 
 .. autoclass:: FragmentAggregate
    :members:
