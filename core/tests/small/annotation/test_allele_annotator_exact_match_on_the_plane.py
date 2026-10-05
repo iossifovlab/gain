@@ -28,7 +28,6 @@ from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing.builders import (
-    AlleleScoreBuilder,
     a_grr,
     an_allele_score,
 )
@@ -45,27 +44,22 @@ TWO_ROWS = VCFAllele("chr1", 10, "A", "C")
 ONE_ROW = VCFAllele("chr1", 16, "C", "T")
 
 
-def _score(multiplicity: str | None) -> AlleleScoreBuilder:
-    builder = (
-        an_allele_score()
-        .with_score("freq", "float", desc="a float score")
-        .with_score("other", "float", desc="a float with a default")
-        .with_aggregator("min", score_id="other")
-        .with_score("id", "str", desc="a string score")
-        .with_score("flag", "bool", desc="a bool score")
-        .with_data(_DATA)
-    )
-    if multiplicity is not None:
-        builder = builder.with_allele_multiplicity(multiplicity)
-    return builder
-
-
 @pytest.fixture
 def many_repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
     """``chr1:10 A>C`` in two rows on a resource declaring ``many``."""
     return (
         a_grr()
-        .with_resource("alleles", _score("many"))
+        .with_resource(
+            "alleles",
+            an_allele_score()
+            .with_score("freq", "float", desc="a float score")
+            .with_score("other", "float", desc="a float with a default")
+            .with_aggregator("min", score_id="other")
+            .with_score("id", "str", desc="a string score")
+            .with_score("flag", "bool", desc="a bool score")
+            .with_data(_DATA)
+            .with_allele_multiplicity("many"),
+        )
         .build_repo(tmp_path)
     )
 
