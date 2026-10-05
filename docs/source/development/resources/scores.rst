@@ -127,8 +127,9 @@ reduction, as described after the table. The reads sit on a grid: three *loci*
      - :meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_scores_in_region_rows`
      - :meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_scores_in_region_agg`
 
-Every built cell also has a singular form, which drops the ``s`` and takes one
-``score``:
+Every built cell except the region fold
+:meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_scores_in_region_agg`
+also has a singular form, which drops the ``s`` and takes one ``score``:
 :meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_score_for_allele`,
 :meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_score_for_allele_rows`,
 :meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_score_in_region_rows`

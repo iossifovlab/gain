@@ -56,9 +56,11 @@ gain#1748; decision 4 below says how the two keys relate.
    | `at_position(chrom, pos, *, …)` | reserved | reserved | — |
    | `in_region(chrom, start, end, *, …)` | reserved | built | exists (gain#1132) |
 
-   Every cell has a plural form and a singular form (the singular drops the
-   `s` and resolves its one score through `_resolve_single_score`). The cells
-   built are the ones that have a consumer:
+   Every cell this ADR builds has a plural form and a singular form (the
+   singular drops the `s` and resolves its one score through
+   `_resolve_single_score`); the existing region fold
+   `get_allele_scores_in_region_agg` has no singular form. The cells built are
+   the ones that have a consumer:
    `get_allele_scores_for_allele` / `get_allele_score_for_allele`,
    `get_allele_scores_for_allele_rows` / `get_allele_score_for_allele_rows`,
    `get_allele_scores_in_region_rows` / `get_allele_score_in_region_rows`,
