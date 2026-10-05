@@ -230,8 +230,11 @@ Besides ``resource_query`` and ``search_term``, an entry takes these keys:
     * ``resource_label: LABEL`` — the ``data_frame`` resource that the
       fragment resource's label ``LABEL`` names;
     * ``file_name: PATH`` — a local file; see `Local metadata files`_.
-      ``file_format`` (``csv``, the default, ``tsv`` or ``excel``) and
-      ``file_separator`` go with it and only with it.
+      ``file_format`` (``csv``, ``tsv`` or ``excel``) and
+      ``file_separator`` go with it and only with it. Without
+      ``file_format`` the format follows the file's suffix: ``.tsv`` is
+      read as ``tsv``, ``.xls`` and ``.xlsx`` as ``excel``, and anything
+      else as ``csv``.
 
     and ``filter``, a list of conjuncts selecting the rows of one sample.
     Each is ``{column: C, value: V}``, the column ``C`` equal to the
