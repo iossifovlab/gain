@@ -432,9 +432,9 @@ class ReferenceGenomeImplementation(
         its own: such contigs are packed into batches no longer than the
         longest contig (nor than ``region_size``), so the critical path
         stays one longest contig while a scaffold-heavy assembly -- a few
-        thousand contigs -- costs a handful of tasks rather than three
-        per contig (gain#1788).  A contig longer than ``region_size`` is
-        counted region by region and merged and saved by one task.
+        thousand contigs -- costs a handful of tasks.  A contig longer
+        than ``region_size`` is counted region by region and merged and
+        saved by one task.
         """
         check_region_size(region_size)
         with self.reference_genome.open():
