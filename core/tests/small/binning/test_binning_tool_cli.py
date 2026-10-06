@@ -295,6 +295,39 @@ def test_dry_run_lists_the_suffixed_track_names(
     assert "scores/two\tscores/two\tt\tmean" in out
 
 
+NAMED_RUN_DEFINITION = textwrap.dedent("""
+    input_reference_genome: genome
+    bins:
+      bin_size: 10
+      regions: ["chr1:1-40"]
+    binners:
+    - position_score_binner:
+        resource_query: "scores/one"
+        name: a
+    - position_score_binner:
+        resource_query: "scores/one"
+        name: b
+""")
+
+
+def test_entries_differing_only_in_name_store_one_track_under_each_name(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
+) -> None:
+    # The two tracks compute the same chunks; the run computes them once
+    # and the writer stores the column under both names.
+    run_definition = write_run_definition(output, NAMED_RUN_DEFINITION)
+
+    binning_tool(run_definition, grr_dir, output)
+
+    with h5py.File(output, "r") as h5:
+        tracks = h5["tracks"][()]
+        values = h5["values"][()]
+    assert [row["name"] for row in tracks] == [
+        b"a/scores/one", b"b/scores/one"]
+    np.testing.assert_array_equal(
+        values, [[1.0, 1.0], [1.0, 1.0], [NAN, NAN], [2.0, 2.0]])
+
+
 def test_dry_run_reports_a_run_definition_error_and_writes_nothing(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
     capsys: pytest.CaptureFixture[str],
