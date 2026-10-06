@@ -564,6 +564,29 @@ def test_load_reset_password_form(
 
 
 @pytest.mark.django_db
+def test_load_reset_password_form_leaves_request_path_intact(
+    client: Client,
+) -> None:
+    # The template context's request is DRF's Request wrapper; the
+    # underlying wsgi_request.path is correct either way, so the check
+    # has to read the context.
+    mail.outbox.clear()
+    response = client.post(
+        "/api/forgotten_password",
+        {"email": "user@example.com"},
+    )
+    assert response.status_code == 200
+    message = mail.outbox[0].message().get_payload()
+    link_search = re.search(r":8000(.*)\n", message)
+    assert link_search is not None
+
+    response = client.get(link_search.group(1))
+
+    assert response.status_code == 200
+    assert response.context["request"].path == "/api/reset_password"
+
+
+@pytest.mark.django_db
 def test_reset_password_form(
     client: Client,
 ) -> None:

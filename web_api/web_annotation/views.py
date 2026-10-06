@@ -400,7 +400,6 @@ class PasswordReset(HtmlThrottledAPIView):
         # pylint: disable=not-callable
         form = self.form(user)  # type: ignore
         request.session[f"{self.code_type}_code"] = verif_code.path
-        request.path = request.path[:request.path.find("?")]  # pyright: ignore
         assert self.template is not None
         return render(
             request,  # pyright: ignore
