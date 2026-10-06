@@ -486,9 +486,10 @@ together with the number of regions, bins and tasks. For every
 ``fragment_score_binner`` entry it then reports the resources the entry
 matched, the metadata tables it reads (resource ids, or the absolute paths
 of local files), its group and track counts, every warning its
-resolution raised, and the mode and uncovered value of its tracks. For the two single-cell entries above, the convention
-entry and the explicit unpooled one, in one run definition binning a small
-two-chromosome genome at 100 bp:
+resolution raised, and the mode and uncovered value of its tracks. For the
+two single-cell entries above, the convention entry and the explicit
+unpooled one, in one run definition binning a small two-chromosome genome
+at 100 bp:
 
 .. code-block:: text
 

@@ -77,7 +77,6 @@ class BinFragmentStartAggregator(BinFragmentAggregator):
         self.end = end
         self.previous = start
         self.bin_size = bin_size
-        self.aggregator_name = aggregator
         self.empty_value = EMPTY_BIN_VALUES[aggregator]
         self.current_bin = calc_bin_index(bin_size, start)
         self.last_bin = calc_bin_index(bin_size, end)
@@ -110,7 +109,7 @@ class BinFragmentStartAggregator(BinFragmentAggregator):
                 calc_bin_begin(self.bin_size, self.current_bin),
                 calc_bin_end(self.bin_size, self.current_bin),
                 self._final()))
-            self.aggregator = Aggregator.build(self.aggregator_name)
+            self.aggregator.clear()
             self.current_bin += 1
         return bins
 
