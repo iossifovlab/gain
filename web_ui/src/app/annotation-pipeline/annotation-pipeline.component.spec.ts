@@ -1101,6 +1101,72 @@ describe('AnnotationPipelineComponent', () => {
     }
   });
 
+  it('keeps text typed during the initial load not valid when the load completes inside the debounce (#1777)', () => {
+    jest.useFakeTimers();
+    try {
+      pipelineStateService.pipelines.set([]);
+      component.currentPipelineText = '';
+      const initialPipelines = new Subject<Pipeline[]>();
+      jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
+        .mockReturnValueOnce(initialPipelines.asObservable());
+      component.ngOnInit();
+      const validateSpy = jest.spyOn(jobsServiceMock, 'validatePipelineConfig')
+        .mockReturnValueOnce(of(''));
+      component.currentPipelineText = 'typed during the initial load';
+      component.onConfigChanged();
+
+      initialPipelines.next(mockPipelines);
+      initialPipelines.complete();
+
+      expect(pipelineStateService.isConfigValid()).toBe(false);
+      expect(validateSpy).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+
+      expect(validateSpy).toHaveBeenCalledTimes(1);
+      expect(validateSpy).toHaveBeenCalledWith('typed during the initial load');
+      expect(pipelineStateService.isConfigValid()).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('keeps text typed during the post-save-as fetch not valid when it completes inside the debounce (#1777)', () => {
+    jest.useFakeTimers();
+    try {
+      component.ngOnInit();
+      jest.spyOn(mockMatRef, 'open').mockReturnValueOnce(mockMatDialogRef);
+      jest.spyOn(mockMatDialogRef, 'afterClosed').mockReturnValueOnce(of('My Pipeline'));
+      jest.spyOn(annotationPipelineServiceMock, 'savePipeline').mockReturnValueOnce(of('4'));
+      const pipelinesAfterSave = new Subject<Pipeline[]>();
+      jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
+        .mockReturnValueOnce(pipelinesAfterSave.asObservable());
+      component.currentPipelineText = 'saved yaml';
+      component.saveAs();
+      const validateSpy = jest.spyOn(jobsServiceMock, 'validatePipelineConfig')
+        .mockReturnValueOnce(of('invalid: bad yaml'));
+      component.currentPipelineText = 'invalid: [yaml';
+      component.onConfigChanged();
+
+      pipelinesAfterSave.next([
+        ...mockPipelines,
+        new Pipeline('4', 'My Pipeline', 'saved yaml', 'user', 'loaded'),
+      ]);
+      pipelinesAfterSave.complete();
+
+      expect(pipelineStateService.isConfigValid()).toBe(false);
+      expect(validateSpy).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+
+      expect(validateSpy).toHaveBeenCalledTimes(1);
+      expect(validateSpy).toHaveBeenCalledWith('invalid: [yaml');
+      expect(pipelineStateService.isConfigValid()).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('validates the next edit after a reconnect-driven refetch fails (#1779)', () => {
     jest.useFakeTimers();
     try {
