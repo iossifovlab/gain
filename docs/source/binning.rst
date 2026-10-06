@@ -467,7 +467,10 @@ Dry run
 ^^^^^^^
 
 ``--dry-run`` reads the run definition, resolves every query against the
-GRR, checks every rule described above, and exits without writing anything.
+GRR, checks every rule described above, and exits without writing an
+output file or a work directory. Resolving a raw-value grouping
+(``group: {group_score_id: ...}``) still reads each resource's full
+histogram, and a caching GRR stores those files in its cache.
 It prints the list of tracks the run would produce — name, resource ids
 (comma-separated), score id (empty for a fragment count) and aggregator —
 together with the number of regions, bins and tasks. For every
