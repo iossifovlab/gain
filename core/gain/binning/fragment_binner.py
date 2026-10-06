@@ -920,7 +920,7 @@ def _value_groups(
 
 
 def _resolve_value_grouping(
-    label: str, score_id: str, value: _FragmentValue,
+    label: str, score_id: str, fragment_value: _FragmentValue,
     resources: list[GenomicResource], *, pool: bool,
 ) -> tuple[ValueGrouping, list[str]]:
     """Resolve one job's raw-value grouping, and its sorted groups.
@@ -976,7 +976,7 @@ def _resolve_value_grouping(
         prefixes = [f"{sample_id}:" for sample_id in sample_ids]
     values = []
     for resource in resources:
-        if score_id == value.score_id:
+        if score_id == fragment_value.score_id:
             raise RunDefinitionError(
                 f"{group_label}: resource {resource.resource_id!r} score "
                 f"{score_id!r} is the aggregated score; group by another "
