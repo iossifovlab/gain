@@ -1017,17 +1017,24 @@ describe('AnnotationPipelineComponent', () => {
     }
   });
 
+  // Load the list, then fire a reconnect whose refetch GET stays open until
+  // the returned subject answers.
+  function startHeldReconnectRefetch(): Subject<Pipeline[]> {
+    const reconnect = armReconnect();
+    component.ngOnInit();
+    pipelineStateService.loadedWhileLoggedIn.set(!component.isUserLoggedIn);
+    const reloaded = new Subject<Pipeline[]>();
+    jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
+      .mockReturnValueOnce(reloaded.asObservable());
+    reconnect();
+    return reloaded;
+  }
+
   it('marks the config not valid on a keystroke during a pipeline-list reload, before it completes (#1777)', () => {
     jest.useFakeTimers();
     try {
-      const reconnect = armReconnect();
-      component.ngOnInit();
+      startHeldReconnectRefetch();
       expect(pipelineStateService.isConfigValid()).toBe(true);
-      pipelineStateService.loadedWhileLoggedIn.set(!component.isUserLoggedIn);
-      const reloaded = new Subject<Pipeline[]>();
-      jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
-        .mockReturnValueOnce(reloaded.asObservable());
-      reconnect();
       const validateSpy = jest.spyOn(jobsServiceMock, 'validatePipelineConfig');
 
       component.currentPipelineText = 'typed during the reload';
@@ -1049,13 +1056,7 @@ describe('AnnotationPipelineComponent', () => {
   it('validates the latest text typed during a reload after it completes; an error stays not valid (#1777)', () => {
     jest.useFakeTimers();
     try {
-      const reconnect = armReconnect();
-      component.ngOnInit();
-      pipelineStateService.loadedWhileLoggedIn.set(!component.isUserLoggedIn);
-      const reloaded = new Subject<Pipeline[]>();
-      jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
-        .mockReturnValueOnce(reloaded.asObservable());
-      reconnect();
+      const reloaded = startHeldReconnectRefetch();
       const validateSpy = jest.spyOn(jobsServiceMock, 'validatePipelineConfig')
         .mockReturnValueOnce(of('invalid: bad yaml'));
       component.currentPipelineText = 'typed during the reload';
@@ -1080,13 +1081,7 @@ describe('AnnotationPipelineComponent', () => {
   it('validates the text typed during a reload after it completes; a valid answer marks it valid (#1777)', () => {
     jest.useFakeTimers();
     try {
-      const reconnect = armReconnect();
-      component.ngOnInit();
-      pipelineStateService.loadedWhileLoggedIn.set(!component.isUserLoggedIn);
-      const reloaded = new Subject<Pipeline[]>();
-      jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
-        .mockReturnValueOnce(reloaded.asObservable());
-      reconnect();
+      const reloaded = startHeldReconnectRefetch();
       const validateSpy = jest.spyOn(jobsServiceMock, 'validatePipelineConfig')
         .mockReturnValueOnce(of(''));
       component.currentPipelineText = 'typed during the reload';
