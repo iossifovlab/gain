@@ -11,7 +11,11 @@
 [#1211](https://github.com/iossifovlab/gain/issues/1211) (the D14 amendment: an absent
 contig is one uncovered run),
 [#1301](https://github.com/iossifovlab/gain/issues/1301) (the D13 amendment: a budget of
-0 or less is one task per track, opening its resource once)
+0 or less is one task per track, opening its resource once),
+[#1742](https://github.com/iossifovlab/gain/issues/1742) (the D2 amendment: the
+`/tracks` layout of the fragment kind, `group` and `resource_ids`, and the
+local-file root attributes; the kind's own semantics are
+[ADR 0035](0035-a-fragment-belongs-to-the-bin-of-its-start.md))
 
 Design doc of record: `seqpipe/genomics-toolbox`
 `docs/2026-09-04-gain-score-binning-design.md`, whose decisions are numbered
@@ -77,6 +81,69 @@ was withdrawn: a bins × tracks matrix with two side tables is what HDF5
 expresses natively, while Parquet would carry the coordinates as columns
 beside the values or in a second file. TSV is what the prototype wrote,
 transposed. Each is a few lines for the consumer to produce from the HDF5.
+
+**Amended by #1742 (2026-10-05): `/tracks` gains `group`, `resource_id`
+becomes `resource_ids`, and a run that reads a local file records it.**
+The `fragment_score_binner` kind (#1203, #1741, #1759; its semantics are
+ADR 0035) made two things true that the layout above could not say: a
+track can be computed from many resources (a pooled entry merges every
+matched sample into one column), and a resource gives many tracks (one per
+group of its fragments). The fragment-binner design of record is
+`seqpipe/genomics-toolbox` `docs/2026-09-30-gain-fragment-binner-design.md`,
+decisions F1–F21; F7 and F12 are the ones this amendment carries.
+
+- `/tracks` has a `group` column, variable-length UTF-8: the track's group
+  (`all` for a fragment entry with no grouping, a class, a sample-prefixed
+  barcode), and the empty string for a position-score track.
+- `/tracks.resource_id` is renamed `resource_ids`, **for every track**: the
+  comma-separated list of the resources the track was computed from, in
+  resource-id order. A position-score track and an unpooled fragment track
+  hold one id and no comma; a pooled track holds every matched id. The
+  separator is safe because a resource id is restricted to `a-zA-Z0-9/._-`
+  (`RESOURCE_ID_CHARACTER_CLASS` in `repository.py`, one constant since
+  #1352), so a comma never occurs inside one. The `resource_query` string a pooled track was named after
+  is not stored; it is the track's `name` prefix.
+- A run whose fragment entry reads its cell metadata from a local file
+  (`meta: {file_name: …}`, F7) writes three more root attributes,
+  `metadata_files` (absolute paths), `metadata_file_sizes` (bytes) and
+  `metadata_file_mtimes` (UTC, ISO 8601), one element per distinct local
+  file in job order. A local file is outside the GRR, so the run is
+  reproducible only where that file is; the attributes at least state which
+  file it was. A run that reads no local file writes none of them, so the
+  six attributes above remain the whole set for every other run. (F12 says
+  "root attributes are unchanged"; F7, added the same day, is what added
+  these, and the code follows F7.)
+
+**This is the one deliberate break of the layout since the 2026.9
+releases.** A reader of `/tracks.resource_id` must switch to
+`resource_ids`, and tells the two layouts apart by the field itself
+(`'resource_ids' in h5['tracks'].dtype.names`); the user page says so
+beside the table. The `gain_version` root attribute does not tell them
+apart: a development build made after the 2026.9.7 release reports a 2026.9
+version but already writes the new layout. No layout version attribute was
+added: the field's presence is the test.
+
+Rejected:
+
+- **A `/track_resources` pair table** (track index, resource id), with
+  `/tracks` unchanged. It was the first decision and was withdrawn: it
+  keeps `resource_id` meaningful only for single-resource tracks, makes
+  every reader join two tables to answer "what was this column computed
+  from", and is a fourth dataset to keep consistent with the others for a
+  question one column answers.
+- **Keeping `resource_id` beside a new `resource_ids`.** It would spare old
+  readers the rename, at the price of two columns with one meaning, one of
+  them empty or arbitrary for every pooled track, kept in sync forever.
+- **Storing the query and re-resolving it at read time.** The matched set
+  depends on the repository's contents the day it is resolved; a file
+  that says "whatever `sc/atac_fragments/*` matches" stops describing its
+  own columns the first time a sample is added.
+
+Accepted cost: a pooled track repeats the whole id list. In the largest
+study of the single-cell demo GRR a pooled entry matches 518 resources,
+so every class track of that entry carries a string of 518 ids, tens of
+kilobytes per row of `/tracks`. Next to `/values` that is noise, and it was
+judged not worth a second table.
 
 ### Bins follow a global grid anchored at position 1 (D5, D17)
 
