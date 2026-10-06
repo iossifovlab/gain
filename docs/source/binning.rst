@@ -485,8 +485,8 @@ It prints the list of tracks the run would produce — name, resource ids
 together with the number of regions, bins and tasks. For every
 ``fragment_score_binner`` entry it then reports the resources the entry
 matched, the metadata tables it reads (resource ids, or the absolute paths
-of local files), its group and track counts, and every warning its
-resolution raised. For the two single-cell entries above, the convention
+of local files), its group and track counts, every warning its
+resolution raised, and the mode and uncovered value of its tracks. For the two single-cell entries above, the convention
 entry and the explicit unpooled one, in one run definition binning a small
 two-chromosome genome at 100 bp:
 
@@ -507,11 +507,15 @@ two-chromosome genome at 100 bp:
         tables: sc/cell_meta_data
         groups: 2
         tracks: 2
+        mode: fragment_start
+        uncovered_value: null
     binners[1]: fragment_score_binner
         resources: sc/atac_fragments/donor1, sc/atac_fragments/donor2
         tables: sc/cell_meta_data
         groups: 2
         tracks: 4
+        mode: fragment_start
+        uncovered_value: null
 
 and for the local-file entry, the report carries the warning:
 
@@ -523,6 +527,8 @@ and for the local-file entry, the report carries the warning:
         groups: 2
         tracks: 2
         warning: the cell metadata table '/tmp/binning-demo/cells.csv' is a local file; the run is not reproducible elsewhere
+        mode: fragment_start
+        uncovered_value: null
 
 Use it to see what a query matched, how large the matrix will be and how
 the work will be cut before committing cluster time.
@@ -623,7 +629,11 @@ understands without a library beyond ``h5py``. It holds three datasets:
     resource-id order: one id for a position-score track and for an
     unpooled fragment track, every matched id for a pooled one. ``group``
     is the track's group, empty for a position-score track. ``score_id``
-    is empty for a fragment track that counts fragments.
+    is empty for a fragment track that counts fragments. ``mode``
+    (variable-length UTF-8) is how a fragment track's fragments reach a
+    bin, ``fragment_start``, and empty for a position-score track;
+    ``uncovered_value`` (``float64``) is what a base no fragment covers
+    adds, ``NaN`` for none, which is every track's.
 
 Row *i* of ``/bins`` describes row *i* of ``/values``, and row *j* of
 ``/tracks`` describes column *j*. The root attributes record what the run

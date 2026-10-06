@@ -139,7 +139,8 @@ def test_a_track_s_parameters_record_the_grouping_score(
 
     assert by_value.name == constant.name == "frags/s1:AAA"
     assert json.loads(by_value.parameters) == {
-        "group_score_id": "cell", "value": 1}
+        "group_score_id": "cell", "value": 1,
+        "mode": "fragment_start", "uncovered_value": None}
     assert by_value.parameters != constant.parameters
 
 
