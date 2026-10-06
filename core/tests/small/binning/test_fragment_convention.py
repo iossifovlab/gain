@@ -177,6 +177,29 @@ def test_an_unlabelled_resource_is_one_all_track_counting_fragments(
         bin_job(job, CHR1, repo)[:, 0], S1_FRAGMENT_COUNT)
 
 
+def test_value_score_id_count_gives_the_read_pairs_per_bin(
+    tmp_path: pathlib.Path, genome: ReferenceGenome,
+) -> None:
+    # Read pairs are what a single-cell resource's count score holds;
+    # an entry asks for them by name.
+    repo = build_repo(
+        tmp_path, ("frags/s1", fragments(**{SAMPLE_ID_LABEL: "S1"})),
+        ("frags/lab", labelled("S1")))
+
+    plain = parse({"resource_query": "frags/s1",
+                   "value": {"score_id": COUNT_SCORE}}, repo, genome)
+    by_class = parse({"resource_query": "frags/lab",
+                      "value": {"score_id": COUNT_SCORE}}, repo, genome)
+
+    assert {(t.score_id, t.aggregator)
+            for t in plain.tracks + by_class.tracks} == {(COUNT_SCORE, "sum")}
+    np.testing.assert_array_equal(
+        bin_job(plain.jobs[0], CHR1, repo)[:, 0], S1_SUM_OF_COUNT)
+    np.testing.assert_array_equal(
+        bin_job(by_class.jobs[0], CHR1, repo),
+        [[5.0, 2.0], [0.0, 3.0], [0.0, 0.0], [0.0, 0.0]])
+
+
 #: CELL_META with a second grouping column; in S1 AAA is T1, BBB is B1.
 SUB_META = """sample_id,barcode,class,subclass
 S1,AAA,T,T1

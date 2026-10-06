@@ -172,7 +172,7 @@ def test_a_malformed_value_grouping_is_refused_naming_what_is_wrong(
     group: dict[str, Any], fragments: list[str],
 ) -> None:
     message = refusal({"resource_query": "frags/s1", "group": group,
-                       "aggregate": {"value": 1}}, stats_repo, genome)
+                       "value": {"value": 1}}, stats_repo, genome)
 
     for fragment in fragments:
         assert fragment in message
@@ -185,23 +185,23 @@ def test_grouping_by_the_aggregated_score_is_refused(
     # wrong with it.
     message = refusal({"resource_query": "frags/s1",
                        "group": {"group_score_id": "count"},
-                       "aggregate": {"score": "count"}}, stats_repo, genome)
+                       "value": {"score_id": "count"}}, stats_repo, genome)
 
     assert "binners[0].group" in message
     assert "'frags/s1'" in message
     assert "'count' is the aggregated score" in message
 
 
-@pytest.mark.parametrize("aggregate", [None, {"value": 1}])
+@pytest.mark.parametrize("value", [None, {"value": 1}])
 def test_meta_with_a_value_grouping_is_refused(
     stats_repo: GenomicResourceRepo, genome: ReferenceGenome,
-    aggregate: dict[str, Any] | None,
+    value: dict[str, Any] | None,
 ) -> None:
     entry: dict[str, Any] = {
         "resource_query": "frags/s1", "group": BY_CELL,
         "meta": {"resource_id": "meta/cells"}}
-    if aggregate is not None:
-        entry["aggregate"] = aggregate
+    if value is not None:
+        entry["value"] = value
 
     message = refusal(entry, stats_repo, genome)
 

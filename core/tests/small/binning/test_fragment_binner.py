@@ -64,11 +64,6 @@ def bin_regions(
         return [bound.bin_region(region, BIN_SIZE) for region in regions]
 
 
-#: The aggregate counting fragments, stated: omitted, a resource with an
-#: ``int`` ``count`` score -- as the conftest's are -- sums that score.
-COUNT_FRAGMENTS = {"value": 1}
-
-
 def test_a_plain_entry_is_one_all_track_counting_fragments_per_bin(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
 ) -> None:
@@ -76,8 +71,7 @@ def test_a_plain_entry_is_one_all_track_counting_fragments_per_bin(
     # each bin -- what the score's own binned read answers for a count of
     # the barcode every fragment carries.
     run = parse_fragment_entry(
-        {"resource_query": "frags/s1", "pool": False,
-         "aggregate": COUNT_FRAGMENTS}, repo, genome)
+        {"resource_query": "frags/s1", "pool": False}, repo, genome)
 
     assert [(t.name, t.group) for t in run.tracks] == [
         ("frags/s1:all", "all")]
@@ -126,30 +120,67 @@ def test_a_constant_value_of_two_sums_to_twice_the_fragment_count(
 ) -> None:
     plain = {"resource_query": "frags/s1", "pool": False}
     counted = bin_entry(
-        {**plain, "aggregate": COUNT_FRAGMENTS}, CHR1, repo, genome)
+        {**plain, "value": {"value": 1}}, CHR1, repo, genome)
 
     doubled = bin_entry(
-        {**plain, "aggregate": {"value": 2, "aggregator": "sum"}},
+        {**plain, "value": {"value": 2}, "aggregate": {"aggregator": "sum"}},
         CHR1, repo, genome)
 
     np.testing.assert_array_equal(doubled, 2 * counted)
     np.testing.assert_array_equal(doubled[:, 0], [4.0, 4.0, 0.0, 2.0])
 
 
-def test_a_score_without_an_aggregator_is_summed(
+def test_a_score_value_without_an_aggregate_is_summed(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
 ) -> None:
-    # Read pairs per bin: 2 + 5, 1 + 3, nothing, 4.
-    plain = {"resource_query": "frags/s1", "pool": False}
+    # ``value: {score_id: count}`` gives the read pairs per bin: 2 + 5,
+    # 1 + 3, nothing, 4.
+    plain = {"resource_query": "frags/s1", "pool": False,
+             "value": {"score_id": "count"}}
 
-    implied = bin_entry(
-        {**plain, "aggregate": {"score": "count"}}, CHR1, repo, genome)
+    implied = bin_entry(plain, CHR1, repo, genome)
     spelled = bin_entry(
-        {**plain, "aggregate": {"score": "count", "aggregator": "sum"}},
+        {**plain, "aggregate": {"mode": "fragment_start",
+                                "aggregator": "sum"}},
         CHR1, repo, genome)
 
     np.testing.assert_array_equal(implied, spelled)
     np.testing.assert_array_equal(implied[:, 0], [7.0, 4.0, 0.0, 4.0])
+
+
+@pytest.mark.parametrize("aggregate,moved_to", [
+    ({"score": "count"}, "value: {score_id: count}"),
+    ({"score": "count", "aggregator": "mean"}, "value: {score_id: count}"),
+    ({"value": 2}, "value: {value: 2}"),
+])
+def test_a_value_given_in_aggregate_is_refused_naming_the_value_key(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+    aggregate: dict[str, Any], moved_to: str,
+) -> None:
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_fragment_entry(
+            {"resource_query": "frags/s1", "aggregate": aggregate},
+            repo, genome)
+
+    message = str(excinfo.value)
+    assert message.startswith("binners[0].aggregate")
+    assert moved_to in message
+
+
+@pytest.mark.parametrize("mode", [
+    "fragment_length", "coverage_profile", "sideways", ["fragment_start"]])
+def test_a_mode_other_than_fragment_start_is_refused_naming_the_modes(
+    repo: GenomicResourceRepo, genome: ReferenceGenome, mode: Any,
+) -> None:
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_fragment_entry(
+            {"resource_query": "frags/s1", "aggregate": {"mode": mode}},
+            repo, genome)
+
+    message = str(excinfo.value)
+    assert message.startswith("binners[0].aggregate")
+    assert repr(mode) in message
+    assert "use one of fragment_start" in message
 
 
 def test_a_constant_group_names_the_entry_s_one_track(
@@ -178,8 +209,7 @@ BY_SAMPLE_LABEL = {
 def grouped_s1(**extra: Any) -> dict[str, Any]:
     return {
         "resource_query": "frags/s1", "pool": False,
-        "group": BY_CLASS, "meta": BY_SAMPLE_LABEL,
-        "aggregate": COUNT_FRAGMENTS, **extra,
+        "group": BY_CLASS, "meta": BY_SAMPLE_LABEL, **extra,
     }
 
 
@@ -238,7 +268,8 @@ def test_a_grouped_mean_is_nan_where_a_class_has_no_fragment(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
 ) -> None:
     block = bin_entry(
-        grouped_s1(aggregate={"score": "count", "aggregator": "mean"}),
+        grouped_s1(
+            value={"score_id": "count"}, aggregate={"aggregator": "mean"}),
         CHR1, repo, genome)
 
     np.testing.assert_array_equal(block, [
@@ -309,15 +340,16 @@ def test_a_pooled_entry_without_metadata_is_named_by_its_query(
         (expected, ("frags/s1", "frags/s2"))]
 
 
-@pytest.mark.parametrize("aggregate", [
-    None, {"score": "count"}, {"score": "count", "aggregator": "count"}])
+@pytest.mark.parametrize("extra", [
+    {}, {"value": {"score_id": "count"}},
+    {"value": {"score_id": "count"}, "aggregate": {"aggregator": "count"}}])
 def test_a_pooled_count_or_sum_is_the_sum_of_the_per_resource_blocks(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
-    aggregate: dict[str, Any] | None,
+    extra: dict[str, Any],
 ) -> None:
     # frags/s2 has no chr2: its chr2 block is all 0, and the pooled chr2
     # block is frags/s1's alone rather than poisoned.
-    entry = pooled() if aggregate is None else pooled(aggregate=aggregate)
+    entry = pooled(**extra)
     regions = [CHR1, BedRegion("chr2", 1, 40)]
     (job,) = parse_fragment_entry(entry, repo, genome).jobs
 
@@ -337,7 +369,8 @@ def test_a_pooled_mean_is_over_the_merged_fragments(
     # where a mean of the two samples' means would be 2.75.  31-40: S2's
     # EEE (2).  On chr2 only S1 speaks: its BBB (6).
     (job,) = parse_fragment_entry(
-        pooled(aggregate={"score": "count", "aggregator": "mean"}),
+        pooled(value={"score_id": "count"},
+               aggregate={"aggregator": "mean"}),
         repo, genome).jobs
 
     chr1, chr2 = bin_regions(job, [CHR1, BedRegion("chr2", 1, 40)], repo)
@@ -358,28 +391,34 @@ def test_a_pooled_mean_is_over_the_merged_fragments(
      ["matches no fragment_score resource"]),
     ({"resource_query": "frags/s1", "pool": "no"}, ["pool"]),
     # /values is one float64 matrix (D11).
-    ({"resource_query": "frags/s1", "aggregate": {"score": "cell"}},
-     ["'cell'", "'str'"]),
-    ({"resource_query": "frags/s1", "aggregate": {"score": "reads"}},
-     ["'reads'"]),
-    ({"resource_query": "frags/s1",
-      "aggregate": {"score": "count", "aggregator": "mode"}},
+    ({"resource_query": "frags/s1", "value": {"score_id": "cell"}},
+     ["binners[0].value", "'cell'", "'str'"]),
+    ({"resource_query": "frags/s1", "value": {"score_id": "reads"}},
+     ["binners[0].value", "'reads'"]),
+    ({"resource_query": "frags/s1", "value": {"score_id": "count"},
+      "aggregate": {"aggregator": "mode"}},
      ["aggregator 'mode' does not produce a number", "sum"]),
     ({"resource_query": "frags/s1",
-      "aggregate": {"value": 1, "aggregator": "join(,)"}},
+      "aggregate": {"aggregator": "join(,)"}},
      ["aggregator 'join(,)' does not produce a number"]),
-    ({"resource_query": "frags/s1", "aggregate": {"value": "two"}},
-     ["value"]),
+    ({"resource_query": "frags/s1", "value": {"value": "two"}},
+     ["binners[0].value", "value must be a number", "'two'"]),
+    ({"resource_query": "frags/s1", "value": {"value": True}},
+     ["binners[0].value", "value must be a number", "True"]),
     # A YAML list where a name belongs is refused, not an unhashable crash.
     ({"resource_query": "frags/s1", "aggregate": {"aggregator": ["sum"]}},
      ["binners[0].aggregate", "aggregator", "['sum']"]),
-    ({"resource_query": "frags/s1", "aggregate": {"score": ["count"]}},
-     ["binners[0].aggregate", "score", "['count']"]),
-    ({"resource_query": "frags/s1", "aggregate": {"scor": "count"}},
-     ["binners[0].aggregate", "'scor'"]),
+    ({"resource_query": "frags/s1", "value": {"score_id": ["count"]}},
+     ["binners[0].value", "score_id", "['count']"]),
+    ({"resource_query": "frags/s1", "value": {"scor": "count"}},
+     ["binners[0].value", "'scor'"]),
+    ({"resource_query": "frags/s1", "aggregate": {"modus": "sum"}},
+     ["binners[0].aggregate", "'modus'"]),
     ({"resource_query": "frags/s1",
-      "aggregate": {"score": "count", "value": 1}},
-     ["binners[0].aggregate", "not both"]),
+      "value": {"score_id": "count", "value": 1}},
+     ["binners[0].value", "score_id", "value", "not both"]),
+    ({"resource_query": "frags/s1", "value": {}},
+     ["binners[0].value", "give one of score_id or value"]),
     ({"resource_query": "frags/s1",
       "group": {"group": "bulk", **BY_CLASS}, "meta": BY_SAMPLE_LABEL},
      ["binners[0].group", "not both"]),
@@ -496,7 +535,8 @@ def test_one_track_under_two_aggregators_carries_each_aggregator(
             {KIND: grouped_s1()},
             {"position_score_binner": {"resource_query": "scores/one"}},
             {KIND: grouped_s1(
-                aggregate={"score": "count", "aggregator": "mean"})},
+                value={"score_id": "count"},
+                aggregate={"aggregator": "mean"})},
         ],
     }
 
@@ -517,7 +557,7 @@ def test_one_track_twice_under_one_aggregator_is_refused(
         "binners": [
             {KIND: {"resource_query": "frags/s1", "pool": False}},
             {KIND: {"resource_query": "frags/s1", "pool": False,
-                    "aggregate": {"value": 2}}},
+                    "value": {"value": 2}}},
         ],
     }
 
