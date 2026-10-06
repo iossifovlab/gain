@@ -456,10 +456,13 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     this.configChanged.next();
   }
 
+  /**
+   * Tell the rest of the app that the editor text is not known to be valid.
+   *
+   * Runs whatever the pipeline-list load state: only the validate request
+   * waits for a load (isConfigValid defers it), the dirty mark does not.
+   */
   private markConfigDirty(): void {
-    if (!this.pipelinesLoaded) {
-      return;
-    }
     this.unselectPublicPipeline();
     this.displayUnsavedPipelineIndication();
 
