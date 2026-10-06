@@ -398,10 +398,22 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     }
   }
 
+  /**
+   * Select a freshly loaded pipeline without replacing the editor's text.
+   *
+   * The config is marked valid, and its error cleared, when the editor still
+   * holds the pipeline's content. Text typed since then keeps the validity
+   * and the error message its own validation gave it: each keystroke
+   * marked it not valid, and only an answer for that text (already received,
+   * or still to come from the debounce or the deferral from the load) marks
+   * it valid again.
+   */
   private selectPipelineAfterSave(pipeline: Pipeline): void {
-    this.configError = '';
-    this.pipelineStateService.isConfigValid.set(true);
     this.selectedPipeline = pipeline;
+    if (!this.isPipelineChanged()) {
+      this.configError = '';
+      this.pipelineStateService.isConfigValid.set(true);
+    }
     this.updateDownloadLink();
     this.pipelineStateService.selectedPipelineId.set(pipeline.id);
     this.dropdownControl.setValue(pipeline.name);
@@ -456,10 +468,16 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     this.configChanged.next();
   }
 
+  /**
+   * Tell the rest of the app that the editor text is not known to be valid.
+   *
+   * Runs whatever the pipeline-list load state: only the validate request
+   * waits for a load (isConfigValid defers it), the dirty mark does not.
+   * A validate request already in flight is dropped: its answer is about
+   * text the editor no longer holds.
+   */
   private markConfigDirty(): void {
-    if (!this.pipelinesLoaded) {
-      return;
-    }
+    this.pipelineValidationSubscription.unsubscribe();
     this.unselectPublicPipeline();
     this.displayUnsavedPipelineIndication();
 
@@ -475,7 +493,6 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     this.validationPendingOnLoad = false;
     this.markConfigDirty();
 
-    this.pipelineValidationSubscription.unsubscribe();
     this.pipelineValidationSubscription = this.jobsService.validatePipelineConfig(this.currentPipelineText).pipe(
       take(1)
     ).subscribe({

@@ -1017,6 +1017,294 @@ describe('AnnotationPipelineComponent', () => {
     }
   });
 
+  // Load the list, then fire a reconnect whose refetch GET stays open until
+  // the returned subject answers.
+  function startHeldReconnectRefetch(): Subject<Pipeline[]> {
+    const reconnect = armReconnect();
+    component.ngOnInit();
+    pipelineStateService.loadedWhileLoggedIn.set(!component.isUserLoggedIn);
+    const reloaded = new Subject<Pipeline[]>();
+    jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
+      .mockReturnValueOnce(reloaded.asObservable());
+    reconnect();
+    return reloaded;
+  }
+
+  it('marks the config not valid on a keystroke during a pipeline-list reload, before it completes (#1777)', () => {
+    jest.useFakeTimers();
+    try {
+      startHeldReconnectRefetch();
+      expect(pipelineStateService.isConfigValid()).toBe(true);
+      const validateSpy = jest.spyOn(jobsServiceMock, 'validatePipelineConfig');
+
+      component.currentPipelineText = 'typed during the reload';
+      component.onConfigChanged();
+
+      // On the keystroke itself, before the debounce fires.
+      expect(pipelineStateService.isConfigValid()).toBe(false);
+      expect(pipelineStateService.currentPipelineText()).toBe('typed during the reload');
+
+      jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+
+      expect(pipelineStateService.isConfigValid()).toBe(false);
+      expect(validateSpy).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('validates the latest text typed during a reload after it completes; an error stays not valid (#1777)', () => {
+    jest.useFakeTimers();
+    try {
+      const reloaded = startHeldReconnectRefetch();
+      const validateSpy = jest.spyOn(jobsServiceMock, 'validatePipelineConfig')
+        .mockReturnValueOnce(of('invalid: bad yaml'));
+      component.currentPipelineText = 'typed during the reload';
+      component.onConfigChanged();
+      jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+      component.currentPipelineText = 'typed during the reload, then more';
+      component.onConfigChanged();
+      jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+
+      reloaded.next(mockPipelines);
+      reloaded.complete();
+
+      expect(validateSpy).toHaveBeenCalledTimes(1);
+      expect(validateSpy).toHaveBeenCalledWith('typed during the reload, then more');
+      expect(pipelineStateService.isConfigValid()).toBe(false);
+      expect(pipelineStateService.currentPipelineText()).toBe('typed during the reload, then more');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('validates the text typed during a reload after it completes; a valid answer marks it valid (#1777)', () => {
+    jest.useFakeTimers();
+    try {
+      const reloaded = startHeldReconnectRefetch();
+      const validateSpy = jest.spyOn(jobsServiceMock, 'validatePipelineConfig')
+        .mockReturnValueOnce(of(''));
+      component.currentPipelineText = 'typed during the reload';
+      component.onConfigChanged();
+      jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+      expect(pipelineStateService.isConfigValid()).toBe(false);
+
+      reloaded.next(mockPipelines);
+      reloaded.complete();
+
+      expect(validateSpy).toHaveBeenCalledTimes(1);
+      expect(validateSpy).toHaveBeenCalledWith('typed during the reload');
+      expect(pipelineStateService.isConfigValid()).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('ignores a validation answer for older text that lands during a reload after a newer keystroke (#1777)', () => {
+    jest.useFakeTimers();
+    try {
+      const reconnect = armReconnect();
+      component.ngOnInit();
+      const olderAnswer = new Subject<string>();
+      const validateSpy = jest.spyOn(jobsServiceMock, 'validatePipelineConfig')
+        .mockReturnValueOnce(olderAnswer.asObservable());
+      const savePipelineSpy = jest.spyOn(annotationPipelineServiceMock, 'savePipeline');
+      component.currentPipelineText = 'older valid text';
+      component.onConfigChanged();
+      jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+      expect(validateSpy).toHaveBeenCalledWith('older valid text');
+      pipelineStateService.loadedWhileLoggedIn.set(!component.isUserLoggedIn);
+      const reloaded = new Subject<Pipeline[]>();
+      jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
+        .mockReturnValueOnce(reloaded.asObservable());
+      reconnect();
+      component.currentPipelineText = 'newer invalid text';
+      component.onConfigChanged();
+      jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+
+      olderAnswer.next('');
+      olderAnswer.complete();
+
+      expect(pipelineStateService.isConfigValid()).toBe(false);
+      expect(pipelineStateService.currentPipelineText()).toBe('newer invalid text');
+      expect(savePipelineSpy).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('keeps text typed during the initial load not valid when the load completes inside the debounce (#1777)', () => {
+    jest.useFakeTimers();
+    try {
+      pipelineStateService.pipelines.set([]);
+      component.currentPipelineText = '';
+      const initialPipelines = new Subject<Pipeline[]>();
+      jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
+        .mockReturnValueOnce(initialPipelines.asObservable());
+      component.ngOnInit();
+      const validateSpy = jest.spyOn(jobsServiceMock, 'validatePipelineConfig')
+        .mockReturnValueOnce(of(''));
+      component.currentPipelineText = 'typed during the initial load';
+      component.onConfigChanged();
+
+      initialPipelines.next(mockPipelines);
+      initialPipelines.complete();
+
+      expect(pipelineStateService.isConfigValid()).toBe(false);
+      expect(validateSpy).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+
+      expect(validateSpy).toHaveBeenCalledTimes(1);
+      expect(validateSpy).toHaveBeenCalledWith('typed during the initial load');
+      expect(pipelineStateService.isConfigValid()).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('keeps text typed during the post-save-as fetch not valid when it completes inside the debounce (#1777)', () => {
+    jest.useFakeTimers();
+    try {
+      component.ngOnInit();
+      jest.spyOn(mockMatRef, 'open').mockReturnValueOnce(mockMatDialogRef);
+      jest.spyOn(mockMatDialogRef, 'afterClosed').mockReturnValueOnce(of('My Pipeline'));
+      jest.spyOn(annotationPipelineServiceMock, 'savePipeline').mockReturnValueOnce(of('4'));
+      const pipelinesAfterSave = new Subject<Pipeline[]>();
+      jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
+        .mockReturnValueOnce(pipelinesAfterSave.asObservable());
+      component.currentPipelineText = 'saved yaml';
+      component.saveAs();
+      const validateSpy = jest.spyOn(jobsServiceMock, 'validatePipelineConfig')
+        .mockReturnValueOnce(of('invalid: bad yaml'));
+      component.currentPipelineText = 'invalid: [yaml';
+      component.onConfigChanged();
+
+      pipelinesAfterSave.next([
+        ...mockPipelines,
+        new Pipeline('4', 'My Pipeline', 'saved yaml', 'user', 'loaded'),
+      ]);
+      pipelinesAfterSave.complete();
+
+      expect(pipelineStateService.isConfigValid()).toBe(false);
+      expect(validateSpy).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+
+      expect(validateSpy).toHaveBeenCalledTimes(1);
+      expect(validateSpy).toHaveBeenCalledWith('invalid: [yaml');
+      expect(pipelineStateService.isConfigValid()).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('marks the config valid after a save-as whose fetch returns the unchanged text (#1777)', () => {
+    component.ngOnInit();
+    jest.spyOn(mockMatRef, 'open').mockReturnValueOnce(mockMatDialogRef);
+    jest.spyOn(mockMatDialogRef, 'afterClosed').mockReturnValueOnce(of('My Pipeline'));
+    jest.spyOn(annotationPipelineServiceMock, 'savePipeline').mockReturnValueOnce(of('4'));
+    jest.spyOn(jobsServiceMock, 'getAnnotationPipelines').mockReturnValueOnce(of([
+      ...mockPipelines,
+      new Pipeline('4', 'My Pipeline', 'saved yaml', 'user', 'loaded'),
+    ]));
+    const validateSpy = jest.spyOn(jobsServiceMock, 'validatePipelineConfig');
+    component.currentPipelineText = 'saved yaml';
+    pipelineStateService.isConfigValid.set(false);
+
+    component.saveAs();
+
+    expect(component.selectedPipeline.id).toBe('4');
+    expect(validateSpy).not.toHaveBeenCalled();
+    expect(pipelineStateService.isConfigValid()).toBe(true);
+  });
+
+  it('keeps text validated while a save was in flight valid after the post-save fetch (#1777)', () => {
+    jest.useFakeTimers();
+    try {
+      component.ngOnInit();
+      component.selectedPipeline = mockPipelines[2];
+      component.currentPipelineText = 'saved yaml';
+      const saveResponse = new Subject<string>();
+      jest.spyOn(annotationPipelineServiceMock, 'savePipeline')
+        .mockReturnValueOnce(saveResponse.asObservable());
+      jest.spyOn(jobsServiceMock, 'getAnnotationPipelines').mockReturnValueOnce(of([
+        mockPipelines[0],
+        mockPipelines[1],
+        new Pipeline('id3', 'name3', 'saved yaml', 'user', 'loaded'),
+      ]));
+      component.save();
+      jest.spyOn(jobsServiceMock, 'validatePipelineConfig').mockReturnValueOnce(of(''));
+      component.currentPipelineText = 'typed while saving';
+      component.onConfigChanged();
+      jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+      expect(pipelineStateService.isConfigValid()).toBe(true);
+
+      saveResponse.next('id3');
+      saveResponse.complete();
+
+      expect(component.selectedPipeline.content).toBe('saved yaml');
+      expect(pipelineStateService.isConfigValid()).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('keeps the error for text found invalid while a save was in flight after the post-save fetch (#1777)', () => {
+    jest.useFakeTimers();
+    try {
+      component.ngOnInit();
+      component.selectedPipeline = mockPipelines[2];
+      component.currentPipelineText = 'saved yaml';
+      const saveResponse = new Subject<string>();
+      jest.spyOn(annotationPipelineServiceMock, 'savePipeline')
+        .mockReturnValueOnce(saveResponse.asObservable());
+      jest.spyOn(jobsServiceMock, 'getAnnotationPipelines').mockReturnValueOnce(of([
+        mockPipelines[0],
+        mockPipelines[1],
+        new Pipeline('id3', 'name3', 'saved yaml', 'user', 'loaded'),
+      ]));
+      component.save();
+      jest.spyOn(jobsServiceMock, 'validatePipelineConfig').mockReturnValueOnce(of('invalid: bad yaml'));
+      component.currentPipelineText = 'typed while saving';
+      component.onConfigChanged();
+      jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+      expect(component.configError).toBe('invalid: bad yaml');
+
+      saveResponse.next('id3');
+      saveResponse.complete();
+
+      expect(pipelineStateService.isConfigValid()).toBe(false);
+      expect(component.configError).toBe('invalid: bad yaml');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('unselects an edited default pipeline on a keystroke during a pipeline-list reload (#1777)', () => {
+    startHeldReconnectRefetch();
+    expect(component.selectedPipeline.type).toBe('default');
+    expect(pipelineStateService.selectedPipelineId()).toBe('id1');
+
+    component.currentPipelineText = 'typed during the reload';
+    component.onConfigChanged();
+
+    expect(component.selectedPipeline).toBeNull();
+    expect(pipelineStateService.selectedPipelineId()).toBe('');
+    expect(component.dropdownControl.value).toBe('');
+  });
+
+  it('marks an edited user pipeline unsaved on a keystroke during a pipeline-list reload (#1777)', () => {
+    startHeldReconnectRefetch();
+    component.onPipelineClick(mockPipelines[2]);
+
+    component.currentPipelineText = 'typed during the reload';
+    component.onConfigChanged();
+
+    expect(component.selectedPipeline.id).toBe('id3');
+    expect(component.dropdownControl.value).toBe('name3 *');
+  });
+
   it('validates the next edit after a reconnect-driven refetch fails (#1779)', () => {
     jest.useFakeTimers();
     try {
