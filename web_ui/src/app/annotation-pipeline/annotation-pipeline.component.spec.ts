@@ -1105,6 +1105,39 @@ describe('AnnotationPipelineComponent', () => {
     }
   });
 
+  it('ignores a validation answer for older text that lands during a reload after a newer keystroke (#1777)', () => {
+    jest.useFakeTimers();
+    try {
+      const reconnect = armReconnect();
+      component.ngOnInit();
+      const olderAnswer = new Subject<string>();
+      const validateSpy = jest.spyOn(jobsServiceMock, 'validatePipelineConfig')
+        .mockReturnValueOnce(olderAnswer.asObservable());
+      const savePipelineSpy = jest.spyOn(annotationPipelineServiceMock, 'savePipeline');
+      component.currentPipelineText = 'older valid text';
+      component.onConfigChanged();
+      jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+      expect(validateSpy).toHaveBeenCalledWith('older valid text');
+      pipelineStateService.loadedWhileLoggedIn.set(!component.isUserLoggedIn);
+      const reloaded = new Subject<Pipeline[]>();
+      jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
+        .mockReturnValueOnce(reloaded.asObservable());
+      reconnect();
+      component.currentPipelineText = 'newer invalid text';
+      component.onConfigChanged();
+      jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+
+      olderAnswer.next('');
+      olderAnswer.complete();
+
+      expect(pipelineStateService.isConfigValid()).toBe(false);
+      expect(pipelineStateService.currentPipelineText()).toBe('newer invalid text');
+      expect(savePipelineSpy).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('keeps text typed during the initial load not valid when the load completes inside the debounce (#1777)', () => {
     jest.useFakeTimers();
     try {

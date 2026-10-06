@@ -472,8 +472,11 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
    *
    * Runs whatever the pipeline-list load state: only the validate request
    * waits for a load (isConfigValid defers it), the dirty mark does not.
+   * A validate request already in flight is dropped: its answer is about
+   * text the editor no longer holds.
    */
   private markConfigDirty(): void {
+    this.pipelineValidationSubscription.unsubscribe();
     this.unselectPublicPipeline();
     this.displayUnsavedPipelineIndication();
 
