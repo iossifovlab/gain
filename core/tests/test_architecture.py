@@ -18,6 +18,8 @@ from typing import NamedTuple
 
 import pytest
 from gain.annotation import pipeline_doc
+from gain.templates import get_jinja_env
+from jinja2 import ChoiceLoader, nodes
 from pytestarch import EvaluableArchitecture, get_evaluable_architecture
 
 GAIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1202,6 +1204,350 @@ def test_markdown_rendering_goes_through_the_one_wrapper_module() -> None:
     )
 
 
+class _Kwarg(NamedTuple):
+    """One keyword argument of a call to the Markdown wrapper.
+
+    The common shape the Python and the Jinja extractors reduce a call
+    to, so that one predicate judges both.
+    """
+
+    #: The keyword, or ``None`` for a ``**`` splat.
+    name: str | None
+    #: The value is a literal empty list or tuple, as written.
+    empty_literal: bool
+
+
+def _names_its_own_dialect(kwargs: Iterable[_Kwarg]) -> bool:
+    """Does a call with these keywords override ``render_markdown``'s dialect?
+
+    The dialect is ``DEFAULT_EXTRAS``, applied by the wrapper.  The one
+    sanctioned override is a literal empty ``extras`` -- plain Markdown.
+    Any other ``extras`` value cannot be proven empty from the source, and
+    a ``**`` splat may carry ``extras`` unseen; both are rejected.
+    """
+    return any(
+        kwarg.name is None
+        or (kwarg.name == "extras" and not kwarg.empty_literal)
+        for kwarg in kwargs
+    )
+
+
+@pytest.mark.parametrize(("kwargs", "offends"), [
+    pytest.param((), False, id="no keywords"),
+    pytest.param((_Kwarg("extras", empty_literal=True),), False,
+                 id="extras=[] or extras=()"),
+    pytest.param((_Kwarg("extras", empty_literal=False),), True,
+                 id="extras=['tables'] or extras=NAME"),
+    pytest.param((_Kwarg(None, empty_literal=False),), True, id="**opts"),
+    pytest.param((_Kwarg("safe_mode", empty_literal=False),), False,
+                 id="another markdown2 keyword"),
+    pytest.param((_Kwarg("safe_mode", empty_literal=False),
+                  _Kwarg("extras", empty_literal=False)), True,
+                 id="another keyword, then extras"),
+])
+def test_which_wrapper_calls_name_their_own_dialect(
+    kwargs: tuple[_Kwarg, ...], *, offends: bool,
+) -> None:
+    """The judgement half of the dialect fence, stated on its own.
+
+    Only a literal empty ``extras`` -- the documented opt-out to plain
+    Markdown -- may be named at a call site.  Anything else cannot be
+    proven empty from the source, and a ``**`` splat can carry ``extras``
+    invisibly, so both are a second source of truth for the dialect.
+    """
+    assert _names_its_own_dialect(kwargs) is offends
+
+
+#: The wrapper module, spelled out rather than taken from the module under
+#: test, for the reason ``DOC_TEMPLATE`` below gives.
+_WRAPPER = "gain.templates.markdown_support"
+
+
+class _WrapperCall(NamedTuple):
+    """A call to ``render_markdown`` found in a source, by line."""
+
+    line: int
+    kwargs: tuple[_Kwarg, ...]
+
+
+def _wrapper_calls_in_python(
+    source: str, package: list[str],
+) -> list[_WrapperCall]:
+    """Every call in ``source`` whose callee resolves to the wrapper.
+
+    The callee is resolved from the module's own imports -- any alias of
+    ``render_markdown``, or the function reached as an attribute of the
+    wrapper module under any alias -- rather than matched by name, so an
+    unrelated function that happens to be called ``markdown`` is not
+    swept up.  Bindings are collected module-wide, ignoring scope: an
+    import inside a function still binds its name for the sweep.
+    ``package`` places the source, for relative imports.
+    """
+    tree = ast.parse(source)
+    callees: set[str] = set()
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(
+                alias.asname or alias.name
+                for alias in node.names if alias.name == _WRAPPER
+            )
+        elif isinstance(node, ast.ImportFrom):
+            module = _import_from_module(node, package)
+            for alias in node.names:
+                local = alias.asname or alias.name
+                if module == _WRAPPER and alias.name == "render_markdown":
+                    callees.add(local)
+                elif f"{module}.{alias.name}" == _WRAPPER:
+                    modules.add(local)
+    callees.update(f"{module}.render_markdown" for module in modules)
+
+    return [
+        _WrapperCall(node.lineno, tuple(
+            _Kwarg(
+                keyword.arg,
+                empty_literal=isinstance(
+                    keyword.value, (ast.List, ast.Tuple),
+                ) and not keyword.value.elts,
+            )
+            for keyword in node.keywords
+        ))
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and _dotted(node.func) in callees
+    ]
+
+
+#: The name the template environment registers ``render_markdown`` under.
+_TEMPLATE_GLOBAL = "markdown"
+
+
+def _wrapper_calls_in_template(source: str) -> list[_WrapperCall]:
+    """Every call to the ``markdown`` global in a Jinja template source.
+
+    Parsed with the gain template environment's own parser, so the
+    template is read with the syntax it is rendered with -- a call split
+    across lines, or one inside a filter or a ``{% set %}``, is still
+    one ``Call`` node.
+    """
+    tree = get_jinja_env().parse(source)
+    return [
+        _WrapperCall(call.lineno, (
+            *(
+                _Kwarg(
+                    keyword.key,
+                    empty_literal=isinstance(
+                        keyword.value, (nodes.List, nodes.Tuple),
+                    ) and not keyword.value.items,
+                )
+                for keyword in call.kwargs
+            ),
+            *((_Kwarg(None, empty_literal=False),)
+              if call.dyn_kwargs is not None else ()),
+        ))
+        for call in tree.find_all(nodes.Call)
+        if isinstance(call.node, nodes.Name)
+        and call.node.name == _TEMPLATE_GLOBAL
+    ]
+
+
+def _wrapper_calls_in_gain_modules() -> list[tuple[str, _WrapperCall]]:
+    """Calls to the wrapper in every gain-core module but the wrapper's own.
+
+    Each is paired with its module's path under ``core/gain``.
+    """
+    exempt = pathlib.Path(GAIN_SRC) / "templates" / "markdown_support.py"
+    return [
+        (str(py.relative_to(GAIN_SRC)), call)
+        for py in sorted(pathlib.Path(GAIN_SRC).rglob("*.py"))
+        if py != exempt
+        for call in _wrapper_calls_in_python(
+            py.read_text(encoding="utf8"),
+            ["gain", *py.relative_to(GAIN_SRC).parts[:-1]],
+        )
+    ]
+
+
+def _wrapper_calls_in_gain_templates() -> list[tuple[str, _WrapperCall]]:
+    """Calls to the wrapper in every template the gain loaders can list.
+
+    Read through the environment's own loaders, so the sweep follows the
+    templates wherever the environment finds them.  A loader that cannot
+    list its templates is skipped: that is the entry-point provider
+    loader, which serves templates from outside gain-core.
+    """
+    env = get_jinja_env()
+    loader = env.loader
+    assert isinstance(loader, ChoiceLoader)
+    found: list[tuple[str, _WrapperCall]] = []
+    for each in loader.loaders:
+        try:
+            names = each.list_templates()
+        except TypeError:
+            continue
+        for name in names:
+            source, _, _ = each.get_source(env, name)
+            found.extend(
+                (name, call) for call in _wrapper_calls_in_template(source))
+    return found
+
+
+def _dotted(node: ast.expr) -> str | None:
+    """``a.b.c`` for a chain of attribute lookups on a name, else None."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        owner = _dotted(node.value)
+        return f"{owner}.{node.attr}" if owner else None
+    return None
+
+
+@pytest.mark.parametrize("source", [
+    (f"from {_WRAPPER} import render_markdown\n"
+     "render_markdown(t, extras=['tables'])"),
+    (f"from {_WRAPPER} import render_markdown as markdown\n"
+     "markdown(t, extras=['tables'])"),
+    (f"from {_WRAPPER} import render_markdown as md\n"
+     "md(t, extras=['tables'])"),
+    ("from .markdown_support import render_markdown\n"
+     "render_markdown(t, extras=['tables'])"),
+    (f"import {_WRAPPER}\n"
+     f"{_WRAPPER}.render_markdown(t, extras=['tables'])"),
+    (f"import {_WRAPPER} as ms\n"
+     "ms.render_markdown(t, extras=['tables'])"),
+    ("from gain.templates import markdown_support\n"
+     "markdown_support.render_markdown(t, extras=['tables'])"),
+    ("def f():\n"
+     f"    from {_WRAPPER} import render_markdown as md\n"
+     "    return md(t, extras=['tables'])"),
+])
+def test_the_python_sweep_sees_every_spelling_of_the_wrapper(
+    source: str,
+) -> None:
+    """The extraction half: a call is seen under any name it is bound to.
+
+    A correct predicate over calls the extractor never produces passes
+    vacuously, so each way of binding ``render_markdown`` -- under its own
+    name, the ``markdown`` alias the resource implementations use, an
+    arbitrary alias, relatively, or through its module -- must reach it.
+    """
+    calls = _wrapper_calls_in_python(source, package=["gain", "templates"])
+
+    assert any(_names_its_own_dialect(call.kwargs) for call in calls), (
+        f"not caught: {source!r} -> {calls}")
+
+
+#: Argument lists as written after the text argument, and whether the
+#: call names its own dialect.  Shared by the Python and the Jinja
+#: extraction tests: both must read each spelling the same way.
+_DIALECT_SPELLINGS = [
+    ("", False),
+    (", extras=[]", False),
+    (", extras=()", False),
+    (", extras=['tables']", True),
+    (", extras=('tables',)", True),
+    (", extras=DEFAULT_EXTRAS", True),
+    (", extras=dialect(x)", True),
+    (", **opts", True),
+    (", safe_mode='escape'", False),
+]
+
+
+@pytest.mark.parametrize(("arguments", "offends"), _DIALECT_SPELLINGS)
+def test_the_python_sweep_reads_extras_as_written(
+    arguments: str, *, offends: bool,
+) -> None:
+    source = (
+        f"from {_WRAPPER} import render_markdown as markdown\n"
+        f"markdown(t{arguments})"
+    )
+
+    calls = _wrapper_calls_in_python(source, package=["gain"])
+
+    assert len(calls) == 1
+    assert _names_its_own_dialect(calls[0].kwargs) is offends
+
+
+@pytest.mark.parametrize("source", [
+    "from markdown import markdown\nmarkdown(t, extras=['tables'])",
+    "def markdown(t, extras): ...\nmarkdown(t, extras=['tables'])",
+    (f"from {_WRAPPER} import render_markdown as md\n"
+     "markdown(t, extras=['tables'])"),
+    (f"from {_WRAPPER} import DEFAULT_EXTRAS\n"
+     "render_markdown(t, extras=['tables'])"),
+])
+def test_the_python_sweep_ignores_an_unrelated_markdown_function(
+    source: str,
+) -> None:
+    """Resolution is by import, not by the callee's name."""
+    assert _wrapper_calls_in_python(source, package=["gain"]) == []
+
+
+@pytest.mark.parametrize(("arguments", "offends"), _DIALECT_SPELLINGS)
+def test_the_template_sweep_reads_extras_as_written(
+    arguments: str, *, offends: bool,
+) -> None:
+    """Templates reach the wrapper as the environment's ``markdown`` global.
+
+    That is where the drift this fence exists for was written (#1278):
+    ``extras=["tables"]`` in the resource template, which a sweep of
+    Python sources alone never sees.
+    """
+    calls = _wrapper_calls_in_template(
+        f"<p>{{{{ markdown(t{arguments})|safe }}}}</p>")
+
+    assert len(calls) == 1
+    assert _names_its_own_dialect(calls[0].kwargs) is offends
+
+
+def test_the_template_sweep_ignores_other_calls() -> None:
+    calls = _wrapper_calls_in_template(
+        "{{ other(t, extras=['tables']) }}{{ t.markdown(extras=['x']) }}")
+
+    assert calls == []
+
+
+def test_the_dialect_sweeps_find_the_wrapper_callers() -> None:
+    """Both sweeps must reach the call sites they police.
+
+    A moved template directory, or a loader the listing no longer sees,
+    would leave the template sweep with nothing to read -- collecting no
+    offenders and passing while policing nothing.  The resource template
+    and the pipeline documentation template both call ``markdown(``.
+    """
+    templates = {name for name, _ in _wrapper_calls_in_gain_templates()}
+    modules = {name for name, _ in _wrapper_calls_in_gain_modules()}
+
+    assert {"resource_template.jinja", DOC_TEMPLATE} <= templates
+    assert "gene_sets/implementations/gene_sets_impl.py" in modules
+
+
+def test_no_caller_of_the_markdown_wrapper_names_its_own_dialect() -> None:
+    """``render_markdown`` decides the Markdown dialect, once.
+
+    It applies ``DEFAULT_EXTRAS`` when a call names no ``extras`` -- but
+    any call can, and the about page and the resource page drifted into
+    rendering the same GRR prose differently that way (gain#1278: an
+    ``extras=["tables"]`` in the resource template).  So within gain-core,
+    Python modules and the templates the gain template loader serves alike,
+    a call to the wrapper names no ``extras`` but a literal empty one, and
+    splats no ``**`` mapping that could carry it.
+    """
+    offenders = [
+        f"{name}:{call.line}"
+        for name, call in [
+            *_wrapper_calls_in_gain_modules(),
+            *_wrapper_calls_in_gain_templates(),
+        ]
+        if _names_its_own_dialect(call.kwargs)
+    ]
+    assert offenders == [], (
+        f"these calls to render_markdown name their own Markdown dialect: "
+        f"{offenders}. The dialect is render_markdown's decision "
+        f"(DEFAULT_EXTRAS in {_WRAPPER}); a caller that genuinely needs "
+        f"plain Markdown passes a literal `extras=[]` and says why (#1278)"
+    )
+
+
 #: The pipeline documentation template, spelled out rather than imported
 #: from the module under test.  A fence that scans for a name its own
 #: subject supplies goes blind the moment the subject renames it: the scan
@@ -2073,6 +2419,17 @@ def _imported_modules(py: pathlib.Path) -> set[str]:
     return _imported_names(py.read_text(encoding="utf8"), package)
 
 
+def _import_from_module(node: ast.ImportFrom, package: list[str]) -> str:
+    """The absolute dotted module a ``from ... import`` reads from.
+
+    Empty only when the dots climb above the top of ``package``.
+    """
+    # `from . import x` stays in the containing package; each extra dot
+    # climbs one above it.
+    base = package[:len(package) - (node.level - 1)] if node.level else []
+    return ".".join([*base, node.module] if node.module else base)
+
+
 def _imported_names(source: str, package: list[str]) -> set[str]:
     """``_imported_modules`` over a source string in a known package.
 
@@ -2088,14 +2445,7 @@ def _imported_names(source: str, package: list[str]) -> set[str]:
         if isinstance(node, ast.Import):
             imported.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
-            if node.level:
-                # `from . import x` stays in the containing package;
-                # each extra dot climbs one above it.
-                base = package[:len(package) - (node.level - 1)]
-            else:
-                base = []
-            prefix = [*base, node.module] if node.module else base
-            module = ".".join(prefix)
+            module = _import_from_module(node, package)
             if module:
                 imported.add(module)
             imported.update(
