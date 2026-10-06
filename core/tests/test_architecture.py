@@ -961,6 +961,21 @@ def test_what_counts_as_a_warning_at_import(
     assert _warns_at_import(source) is at_import
 
 
+def _plant_shim_package(tmp_path: pathlib.Path) -> pathlib.Path:
+    """Plant a ``gain`` package under ``tmp_path`` holding a shim,
+    ``gain.annotation.old_name``, and a plain sibling, ``new_name``.
+    """
+    pkg = tmp_path / "gain"
+    (pkg / "annotation").mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "annotation" / "__init__.py").write_text("")
+    (pkg / "annotation" / "old_name.py").write_text(
+        "import warnings\n"
+        "warnings.warn('gone', DeprecationWarning, stacklevel=2)\n")
+    (pkg / "annotation" / "new_name.py").write_text("def cli() -> None: ...\n")
+    return pkg
+
+
 def test_the_derivation_finds_a_planted_shim(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -972,14 +987,7 @@ def test_the_derivation_finds_a_planted_shim(
     would.  This plants a shim and a plain sibling in a throwaway package
     and asserts the derivation names the shim, and only the shim.
     """
-    pkg = tmp_path / "gain"
-    (pkg / "annotation").mkdir(parents=True)
-    (pkg / "__init__.py").write_text("")
-    (pkg / "annotation" / "__init__.py").write_text("")
-    (pkg / "annotation" / "old_name.py").write_text(
-        "import warnings\n"
-        "warnings.warn('gone', DeprecationWarning, stacklevel=2)\n")
-    (pkg / "annotation" / "new_name.py").write_text("def cli() -> None: ...\n")
+    pkg = _plant_shim_package(tmp_path)
 
     derived = _modules_warning_at_import(pkg)
 
@@ -999,14 +1007,7 @@ def test_the_fence_flags_a_planted_importer(
     neither the shim nor the sibling.  The relative spelling is resolved
     against the planted tree, not ``GAIN_SRC``.
     """
-    pkg = tmp_path / "gain"
-    (pkg / "annotation").mkdir(parents=True)
-    (pkg / "__init__.py").write_text("")
-    (pkg / "annotation" / "__init__.py").write_text("")
-    (pkg / "annotation" / "old_name.py").write_text(
-        "import warnings\n"
-        "warnings.warn('gone', DeprecationWarning, stacklevel=2)\n")
-    (pkg / "annotation" / "new_name.py").write_text("def cli() -> None: ...\n")
+    pkg = _plant_shim_package(tmp_path)
     (pkg / "dotted.py").write_text("import gain.annotation.old_name\n")
     (pkg / "from_package.py").write_text(
         "from gain.annotation import old_name\n")
