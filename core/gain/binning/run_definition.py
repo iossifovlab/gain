@@ -204,7 +204,8 @@ def _name_tracks(tracks: list[tuple[str, Track]]) -> list[Track]:
     tracks that still share a name (same base, group and aggregator,
     differing at most in what else decides their values) are refused,
     naming both entries: nothing in the ``/tracks`` table would tell the
-    columns apart.
+    columns apart; the refusal suggests an entry's ``name``, which sets
+    its tracks' base (F30).
     """
     occurrences = Counter(
         (track.name, track.group) for _, track in tracks)
@@ -218,7 +219,8 @@ def _name_tracks(tracks: list[tuple[str, Track]]) -> list[Track]:
             raise RunDefinitionError(
                 f"{producers[named_track.name]} and {label} both produce "
                 f"the track {named_track.name!r}; a resource may be binned "
-                f"once per aggregator")
+                f"once per aggregator and name -- add name to one of them "
+                f"to tell the tracks apart")
         producers[named_track.name] = label
         named.append(named_track)
     return named

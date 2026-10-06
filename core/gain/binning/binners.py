@@ -181,6 +181,30 @@ def check_keys(label: str, config: Any, known: frozenset[str]) -> None:
                 f"{', '.join(sorted(known))}")
 
 
+def entry_name(label: str, config: dict[str, Any]) -> str | None:
+    """An entry's ``name``, the base of its tracks' names (F30).
+
+    Absent, the entry has none and its kind names its tracks.  Given, it
+    is a non-empty string; anything else -- ``null`` included -- is
+    refused rather than read as absent.
+    """
+    if "name" not in config:
+        return None
+    name = config["name"]
+    if not isinstance(name, str) or not name:
+        raise RunDefinitionError(
+            f"{label}: name must be a non-empty string, not {name!r}")
+    return name
+
+
+def named_base(name: str | None, resource_id: str) -> str:
+    """The base of a per-resource track's name: ``name/<resource id>``.
+
+    An entry without ``name`` names the track by the resource id alone.
+    """
+    return resource_id if name is None else f"{name}/{resource_id}"
+
+
 def match_resources(
     label: str, config: dict[str, Any], grr: GenomicResourceRepo,
     resource_type: str,
@@ -297,7 +321,7 @@ class PositionScoreBinner:
 
     ENTRY_KEYS: ClassVar[frozenset[str]] = frozenset({
         "resource_query", "search_term", "aggregator",
-        "none_value_replacement"})
+        "none_value_replacement", "name"})
 
     @classmethod
     def parse_entry(
@@ -311,10 +335,12 @@ class PositionScoreBinner:
         scores: one track each, in resource-id order.
         """
         check_keys(label, config, cls.ENTRY_KEYS)
+        name = entry_name(label, config)
         matches = match_resources(label, config, grr, "position_score")
         return [
             BinningJob(binner=cls.kind, tracks=(cls._track_of(
                 label, resource,
+                name=name,
                 aggregator=config.get("aggregator"),
                 none_value_replacement=config.get("none_value_replacement"),
             ),))
@@ -338,6 +364,7 @@ class PositionScoreBinner:
     @classmethod
     def _track_of(
         cls, label: str, resource: GenomicResource, *,
+        name: str | None,
         aggregator: str | None,
         none_value_replacement: Any,
     ) -> Track:
@@ -386,7 +413,7 @@ class PositionScoreBinner:
                 f"of {', '.join(numeric_aggregators())}")
         assert replacement is None or isinstance(replacement, int | float)
         return Track(
-            name=resource.resource_id,
+            name=named_base(name, resource.resource_id),
             resource_ids=(resource.resource_id,),
             group="",
             score_id=score_id,

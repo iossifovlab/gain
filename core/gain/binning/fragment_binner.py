@@ -87,7 +87,9 @@ from gain.binning.binners import (
     RunDefinitionError,
     Track,
     check_keys,
+    entry_name,
     match_resources,
+    named_base,
 )
 from gain.genomic_resources.data_frame_resource import (
     load_data_frame_from_resource,
@@ -135,7 +137,8 @@ COUNT_SCORE = "count"
 DEFAULT_GROUP = "all"
 
 ENTRY_KEYS = frozenset({
-    "resource_query", "search_term", "pool", "group", "aggregate", "meta"})
+    "resource_query", "search_term", "pool", "group", "aggregate", "meta",
+    "name"})
 #: The keys of a metadata grouping, each with its default.
 CELL_GROUP_DEFAULTS = {
     "cell_score_id": CELL_SCORE,
@@ -1115,6 +1118,7 @@ class FragmentScoreBinner:
         ``meta`` file is read from; unset, the current directory.
         """
         check_keys(label, config, ENTRY_KEYS)
+        name = entry_name(label, config)
         matches = match_resources(label, config, grr, "fragment_score")
         pool = config.get("pool", True)
         if not isinstance(pool, bool):
@@ -1130,11 +1134,12 @@ class FragmentScoreBinner:
             meta=None if config.get("meta") is None
             else _MetaSpec.parse(f"{label}.meta", config["meta"], base_dir),
             tables=_Tables(f"{label}.meta", grr))
+        pooled_base = config["resource_query"] if name is None else name
         return [
             cls._resolve_job(
                 entry, resources,
-                base=config["resource_query"] if pool
-                else resources[0].resource_id)
+                base=pooled_base if pool
+                else named_base(name, resources[0].resource_id))
             for resources in ([matches] if pool else [[r] for r in matches])
         ]
 
