@@ -10,6 +10,7 @@ import datetime
 import threading
 import time
 
+import pytest
 from gain.genomic_resources.memo import Memo, config_memo_key
 
 
@@ -77,3 +78,17 @@ def test_two_threads_racing_on_one_key_build_once() -> None:
     assert len(builds) == 1
     assert len(results) == 2
     assert results[0] is results[1] is builds[0]
+
+
+def test_a_builder_that_raises_stores_nothing_and_a_retry_builds() -> None:
+    memo: Memo[str, object] = Memo()
+    built = object()
+
+    def raising_build() -> object:
+        raise RuntimeError("build failed")
+
+    with pytest.raises(RuntimeError, match="build failed"):
+        memo.get_or_build("key", raising_build)
+
+    assert len(memo) == 0
+    assert memo.get_or_build("key", lambda: built) is built
