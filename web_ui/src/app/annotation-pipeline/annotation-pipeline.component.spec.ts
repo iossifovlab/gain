@@ -1250,6 +1250,61 @@ describe('AnnotationPipelineComponent', () => {
     }
   });
 
+  it('keeps the error for text found invalid while a save was in flight after the post-save fetch (#1777)', () => {
+    jest.useFakeTimers();
+    try {
+      component.ngOnInit();
+      component.selectedPipeline = mockPipelines[2];
+      component.currentPipelineText = 'saved yaml';
+      const saveResponse = new Subject<string>();
+      jest.spyOn(annotationPipelineServiceMock, 'savePipeline')
+        .mockReturnValueOnce(saveResponse.asObservable());
+      jest.spyOn(jobsServiceMock, 'getAnnotationPipelines').mockReturnValueOnce(of([
+        mockPipelines[0],
+        mockPipelines[1],
+        new Pipeline('id3', 'name3', 'saved yaml', 'user', 'loaded'),
+      ]));
+      component.save();
+      jest.spyOn(jobsServiceMock, 'validatePipelineConfig').mockReturnValueOnce(of('invalid: bad yaml'));
+      component.currentPipelineText = 'typed while saving';
+      component.onConfigChanged();
+      jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+      expect(component.configError).toBe('invalid: bad yaml');
+
+      saveResponse.next('id3');
+      saveResponse.complete();
+
+      expect(pipelineStateService.isConfigValid()).toBe(false);
+      expect(component.configError).toBe('invalid: bad yaml');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('unselects an edited default pipeline on a keystroke during a pipeline-list reload (#1777)', () => {
+    startHeldReconnectRefetch();
+    expect(component.selectedPipeline.type).toBe('default');
+    expect(pipelineStateService.selectedPipelineId()).toBe('id1');
+
+    component.currentPipelineText = 'typed during the reload';
+    component.onConfigChanged();
+
+    expect(component.selectedPipeline).toBeNull();
+    expect(pipelineStateService.selectedPipelineId()).toBe('');
+    expect(component.dropdownControl.value).toBe('');
+  });
+
+  it('marks an edited user pipeline unsaved on a keystroke during a pipeline-list reload (#1777)', () => {
+    startHeldReconnectRefetch();
+    component.onPipelineClick(mockPipelines[2]);
+
+    component.currentPipelineText = 'typed during the reload';
+    component.onConfigChanged();
+
+    expect(component.selectedPipeline.id).toBe('id3');
+    expect(component.dropdownControl.value).toBe('name3 *');
+  });
+
   it('validates the next edit after a reconnect-driven refetch fails (#1779)', () => {
     jest.useFakeTimers();
     try {
