@@ -18,6 +18,7 @@ from gain.genomic_resources.gene_models.gene_models_factory import (
     build_gene_models_from_file,
     build_gene_models_from_resource,
 )
+from gain.genomic_resources.memo import Memo
 from gain.genomic_resources.testing import build_inmemory_test_resource
 
 
@@ -123,8 +124,8 @@ def clean_gene_models_cache(
     mocker.patch(
         "gain.genomic_resources.gene_models."
         "gene_models_factory._FILE_CACHE",
-        {})
+        Memo())
     mocker.patch(
         "gain.genomic_resources.gene_models."
         "gene_models_factory._RESOURCE_CACHE",
-        {})
+        Memo())

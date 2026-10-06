@@ -97,6 +97,7 @@ of one decision will drift.
 | [0033](0033-gain-grr-is-the-public-import-path-for-external-users.md) | `gain.grr` is the public import path for external users | accepted |
 | [0034](0034-the-allele-plane-reads-a-declared-multiplicity.md) | The allele plane reads a declared multiplicity | accepted |
 | [0035](0035-a-fragment-belongs-to-the-bin-of-its-start.md) | A fragment belongs to the bin of its start, and its grouping is declared | accepted |
+| [0036](0036-objects-built-from-a-resource-are-memoised-on-its-memo-key.md) | An object built from a resource is memoised on its memo key, through one `Memo` | accepted |
 
 > **Note:** `0003` was allocated twice, by two changes that landed the same day.
 > "Numbers are never reused" is a rule about not re-issuing a *retired* number;

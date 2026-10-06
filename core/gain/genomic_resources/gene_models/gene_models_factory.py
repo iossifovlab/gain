@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
 import os
-from threading import Lock
 from typing import TYPE_CHECKING, Any
 
 from gain import logging
+from gain.genomic_resources.memo import Memo, config_memo_key
 
 if TYPE_CHECKING:
     from gain.genomic_resources.gene_models.gene_models import GeneModels
@@ -16,9 +15,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_RESOURCE_CACHE: dict[tuple[str, str, str], GeneModels] = {}
-_FILE_CACHE: dict[tuple[str, str], GeneModels] = {}
-_INMEMORY_CACHE_LOCK = Lock()
+_RESOURCE_CACHE: Memo[tuple[str, str, str], GeneModels] = Memo()
+_FILE_CACHE: Memo[tuple[str, str], GeneModels] = Memo()
 
 
 def _root_relative(path: str) -> str:
@@ -61,19 +59,11 @@ def build_gene_models_from_file(
             "filename": _root_relative(chrom_mapping_file_name),
         }
 
-    # Keyed on the serialized config so that every config-shaping
+    # Keyed on the whole config so that every config-shaping
     # argument -- present and future -- participates in the key.
-    cache_id = (file_name, json.dumps(config, sort_keys=True))
-
-    with _INMEMORY_CACHE_LOCK:
-        if cache_id in _FILE_CACHE:
-            return _FILE_CACHE[cache_id]
-
-        res = build_local_resource("/", config)
-
-        gene_models = GeneModels(res)
-        _FILE_CACHE[cache_id] = gene_models
-        return gene_models
+    return _FILE_CACHE.get_or_build(
+        (file_name, config_memo_key(config)),
+        lambda: GeneModels(build_local_resource("/", config)))
 
 
 def build_gene_models_from_resource(
@@ -92,14 +82,8 @@ def build_gene_models_from_resource(
             "%s as gene models", resource.resource_id, resource.get_type())
         raise ValueError(f"wrong resource type: {resource.resource_id}")
 
-    cache_id = resource.get_memo_key()
-    with _INMEMORY_CACHE_LOCK:
-        if cache_id in _RESOURCE_CACHE:
-            return _RESOURCE_CACHE[cache_id]
-
-        gene_models = GeneModels(resource)
-        _RESOURCE_CACHE[cache_id] = gene_models
-        return gene_models
+    return _RESOURCE_CACHE.get_or_build(
+        resource.get_memo_key(), lambda: GeneModels(resource))
 
 
 def build_gene_models_from_resource_id(
