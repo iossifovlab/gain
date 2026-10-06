@@ -1073,6 +1073,34 @@ describe('AnnotationPipelineComponent', () => {
     }
   });
 
+  it('validates the text typed during a reload after it completes; a valid answer marks it valid (#1777)', () => {
+    jest.useFakeTimers();
+    try {
+      const reconnect = armReconnect();
+      component.ngOnInit();
+      pipelineStateService.loadedWhileLoggedIn.set(!component.isUserLoggedIn);
+      const reloaded = new Subject<Pipeline[]>();
+      jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
+        .mockReturnValueOnce(reloaded.asObservable());
+      reconnect();
+      const validateSpy = jest.spyOn(jobsServiceMock, 'validatePipelineConfig')
+        .mockReturnValueOnce(of(''));
+      component.currentPipelineText = 'typed during the reload';
+      component.onConfigChanged();
+      jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+      expect(pipelineStateService.isConfigValid()).toBe(false);
+
+      reloaded.next(mockPipelines);
+      reloaded.complete();
+
+      expect(validateSpy).toHaveBeenCalledTimes(1);
+      expect(validateSpy).toHaveBeenCalledWith('typed during the reload');
+      expect(pipelineStateService.isConfigValid()).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('validates the next edit after a reconnect-driven refetch fails (#1779)', () => {
     jest.useFakeTimers();
     try {
