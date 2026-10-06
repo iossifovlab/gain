@@ -179,7 +179,7 @@ two samples kept apart, is:
           score: count
           aggregator: sum
         meta:
-          resource_id: sc/cell_meta_data
+          resource_label: cell_meta_resource_id
           filter:
           - column: sample_id
             label: sample_id
@@ -206,7 +206,10 @@ Besides ``resource_query`` and ``search_term``, an entry takes these keys:
       key is optional and defaults to the convention's — ``cell``,
       ``barcode`` and ``class`` — so ``group: {}`` groups by the
       convention throughout. The tracks are the distinct non-empty groups
-      of the rows selected for the entry's resources, in sorted order.
+      of the rows each job selects, in sorted order: the rows of every
+      resource of a pooled entry together, or, with ``pool: false``, of
+      each resource on its own, so two samples may get different sets of
+      tracks.
     * ``{group_score_id: S}`` — one track per distinct value of the
       ``str`` score ``S``; see `Grouping by a raw value`_. ``meta`` does
       not go with this form.
@@ -234,7 +237,9 @@ Besides ``resource_query`` and ``search_term``, an entry takes these keys:
       ``file_separator`` go with it and only with it. Without
       ``file_format`` the format follows the file's suffix: ``.tsv`` is
       read as ``tsv``, ``.xls`` and ``.xlsx`` as ``excel``, and anything
-      else as ``csv``.
+      else as ``csv``. Only ``.xlsx`` is readable out of the box: a legacy
+      ``.xls`` file also needs the ``xlrd`` package, which GAIn does not
+      install, and without it the run is refused when it resolves.
 
     and ``filter``, a list of conjuncts selecting the rows of one sample.
     Each is ``{column: C, value: V}``, the column ``C`` equal to the
@@ -648,8 +653,11 @@ joined:
     holding one id and no ``group`` column; a later file has
     ``resource_ids`` and ``group`` instead, for every track, position
     scores included. Code reading ``resource_id`` must switch to
-    ``resource_ids``; the ``gain_version`` root attribute tells the two
-    layouts apart.
+    ``resource_ids``. Tell the two layouts apart by the field itself —
+    ``'resource_ids' in h5['tracks'].dtype.names`` — not by the
+    ``gain_version`` root attribute: a development build made after the
+    2026.9.7 release reports a 2026.9 version but already writes the new
+    layout.
 
 Every value in ``/values`` is a ``float64``, including the result of an
 integer-valued aggregator such as ``count`` or the ``max`` of an integer

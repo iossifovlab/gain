@@ -116,9 +116,12 @@ decisions F1–F21; F7 and F12 are the ones this amendment carries.
 
 **This is the one deliberate break of the layout since the 2026.9
 releases.** A reader of `/tracks.resource_id` must switch to
-`resource_ids`, and tells the two layouts apart by the `gain_version` root
-attribute; the user page says so beside the table. No layout version
-attribute was added: `gain_version` already dates every file.
+`resource_ids`, and tells the two layouts apart by the field itself
+(`'resource_ids' in h5['tracks'].dtype.names`); the user page says so
+beside the table. The `gain_version` root attribute does not tell them
+apart: a development build made after the 2026.9.7 release reports a 2026.9
+version but already writes the new layout. No layout version attribute was
+added: the field's presence is the test.
 
 Rejected:
 
