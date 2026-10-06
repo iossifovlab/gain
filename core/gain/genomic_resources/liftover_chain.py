@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from threading import Lock, RLock
+from threading import RLock
 from typing import Any, cast
 
 from pyliftover import LiftOver
 
 from gain import logging
 from gain.genomic_resources import GenomicResource
+from gain.genomic_resources.memo import Memo
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
@@ -147,8 +148,7 @@ class LiftoverChain(ResourceConfigValidationMixin):
         }
 
 
-_INMEMORY_CACHE: dict[tuple[str, str, str], LiftoverChain] = {}
-_INMEMORY_CACHE_LOCK = Lock()
+_INMEMORY_CACHE: Memo[tuple[str, str, str], LiftoverChain] = Memo()
 
 
 def build_liftover_chain_from_resource(
@@ -165,16 +165,8 @@ def build_liftover_chain_from_resource(
             resource.resource_id, resource.get_type())
         raise ValueError(f"wrong resource type: {resource.resource_id}")
 
-    cache_id = resource.get_memo_key()
-    with _INMEMORY_CACHE_LOCK:
-        if cache_id in _INMEMORY_CACHE:
-            return _INMEMORY_CACHE[cache_id]
-
-        liftover_chain = LiftoverChain(resource)
-
-        _INMEMORY_CACHE[cache_id] = liftover_chain
-
-        return liftover_chain
+    return _INMEMORY_CACHE.get_or_build(
+        resource.get_memo_key(), lambda: LiftoverChain(resource))
 
 
 def build_liftover_chain_from_resource_id(

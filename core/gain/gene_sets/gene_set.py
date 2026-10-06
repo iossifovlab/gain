@@ -5,7 +5,6 @@ import abc
 import gzip
 import json
 import os
-from threading import Lock
 from typing import IO, Annotated, Any, Literal, cast
 
 from pydantic import BaseModel, Field
@@ -21,6 +20,7 @@ from gain.genomic_resources.histogram import (
     Histogram,
     load_histogram,
 )
+from gain.genomic_resources.memo import Memo, config_memo_key
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
@@ -332,9 +332,8 @@ class GeneSetCollection(
             return None
 
 
-_RESOURCE_CACHE: dict[tuple[str, str, str], GeneSetCollection] = {}
-_FILE_CACHE: dict[tuple[str, str], GeneSetCollection] = {}
-_INMEMORY_CACHE_LOCK = Lock()
+_RESOURCE_CACHE: Memo[tuple[str, str, str], GeneSetCollection] = Memo()
+_FILE_CACHE: Memo[tuple[str, str], GeneSetCollection] = Memo()
 
 _FORMAT_BY_EXTENSION = {
     ".txt": "map",
@@ -391,36 +390,23 @@ def build_gene_set_collection_from_file(
         root = dirname
         config["filename"] = basename
 
-    # Keyed on the serialized config so that every config-shaping argument --
+    # Keyed on the whole config so that every config-shaping argument --
     # present and future -- participates in the key. A resource id plus repo
     # url identifies a resource only when it is a subdirectory of a
     # repository; this one is the repository root, so which file it describes
     # lives in the config alone. Hence a cache of its own, and a collection
     # built directly rather than through the resource-keyed factory (#894).
-    cache_id = (filename, json.dumps(config, sort_keys=True))
-
-    with _INMEMORY_CACHE_LOCK:
-        if cache_id in _FILE_CACHE:
-            return _FILE_CACHE[cache_id]
-
-        resource = build_local_resource(root, config)
-        collection = GeneSetCollection(resource)
-        _FILE_CACHE[cache_id] = collection
-        return collection
+    return _FILE_CACHE.get_or_build(
+        (filename, config_memo_key(config)),
+        lambda: GeneSetCollection(build_local_resource(root, config)))
 
 
 def build_gene_set_collection_from_resource(
     resource: GenomicResource,
 ) -> GeneSetCollection:
     """Return a Gene Set Collection built from a resource."""
-    cache_id = resource.get_memo_key()
-    with _INMEMORY_CACHE_LOCK:
-        if cache_id in _RESOURCE_CACHE:
-            return _RESOURCE_CACHE[cache_id]
-
-        collection = GeneSetCollection(resource)
-        _RESOURCE_CACHE[cache_id] = collection
-        return collection
+    return _RESOURCE_CACHE.get_or_build(
+        resource.get_memo_key(), lambda: GeneSetCollection(resource))
 
 
 def build_gene_set_collection_from_resource_id(

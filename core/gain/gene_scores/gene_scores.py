@@ -3,7 +3,6 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass
 from io import StringIO
-from threading import Lock
 from typing import Any, ClassVar, cast
 
 import numpy as np
@@ -18,6 +17,7 @@ from gain.genomic_resources.histogram import (
     build_default_histogram_conf,
     build_histogram_config,
 )
+from gain.genomic_resources.memo import Memo
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
@@ -342,8 +342,7 @@ class GeneScore(ScoreResource[GeneScoreDef]):
         }
 
 
-_INMEMORY_CACHE: dict[tuple[str, str, str], GeneScore] = {}
-_INMEMORY_CACHE_LOCK = Lock()
+_INMEMORY_CACHE: Memo[tuple[str, str, str], GeneScore] = Memo()
 
 
 def build_gene_score_from_resource(resource: GenomicResource) -> GeneScore:
@@ -357,14 +356,8 @@ def build_gene_score_from_resource(resource: GenomicResource) -> GeneScore:
             "%s as gene scores", resource.resource_id, resource.get_type())
         raise ValueError(f"invalid resource type: {resource.resource_id}")
 
-    cache_id = resource.get_memo_key()
-    with _INMEMORY_CACHE_LOCK:
-        if cache_id in _INMEMORY_CACHE:
-            return _INMEMORY_CACHE[cache_id]
-
-        gene_score = GeneScore(resource)
-        _INMEMORY_CACHE[cache_id] = gene_score
-        return gene_score
+    return _INMEMORY_CACHE.get_or_build(
+        resource.get_memo_key(), lambda: GeneScore(resource))
 
 
 def build_gene_score_from_resource_id(
