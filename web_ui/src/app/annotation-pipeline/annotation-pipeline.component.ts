@@ -401,15 +401,18 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   /**
    * Select a freshly loaded pipeline without replacing the editor's text.
    *
-   * The config counts as valid only when the editor still holds the
-   * pipeline's content. Text typed since then stays not valid until its
-   * own validation answers: the debounce or the deferral from the load
-   * sends it.
+   * The config is marked valid when the editor still holds the pipeline's
+   * content. Text typed since then keeps the validity its own validation
+   * gave it: each keystroke marked it not valid, and only an answer for
+   * that text (already received, or still to come from the debounce or
+   * the deferral from the load) marks it valid again.
    */
   private selectPipelineAfterSave(pipeline: Pipeline): void {
     this.configError = '';
     this.selectedPipeline = pipeline;
-    this.pipelineStateService.isConfigValid.set(!this.isPipelineChanged());
+    if (!this.isPipelineChanged()) {
+      this.pipelineStateService.isConfigValid.set(true);
+    }
     this.updateDownloadLink();
     this.pipelineStateService.selectedPipelineId.set(pipeline.id);
     this.dropdownControl.setValue(pipeline.name);

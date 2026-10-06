@@ -1032,10 +1032,14 @@ describe('AnnotationPipelineComponent', () => {
 
       component.currentPipelineText = 'typed during the reload';
       component.onConfigChanged();
+
+      // On the keystroke itself, before the debounce fires.
+      expect(pipelineStateService.isConfigValid()).toBe(false);
+      expect(pipelineStateService.currentPipelineText()).toBe('typed during the reload');
+
       jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
 
       expect(pipelineStateService.isConfigValid()).toBe(false);
-      expect(pipelineStateService.currentPipelineText()).toBe('typed during the reload');
       expect(validateSpy).not.toHaveBeenCalled();
     } finally {
       jest.useRealTimers();
@@ -1162,6 +1166,57 @@ describe('AnnotationPipelineComponent', () => {
       expect(validateSpy).toHaveBeenCalledTimes(1);
       expect(validateSpy).toHaveBeenCalledWith('invalid: [yaml');
       expect(pipelineStateService.isConfigValid()).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('marks the config valid after a save-as whose fetch returns the unchanged text (#1777)', () => {
+    component.ngOnInit();
+    jest.spyOn(mockMatRef, 'open').mockReturnValueOnce(mockMatDialogRef);
+    jest.spyOn(mockMatDialogRef, 'afterClosed').mockReturnValueOnce(of('My Pipeline'));
+    jest.spyOn(annotationPipelineServiceMock, 'savePipeline').mockReturnValueOnce(of('4'));
+    jest.spyOn(jobsServiceMock, 'getAnnotationPipelines').mockReturnValueOnce(of([
+      ...mockPipelines,
+      new Pipeline('4', 'My Pipeline', 'saved yaml', 'user', 'loaded'),
+    ]));
+    const validateSpy = jest.spyOn(jobsServiceMock, 'validatePipelineConfig');
+    component.currentPipelineText = 'saved yaml';
+    pipelineStateService.isConfigValid.set(false);
+
+    component.saveAs();
+
+    expect(component.selectedPipeline.id).toBe('4');
+    expect(validateSpy).not.toHaveBeenCalled();
+    expect(pipelineStateService.isConfigValid()).toBe(true);
+  });
+
+  it('keeps text validated while a save was in flight valid after the post-save fetch (#1777)', () => {
+    jest.useFakeTimers();
+    try {
+      component.ngOnInit();
+      component.selectedPipeline = mockPipelines[2];
+      component.currentPipelineText = 'saved yaml';
+      const saveResponse = new Subject<string>();
+      jest.spyOn(annotationPipelineServiceMock, 'savePipeline')
+        .mockReturnValueOnce(saveResponse.asObservable());
+      jest.spyOn(jobsServiceMock, 'getAnnotationPipelines').mockReturnValueOnce(of([
+        mockPipelines[0],
+        mockPipelines[1],
+        new Pipeline('id3', 'name3', 'saved yaml', 'user', 'loaded'),
+      ]));
+      component.save();
+      jest.spyOn(jobsServiceMock, 'validatePipelineConfig').mockReturnValueOnce(of(''));
+      component.currentPipelineText = 'typed while saving';
+      component.onConfigChanged();
+      jest.advanceTimersByTime(VALIDATE_DEBOUNCE_MS);
+      expect(pipelineStateService.isConfigValid()).toBe(true);
+
+      saveResponse.next('id3');
+      saveResponse.complete();
+
+      expect(component.selectedPipeline.content).toBe('saved yaml');
+      expect(pipelineStateService.isConfigValid()).toBe(true);
     } finally {
       jest.useRealTimers();
     }
