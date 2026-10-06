@@ -271,6 +271,29 @@ def test_copy_resource_file_corrupted_bytes_raise_checksum_mismatch(
         dest_proto.copy_resource_file(src_res, dest_res, _FILE_NAME)
 
 
+def test_copy_resource_file_recovers_from_a_transient_checksum_mismatch(
+    tmp_path: pathlib.Path, mocker: MockerFixture,
+) -> None:
+    src_proto, src_fs = build_faulty_test_protocol(
+        tmp_path / "src", _source_content())
+    src_res = src_proto.get_resource(_RESOURCE_ID)
+    dest_proto, _ = build_faulty_test_protocol(tmp_path / "dst")
+    dest_res = _a_destination_resource(dest_proto, src_res)
+    src_fs.corrupt_read(_SOURCE_FILE, on_call=1)
+    sleep = mocker.patch("gain.genomic_resources.fsspec_protocol.time.sleep")
+
+    dest_proto.copy_resource_file(src_res, dest_res, _FILE_NAME)
+
+    # Only the first attempt was corrupt, so the mismatch was retried
+    # rather than surfaced: one backoff, then a clean second download.
+    # The all-attempts-corrupt test above cannot tell a retry from a
+    # first-attempt give-up; this one fails if the mismatch stops being
+    # retryable.
+    assert dest_proto.file_exists(dest_res, _FILE_NAME)
+    assert dest_proto.get_file_content(dest_res, _FILE_NAME) == _FILE_CONTENT
+    assert sleep.call_count == 1
+
+
 class _NewRetryableFailure(RetryableCopyError):
     """A retryable failure shape the copy loop has never been told about.
 
