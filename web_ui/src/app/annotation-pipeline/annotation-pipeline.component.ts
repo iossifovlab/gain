@@ -404,8 +404,9 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
    * The config is marked valid, and its error cleared, when the editor still
    * holds the pipeline's content. Text typed since then keeps the validity
    * and the error message its own validation gave it: each keystroke
-   * marked it not valid, and only an answer for that text (already received, or still to come from the debounce or
-   * the deferral from the load) marks it valid again.
+   * marked it not valid, and only an answer for that text (already received,
+   * or still to come from the debounce or the deferral from the load) marks
+   * it valid again.
    */
   private selectPipelineAfterSave(pipeline: Pipeline): void {
     this.selectedPipeline = pipeline;
