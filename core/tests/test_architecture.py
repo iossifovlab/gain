@@ -617,6 +617,25 @@ def _modules_warning_at_import(root: pathlib.Path) -> frozenset[str]:
     )
 
 
+def _modules_importing_a_warner(root: pathlib.Path) -> list[str]:
+    """Modules of the package at ``root`` that import one warning at
+    import, as sorted ``"<path under root>: <imported>"`` lines.
+
+    The fence's offender computation, taking ``root`` for the same reason
+    :func:`_modules_warning_at_import` does: so it can be shown flagging
+    an importer in a planted tree, which the real one -- holding no shim
+    -- never gives it the chance to.  Imports are resolved against
+    ``root`` too, so a relative import in the planted tree names the
+    planted package.
+    """
+    shims = _modules_warning_at_import(root)
+    return sorted(
+        f"{py.relative_to(root).as_posix()}: {imported}"
+        for py in root.rglob("*.py")
+        for imported in shims & _imported_modules(py, root)
+    )
+
+
 def _warns_at_import(source: str) -> bool:
     """Does importing a module with this source emit a DeprecationWarning?
 
@@ -967,6 +986,42 @@ def test_the_derivation_finds_a_planted_shim(
     assert derived == frozenset({"gain.annotation.old_name"})
 
 
+def test_the_fence_flags_a_planted_importer(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The fence names a module that imports a shim, and only that one.
+
+    The derived set over the real tree is empty, so the fence below only
+    ever intersects with nothing -- and an offender computation that
+    could never produce an offender would pass it just the same.  This
+    plants a shim, a plain sibling and three importers, one per spelling
+    that reaches the shim, and asserts the fence names each importer and
+    neither the shim nor the sibling.  The relative spelling is resolved
+    against the planted tree, not ``GAIN_SRC``.
+    """
+    pkg = tmp_path / "gain"
+    (pkg / "annotation").mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "annotation" / "__init__.py").write_text("")
+    (pkg / "annotation" / "old_name.py").write_text(
+        "import warnings\n"
+        "warnings.warn('gone', DeprecationWarning, stacklevel=2)\n")
+    (pkg / "annotation" / "new_name.py").write_text("def cli() -> None: ...\n")
+    (pkg / "dotted.py").write_text("import gain.annotation.old_name\n")
+    (pkg / "from_package.py").write_text(
+        "from gain.annotation import old_name\n")
+    (pkg / "annotation" / "relative.py").write_text(
+        "from . import old_name\n")
+
+    offenders = _modules_importing_a_warner(pkg)
+
+    assert offenders == [
+        "annotation/relative.py: gain.annotation.old_name",
+        "dotted.py: gain.annotation.old_name",
+        "from_package.py: gain.annotation.old_name",
+    ]
+
+
 #: A module the sweep must reach in the real tree.  The rule below is
 #: anchored on it rather than on a shim: ``gain`` ships none today, so an
 #: empty derived set is the expected answer and cannot itself show that
@@ -1017,12 +1072,7 @@ def test_nothing_in_gain_imports_a_module_that_warns_at_import() -> None:
     nothing that ships.  ``web_api`` is fenced by its own copy of the
     rule, for the reason its ``test_architecture.py`` docstring gives.
     """
-    shims = _modules_warning_at_import(pathlib.Path(GAIN_SRC))
-    offenders = sorted(
-        f"{py.relative_to(GAIN_SRC)}: {imported}"
-        for py in pathlib.Path(GAIN_SRC).rglob("*.py")
-        for imported in shims & _imported_modules(py)
-    )
+    offenders = _modules_importing_a_warner(pathlib.Path(GAIN_SRC))
     assert offenders == [], (
         f"these modules import a module that warns at import: {offenders}. "
         f"Import the module the shim forwards to -- importing the shim "
@@ -2050,7 +2100,9 @@ def test_no_gain_module_redacts_an_exceptions_text_with_the_narrow_redactor(
 
 
 @functools.cache
-def _imported_modules(py: pathlib.Path) -> set[str]:
+def _imported_modules(
+    py: pathlib.Path, root: str | pathlib.Path = GAIN_SRC,
+) -> set[str]:
     """Absolute dotted names ``py`` imports, however it spells them.
 
     Cached per file: the package-wide sweep and the narrower ones
@@ -2064,12 +2116,14 @@ def _imported_modules(py: pathlib.Path) -> set[str]:
     all seen -- a text scan for ``from gain.annotation`` catches none of
     the three, and matches a line inside a docstring that imports nothing.
 
-    Every rule here sweeps the ``gain`` package, so the containing tree
-    is fixed rather than a parameter.
+    ``root`` is the ``gain`` package directory ``py`` sits in.  Every rule
+    here sweeps the real one, ``GAIN_SRC``; only
+    :func:`_modules_importing_a_warner` passes another, so that it can be
+    shown working on a planted tree.
     """
     # The package that contains this module, as a dotted path: `gain` plus
-    # the directories between GAIN_SRC and the file.
-    package = ["gain", *py.relative_to(GAIN_SRC).parts[:-1]]
+    # the directories between root and the file.
+    package = ["gain", *py.relative_to(root).parts[:-1]]
     return _imported_names(py.read_text(encoding="utf8"), package)
 
 

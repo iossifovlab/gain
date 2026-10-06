@@ -209,7 +209,9 @@ def test_the_fence_can_see_the_project_it_polices() -> None:
 
 
 @functools.cache
-def _imported_modules(py: pathlib.Path) -> frozenset[str]:
+def _imported_modules(
+    py: pathlib.Path, root: pathlib.Path = WEB_API_SRC,
+) -> frozenset[str]:
     """Absolute dotted names ``py`` imports, however it spells them.
 
     Cached per file: two rules sweep the whole project -- the Markdown
@@ -229,14 +231,16 @@ def _imported_modules(py: pathlib.Path) -> frozenset[str]:
     way.
 
     Relative imports are resolved against the containing package, taken as
-    the directories between ``WEB_API_SRC`` and the file.  A level that
+    the directories between ``root`` and the file -- ``WEB_API_SRC``
+    everywhere but :func:`_modules_importing_a_warner` on a planted
+    tree.  A level that
     climbs past the project root is clamped rather than allowed to slice
     negatively, which would silently yield a name from the wrong end of the
     package path.
     """
     return _imported_names(
         py.read_text(encoding="utf8"),
-        package=list(py.relative_to(WEB_API_SRC).parts[:-1]),
+        package=list(py.relative_to(root).parts[:-1]),
     )
 
 
@@ -337,6 +341,28 @@ def _modules_warning_at_import(root: pathlib.Path) -> frozenset[str]:
     return frozenset(
         name for name, py in _package_modules(root).items()
         if _warns_at_import(py.read_text(encoding="utf8"))
+    )
+
+
+def _modules_importing_a_warner(
+    root: pathlib.Path, gain_root: pathlib.Path,
+) -> list[str]:
+    """Modules of the tree at ``root`` that import one of the ``gain``
+    package at ``gain_root`` that warns at import, as sorted ``"<path
+    under root>: <imported>"`` lines.
+
+    The fence's offender computation, taking its trees as parameters for
+    the same reason :func:`_modules_warning_at_import` does: so it can be
+    shown flagging an importer in a planted tree, which the real ones --
+    ``gain`` holding no shim -- never give it the chance to.  Two roots
+    where ``core``'s copy takes one, because here the swept tree and the
+    one the shims come from are different projects.
+    """
+    shims = _modules_warning_at_import(gain_root)
+    return sorted(
+        f"{py.relative_to(root).as_posix()}: {imported}"
+        for py in root.rglob("*.py")
+        for imported in shims & _imported_modules(py, root)
     )
 
 
@@ -695,6 +721,45 @@ def test_the_derivation_finds_a_planted_shim(
     assert derived == frozenset({"gain.annotation.old_name"})
 
 
+def test_the_fence_flags_a_planted_importer(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The fence names a module that imports a shim, and only that one.
+
+    The derived set over the real ``gain`` is empty, so the fence below
+    only ever intersects with nothing -- and an offender computation that
+    could never produce an offender would pass it just the same.  This
+    plants a ``gain`` holding a shim and a plain sibling, and, as a
+    separate root the way the real rule has them, a project holding one
+    importer per spelling that reaches the shim plus one importing the
+    sibling.  The fence must name each importer of the shim and nothing
+    else.
+    """
+    pkg = tmp_path / "gain"
+    (pkg / "annotation").mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "annotation" / "__init__.py").write_text("")
+    (pkg / "annotation" / "old_name.py").write_text(
+        "import warnings\n"
+        "warnings.warn('gone', DeprecationWarning, stacklevel=2)\n")
+    (pkg / "annotation" / "new_name.py").write_text("def cli() -> None: ...\n")
+    project = tmp_path / "web_api"
+    (project / "app").mkdir(parents=True)
+    (project / "app" / "dotted.py").write_text(
+        "import gain.annotation.old_name\n")
+    (project / "app" / "from_package.py").write_text(
+        "from gain.annotation import old_name\n")
+    (project / "app" / "plain.py").write_text(
+        "from gain.annotation import new_name\n")
+
+    offenders = _modules_importing_a_warner(project, pkg)
+
+    assert offenders == [
+        "app/dotted.py: gain.annotation.old_name",
+        "app/from_package.py: gain.annotation.old_name",
+    ]
+
+
 def test_the_warning_scan_reaches_the_gain_package() -> None:
     """The derivation sweeps the ``gain`` package this project builds on.
 
@@ -732,12 +797,7 @@ def test_no_web_api_module_imports_a_module_that_warns_at_import() -> None:
     the same split as the Markdown rule above: this project's CI image is
     the only one that contains it.
     """
-    shims = _modules_warning_at_import(GAIN_PKG)
-    offenders = sorted(
-        f"{py.relative_to(WEB_API_SRC)}: {imported}"
-        for py in WEB_API_SRC.rglob("*.py")
-        for imported in shims & _imported_modules(py)
-    )
+    offenders = _modules_importing_a_warner(WEB_API_SRC, GAIN_PKG)
 
     assert offenders == [], (
         f"these web_api modules import a module that warns at import: "
