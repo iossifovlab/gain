@@ -1082,6 +1082,24 @@ def test_nothing_in_gain_imports_a_module_that_warns_at_import() -> None:
     )
 
 
+def test_the_warner_fence_reuses_the_sweeps_parses() -> None:
+    """The fence over the real tree parses no file the sweeps parsed.
+
+    ``_imported_modules`` is cached so that the rules sweeping the
+    ``gain`` package share one parse per file.  The fence passes its
+    ``root`` explicitly where the sweeps leave it out; ``functools.cache``
+    keys on the arguments as passed, so unless both spellings land on
+    one key the fence parses the whole package a second time.
+    """
+    for py in pathlib.Path(GAIN_SRC).rglob("*.py"):
+        _imported_modules(py)
+    misses = _imported_modules_under.cache_info().misses
+
+    _modules_importing_a_warner(pathlib.Path(GAIN_SRC))
+
+    assert _imported_modules_under.cache_info().misses == misses
+
+
 def test_every_annotator_entry_point_names_the_module_that_defines_it(
 ) -> None:
     """No annotator is registered through a re-export.
@@ -2100,16 +2118,18 @@ def test_no_gain_module_redacts_an_exceptions_text_with_the_narrow_redactor(
     )
 
 
-@functools.cache
 def _imported_modules(
-    py: pathlib.Path, root: str | pathlib.Path = GAIN_SRC,
+    py: pathlib.Path, root: pathlib.Path = pathlib.Path(GAIN_SRC),
 ) -> set[str]:
     """Absolute dotted names ``py`` imports, however it spells them.
 
-    Cached per file: the package-wide sweep and the narrower ones
-    overlap -- every file under ``genomic_resources`` is read by two
-    rules, ``scan.py`` by three -- and the sources do not change within
-    a test run.
+    Cached per file, in :func:`_imported_modules_under`: the
+    package-wide sweep and the narrower ones overlap -- every file under
+    ``genomic_resources`` is read by two rules, ``scan.py`` by three --
+    and the sources do not change within a test run.  The default is
+    filled in here, outside the cache, because ``functools.cache`` keys
+    on the arguments as passed: a sweep leaving ``root`` out and the
+    fence passing it would otherwise each parse every file.
 
     Resolved from the AST rather than matched against the source text, so
     that ``from gain import annotation``, a relative ``from ..annotation
@@ -2122,6 +2142,12 @@ def _imported_modules(
     :func:`_modules_importing_a_warner` passes another, so that it can be
     shown working on a planted tree.
     """
+    return _imported_modules_under(py, root)
+
+
+@functools.cache
+def _imported_modules_under(py: pathlib.Path, root: pathlib.Path) -> set[str]:
+    """:func:`_imported_modules`, cached on an always-explicit ``root``."""
     # The package that contains this module, as a dotted path: `gain` plus
     # the directories between root and the file.
     package = ["gain", *py.relative_to(root).parts[:-1]]

@@ -208,15 +208,18 @@ def test_the_fence_can_see_the_project_it_polices() -> None:
     assert (WEB_API_SRC / "manage.py").resolve() in swept
 
 
-@functools.cache
 def _imported_modules(
     py: pathlib.Path, root: pathlib.Path = WEB_API_SRC,
 ) -> frozenset[str]:
     """Absolute dotted names ``py`` imports, however it spells them.
 
-    Cached per file: two rules sweep the whole project -- the Markdown
-    one above and the import-time-deprecation one below -- and the
-    sources do not change within a test run.
+    Cached per file, in :func:`_imported_modules_under`: two rules sweep
+    the whole project -- the Markdown one above and the
+    import-time-deprecation one below -- and the sources do not change
+    within a test run.  The default is filled in here, outside the
+    cache, because ``functools.cache`` keys on the arguments as passed:
+    the Markdown sweep leaving ``root`` out and the fence passing it
+    would otherwise each parse every file.
 
     Resolved from the AST rather than matched against the source text, so
     that ``import markdown2``, ``from markdown2 import markdown`` and an
@@ -238,6 +241,14 @@ def _imported_modules(
     negatively, which would silently yield a name from the wrong end of the
     package path.
     """
+    return _imported_modules_under(py, root)
+
+
+@functools.cache
+def _imported_modules_under(
+    py: pathlib.Path, root: pathlib.Path,
+) -> frozenset[str]:
+    """:func:`_imported_modules`, cached on an always-explicit ``root``."""
     return _imported_names(
         py.read_text(encoding="utf8"),
         package=list(py.relative_to(root).parts[:-1]),
@@ -806,6 +817,24 @@ def test_no_web_api_module_imports_a_module_that_warns_at_import() -> None:
         f"importing the shim warns in every process that loads the "
         f"importer, and keeps the shim alive past its removal"
     )
+
+
+def test_the_warner_fence_reuses_the_markdown_sweeps_parses() -> None:
+    """The fence over this tree parses no file the Markdown sweep parsed.
+
+    ``_imported_modules`` is cached so that the two rules sweeping this
+    project share one parse per file.  The fence passes its ``root``
+    explicitly where the Markdown sweep leaves it out; ``functools.cache``
+    keys on the arguments as passed, so unless both spellings land on one
+    key the fence parses the whole project a second time.
+    """
+    for py in WEB_API_SRC.rglob("*.py"):
+        _imported_modules(py)
+    misses = _imported_modules_under.cache_info().misses
+
+    _modules_importing_a_warner(WEB_API_SRC, GAIN_PKG)
+
+    assert _imported_modules_under.cache_info().misses == misses
 
 
 #: The pipeline documentation template, spelled out rather than imported
