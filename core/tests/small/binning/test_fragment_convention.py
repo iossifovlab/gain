@@ -7,13 +7,14 @@ whose ``SAMPLE_ID_COLUMN`` rows equal to its ``SAMPLE_ID_LABEL`` map the
 ``BARCODE_COLUMN`` of its ``CELL_SCORE`` to a ``CLASS_COLUMN``.  The toy
 fragments and the cell table are the conftest's ``S1_FRAGMENTS``,
 ``S2_FRAGMENTS`` and ``CELL_META``; bins are 10 wide.  Over chr1:1-40,
-``S1_FRAGMENTS`` read through S1's rows sums its counts to
+``S1_FRAGMENTS`` read through S1's rows counts the fragments starting in
+each bin as
 
 ==========  =====  =====
 bin         B      T
 ==========  =====  =====
-1-10        5      2
-11-20       0      3
+1-10        1      1
+11-20       0      1
 21-30       0      0
 31-40       0      0
 ==========  =====  =====
@@ -61,7 +62,7 @@ from tests.small.binning.conftest import (
 BIN_SIZE = 10
 KIND = "fragment_score_binner"
 CHR1 = BedRegion("chr1", 1, 40)
-S1_SUM_BY_CLASS = [[5.0, 2.0], [0.0, 3.0], [0.0, 0.0], [0.0, 0.0]]
+S1_COUNT_BY_CLASS = [[1.0, 1.0], [0.0, 1.0], [0.0, 0.0], [0.0, 0.0]]
 
 
 def without_column(data: str, name: str) -> str:
@@ -130,7 +131,7 @@ def bin_job(
         return bound.bin_region(region, BIN_SIZE)
 
 
-def test_a_labelled_resource_alone_is_grouped_sum_of_count_by_class(
+def test_a_labelled_resource_alone_counts_fragments_by_class(
     tmp_path: pathlib.Path, genome: ReferenceGenome,
 ) -> None:
     repo = build_repo(tmp_path, ("frags/s1", labelled("S1")))
@@ -140,12 +141,12 @@ def test_a_labelled_resource_alone_is_grouped_sum_of_count_by_class(
     assert [
         (t.name, t.group, t.score_id, t.aggregator) for t in run.tracks
     ] == [
-        ("frags/s1:B", "B", COUNT_SCORE, "sum"),
-        ("frags/s1:T", "T", COUNT_SCORE, "sum"),
+        ("frags/s1:B", "B", "", "sum"),
+        ("frags/s1:T", "T", "", "sum"),
     ]
     (job,) = run.jobs
     np.testing.assert_array_equal(
-        bin_job(job, CHR1, repo), S1_SUM_BY_CLASS)
+        bin_job(job, CHR1, repo), S1_COUNT_BY_CLASS)
 
 
 # Read pairs per bin of S1_FRAGMENTS over chr1:1-40, and fragments.
@@ -153,18 +154,16 @@ S1_SUM_OF_COUNT = [7.0, 4.0, 0.0, 4.0]
 S1_FRAGMENT_COUNT = [2.0, 2.0, 0.0, 1.0]
 
 
-@pytest.mark.parametrize("count_type,cell,expected", [
-    ("int", True, (COUNT_SCORE, S1_SUM_OF_COUNT)),
-    ("int", False, (COUNT_SCORE, S1_SUM_OF_COUNT)),
-    ("float", True, ("", S1_FRAGMENT_COUNT)),
-    (None, True, ("", S1_FRAGMENT_COUNT)),
+@pytest.mark.parametrize("count_type,cell", [
+    ("int", True), ("int", False), ("float", True), (None, True),
 ])
-def test_an_unlabelled_resource_is_one_all_track_by_its_count_score(
+def test_an_unlabelled_resource_is_one_all_track_counting_fragments(
     tmp_path: pathlib.Path, genome: ReferenceGenome,
-    count_type: str | None, cell: bool, expected: tuple[str, list[float]],
+    count_type: str | None, cell: bool,
 ) -> None:
-    # Only an int count score is summed by default; anything else counts
-    # fragments.  The sample label alone does not group.
+    # Whatever its count score, the default counts fragments; S1's counts
+    # are not all 1, so a sum of them would differ.  The sample label
+    # alone does not group.
     repo = build_repo(tmp_path, ("frags/s1", fragments(
         count_type=count_type, cell=cell, **{SAMPLE_ID_LABEL: "S1"})))
 
@@ -172,10 +171,33 @@ def test_an_unlabelled_resource_is_one_all_track_by_its_count_score(
 
     assert [(t.name, t.group, t.score_id, t.aggregator)
             for t in run.tracks] == [
-        ("frags/s1:all", "all", expected[0], "sum")]
+        ("frags/s1:all", "all", "", "sum")]
     (job,) = run.jobs
     np.testing.assert_array_equal(
-        bin_job(job, CHR1, repo)[:, 0], expected[1])
+        bin_job(job, CHR1, repo)[:, 0], S1_FRAGMENT_COUNT)
+
+
+def test_value_score_id_count_gives_the_read_pairs_per_bin(
+    tmp_path: pathlib.Path, genome: ReferenceGenome,
+) -> None:
+    # Read pairs are what a single-cell resource's count score holds;
+    # an entry asks for them by name.
+    repo = build_repo(
+        tmp_path, ("frags/s1", fragments(**{SAMPLE_ID_LABEL: "S1"})),
+        ("frags/lab", labelled("S1")))
+
+    plain = parse({"resource_query": "frags/s1",
+                   "value": {"score_id": COUNT_SCORE}}, repo, genome)
+    by_class = parse({"resource_query": "frags/lab",
+                      "value": {"score_id": COUNT_SCORE}}, repo, genome)
+
+    assert {(t.score_id, t.aggregator)
+            for t in plain.tracks + by_class.tracks} == {(COUNT_SCORE, "sum")}
+    np.testing.assert_array_equal(
+        bin_job(plain.jobs[0], CHR1, repo)[:, 0], S1_SUM_OF_COUNT)
+    np.testing.assert_array_equal(
+        bin_job(by_class.jobs[0], CHR1, repo),
+        [[5.0, 2.0], [0.0, 3.0], [0.0, 0.0], [0.0, 0.0]])
 
 
 #: CELL_META with a second grouping column; in S1 AAA is T1, BBB is B1.
@@ -203,7 +225,7 @@ def test_a_group_naming_one_column_keeps_the_other_defaults(
     assert [t.name for t in run.tracks] == ["frags/s1:B1", "frags/s1:T1"]
     (job,) = run.jobs
     np.testing.assert_array_equal(
-        bin_job(job, CHR1, repo), S1_SUM_BY_CLASS)
+        bin_job(job, CHR1, repo), S1_COUNT_BY_CLASS)
 
 
 def test_an_empty_group_is_the_omitted_group_on_a_labelled_resource(
@@ -229,7 +251,7 @@ def test_a_constant_group_stays_constant_on_a_labelled_resource(
                 repo, genome)
 
     assert [(t.name, t.score_id) for t in run.tracks] == [
-        ("frags/s1:bulk", COUNT_SCORE)]
+        ("frags/s1:bulk", "")]
 
 
 def test_meta_by_resource_label_resolves_the_table_the_label_names(
@@ -251,7 +273,7 @@ def test_meta_by_resource_label_resolves_the_table_the_label_names(
 
     assert [t.name for t in run.tracks] == ["frags/s1:B", "frags/s1:T"]
     np.testing.assert_array_equal(
-        bin_job(run.jobs[0], CHR1, repo), S1_SUM_BY_CLASS)
+        bin_job(run.jobs[0], CHR1, repo), S1_COUNT_BY_CLASS)
 
 
 def test_an_explicit_meta_without_a_filter_selects_every_row(
@@ -273,7 +295,7 @@ def test_an_explicit_meta_without_a_filter_selects_every_row(
 def test_an_unpooled_entry_resolves_each_resource_on_its_own(
     tmp_path: pathlib.Path, genome: ReferenceGenome,
 ) -> None:
-    # Different tiers, tables and default aggregates: each its own job.
+    # Different tiers, tables and count scores: each its own job.
     repo = build_repo(
         tmp_path, ("meta/sub", a_data_frame().with_raw_content(SUB_META)),
         ("frags/a", labelled("S1")),
@@ -283,8 +305,8 @@ def test_an_unpooled_entry_resolves_each_resource_on_its_own(
     run = parse({"resource_query": "frags/*", "pool": False}, repo, genome)
 
     assert [(t.name, t.score_id) for t in run.tracks] == [
-        ("frags/a:B", COUNT_SCORE), ("frags/a:T", COUNT_SCORE),
-        ("frags/b:B", COUNT_SCORE), ("frags/b:T", COUNT_SCORE),
+        ("frags/a:B", ""), ("frags/a:T", ""),
+        ("frags/b:B", ""), ("frags/b:T", ""),
         ("frags/c:all", ""),
     ]
 
@@ -437,32 +459,24 @@ def test_a_pool_sharing_an_explicit_table_reads_it_once(
     assert [t.name for t in run.tracks] == ["frags/*:B", "frags/*:T"]
 
 
-def test_a_pool_disagreeing_on_the_default_aggregate_is_refused(
+def test_a_pool_with_and_without_an_int_count_score_counts_fragments(
     tmp_path: pathlib.Path, genome: ReferenceGenome,
 ) -> None:
+    # The default is the same for every resource, so they cannot
+    # disagree on it: three copies of S1's fragments count three times.
     repo = build_repo(
         tmp_path, ("frags/a", fragments()),
         ("frags/b", fragments(count_type="float")),
         ("frags/c", fragments(count_type=None)))
 
-    message = refusal({"resource_query": "frags/*"}, repo, genome)
+    run = parse({"resource_query": "frags/*"}, repo, genome)
 
-    assert f"'frags/a' have an int {COUNT_SCORE!r} score" in message
-    assert "'frags/b', 'frags/c' do not" in message
-    assert "state the aggregate" in message
-
-
-def test_a_pool_disagreeing_on_the_default_aggregate_may_state_it(
-    tmp_path: pathlib.Path, genome: ReferenceGenome,
-) -> None:
-    repo = build_repo(
-        tmp_path, ("frags/a", fragments()),
-        ("frags/b", fragments(count_type="float")))
-
-    run = parse({"resource_query": "frags/*", "aggregate": {"value": 1}},
-                repo, genome)
-
-    assert [t.name for t in run.tracks] == ["frags/*:all"]
+    assert [(t.name, t.score_id, t.aggregator) for t in run.tracks] == [
+        ("frags/*:all", "", "sum")]
+    (job,) = run.jobs
+    np.testing.assert_array_equal(
+        bin_job(job, CHR1, repo)[:, 0],
+        [3 * count for count in S1_FRAGMENT_COUNT])
 
 
 def test_dropped_fragments_are_counted_and_logged_per_resource_and_region(

@@ -5,19 +5,19 @@
 ``S``, the set read from the score's full categorical histogram.  The
 toy GRR is the conftest's, with its statistics built (``stats_repo``):
 ``frags/s1``'s ``cell`` values are AAA, BBB, CCC and DDD, and
-``frags/s2``'s are AAA and EEE.  Bins are 10 wide; summing ``count``
-over chr1:1-40, ``frags/s1`` bins to
+``frags/s2``'s are AAA and EEE.  Bins are 10 wide; counting the
+fragments that start in each bin over chr1:1-40, ``frags/s1`` bins to
 
 =====  ====  ====  ====  ====
 bin    AAA   BBB   CCC   DDD
 =====  ====  ====  ====  ====
-1-10   2     5     0     0
-11-20  3     0     1     0
+1-10   1     1     0     0
+11-20  1     0     1     0
 21-30  0     0     0     0
-31-40  0     0     0     4
+31-40  0     0     0     1
 =====  ====  ====  ====  ====
 
-and ``frags/s2`` to AAA ``[7, 0, 0, 0]`` and EEE ``[0, 5, 0, 2]``.
+and ``frags/s2`` to AAA ``[1, 0, 0, 0]`` and EEE ``[0, 2, 0, 1]``.
 """
 import datetime
 import gzip
@@ -56,10 +56,10 @@ KIND = "fragment_score_binner"
 CHR1 = BedRegion("chr1", 1, 40)
 BY_CELL = {"group_score_id": "cell"}
 S1_BY_CELL = [
-    [2.0, 5.0, 0.0, 0.0],
-    [3.0, 0.0, 1.0, 0.0],
+    [1.0, 1.0, 0.0, 0.0],
+    [1.0, 0.0, 1.0, 0.0],
     [0.0, 0.0, 0.0, 0.0],
-    [0.0, 0.0, 0.0, 4.0],
+    [0.0, 0.0, 0.0, 1.0],
 ]
 
 
@@ -124,7 +124,7 @@ def test_a_pooled_block_is_the_per_resource_blocks_side_by_side(
             np.hstack([bin_job(s1, region, stats_repo),
                        bin_job(s2, region, stats_repo)]))
     np.testing.assert_array_equal(
-        bin_job(s2, CHR1, stats_repo), [[7, 0], [0, 5], [0, 0], [0, 2]])
+        bin_job(s2, CHR1, stats_repo), [[1, 0], [0, 2], [0, 0], [0, 1]])
 
 
 def test_a_track_s_parameters_record_the_grouping_score(
@@ -138,7 +138,8 @@ def test_a_track_s_parameters_record_the_grouping_score(
                       "group": {"group": "AAA"}}, stats_repo, genome).tracks[0]
 
     assert by_value.name == constant.name == "frags/s1:AAA"
-    assert json.loads(by_value.parameters) == {"group_score_id": "cell"}
+    assert json.loads(by_value.parameters) == {
+        "group_score_id": "cell", "value": 1}
     assert by_value.parameters != constant.parameters
 
 
@@ -171,7 +172,7 @@ def test_a_malformed_value_grouping_is_refused_naming_what_is_wrong(
     group: dict[str, Any], fragments: list[str],
 ) -> None:
     message = refusal({"resource_query": "frags/s1", "group": group,
-                       "aggregate": {"value": 1}}, stats_repo, genome)
+                       "value": {"value": 1}}, stats_repo, genome)
 
     for fragment in fragments:
         assert fragment in message
@@ -184,23 +185,23 @@ def test_grouping_by_the_aggregated_score_is_refused(
     # wrong with it.
     message = refusal({"resource_query": "frags/s1",
                        "group": {"group_score_id": "count"},
-                       "aggregate": {"score": "count"}}, stats_repo, genome)
+                       "value": {"score_id": "count"}}, stats_repo, genome)
 
     assert "binners[0].group" in message
     assert "'frags/s1'" in message
     assert "'count' is the aggregated score" in message
 
 
-@pytest.mark.parametrize("aggregate", [None, {"value": 1}])
+@pytest.mark.parametrize("value", [None, {"value": 1}])
 def test_meta_with_a_value_grouping_is_refused(
     stats_repo: GenomicResourceRepo, genome: ReferenceGenome,
-    aggregate: dict[str, Any] | None,
+    value: dict[str, Any] | None,
 ) -> None:
     entry: dict[str, Any] = {
         "resource_query": "frags/s1", "group": BY_CELL,
         "meta": {"resource_id": "meta/cells"}}
-    if aggregate is not None:
-        entry["aggregate"] = aggregate
+    if value is not None:
+        entry["value"] = value
 
     message = refusal(entry, stats_repo, genome)
 
@@ -610,7 +611,7 @@ def test_a_value_with_a_slash_or_colon_is_quoted_only_in_its_chunk_name(
         (b"frags/odd:S9:T/1:x", b"S9:T/1:x"),
     ]
     np.testing.assert_array_equal(values[:4], [
-        [0, 2], [3, 0], [0, 0], [0, 0]])
+        [0, 1], [1, 0], [0, 0], [0, 0]])
     chunks = sorted(
         path.name for path in (tmp_path / "bins_work" / "chunks").glob(
             "*.npy"))

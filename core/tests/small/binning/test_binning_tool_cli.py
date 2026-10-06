@@ -1115,11 +1115,11 @@ MIXED_RUN_DEFINITION = textwrap.dedent("""
           filter:
           - column: sample_id
             label: sample_id
-        aggregate: {value: 1}
+        value: {value: 1}
     - fragment_score_binner:
         resource_query: frags/s1
         pool: false
-        aggregate: {value: 1}
+        value: {value: 1}
     - position_score_binner:
         resource_query: scores/one
 """)
@@ -1319,8 +1319,8 @@ def test_entries_differing_only_in_parameters_compute_their_own_chunks(
     # must get its own chunks rather than share the other's.
     binning_tool(
         write_run_definition(output, fragment_entries(
-            "{resource_query: frags/s1, pool: false, aggregate: {value: 1}}",
-            '{resource_query: "frags/s1*", aggregate: {value: 2}}')),
+            "{resource_query: frags/s1, pool: false, value: {value: 1}}",
+            '{resource_query: "frags/s1*", value: {value: 2}}')),
         grr_dir, output)
 
     values = read_matrix(output)

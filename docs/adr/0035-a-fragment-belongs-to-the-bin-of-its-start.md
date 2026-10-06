@@ -10,7 +10,9 @@
   (the kind), [gain#1741](https://github.com/iossifovlab/gain/issues/1741) (the
   convention, the defaults, the dry-run report, the dropped counts),
   [gain#1759](https://github.com/iossifovlab/gain/issues/1759) (raw-value grouping),
-  [gain#1742](https://github.com/iossifovlab/gain/issues/1742) (the docs and this record);
+  [gain#1742](https://github.com/iossifovlab/gain/issues/1742) (the docs and this record),
+  [gain#1793](https://github.com/iossifovlab/gain/issues/1793) (the amendment: the
+  `value` / `aggregate` keys and the fragment-count default);
   content [grr_nygc_single_cell_demo#3](https://github.com/iossifovlab/grr_nygc_single_cell_demo/issues/3)
 - **Design:** `seqpipe/genomics-toolbox`
   `docs/2026-09-30-gain-fragment-binner-design.md` (decisions F1–F21). The
@@ -101,15 +103,31 @@ purpose, and a score's name is not. A resource that *looks* single-cell (it has 
 no label is binned as `all`, and `--dry-run` warns — the warning is the whole
 of the heuristic that remains.
 
-Without an `aggregate` key, a resource with an `int` score named `count`
-(`COUNT_SCORE`) has it summed, and any other resource has its fragments
-counted, as `{value: 1, aggregator: sum}`. The trigger is the `int` `count`
-score alone, whether or not a `cell` score exists.
+Without `value` and `aggregate` keys, every resource has the fragments that
+start in each bin counted, as `value: {value: 1}` and `aggregate: {mode:
+fragment_start, aggregator: sum}`, whatever scores it has. The read pairs
+behind each fragment are summed only on request, with `value: {score_id:
+count}`.
 
 A pooled entry is one job, so its resources must fall in the same tier: all
-labelled or none, all with an `int` `count` or none, all naming one metadata
-table. Disagreement is a parse-time error listing both sides, never a
-majority vote.
+labelled or none, all naming one metadata table. Disagreement is a
+parse-time error listing both sides, never a majority vote.
+
+**Amended by #1793 (2026-10-06): the default no longer depends on a `count`
+score.** As first accepted, an entry without `aggregate` summed the `int`
+score named `count` (`COUNT_SCORE`) of a resource that had one, and counted
+the fragments of any other; a pooled entry's resources therefore also had to
+agree on having an `int` `count`. That trigger was a score's name deciding
+what a column means, which is the sniffing the grouping rule above refuses:
+two resources of one study, one with `count` and one without, gave columns
+of different statistics from the same two-line entry, and the pooled refusal
+existed only to keep that guess consistent. The number of fragments is the
+common ATAC count matrix and needs no score, so it is the default for every
+resource (decision F28 of `seqpipe/genomics-toolbox`
+`docs/2026-10-06-gain-fragment-binner-modes-design.md`), and the pooled
+`count` agreement rule goes with the trigger. The same change split the old
+`aggregate: {score | value, aggregator}` into `value` (what one fragment
+adds) and `aggregate` (how a bin reduces the values; F23).
 
 ### The metadata convention is fixed, and checked before any work runs (F7)
 
@@ -155,7 +173,7 @@ ADR 0032, not its truncated sidecar), sorted. So the tracks are known before
 any task runs, exactly as for every other entry, and the writer preallocates
 `/values` as before. A resource whose full histogram is absent, unreadable,
 truncated or annulled is a parse-time error saying to build (and, in a DVC
-repository, pull) its statistics. The grouping score may not be the aggregated
+repository, pull) its statistics. The grouping score may not be the `value`
 score.
 
 Unpooled, the group is the bare value. Pooled, the same 10x barcode recurs in

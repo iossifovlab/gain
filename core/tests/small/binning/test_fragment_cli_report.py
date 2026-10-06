@@ -87,7 +87,7 @@ def test_dry_run_reports_each_fragment_entry_and_writes_nothing(
         tmp_path / "defs",
         "{resource_query: frags/lab}",
         '{resource_query: "frags/*", pool: false,'
-        ' aggregate: {score: count, aggregator: mean}}',
+        ' value: {score_id: count}, aggregate: {aggregator: mean}}',
         "{resource_query: frags/bare}")
     output = tmp_path / "defs" / "bins.h5"
 

@@ -162,9 +162,10 @@ the query is all an entry needs:
 Here ``sc/atac_fragments/donor1`` and ``sc/atac_fragments/donor2`` are two
 samples of a single-cell ATAC study, each labelled with its cell metadata
 table, ``sc/cell_meta_data``, and with its sample. The entry pools both
-samples and sums the read pairs of every fragment per cell type, one track
-per cell type. The same entry with every default spelled out, and with the
-two samples kept apart, is:
+samples and counts the fragments that start in each bin per cell type, one
+track per cell type. To sum the read pairs behind the fragments instead,
+add ``value: {score_id: count}``. The same entry with every default spelled
+out, and with the two samples kept apart, is:
 
 .. code-block:: yaml
 
@@ -175,8 +176,10 @@ two samples kept apart, is:
           cell_score_id: cell
           cell_meta_column: barcode
           group_meta_column: class
+        value:
+          value: 1
         aggregate:
-          score: count
+          mode: fragment_start
           aggregator: sum
         meta:
           resource_label: cell_meta_resource_id
@@ -216,15 +219,20 @@ Besides ``resource_query`` and ``search_term``, an entry takes these keys:
 
     Without ``group``, the resource's labels decide (see `Defaults`_).
 
-``aggregate`` (optional)
-    What is reduced per fragment, and how. ``{score: S, aggregator: A}``
-    reduces the value of the numeric (``int`` or ``float``) fragment score
-    ``S``; ``{value: V, aggregator: A}`` reduces the constant number ``V``
-    for every fragment, so ``{value: 1, aggregator: sum}`` counts
-    fragments. ``aggregator`` is one of ``sum``, ``count``, ``mean``,
-    ``max``, ``min``, ``median`` and ``product``, and defaults to ``sum``.
-    One aggregator applies to every resource of the entry. Without
-    ``aggregate``, see `Defaults`_.
+``value`` (optional, default ``{value: 1}``)
+    What one fragment adds, in exactly one of two forms.
+    ``{score_id: S}`` is the value of the numeric (``int`` or ``float``)
+    fragment score ``S``, which every matched resource must have;
+    ``{value: V}`` is the constant number ``V`` for every fragment.
+
+``aggregate`` (optional, default ``{mode: fragment_start, aggregator: sum}``)
+    How a bin reduces the values of its fragments. ``mode`` says which
+    fragments reach a bin; ``fragment_start``, the fragments that start in
+    it, is the only mode. ``aggregator`` is one of ``sum``, ``count``,
+    ``mean``, ``max``, ``min``, ``median`` and ``product``, and defaults to
+    ``sum``. One aggregator applies to every resource of the entry. With
+    the default ``value``, ``sum`` counts fragments; ``value:
+    {score_id: count}`` sums the read pairs of a single-cell resource.
 
 ``meta`` (optional)
     Where the table mapping barcodes to groups comes from: exactly one of
@@ -308,15 +316,16 @@ so its track is named ``<resource id>:all``. A resource that has ``cell``
 and ``count`` scores but no label is binned as the single ``all`` track,
 and ``--dry-run`` warns about it.
 
-Without ``aggregate``, an entry sums the ``int`` score named ``count`` when
-the resource has one — the read pairs behind each fragment — and otherwise
-counts fragments, as ``{value: 1, aggregator: sum}``.
+Without ``value`` and ``aggregate``, an entry counts the fragments that
+start in each bin, as ``value: {value: 1}`` and ``aggregate: {mode:
+fragment_start, aggregator: sum}``, whatever scores the resource has. The
+read pairs behind each fragment are summed only on request, with ``value:
+{score_id: count}``.
 
 A pooled entry is one job reading one table, so its resources must agree:
 on whether they carry ``cell_meta_resource_id`` (when ``group`` is
-omitted), on the one metadata table their ``meta`` names, and (when
-``aggregate`` is omitted) on whether they have an ``int`` ``count`` score.
-Resources that disagree are an error listing both sides; give the setting
+omitted), and on the one metadata table their ``meta`` names. Resources
+that disagree are an error listing both sides; give the setting
 explicitly, or ``pool: false``.
 
 Empty bins
@@ -364,7 +373,7 @@ DVC, pulled; a resource without the full histogram, or with a truncated
 one, is an error naming it. A score whose values pass the default
 categorical histogram's limit of 100 values keeps the full histogram only
 when its configuration declares ``histogram: {type: categorical}``. The
-grouping score may not be the aggregated score.
+grouping score may not be the ``value`` score.
 
 Unpooled, a track's group is the bare value. Pooled, the same barcode
 recurs in every 10x sample while naming a different cell, so the group is
@@ -484,12 +493,12 @@ two-chromosome genome at 100 bp:
 .. code-block:: text
 
     tracks:
-      sc/atac_fragments/*:ODC	sc/atac_fragments/donor1,sc/atac_fragments/donor2	count	sum
-      sc/atac_fragments/*:PVALB	sc/atac_fragments/donor1,sc/atac_fragments/donor2	count	sum
-      sc/atac_fragments/donor1:ODC	sc/atac_fragments/donor1	count	sum
-      sc/atac_fragments/donor1:PVALB	sc/atac_fragments/donor1	count	sum
-      sc/atac_fragments/donor2:ODC	sc/atac_fragments/donor2	count	sum
-      sc/atac_fragments/donor2:PVALB	sc/atac_fragments/donor2	count	sum
+      sc/atac_fragments/*:ODC	sc/atac_fragments/donor1,sc/atac_fragments/donor2		sum
+      sc/atac_fragments/*:PVALB	sc/atac_fragments/donor1,sc/atac_fragments/donor2		sum
+      sc/atac_fragments/donor1:ODC	sc/atac_fragments/donor1		sum
+      sc/atac_fragments/donor1:PVALB	sc/atac_fragments/donor1		sum
+      sc/atac_fragments/donor2:ODC	sc/atac_fragments/donor2		sum
+      sc/atac_fragments/donor2:PVALB	sc/atac_fragments/donor2		sum
     regions: 2
     bins: 14
     tasks: 3
@@ -749,9 +758,9 @@ in their name.
 The third entry bins a ``fragment_score`` resource: the gnomAD v4.1 genome
 structural-variant collection, whose records are intervals. It is grouped by
 the raw value of its ``deletion_duplication`` score, whose statistics list
-two values, ``deletion`` and ``duplication``, so it makes two tracks. The
-resource has no ``int`` score named ``count``, so each track counts the
-variants that start in each bin. A single resource carries no
+two values, ``deletion`` and ``duplication``, so it makes two tracks.
+Without ``value`` and ``aggregate``, each track counts the variants that
+start in each bin. A single resource carries no
 ``sample_id`` label, so the entry sets ``pool: false`` and the groups are
 the bare values.
 

@@ -29,11 +29,15 @@ An entry's keys:
   Omitted, the resource's labels decide: a resource carrying
   :data:`CELL_META_RESOURCE_ID_LABEL` is grouped as with ``group: {}``,
   any other is the one group ``all``.
-- ``aggregate``: ``{score: S, aggregator: A}``, the score's value per
-  fragment, or ``{value: V, aggregator: A}``, a constant per fragment.
-  ``aggregator`` omitted means ``sum``.  ``aggregate`` omitted sums the
-  :data:`COUNT_SCORE` score when the resource has one of type ``int``,
-  and otherwise counts fragments, ``{value: 1, aggregator: sum}``.
+- ``value``: what one fragment adds, ``{score_id: S}``, the value of the
+  numeric score ``S``, or ``{value: V}``, a constant; omitted, ``{value:
+  1}``.
+- ``aggregate``: how a bin reduces the values, ``{mode, aggregator}``;
+  ``mode`` is :data:`FRAGMENT_START`, the only one, and ``aggregator``
+  omitted means ``sum``.  The keys ``score`` and ``value`` are refused
+  here, naming the ``value`` key.  Without ``value`` and ``aggregate``
+  an entry counts the fragments that start in each bin, whatever its
+  resources' scores.
 - ``meta``: exactly one source of the table mapping barcodes to groups
   -- ``resource_id: ID``, a ``data_frame`` resource; ``resource_label:
   LABEL``, the ``data_frame`` resource the fragment resource's label
@@ -50,9 +54,7 @@ An entry's keys:
 
 A pooled entry resolves to one job, so its resources must agree: on
 whether they carry :data:`CELL_META_RESOURCE_ID_LABEL` (when ``group``
-is omitted), on the one metadata table their ``meta`` names, and (when
-``aggregate`` is omitted) on whether they have an ``int``
-:data:`COUNT_SCORE` score.
+is omitted), and on the one metadata table their ``meta`` names.
 
 A fragment whose barcode is not in the filtered rows, or whose row's
 group is empty, or whose ``group_score_id`` value is missing or is one
@@ -130,15 +132,15 @@ BARCODE_COLUMN = "barcode"
 CLASS_COLUMN = "class"
 #: The fragment score carrying a fragment's barcode.
 CELL_SCORE = "cell"
-#: The fragment score summed by default, when it is an ``int``.
+#: The fragment score holding a fragment's read pairs.
 COUNT_SCORE = "count"
 
 #: The group of an entry that names none.
 DEFAULT_GROUP = "all"
 
 ENTRY_KEYS = frozenset({
-    "resource_query", "search_term", "pool", "group", "aggregate", "meta",
-    "name"})
+    "resource_query", "search_term", "pool", "group", "value", "aggregate",
+    "meta", "name"})
 #: The keys of a metadata grouping, each with its default.
 CELL_GROUP_DEFAULTS = {
     "cell_score_id": CELL_SCORE,
@@ -149,7 +151,15 @@ CELL_GROUP_KEYS = frozenset(CELL_GROUP_DEFAULTS)
 #: The key of a raw-value grouping: the ``str`` score whose values group.
 VALUE_GROUP_KEY = "group_score_id"
 GROUP_KEYS = frozenset({"group", VALUE_GROUP_KEY}) | CELL_GROUP_KEYS
-AGGREGATE_KEYS = frozenset({"score", "value", "aggregator"})
+VALUE_KEYS = frozenset({"score_id", "value"})
+AGGREGATE_KEYS = frozenset({"mode", "aggregator"})
+#: The keys ``aggregate`` does not take, each with the ``value`` key that
+#: says what one fragment adds.
+MOVED_TO_VALUE = {"score": "score_id", "value": "value"}
+#: The fragment mode reducing, per bin, the fragments that start in it.
+FRAGMENT_START = "fragment_start"
+#: The accepted ``aggregate.mode`` values.
+MODES = (FRAGMENT_START,)
 META_SOURCE_KEYS = frozenset({"resource_id", "resource_label", "file_name"})
 META_FILE_KEYS = frozenset({"file_separator", "file_format"})
 META_KEYS = META_SOURCE_KEYS | META_FILE_KEYS | frozenset({"filter"})
@@ -414,7 +424,7 @@ class FragmentBinningJob(BinningJob):
     ``resource_ids`` are the resources read together, in resource-id
     order -- every match of a pooled entry, or one resource of an
     unpooled one.  A fragment contributes its ``score_id`` score's value
-    when the entry aggregates a score, else the constant ``value``.  With
+    when the entry's value is a score, else the constant ``value``.  With
     a ``grouping`` a fragment reaches the track of its barcode's group,
     or none; without one, the job's one track.  ``warnings`` are what a
     dry run tells the user about how the job was resolved.
@@ -436,43 +446,36 @@ class FragmentBinningJob(BinningJob):
 
 
 @dataclass(frozen=True)
-class _Aggregate:
-    """What a fragment contributes, and how a bin reduces the contributions.
+class _FragmentValue:
+    """What one fragment adds: a numeric score's value, or a constant.
 
-    Exactly one of a score or a constant ``value``; an omitted
-    aggregator is ``sum``.
+    Exactly one of ``score_id`` and a constant ``value``; the default is
+    the constant 1, so a bin's ``sum`` is its fragment count.
     """
 
     score_id: str | None
     value: float
-    aggregator: str
 
     @classmethod
     def parse(
         cls, label: str, config: Any, matches: list[GenomicResource],
-    ) -> _Aggregate:
-        """Resolve an entry's ``aggregate`` block against its matches.
+    ) -> _FragmentValue:
+        """Resolve an entry's ``value`` block against its matches.
 
-        A score must be numeric in every matched resource, and the
-        aggregator one the binned fold accepts.
+        A score must be numeric in every matched resource.
         """
-        check_keys(label, config, AGGREGATE_KEYS)
-        if "score" in config and "value" in config:
+        check_keys(label, config, VALUE_KEYS)
+        if len(config) != 1:
             raise RunDefinitionError(
-                f"{label}: give one of score or value, not both")
-        aggregator = _require_text(
-            label, "aggregator", config.get("aggregator", "sum"))
-        if aggregator not in EMPTY_BIN_VALUES:
-            raise RunDefinitionError(
-                f"{label}: aggregator {aggregator!r} does not produce a "
-                f"number; use one of {', '.join(sorted(EMPTY_BIN_VALUES))}")
-        if "score" not in config:
-            value = config.get("value", 1)
+                f"{label}: give one of score_id or value"
+                f"{', not both' if config else ''}")
+        if "score_id" not in config:
+            value = config["value"]
             if isinstance(value, bool) or not isinstance(value, int | float):
                 raise RunDefinitionError(
                     f"{label}: value must be a number, not {value!r}")
-            return cls(score_id=None, value=value, aggregator=aggregator)
-        score_id = _require_text(label, "score", config["score"])
+            return cls(score_id=None, value=value)
+        score_id = _require_text(label, "score_id", config["score_id"])
         for resource in matches:
             value_type = _score_type(label, resource, score_id)
             if value_type not in NUMERIC_VALUE_TYPES:
@@ -480,34 +483,58 @@ class _Aggregate:
                     f"{label}: resource {resource.resource_id!r} score "
                     f"{score_id!r} is of type {value_type!r}; only a "
                     f"numeric score (int or float) can be aggregated")
-        return cls(score_id=score_id, value=1, aggregator=aggregator)
+        return cls(score_id=score_id, value=1)
 
     @classmethod
-    def default(
-        cls, label: str, resources: list[GenomicResource],
-    ) -> _Aggregate:
-        """The aggregate of an entry that states none (F8).
+    def default(cls) -> _FragmentValue:
+        """The value of an entry that states none: 1 per fragment."""
+        return cls(score_id=None, value=1)
 
-        The sum of :data:`COUNT_SCORE` when the resources have it as an
-        ``int``, else the fragment count; resources pooled into one job
-        must agree on which.
+
+@dataclass(frozen=True)
+class _Aggregate:
+    """How a bin reduces the values of its fragments.
+
+    ``mode`` says which fragments reach a bin; ``aggregator`` is the
+    fold over their values.  The default is :data:`FRAGMENT_START` and
+    ``sum``.
+    """
+
+    mode: str
+    aggregator: str
+
+    @classmethod
+    def parse(cls, label: str, config: Any) -> _Aggregate:
+        """Resolve an entry's ``aggregate`` block.
+
+        The aggregator must be one the binned fold accepts.  What one
+        fragment adds is ``value``'s, and refused here.
         """
-        summed, counted = _partition(resources, _has_int_count)
-        if not summed:
-            return cls(score_id=None, value=1, aggregator="sum")
-        if counted:
+        if isinstance(config, dict):
+            for key, value_key in MOVED_TO_VALUE.items():
+                if key in config:
+                    raise RunDefinitionError(
+                        f"{label}: {key} is not an aggregate key; what one "
+                        f"fragment adds is the entry's value key: give "
+                        f"value: {{{value_key}: {config[key]}}}")
+        check_keys(label, config, AGGREGATE_KEYS)
+        mode = config.get("mode", FRAGMENT_START)
+        if mode not in MODES:
             raise RunDefinitionError(
-                f"{label}: the pooled resources disagree on the default "
-                f"aggregate: {_quoted(summed)} have an int "
-                f"{COUNT_SCORE!r} score, summed by default, while "
-                f"{_quoted(counted)} do not, and count fragments; state "
-                f"the aggregate")
-        return cls(score_id=COUNT_SCORE, value=1, aggregator="sum")
+                f"{label}: mode {mode!r} is not supported; use one of "
+                f"{', '.join(MODES)}")
+        aggregator = _require_text(
+            label, "aggregator", config.get("aggregator", "sum"))
+        if aggregator not in EMPTY_BIN_VALUES:
+            raise RunDefinitionError(
+                f"{label}: aggregator {aggregator!r} does not produce a "
+                f"number; use one of {', '.join(sorted(EMPTY_BIN_VALUES))}")
+        return cls(mode=mode, aggregator=aggregator)
 
-
-def _has_int_count(resource: GenomicResource) -> bool:
-    definition = FragmentScore(resource).score_definitions.get(COUNT_SCORE)
-    return definition is not None and definition.value_type == "int"
+    @classmethod
+    def default(cls) -> _Aggregate:
+        """The aggregate of an entry that states none: the sum."""
+        return cls(mode=FRAGMENT_START, aggregator="sum")
 
 
 def _score_type(
@@ -893,7 +920,7 @@ def _value_groups(
 
 
 def _resolve_value_grouping(
-    label: str, score_id: str, aggregate: _Aggregate,
+    label: str, score_id: str, fragment_value: _FragmentValue,
     resources: list[GenomicResource], *, pool: bool,
 ) -> tuple[ValueGrouping, list[str]]:
     """Resolve one job's raw-value grouping, and its sorted groups.
@@ -949,7 +976,7 @@ def _resolve_value_grouping(
         prefixes = [f"{sample_id}:" for sample_id in sample_ids]
     values = []
     for resource in resources:
-        if score_id == aggregate.score_id:
+        if score_id == fragment_value.score_id:
             raise RunDefinitionError(
                 f"{group_label}: resource {resource.resource_id!r} score "
                 f"{score_id!r} is the aggregated score; group by another "
@@ -978,12 +1005,13 @@ def _resolve_value_grouping(
 class _Entry:
     """An entry's parsed keys, before the defaults its resources decide.
 
-    ``aggregate`` and ``meta`` ``None`` mean none was given.
+    ``meta`` ``None`` means none was given.
     """
 
     label: str
     pool: bool
-    aggregate: _Aggregate | None
+    value: _FragmentValue
+    aggregate: _Aggregate
     group: _Group
     meta: _MetaSpec | None
     tables: _Tables
@@ -1127,9 +1155,12 @@ class FragmentScoreBinner:
         entry = _Entry(
             label=label,
             pool=pool,
-            aggregate=None if config.get("aggregate") is None
-            else _Aggregate.parse(
-                f"{label}.aggregate", config["aggregate"], matches),
+            value=_FragmentValue.default() if config.get("value") is None
+            else _FragmentValue.parse(
+                f"{label}.value", config["value"], matches),
+            aggregate=_Aggregate.default()
+            if config.get("aggregate") is None
+            else _Aggregate.parse(f"{label}.aggregate", config["aggregate"]),
             group=_Group.parse(f"{label}.group", config.get("group")),
             meta=None if config.get("meta") is None
             else _MetaSpec.parse(f"{label}.meta", config["meta"], base_dir),
@@ -1148,7 +1179,7 @@ class FragmentScoreBinner:
         cls, entry: _Entry, resources: list[GenomicResource], *, base: str,
     ) -> FragmentBinningJob:
         """Resolve the defaults and the grouping of one job's resources."""
-        label, aggregate, meta = entry.label, entry.aggregate, entry.meta
+        label, meta = entry.label, entry.meta
         constant, cell_keys = entry.group.constant, entry.group.cell_keys
         warnings: list[str] = []
         if entry.group.value_score is not None:
@@ -1158,14 +1189,11 @@ class FragmentScoreBinner:
                     f"with a group of {VALUE_GROUP_KEY}, whose values are "
                     f"the groups, for "
                     f"{_quoted(r.resource_id for r in resources)}")
-            if aggregate is None:
-                aggregate = _Aggregate.default(
-                    f"{label}.aggregate", resources)
             value_grouping, groups = _resolve_value_grouping(
-                label, entry.group.value_score, aggregate, resources,
+                label, entry.group.value_score, entry.value, resources,
                 pool=entry.pool)
             return cls._job_of(
-                tuple(r.resource_id for r in resources), aggregate,
+                tuple(r.resource_id for r in resources), entry,
                 value_grouping, groups, base=base, warnings=())
         if constant is None and cell_keys is None:
             # No group given: the label tier decides (F8).
@@ -1187,8 +1215,6 @@ class FragmentScoreBinner:
                     f"{CELL_META_RESOURCE_ID_LABEL!r} label; it is binned "
                     f"as the single {DEFAULT_GROUP!r} track"
                     for r in resources if _is_single_cell(r))
-        if aggregate is None:
-            aggregate = _Aggregate.default(f"{label}.aggregate", resources)
         grouping = None
         if cell_keys is None:
             assert constant is not None
@@ -1213,19 +1239,20 @@ class FragmentScoreBinner:
                     f"the cell metadata table {grouping.table.name!r} is a "
                     f"local file; the run is not reproducible elsewhere")
         return cls._job_of(
-            tuple(r.resource_id for r in resources), aggregate, grouping,
+            tuple(r.resource_id for r in resources), entry, grouping,
             groups, base=base, warnings=tuple(warnings))
 
     @classmethod
     def _job_of(
-        cls, resource_ids: tuple[str, ...], aggregate: _Aggregate,
+        cls, resource_ids: tuple[str, ...], entry: _Entry,
         grouping: CellGrouping | ValueGrouping | None, groups: list[str],
         *, base: str,
         warnings: tuple[str, ...],
     ) -> FragmentBinningJob:
+        value, aggregator = entry.value, entry.aggregate.aggregator
         parameters: dict[str, Any] = {}
-        if aggregate.score_id is None:
-            parameters["value"] = aggregate.value
+        if value.score_id is None:
+            parameters["value"] = value.value
         if grouping is not None:
             parameters.update(grouping.parameters)
         parameters_text = (
@@ -1235,8 +1262,8 @@ class FragmentScoreBinner:
                 name=f"{base}:{group}",
                 resource_ids=resource_ids,
                 group=group,
-                score_id=aggregate.score_id or "",
-                aggregator=aggregate.aggregator,
+                score_id=value.score_id or "",
+                aggregator=aggregator,
                 none_value_replacement=None,
                 binner=cls.kind,
                 parameters=parameters_text,
@@ -1245,7 +1272,7 @@ class FragmentScoreBinner:
         )
         return FragmentBinningJob(
             binner=cls.kind, tracks=tracks, resource_ids=resource_ids,
-            score_id=aggregate.score_id, value=aggregate.value,
+            score_id=value.score_id, value=value.value,
             grouping=grouping, warnings=warnings)
 
     @staticmethod
