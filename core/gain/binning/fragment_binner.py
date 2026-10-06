@@ -483,31 +483,9 @@ class _Aggregate:
         return cls(score_id=score_id, value=1, aggregator=aggregator)
 
     @classmethod
-    def default(
-        cls, label: str, resources: list[GenomicResource],
-    ) -> _Aggregate:
-        """The aggregate of an entry that states none (F8).
-
-        The sum of :data:`COUNT_SCORE` when the resources have it as an
-        ``int``, else the fragment count; resources pooled into one job
-        must agree on which.
-        """
-        summed, counted = _partition(resources, _has_int_count)
-        if not summed:
-            return cls(score_id=None, value=1, aggregator="sum")
-        if counted:
-            raise RunDefinitionError(
-                f"{label}: the pooled resources disagree on the default "
-                f"aggregate: {_quoted(summed)} have an int "
-                f"{COUNT_SCORE!r} score, summed by default, while "
-                f"{_quoted(counted)} do not, and count fragments; state "
-                f"the aggregate")
-        return cls(score_id=COUNT_SCORE, value=1, aggregator="sum")
-
-
-def _has_int_count(resource: GenomicResource) -> bool:
-    definition = FragmentScore(resource).score_definitions.get(COUNT_SCORE)
-    return definition is not None and definition.value_type == "int"
+    def default(cls) -> _Aggregate:
+        """The aggregate of an entry that states none: the fragment count."""
+        return cls(score_id=None, value=1, aggregator="sum")
 
 
 def _score_type(
@@ -1159,8 +1137,7 @@ class FragmentScoreBinner:
                     f"the groups, for "
                     f"{_quoted(r.resource_id for r in resources)}")
             if aggregate is None:
-                aggregate = _Aggregate.default(
-                    f"{label}.aggregate", resources)
+                aggregate = _Aggregate.default()
             value_grouping, groups = _resolve_value_grouping(
                 label, entry.group.value_score, aggregate, resources,
                 pool=entry.pool)
@@ -1188,7 +1165,7 @@ class FragmentScoreBinner:
                     f"as the single {DEFAULT_GROUP!r} track"
                     for r in resources if _is_single_cell(r))
         if aggregate is None:
-            aggregate = _Aggregate.default(f"{label}.aggregate", resources)
+            aggregate = _Aggregate.default()
         grouping = None
         if cell_keys is None:
             assert constant is not None

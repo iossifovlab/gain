@@ -110,6 +110,17 @@ def bin_entry(
 CHR1 = BedRegion("chr1", 1, 40)
 
 
+def test_an_entry_without_value_or_aggregate_counts_fragments(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+) -> None:
+    # ``frags/s1`` has an int ``count`` score, with counts 2 and 5 in the
+    # first bin; the default counts the two fragments, not 7 read pairs.
+    block = bin_entry(
+        {"resource_query": "frags/s1", "pool": False}, CHR1, repo, genome)
+
+    np.testing.assert_array_equal(block[:, 0], [2.0, 2.0, 0.0, 1.0])
+
+
 def test_a_constant_value_of_two_sums_to_twice_the_fragment_count(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
 ) -> None:
