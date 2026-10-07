@@ -118,8 +118,8 @@ takes, besides ``resource_query`` and ``search_term``, these keys:
 
 ``aggregator`` (optional)
     How the positions inside a bin are reduced to one number. The default is
-    the aggregator the score itself declares as its ``position_aggregator``
-    in its resource configuration, so a conservation score and a coverage
+    the ``aggregator`` the score itself declares in its resource
+    configuration, so a conservation score and a coverage
     track are each reduced the way their authors intended. Setting
     ``aggregator`` on an entry overrides that for every resource the entry
     matches. Only aggregators that produce a number are accepted, and only

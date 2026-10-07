@@ -190,12 +190,15 @@ silently produced no column. A typo must not shrink the matrix.
 
 ### The aggregator defaults to the score's own (D8)
 
-Without `aggregator:`, a track is reduced by the `position_aggregator` its
+Without `aggregator:`, a track is reduced by the aggregator its
 score declares in its resource configuration, so a conservation score and a
 coverage track are each reduced the way their authors intended.
 `aggregator:` on an entry overrides that for every resource the entry
 matches. Two entries for two aggregators of one resource; there is no
 per-resource override inside one entry.
+
+> **Note (gain#1828):** the resource-level key is now `aggregator`. It
+> replaced `position_aggregator` in 2026.7.5 (gain#462).
 
 ### A resource with several scores is refused (D9)
 
