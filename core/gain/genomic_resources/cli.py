@@ -105,7 +105,10 @@ class CommandResult:
     ``wrote`` is not a fourth outcome but a fact about the run: whether
     it changed anything on disk.  The resource-scoped commands read it
     to note that the repository-global artifacts are now behind the
-    resources they describe (gain#760).
+    resources they describe (gain#760).  It is set by the command layer,
+    not reported by the protocol, so a new write site on a
+    resource-scoped path must set it, or the note silently stops firing
+    for that write.
     """
 
     needs_update: int = 0
