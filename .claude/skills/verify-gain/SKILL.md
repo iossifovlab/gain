@@ -43,8 +43,13 @@ directory: <absolute checkout path>/test_fixtures/mini-GRR
 
 The drives pass this file as `GRR_DEFINITION_FILE` (or `-g`). They also set
 `HOME` to `$RUN/scratch/home`, so `~/.grr_definition.yaml` is never read or
-changed, and point `http(s)_proxy` at a closed local port, so any network
-access fails instead of passing quietly.
+changed. The definition is what keeps a drive off the network: it names a
+local directory GRR, so no repository request leaves the host. The scripts
+also point `http(s)_proxy` at a closed local port, but that only catches
+clients that honour the proxy environment (curl, urllib, requests). gain's
+HTTP GRR path (fsspec `HTTPFileSystem` over aiohttp) ignores it, so a
+definition that named an `http(s)` GRR would reach the network and the drive
+would still pass. Keep the definition a `type: directory` GRR.
 
 ## 2. Doctor
 
@@ -153,7 +158,7 @@ All in `.claude/skills/verify-gain/scripts/`, all executable:
 | `drive-annotate-tabular.sh` | `drive-annotate-tabular.sh <run id>` | drives `annotate_tabular` + `mini_pipeline`, keeps the evidence, runs the read-back |
 | `readback-annotate-tabular.sh` | `readback-annotate-tabular.sh <output.tsv>` | checks `pos_bw_0` = 0.1, 0.2, 0.3 at the drive's positions |
 | `cleanup.sh` | `cleanup.sh <run id>` | removes `.verify/<run id>/scratch/` only |
-| `common.sh` | sourced by the others | checkout discovery, run-id validation, the isolated environment (`HOME`, `GRR_DEFINITION_FILE`, closed proxy) |
+| `common.sh` | sourced by the others | checkout discovery, run-id validation, the isolated environment (`HOME`, `GRR_DEFINITION_FILE`, a closed proxy for proxy-honouring clients only) |
 
 A full run, from the checkout root:
 
