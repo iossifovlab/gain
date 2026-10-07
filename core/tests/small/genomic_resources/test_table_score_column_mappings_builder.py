@@ -122,6 +122,86 @@ def test_tabix_index_columns_follow_the_explicit_mapping(
     assert by_b.get_scores_at_position("1", 20, ["v"]) == (None,)
 
 
+def test_a_later_mapping_for_the_same_column_replaces_the_earlier(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The index mapping would read pos_begin from ``a``; the later name
+    # mapping must win outright, leaving no trace of the first.
+    resource = (
+        a_position_score()
+        .with_score("v", "float")
+        .with_score("a", "int")
+        .with_position_column("pos_begin", column_index=1)
+        .with_position_column("pos_begin", column_name="b")
+        .with_tabix()
+        .with_data("""
+            chrom  a   b    v
+            1      10  100  0.5
+            1      20  200  0.6
+        """)
+        .build_resource(tmp_path)
+    )
+
+    config_text = resource.get_file_content("genomic_resource.yaml")
+    assert config_text.count("pos_begin:") == 1
+    assert _config(resource)["table"]["pos_begin"] == {"column_name": "b"}
+    score = PositionScore(resource).open()
+    assert score.get_scores_at_position("1", 200, ["v"]) == (0.6,)
+    assert score.get_scores_at_position("1", 20, ["v"]) == (None,)
+
+
+@pytest.mark.parametrize("mappings, data, colliding", [
+    pytest.param(
+        [("chrom", {"column_index": 0})],
+        """
+            pos_begin  v
+            1          0.5
+        """,
+        "'chrom', 'pos_begin'",
+        id="index-onto-an-unmapped-column"),
+    pytest.param(
+        [("chrom", {"column_index": 0}),
+         ("pos_begin", {"column_index": 0})],
+        """
+            contig  v
+            1       0.5
+        """,
+        "'chrom', 'pos_begin'",
+        id="two-columns-on-one-index"),
+    pytest.param(
+        [("chrom", {"column_name": "pos_begin"})],
+        """
+            pos_begin  v
+            1          0.5
+        """,
+        "'chrom', 'pos_begin'",
+        id="name-onto-another-base-name"),
+    pytest.param(
+        [("pos_begin", {"column_name": "pos_end"})],
+        """
+            chrom  pos_end  v
+            1      10       0.5
+        """,
+        "'pos_begin', 'pos_end'",
+        id="name-onto-the-optional-pos-end"),
+])
+@pytest.mark.parametrize("tabix", [False, True])
+def test_two_position_columns_on_one_data_column_are_refused(
+    mappings: list[tuple[str, dict]], data: str, colliding: str,
+    tabix: bool,
+) -> None:
+    builder = a_position_score().with_score("v", "float").with_data(data)
+    for column, address in mappings:
+        builder = builder.with_position_column(column, **address)
+    if tabix:
+        builder = builder.with_tabix()
+
+    with pytest.raises(
+            ResourceValidationError,
+            match=f"position columns \\[{colliding}\\] .*same data column"):
+        builder.realize_into(pathlib.Path("/nonexistent"))
+
+
 def test_header_mode_none_refuses_a_name_mapped_position_column() -> None:
     builder = (
         a_position_score()

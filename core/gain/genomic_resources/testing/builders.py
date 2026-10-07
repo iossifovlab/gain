@@ -664,6 +664,7 @@ class _TableScoreBuilder(ExtraFilesMixin, MetaMixin):
                 position_required + self._effective_trailing_columns),
             base_optional=position_optional)
         self._validate_header_mode(scores)
+        self._validate_distinct_position_columns(header)
         self._validate_index_options()
         # The authored header -- plus any explicit position mapping -- is
         # the single column declaration; the modes that do not write the
@@ -732,6 +733,24 @@ class _TableScoreBuilder(ExtraFilesMixin, MetaMixin):
                 f"header_mode 'none' leaves no header to resolve a column "
                 f"name against; position column(s) {sorted(named_positions)} "
                 f"must be mapped with column_index")
+
+    def _validate_distinct_position_columns(self, header: list[str]) -> None:
+        """Reject two position columns resolving to one data column.
+
+        The set-based header check cannot see the collision -- the shared
+        name simply appears once -- so without this the builder would
+        realize a config and a tabix index in which both columns read the
+        same field.
+        """
+        by_index: dict[int, list[str]] = {}
+        for column, index in self._position_column_indexes(header).items():
+            by_index.setdefault(index, []).append(column)
+        for index, columns in sorted(by_index.items()):
+            if len(columns) > 1:
+                raise ResourceValidationError(
+                    f"position columns {columns} resolve to the same data "
+                    f"column, index {index} ({header[index]!r}); map each "
+                    f"to a distinct column")
 
     def _validate_index_options(self) -> None:
         """Reject a keep-the-conventional-index request with no second name.
