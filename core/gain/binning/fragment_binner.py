@@ -8,7 +8,11 @@ reads, so adjacent regions see each fragment exactly once -- or, in
 weighted by its overlap in base pairs.  That mode reads
 :meth:`FragmentScore.get_fragment_scores_overlapping_region` and clips
 each fragment to the region, so a base pair belongs to one region and no
-fragment's base pair is counted twice.
+fragment's base pair is counted twice.  In :data:`COVERAGE_PROFILE`
+mode the clipped fragments of each track make its coverage profile --
+per base, the sum of the values of the fragments over it -- and each bin
+reduces the profile, weighted by base pairs; a base the profile leaves
+at 0 is uncovered.
 
 An entry's keys:
 
@@ -38,12 +42,13 @@ An entry's keys:
   numeric score ``S``, or ``{value: V}``, a constant; omitted, ``{value:
   1}``.
 - ``aggregate``: how a bin reduces the values, ``{mode, aggregator,
-  uncovered_value}``; ``mode`` is :data:`FRAGMENT_START` (the default)
-  or :data:`FRAGMENT_LENGTH`, and ``aggregator`` omitted means ``sum``.
-  :data:`FRAGMENT_LENGTH` takes only :data:`LENGTH_AGGREGATORS`, and an
-  ``uncovered_value``: a number each base of the region no fragment of
-  the track covers adds, with a weight of 1 bp, or ``null`` (the
-  default), nothing; :data:`FRAGMENT_START` refuses it.  The keys
+  uncovered_value}``; ``mode`` is :data:`FRAGMENT_START` (the default),
+  :data:`FRAGMENT_LENGTH` or :data:`COVERAGE_PROFILE`, and
+  ``aggregator`` omitted means ``sum``.  The last two take only
+  :data:`LENGTH_AGGREGATORS`, and an ``uncovered_value``: a number each
+  uncovered base of the region adds, with a weight of 1 bp, or ``null``,
+  nothing -- omitted, ``null`` in :data:`FRAGMENT_LENGTH` mode and ``0``
+  in :data:`COVERAGE_PROFILE` mode; :data:`FRAGMENT_START` refuses it.  The keys
   ``score`` and ``value`` are refused here, naming the ``value`` key.
   Without ``value`` and ``aggregate`` an entry counts the fragments that
   start in each bin, whatever its resources' scores.
@@ -68,11 +73,12 @@ is omitted), and on the one metadata table their ``meta`` names.
 A fragment whose barcode is not in the filtered rows, or whose row's
 group is empty, or whose ``group_score_id`` value is missing or is one
 its resource's histogram does not list, reaches no track; it is counted
-as dropped, per resource and region (in :data:`FRAGMENT_LENGTH` mode,
-in every region it reaches).  An empty bin holds the fold's empty value
--- 0 for ``count`` and ``sum``, NaN for the others -- and so does every
-bin of a contig a resource lacks; with an ``uncovered_value`` no bin is
-empty, and a contig a resource lacks is uncovered throughout.
+as dropped, per resource and region (in :data:`FRAGMENT_LENGTH` and
+:data:`COVERAGE_PROFILE` modes, in every region it reaches).  An empty
+bin holds the fold's empty value -- 0 for ``count`` and ``sum``, NaN for
+the others -- and so does every bin of a contig a resource lacks; with
+an ``uncovered_value`` no bin is empty, and a contig a resource lacks is
+uncovered throughout.
 """
 from __future__ import annotations
 
@@ -106,6 +112,7 @@ from gain.binning.binners import (
 )
 from gain.binning.fragment_folds import (
     BinFragmentAggregator,
+    BinFragmentCoverageAggregator,
     BinFragmentLengthAggregator,
     BinFragmentStartAggregator,
     BinValue,
@@ -178,8 +185,11 @@ FRAGMENT_START = "fragment_start"
 #: The fragment mode reducing, per bin, the fragments that overlap it,
 #: each weighted by its overlap in base pairs.
 FRAGMENT_LENGTH = "fragment_length"
+#: The fragment mode reducing, per bin, the coverage profile of the
+#: fragments, weighted by base pairs; a base at 0 is uncovered.
+COVERAGE_PROFILE = "coverage_profile"
 #: The accepted ``aggregate.mode`` values.
-MODES = (FRAGMENT_START, FRAGMENT_LENGTH)
+MODES = (FRAGMENT_START, FRAGMENT_LENGTH, COVERAGE_PROFILE)
 #: The aggregators a length-weighted mode accepts: ``count`` would count
 #: base pairs, and ``product`` raise a value to the power of a length.
 LENGTH_AGGREGATORS = ("max", "mean", "median", "min", "sum")
@@ -525,8 +535,8 @@ class _Aggregate:
 
     mode: str
     aggregator: str
-    #: What a base no fragment covers adds, with a weight of 1 bp;
-    #: ``None``, nothing.  Only :data:`FRAGMENT_LENGTH` takes one.
+    #: What an uncovered base adds, with a weight of 1 bp; ``None``,
+    #: nothing.  :data:`FRAGMENT_START` takes none.
     uncovered_value: float | None = None
 
     @classmethod
@@ -534,9 +544,10 @@ class _Aggregate:
         """Resolve an entry's ``aggregate`` block.
 
         The aggregator must be one the mode's fold accepts, and
-        ``uncovered_value`` a number or ``null``, given only in
-        :data:`FRAGMENT_LENGTH` mode.  What one fragment adds is
-        ``value``'s, and refused here.
+        ``uncovered_value`` a number or ``null``, not given in
+        :data:`FRAGMENT_START` mode; omitted, it is ``0`` in
+        :data:`COVERAGE_PROFILE` mode and ``None`` otherwise.  What one
+        fragment adds is ``value``'s, and refused here.
         """
         if isinstance(config, dict):
             for key, value_key in MOVED_TO_VALUE.items():
@@ -575,7 +586,8 @@ class _Aggregate:
                 f"{label}: aggregator {aggregator!r} would weigh a value "
                 f"by its overlap as a power in {mode} mode; use one of "
                 f"{', '.join(LENGTH_AGGREGATORS)}")
-        uncovered = config.get("uncovered_value")
+        uncovered = config.get(
+            "uncovered_value", 0 if mode == COVERAGE_PROFILE else None)
         return cls(
             mode=mode, aggregator=aggregator,
             uncovered_value=_uncovered_value(label, uncovered))
@@ -1236,7 +1248,9 @@ def _fold_of(
         return BinFragmentStartAggregator(
             start=region.start, end=region.stop, bin_size=bin_size,
             aggregator=track.aggregator)
-    return BinFragmentLengthAggregator(
+    fold = BinFragmentCoverageAggregator if track.mode == COVERAGE_PROFILE \
+        else BinFragmentLengthAggregator
+    return fold(
         start=region.start, end=region.stop, bin_size=bin_size,
         aggregator=track.aggregator, uncovered_value=track.uncovered_value)
 

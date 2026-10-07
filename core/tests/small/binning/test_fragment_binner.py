@@ -192,7 +192,7 @@ def test_a_value_given_in_aggregate_is_refused_naming_the_value_key(
 
 
 @pytest.mark.parametrize("mode", [
-    "coverage_profile", "sideways", ["fragment_start"]])
+    "coverage", "sideways", ["fragment_start"]])
 def test_an_unknown_mode_is_refused_naming_the_modes(
     repo: GenomicResourceRepo, genome: ReferenceGenome, mode: Any,
 ) -> None:
@@ -204,7 +204,8 @@ def test_an_unknown_mode_is_refused_naming_the_modes(
     message = str(excinfo.value)
     assert message.startswith("binners[0].aggregate")
     assert repr(mode) in message
-    assert "use one of fragment_start, fragment_length" in message
+    assert ("use one of fragment_start, fragment_length, "
+            "coverage_profile") in message
 
 
 def length_entry(**aggregate: Any) -> dict[str, Any]:
