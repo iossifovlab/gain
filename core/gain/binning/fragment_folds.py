@@ -206,12 +206,12 @@ class BinFragmentLengthAggregator(BinFragmentAggregator):
         """Answer the bins before ``bin_index``, from the current one."""
         bins = []
         while self.current_bin < bin_index:
-            aggregator = self._aggregator(self.current_bin)
-            self.pending.popleft()
+            value = _final_value(self.pending.popleft(), self.empty_value) \
+                if self.pending else self.empty_value
             bins.append(BinValue(
                 calc_bin_begin(self.bin_size, self.current_bin),
                 calc_bin_end(self.bin_size, self.current_bin),
-                _final_value(aggregator, self.empty_value)))
+                value))
             self.current_bin += 1
         return bins
 
