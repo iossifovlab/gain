@@ -3,8 +3,11 @@
 #
 # Read-only preflight. Run it before the first drive and after any failed
 # drive. Checks:
-#   1. the annotate_tabular and grr_browse on PATH are the checkout's
-#      .venv/bin ones (a conda env can shadow them);
+#   1. every CLI the drives run (annotate_tabular, annotate_vcf,
+#      grr_browse, grr_cache_repo, grr_manage, binning_tool) on PATH is the
+#      checkout's .venv/bin one (a conda env can shadow them), and the
+#      checkout's .venv/bin/python imports h5py (the binning-tool
+#      read-back needs it);
 #   2. test_fixtures/mini-GRR is initialised (it is a git submodule);
 #   3. grr_browse with the run's GRR definition lists mini_pipeline.
 # For a run with an HTTP GRR (launch-http-grr.sh wrote
@@ -33,7 +36,7 @@ scratch="$run_dir/scratch"
 [[ -f "$scratch/grr.yaml" ]] || vg_die "doctor: $scratch/grr.yaml is missing (run launch.sh)"
 
 # 1. CLI on PATH comes from this checkout.
-for cli in annotate_tabular grr_browse grr_cache_repo; do
+for cli in annotate_tabular annotate_vcf grr_browse grr_cache_repo grr_manage binning_tool; do
     expected="$VG_VENV_BIN/$cli"
     [[ -x "$expected" ]] || vg_die "doctor: FAIL: $expected is missing; run 'uv sync' in $VG_CHECKOUT"
     found="$(command -v "$cli" || true)"
@@ -47,6 +50,10 @@ for cli in annotate_tabular grr_browse grr_cache_repo; do
     fi
     echo "doctor: ok: $cli -> $found"
 done
+"$VG_VENV_BIN/python" -I -c 'import h5py' 2> /dev/null \
+    || vg_die "doctor: FAIL: $VG_VENV_BIN/python cannot import h5py; the binning-tool read-back needs it.
+    Fix: run 'uv sync' in $VG_CHECKOUT"
+echo "doctor: ok: $VG_VENV_BIN/python imports h5py"
 
 # 2. mini-GRR submodule is initialised.
 mini_grr="${VERIFY_GAIN_MINI_GRR:-$VG_CHECKOUT/test_fixtures/mini-GRR}"

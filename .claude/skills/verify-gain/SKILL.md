@@ -1,6 +1,6 @@
 ---
 name: verify-gain
-description: Drive the real gain command-line tools (annotate_tabular, grr_browse, grr_cache_repo) from this checkout's .venv against test_fixtures/mini-GRR, as a directory GRR or as an HTTP GRR served by the run's own verify-gain-<run id> compose project, and keep the evidence (command, stdout, stderr, exit code, output file, read-back) under .verify/<run id>/evidence/. Use it to prove a gain CLI change works end to end, beyond unit tests, with no network and no shared container touched.
+description: Drive the real gain command-line tools (annotate_tabular, annotate_vcf, grr_manage, binning_tool, grr_browse, grr_cache_repo) from this checkout's .venv against test_fixtures/mini-GRR (or a scratch copy of it), as a directory GRR or as an HTTP GRR served by the run's own verify-gain-<run id> compose project, and keep the evidence (command, stdout, stderr, exit code, output file, read-back) under .verify/<run id>/evidence/. Use it to prove a gain CLI change works end to end, beyond unit tests, with no network and no shared container touched.
 ---
 
 # verify-gain
@@ -14,7 +14,8 @@ A run is one directory, `.verify/<run id>/`:
 
 - `.verify/<run id>/scratch/` — the GRR definitions, inputs, work dirs, a
   private `HOME` and `TMPDIR`, and for an HTTP run the served GRR copy, the
-  compose override and the cache. Removed by Cleanup.
+  compose override and the cache, and for a `grr-manage` drive the copy of
+  mini-GRR that `grr_manage` writes. Removed by Cleanup.
 - `.verify/<run id>/evidence/` — one subdirectory per drive. Kept.
 
 `.verify/` is git-ignored, so no run output is ever committed, and every
@@ -116,10 +117,13 @@ PATH="$PWD/.venv/bin:$PATH" .claude/skills/verify-gain/scripts/doctor.sh "$RUN_I
 
 It fails (exit 1) with a message naming the fix when:
 
-- the `annotate_tabular` or `grr_browse` on `PATH` is not this checkout's
-  `.venv/bin/` one (on a workstation a conda env can shadow it). Fix:
-  `export PATH="$PWD/.venv/bin:$PATH"`. If `.venv/bin/annotate_tabular` is
-  missing, run `uv sync` first.
+- a CLI that the drives run (`annotate_tabular`, `annotate_vcf`,
+  `grr_browse`, `grr_cache_repo`, `grr_manage`, `binning_tool`) on `PATH`
+  is not this checkout's `.venv/bin/` one (on a workstation a conda env can
+  shadow it). Fix: `export PATH="$PWD/.venv/bin:$PATH"`. If
+  `.venv/bin/annotate_tabular` is missing, run `uv sync` first.
+- `.venv/bin/python` cannot import `h5py` (the `binning-tool` read-back
+  needs it). Fix: `uv sync`.
 - `test_fixtures/mini-GRR/mini_pipeline/genomic_resource.yaml` is missing:
   the submodule is not initialised. Fix:
   `git submodule update --init test_fixtures/mini-GRR`.
@@ -188,6 +192,51 @@ GRR_DEFINITION_FILE=$RUN/scratch/grr.yaml .venv/bin/annotate_tabular \
 The drive exits 0 only when `annotate_tabular` exits 0 and the read-back
 check passes. On a non-zero exit, run Doctor before anything else.
 
+**`features/annotate-vcf.md`** — `annotate_vcf` with the `mini_pipeline`
+pipeline:
+
+```bash
+.claude/skills/verify-gain/scripts/drive-annotate-vcf.sh "$RUN_ID"
+```
+
+which writes `$RUN/scratch/in.vcf` (the `chr1` and `chr2` contig lines and
+`A>C` records at `chr1:6`, `chr2:3`, `chr2:8`) and runs, from
+`$RUN/scratch/` in the isolated environment:
+
+```bash
+.venv/bin/annotate_vcf $RUN/scratch/in.vcf mini_pipeline -g $RUN/scratch/grr.yaml \
+    -o $RUN/scratch/out.vcf -w $RUN/scratch/work -j 1
+```
+
+**`features/grr-manage.md`** — `grr_manage` on a scratch copy of
+mini-GRR, then `grr_browse` on the copy:
+
+```bash
+.claude/skills/verify-gain/scripts/drive-grr-manage.sh "$RUN_ID"
+```
+
+It copies `test_fixtures/mini-GRR` (without `.git`) to
+`$RUN/scratch/grr-copy`, adds `mini_vcf_plot/verify_gain_added.txt`, and
+runs six steps on the absolute path of the copy: `resource-manifest -n -r
+mini_vcf_plot`, `repo-manifest -n`, `repo-manifest`, `repo-manifest -n`
+again, `list`, and `grr_browse -g $RUN/scratch/grr-copy.yaml`. The first
+two steps must exit 1, so the drive runs all six and the read-back judges
+every exit code.
+
+**`features/binning-tool.md`** — `binning_tool` over `mini_positionscore_bw`
+in bins of 5 bases:
+
+```bash
+.claude/skills/verify-gain/scripts/drive-binning-tool.sh "$RUN_ID"
+```
+
+which writes `$RUN/scratch/bin.yaml` and runs:
+
+```bash
+.venv/bin/binning_tool $RUN/scratch/bin.yaml -g $RUN/scratch/grr.yaml \
+    -o $RUN/scratch/bins.h5 -w $RUN/scratch/bin-work -j 1
+```
+
 **`features/http-grr.md`** — `grr_browse` and `grr_cache_repo` against the
 run's HTTP GRR (after `launch-http-grr.sh`):
 
@@ -216,6 +265,11 @@ Each drive keeps, in `$RUN/evidence/<feature>/`:
 | `exit_code.txt` | the CLI's exit code |
 | `input.tsv` | `annotate-tabular`: the input the drive fed in |
 | `output.tsv` | `annotate-tabular`: the annotated output file |
+| `input.vcf` / `output.vcf` | `annotate-vcf`: the input VCF and the annotated VCF |
+| `<step>/` | `grr-manage`: `command.txt`, `stdout.txt`, `stderr.txt` and `exit_code.txt` of each of the six steps |
+| `added_file.txt`, `grr-copy.yaml`, `resources.txt`, `manifest.txt` | `grr-manage`: the added file, the definition of the copy, the resource ids of the copy and the `mini_vcf_plot` manifest after `repo-manifest` |
+| `bin.yaml` / `bins.h5` | `binning-tool`: the run definition and the HDF5 output |
+| `work_dir_left.txt` | `binning-tool`: whether the work directory was removed |
 | `grr-http.yaml` | `grr-browse`, `grr-cache-repo`: the HTTP GRR definition, with the run's port |
 | `contents.json` | `grr-browse`: the served `.CONTENTS.json` |
 | `cached_files.txt` | `grr-cache-repo`: the files in `cache_dir` after the drive |
@@ -224,16 +278,27 @@ Each drive keeps, in `$RUN/evidence/<feature>/`:
 The read-back reads the mutation a second time, with a separate command over
 the kept output file. For `annotate-tabular` it compares `pos_bw_0` with the
 exact values `0.1`, `0.2`, `0.3` at `chr1:6`, `chr2:3`, `chr2:8`; an output
-whose `pos_bw_0` column is all `0` fails it. For `grr-browse` it compares
+whose `pos_bw_0` column is all `0` fails it. For `annotate-vcf` it finds the
+`##INFO=<ID=pos_bw_0,` header line and compares the `pos_bw_0` strings
+`0.1`, `0.2`, `0.3` at the same positions. For `grr-manage` it checks that
+both dry runs exit 1 and name `verify_gain_added.txt`, that
+`repo-manifest` exits 0, that the second dry run exits 0, that the
+manifest lists the file, and that `grr_manage list` and `grr_browse` list
+exactly the resources of the copy. For `binning-tool` it opens `bins.h5`
+with `h5py` and compares the four bins and the values `0`, `0.1`, `0.2`,
+`0.3` within `1e-6`. For `grr-browse` it compares
 the listed resource ids with the ids in `contents.json`. For
 `grr-cache-repo` it `cmp`s the cached `mini_pipeline.yaml`,
 `genomic_resource.yaml` and `mini_positionscore_bw_0.bw` with the served
-copy. Re-run the `annotate-tabular` and `grr-browse` read-backs at any time
-(the `grr-cache-repo` one needs the scratch directory):
+copy. Re-run every read-back except the `grr-cache-repo` one at any time (that
+one needs the scratch directory):
 
 ```bash
 .claude/skills/verify-gain/scripts/readback-annotate-tabular.sh "$RUN/evidence/annotate-tabular/output.tsv"
 cat "$RUN/evidence/annotate-tabular/exit_code.txt"
+.claude/skills/verify-gain/scripts/readback-annotate-vcf.sh "$RUN/evidence/annotate-vcf/output.vcf"
+.claude/skills/verify-gain/scripts/readback-grr-manage.sh "$RUN/evidence/grr-manage"
+.claude/skills/verify-gain/scripts/readback-binning-tool.sh "$RUN/evidence/binning-tool/bins.h5"
 .claude/skills/verify-gain/scripts/readback-grr-browse.sh \
     "$RUN/evidence/grr-browse/stdout.txt" "$RUN/evidence/grr-browse/contents.json"
 ```
@@ -265,9 +330,15 @@ All in `.claude/skills/verify-gain/scripts/`, all executable:
 | --- | --- | --- |
 | `launch.sh` | `launch.sh [run id]` | creates `.verify/<run id>/{scratch,evidence}` and `scratch/grr.yaml`; prints the run id |
 | `launch-http-grr.sh` | `launch-http-grr.sh <run id>` | copies mini-GRR to scratch, starts `apache` in `verify-gain-<run id>` on an ephemeral port, writes `scratch/grr-http.yaml` |
-| `doctor.sh` | `doctor.sh <run id>` | read-only preflight (CLI on `PATH`, mini-GRR initialised, `grr_browse` lists `mini_pipeline`; for an HTTP run also the image, the project's container and the HTTP definition) |
+| `doctor.sh` | `doctor.sh <run id>` | read-only preflight (CLIs on `PATH`, `h5py` in the `.venv`, mini-GRR initialised, `grr_browse` lists `mini_pipeline`; for an HTTP run also the image, the project's container and the HTTP definition) |
 | `drive-annotate-tabular.sh` | `drive-annotate-tabular.sh <run id>` | drives `annotate_tabular` + `mini_pipeline`, keeps the evidence, runs the read-back |
 | `readback-annotate-tabular.sh` | `readback-annotate-tabular.sh <output.tsv>` | checks `pos_bw_0` = 0.1, 0.2, 0.3 at the drive's positions |
+| `drive-annotate-vcf.sh` | `drive-annotate-vcf.sh <run id>` | drives `annotate_vcf` + `mini_pipeline`, keeps the evidence, runs the read-back |
+| `readback-annotate-vcf.sh` | `readback-annotate-vcf.sh <output.vcf>` | checks the `pos_bw_0` header line and `pos_bw_0` = 0.1, 0.2, 0.3 at the drive's positions |
+| `drive-grr-manage.sh` | `drive-grr-manage.sh <run id>` | copies mini-GRR to scratch, adds a file, drives the six `grr_manage` and `grr_browse` steps, keeps the evidence, runs the read-back |
+| `readback-grr-manage.sh` | `readback-grr-manage.sh <evidence dir>` | checks the exit codes and messages of the six steps, the manifest and both listings |
+| `drive-binning-tool.sh` | `drive-binning-tool.sh <run id>` | drives `binning_tool` over `mini_positionscore_bw`, keeps the evidence, runs the read-back |
+| `readback-binning-tool.sh` | `readback-binning-tool.sh <bins.h5>` | opens the HDF5 file with `h5py`, checks the four bins and the values within `1e-6` |
 | `drive-grr-browse.sh` | `drive-grr-browse.sh <run id>` | drives `grr_browse` against the HTTP GRR, keeps the evidence, runs the read-back |
 | `readback-grr-browse.sh` | `readback-grr-browse.sh <stdout.txt> <contents.json>` | checks the listing holds exactly the `.CONTENTS.json` ids, from `mini_http`, none cached |
 | `drive-grr-cache-repo.sh` | `drive-grr-cache-repo.sh <run id>` | drives `grr_cache_repo mini_pipeline` against the HTTP GRR, keeps the evidence, runs the read-back |
@@ -282,8 +353,11 @@ S=.claude/skills/verify-gain/scripts
 RUN_ID=$($S/launch.sh)
 PATH="$PWD/.venv/bin:$PATH" $S/doctor.sh "$RUN_ID"
 $S/drive-annotate-tabular.sh "$RUN_ID"
+$S/drive-annotate-vcf.sh "$RUN_ID"
+$S/drive-grr-manage.sh "$RUN_ID"
+$S/drive-binning-tool.sh "$RUN_ID"
 $S/cleanup.sh "$RUN_ID"
-ls .verify/$RUN_ID/evidence/annotate-tabular
+ls .verify/$RUN_ID/evidence/{annotate-tabular,annotate-vcf,grr-manage,binning-tool}
 ```
 
 A full HTTP run:
