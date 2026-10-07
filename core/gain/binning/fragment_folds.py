@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import math
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from typing import NamedTuple
 
 from gain.genomic_resources.aggregators import Aggregator
@@ -47,15 +48,19 @@ class BinValue(NamedTuple):
     value: float
 
 
+#: The answer of a ``feed`` that completes no bin, shared by every fold.
+NO_BINS: tuple[BinValue, ...] = ()
+
+
 class BinFragmentAggregator(ABC):
     """A streaming fold of one track's fragments into grid bins."""
 
     @abstractmethod
-    def feed(self, fragment: FragmentValue) -> list[BinValue]:
+    def feed(self, fragment: FragmentValue) -> Sequence[BinValue]:
         """Fold ``fragment``; answer the bins it shows are complete."""
 
     @abstractmethod
-    def flush(self) -> list[BinValue]:
+    def flush(self) -> Sequence[BinValue]:
         """Answer every bin not answered yet, to the region's last."""
 
 
@@ -82,7 +87,7 @@ class BinFragmentStartAggregator(BinFragmentAggregator):
         self.last_bin = calc_bin_index(bin_size, end)
         self.aggregator = Aggregator.build(aggregator)
 
-    def feed(self, fragment: FragmentValue) -> list[BinValue]:
+    def feed(self, fragment: FragmentValue) -> Sequence[BinValue]:
         if not self.start <= fragment.start <= self.end:
             raise ValueError(
                 f"a fragment at {fragment.start} is outside the binned "
@@ -94,11 +99,15 @@ class BinFragmentStartAggregator(BinFragmentAggregator):
                 f"by start")
         self.previous = fragment.start
         fragment_bin = calc_bin_index(self.bin_size, fragment.start)
+        if fragment_bin == self.current_bin:
+            # Most fragments start in the bin already open: none closes.
+            self.aggregator.add(fragment.value)
+            return NO_BINS
         bins = self._emit_until(fragment_bin)
         self.aggregator.add(fragment.value)
         return bins
 
-    def flush(self) -> list[BinValue]:
+    def flush(self) -> Sequence[BinValue]:
         return self._emit_until(self.last_bin + 1)
 
     def _emit_until(self, bin_index: int) -> list[BinValue]:
