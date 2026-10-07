@@ -286,12 +286,13 @@ aggregator decides what an empty bin holds (see `Empty bins`_).
 
 .. note::
 
-    **The** ``fragment_score_binner`` **entry layout changed after the
-    2026.9.7 release.** The first published layout of this kind kept what
-    one fragment adds and how a bin reduces the values in one
-    ``aggregate`` key. Now the ``value`` key says what one fragment adds,
-    and ``aggregate`` says how a bin reduces the values. Rewrite each old
-    form as follows:
+    **The** ``fragment_score_binner`` **entry layout changed during
+    development.** No release contains this kind yet. The development
+    builds since the kind first appeared (#1203) kept what one fragment
+    adds and how a bin reduces the values in one ``aggregate`` key. Now
+    the ``value`` key says what one fragment adds, and ``aggregate`` says
+    how a bin reduces the values. If you used such a build, rewrite each
+    old form as follows:
 
     .. list-table::
        :header-rows: 1
@@ -1129,6 +1130,8 @@ Check what the run would produce first:
         tables: none
         groups: 2
         tracks: 2
+        mode: fragment_start
+        uncovered_value: null
 
 Nine position-score tracks are nine jobs, and the fragment entry's two
 tracks are one job, so the single region makes ten tasks.
