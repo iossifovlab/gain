@@ -1,4 +1,13 @@
-.claude
+# A .claude directory at any depth is ignored (Claude Code started from a
+# member project writes <member>/.claude/settings.local.json). The root one is
+# un-ignored only so that its committed skills/ can be re-included;
+# .claude/worktrees/ and the rest of the root .claude stay ignored.
+**/.claude/
+!/.claude/
+/.claude/*
+!/.claude/skills/
+# verify-gain run output (.claude/skills/verify-gain)
+.verify/
 .specify
 *.pyc
 __pycache__
