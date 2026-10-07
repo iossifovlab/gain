@@ -202,6 +202,41 @@ def test_two_position_columns_on_one_data_column_are_refused(
         builder.realize_into(pathlib.Path("/nonexistent"))
 
 
+@pytest.mark.parametrize(("address", "key_column"), [
+    pytest.param(
+        {"column_name": "reference"}, "reference",
+        id="name-onto-reference"),
+    pytest.param(
+        {"column_name": "alternative"}, "alternative",
+        id="name-onto-alternative"),
+    pytest.param(
+        {"column_index": 1}, "reference",
+        id="index-onto-reference"),
+])
+@pytest.mark.parametrize("tabix", [False, True])
+def test_a_position_column_on_an_allele_key_column_is_refused(
+    address: dict, key_column: str, tabix: bool,
+) -> None:
+    builder = (
+        an_allele_score()
+        .with_score("freq", "float")
+        .with_position_column("pos_begin", **address)
+        .with_data("""
+            chrom  reference  alternative  freq
+            1      A          G            0.1
+        """)
+    )
+    if tabix:
+        builder = builder.with_tabix()
+
+    with pytest.raises(
+            ResourceValidationError,
+            match=(
+                f"columns \\['pos_begin', '{key_column}'\\] "
+                f".*same data column")):
+        builder.realize_into(pathlib.Path("/nonexistent"))
+
+
 def test_header_mode_none_refuses_a_name_mapped_position_column() -> None:
     builder = (
         a_position_score()

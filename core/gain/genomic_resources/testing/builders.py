@@ -735,20 +735,29 @@ class _TableScoreBuilder(ExtraFilesMixin, MetaMixin):
                 f"must be mapped with column_index")
 
     def _validate_distinct_position_columns(self, header: list[str]) -> None:
-        """Reject two position columns resolving to one data column.
+        """Reject two position or key columns resolving to one data column.
 
-        The set-based header check cannot see the collision -- the shared
-        name simply appears once -- so without this the builder would
-        realize a config and a tabix index in which both columns read the
-        same field.
+        The key columns (an allele score's ``reference`` and
+        ``alternative``) take part too: a position column may share a data
+        column with a score, never with a key.  The set-based header check
+        cannot see the collision -- the shared name simply appears once --
+        so without this the builder would realize a config and a tabix
+        index in which both columns read the same field.
         """
         by_index: dict[int, list[str]] = {}
         for column, index in self._position_column_indexes(header).items():
             by_index.setdefault(index, []).append(column)
+        keys = self._effective_trailing_columns
+        for column in keys:
+            by_index.setdefault(header.index(column), []).append(column)
         for index, columns in sorted(by_index.items()):
             if len(columns) > 1:
+                kind = (
+                    "position and key columns"
+                    if any(column in keys for column in columns)
+                    else "position columns")
                 raise ResourceValidationError(
-                    f"position columns {columns} resolve to the same data "
+                    f"{kind} {columns} resolve to the same data "
                     f"column, index {index} ({header[index]!r}); map each "
                     f"to a distinct column")
 
