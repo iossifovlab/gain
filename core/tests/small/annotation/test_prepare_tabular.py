@@ -1,4 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import csv
 import gzip
 import logging
 import os
@@ -12,6 +13,7 @@ from gain.annotation.annotatable import (
     CNVAllele,
     VCFAllele,
 )
+from gain.annotation.annotate_tabular import cli as annotate_tabular_cli
 from gain.annotation.prepare_tabular import (
     _build_argument_parser,
     _build_direct_sort_plan,
@@ -29,6 +31,9 @@ from gain.annotation.record_to_annotatable import (
     RecordToRegion,
     RecordToVcfAllele,
     VcfLikeRecordToVcfAllele,
+)
+from gain.genomic_resources.genomic_context import (
+    clear_registered_contexts,
 )
 from gain.genomic_resources.testing import (
     setup_denovo,
@@ -728,3 +733,225 @@ def test_cli_rejects_tab_in_csv_cell(tmp_path: pathlib.Path) -> None:
     out_file = tmp_path / "out.tsv.gz"
     with pytest.raises(ValueError, match="tab character"):
         cli([str(in_file), "-o", str(out_file)])
+
+
+# --- quote-aware input parsing (#145) -----------------------------------
+
+
+def _read_gz_tsv_rows(path: pathlib.Path) -> list[list[str]]:
+    """Read the output the way ``annotate_tabular`` does: csv per line."""
+    with gzip.open(path, "rt") as f:
+        return [next(csv.reader([line], delimiter="\t")) for line in f]
+
+
+def test_cli_quoted_csv_cell_with_comma_is_one_column(
+    tmp_path: pathlib.Path,
+) -> None:
+    in_file = tmp_path / "in.csv"
+    in_file.write_text(
+        'chrom,pos,note\n'
+        'chr1,200,"b, with comma"\n'
+        'chr1,100,plain\n',
+    )
+    out_file = tmp_path / "out.tsv.gz"
+
+    cli([str(in_file), "-o", str(out_file)])
+
+    assert _read_gz_text(out_file) == (
+        "chrom\tpos\tnote\n"
+        "chr1\t100\tplain\n"
+        "chr1\t200\tb, with comma\n"
+    )
+
+
+def test_cli_output_reads_back_to_the_input_cell_values(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Reading the output as ``annotate_tabular`` does gives the cells the
+    input decodes to, quotes and separators included."""
+    in_text = (
+        'chrom,pos,note\n'
+        'chr1,300,"b, with comma"\n'
+        'chr1,100,"q ""x"""\n'
+        'chr1,200,"""x"""\n'
+    )
+    in_file = tmp_path / "in.csv"
+    in_file.write_text(in_text)
+    out_file = tmp_path / "out.tsv.gz"
+
+    cli([str(in_file), "-o", str(out_file)])
+
+    expected = [
+        next(csv.reader([line], delimiter=","))
+        for line in in_text.splitlines()
+    ]
+    assert expected[1:] == [
+        ["chr1", "300", "b, with comma"],
+        ["chr1", "100", 'q "x"'],
+        ["chr1", "200", '"x"'],
+    ]
+    out_rows = _read_gz_tsv_rows(out_file)
+    assert out_rows[0] == expected[0]
+    assert sorted(out_rows[1:]) == sorted(expected[1:])
+
+
+def test_read_header_quoted_cell_with_separator_is_one_column(
+    tmp_path: pathlib.Path,
+) -> None:
+    p = tmp_path / "x.csv"
+    p.write_text('#chrom,pos,"note, free text"\n1,1,a\n')
+
+    assert _read_header(str(p), ",") == ["chrom", "pos", "note, free text"]
+
+
+def test_cli_vcf_like_injection_sees_decoded_cells(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The indirect layout builds its sort columns from decoded cells,
+    starting with the first data row it inspects for layout detection."""
+    in_file = tmp_path / "in.csv"
+    in_file.write_text(
+        'note,vcf_like\n'
+        '"x, y",2:200:C:T\n'
+        'plain,1:100:G:A\n',
+    )
+    out_file = tmp_path / "out.tsv.gz"
+
+    cli([str(in_file), "-o", str(out_file)])
+
+    assert _read_gz_tsv_rows(out_file) == [
+        ["note", "vcf_like", "chrom", "pos", "ref", "alt"],
+        ["plain", "1:100:G:A", "1", "100", "G", "A"],
+        ["x, y", "2:200:C:T", "2", "200", "C", "T"],
+    ]
+
+
+_QUOTED_BEFORE_KEYS_CSV = (
+    'note,chrom,pos\n'
+    '"z, last",bar,20\n'
+    '"say ""hi""",foo,17\n'
+    'plain,bar,5\n'
+    '"a, b, c",foo,3\n'
+)
+
+
+def test_cli_sorts_by_keys_past_a_quoted_cell_with_separator(
+    tmp_path: pathlib.Path,
+) -> None:
+    in_file = tmp_path / "in.csv"
+    in_file.write_text(_QUOTED_BEFORE_KEYS_CSV)
+    out_file = tmp_path / "out.tsv.gz"
+
+    cli([str(in_file), "-o", str(out_file)])
+
+    assert _read_gz_tsv_rows(out_file) == [
+        ["note", "chrom", "pos"],
+        ["plain", "bar", "5"],
+        ["z, last", "bar", "20"],
+        ["a, b, c", "foo", "3"],
+        ['say "hi"', "foo", "17"],
+    ]
+    with TabixFile(str(out_file)) as tf:
+        assert list(tf.fetch("foo", 0, 10)) == ["a, b, c\tfoo\t3"]
+
+
+def test_cli_ranked_sort_past_a_quoted_cell_with_separator(
+    tmp_path: pathlib.Path,
+) -> None:
+    grr_root = _setup_foobar_grr(tmp_path)
+    in_file = tmp_path / "in.csv"
+    in_file.write_text(_QUOTED_BEFORE_KEYS_CSV)
+    out_file = tmp_path / "out.tsv.gz"
+
+    cli([
+        str(in_file), "-o", str(out_file),
+        "--grr-directory", str(grr_root), "-R", "foobar_genome",
+    ])
+
+    assert _read_gz_tsv_rows(out_file) == [
+        ["note", "chrom", "pos"],
+        ["a, b, c", "foo", "3"],
+        ['say "hi"', "foo", "17"],
+        ["plain", "bar", "5"],
+        ["z, last", "bar", "20"],
+    ]
+    with TabixFile(str(out_file)) as tf:
+        assert list(tf.fetch("foo", 10, 20)) == ['"say ""hi"""\tfoo\t17']
+
+
+def test_cli_skip_sort_reads_and_emits_quoted_cells(
+    tmp_path: pathlib.Path,
+) -> None:
+    in_file = tmp_path / "in.csv"
+    in_file.write_text(
+        'note,chrom,pos\n'
+        '"a, b",foo,3\n'
+        '"""x""",foo,17\n',
+    )
+    out_file = tmp_path / "out.tsv.gz"
+
+    cli([str(in_file), "-o", str(out_file), "--skip-sort"])
+
+    assert _read_gz_tsv_rows(out_file) == [
+        ["note", "chrom", "pos"],
+        ["a, b", "foo", "3"],
+        ['"x"', "foo", "17"],
+    ]
+    with TabixFile(str(out_file)) as tf:
+        assert list(tf.fetch("foo", 0, 20)) == [
+            "a, b\tfoo\t3", '"""x"""\tfoo\t17',
+        ]
+
+
+def test_cli_rejects_a_quoted_tab_in_a_tsv_cell(tmp_path: pathlib.Path) -> None:
+    """A quoted tab decodes into the cell, where neither sort nor tabix
+    could tell it from a column boundary."""
+    in_file = tmp_path / "in.tsv"
+    in_file.write_text('chrom\tpos\tnote\n1\t10\t"a\tb"\n')
+    out_file = tmp_path / "out.tsv.gz"
+
+    with pytest.raises(ValueError, match="tab character"):
+        cli([str(in_file), "-o", str(out_file)])
+
+
+def test_cli_accepts_a_quoted_input_separator_in_a_cell(
+    tmp_path: pathlib.Path,
+) -> None:
+    in_file = tmp_path / "in.csv"
+    in_file.write_text('chrom,pos,note\n1,10,"a,b"\n')
+    out_file = tmp_path / "out.tsv.gz"
+
+    cli([str(in_file), "-o", str(out_file)])
+
+    assert _read_gz_tsv_rows(out_file)[1] == ["1", "10", "a,b"]
+
+
+def test_prepared_quoted_csv_annotates_with_decoded_values(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+) -> None:
+    """``annotate_tabular`` reads the prepared file back cell for cell."""
+    in_file = tmp_path / "in.csv"
+    in_file.write_text(
+        'chrom,pos,note\n'
+        'chr1,24,"""x"", y"\n'
+        'chr1,23,"a, b"\n',
+    )
+    prepared = tmp_path / "prepared.tsv.gz"
+    out_file = tmp_path / "out.tsv.gz"
+    cli([str(in_file), "-o", str(prepared)])
+    clear_registered_contexts()  # each tool runs in its own process
+
+    annotate_tabular_cli([
+        str(a) for a in [
+            prepared, annotate_directory_fixture / "annotation.yaml",
+            "--grr", annotate_directory_fixture / "grr.yaml",
+            "-o", out_file, "-w", tmp_path / "work", "-j", 1,
+        ]
+    ])
+
+    assert _read_gz_tsv_rows(out_file) == [
+        ["chrom", "pos", "note", "score"],
+        ["chr1", "23", "a, b", "0.1"],
+        ["chr1", "24", '"x", y', "0.2"],
+    ]
