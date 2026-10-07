@@ -1248,8 +1248,9 @@ def _fold_of(
         return BinFragmentStartAggregator(
             start=region.start, end=region.stop, bin_size=bin_size,
             aggregator=track.aggregator)
-    fold = BinFragmentCoverageAggregator if track.mode == COVERAGE_PROFILE \
-        else BinFragmentLengthAggregator
+    fold = (
+        BinFragmentCoverageAggregator if track.mode == COVERAGE_PROFILE
+        else BinFragmentLengthAggregator)
     return fold(
         start=region.start, end=region.stop, bin_size=bin_size,
         aggregator=track.aggregator, uncovered_value=track.uncovered_value)
