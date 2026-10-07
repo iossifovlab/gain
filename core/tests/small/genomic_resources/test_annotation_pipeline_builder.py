@@ -35,9 +35,11 @@ def annotate_position(
 ) -> dict[str, Any]:
     pipeline = load_pipeline_from_file_or_resource(
         pipeline_id, grr, work_dir=tmp_path / "work")
-    with pipeline.open() as work_pipeline:
-        result = work_pipeline.annotate(Position(chrom, pos))
-    return result
+    work_pipeline = pipeline.open()
+    try:
+        return work_pipeline.annotate(Position(chrom, pos))
+    finally:
+        work_pipeline.close()
 
 
 def test_a_pipeline_annotates_with_the_score_it_names_by_id(
