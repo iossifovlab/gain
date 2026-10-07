@@ -53,14 +53,19 @@ for tag in "$prev_tag" "$new_tag"; do
     fi
 done
 
-# All commits in prev..new as "<sha>\t<first parent sha>".
+# All commits in prev..new as "<sha>\t<first parent sha>\t<subject>"; the
+# subject goes last, unescaped, so read keeps any tabs in it.
 commits_tsv="$(gh api --paginate \
     "repos/$repo/compare/$prev_tag...$new_tag?per_page=100" \
-    --jq '.commits[] | [.sha, (.parents[0].sha // "")] | @tsv')"
+    --jq '.commits[] | ([.sha, (.parents[0].sha // "")] | @tsv)
+        + "\t" + (.commit.message | split("\n")[0])')"
 
 declare -A first_parent=()
-while IFS=$'\t' read -r sha parent; do
-    [ -n "$sha" ] && first_parent["$sha"]="$parent"
+declare -A subject_of=()
+while IFS=$'\t' read -r sha parent subject; do
+    [ -n "$sha" ] || continue
+    first_parent["$sha"]="$parent"
+    subject_of["$sha"]="$subject"
 done <<< "$commits_tsv"
 
 head_sha="$(gh api "repos/$repo/commits/$new_tag" --jq .sha)"
@@ -90,8 +95,7 @@ for sha in "${chain[@]}"; do
         title_of["$sha"]="${pr_line#*$'\t'}"
         prs+=("${pr_of[$sha]}")
     else
-        title_of["$sha"]="$(gh api "repos/$repo/commits/$sha" \
-            --jq '.commit.message | split("\n")[0]')"
+        title_of["$sha"]="${subject_of[$sha]}"
     fi
 done
 
