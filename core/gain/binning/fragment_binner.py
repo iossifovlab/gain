@@ -93,13 +93,17 @@ from gain.binning.binners import (
     match_resources,
     named_base,
 )
+from gain.binning.fragment_folds import (
+    BinFragmentStartAggregator,
+    BinValue,
+    FragmentValue,
+)
 from gain.genomic_resources.data_frame_resource import (
     load_data_frame_from_resource,
 )
 from gain.genomic_resources.genomic_scores import FragmentScore
 from gain.genomic_resources.genomic_scores.aggregation import (
     EMPTY_BIN_VALUES,
-    fold_into_bins,
 )
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
@@ -113,7 +117,7 @@ from gain.genomic_resources.repository import (
     GenomicResourceRepo,
 )
 from gain.genomic_resources.score_def import ScoreValue
-from gain.utils.regions import BedRegion
+from gain.utils.regions import BedRegion, calc_bin_index
 
 logger = logging.getLogger(__name__)
 
@@ -502,6 +506,8 @@ class _Aggregate:
 
     mode: str
     aggregator: str
+    #: What a base no fragment covers adds; always ``None``, nothing.
+    uncovered_value: float | None = None
 
     @classmethod
     def parse(cls, label: str, config: Any) -> _Aggregate:
@@ -1066,13 +1072,34 @@ class FragmentScoreBinding:
     ) -> npt.NDArray[np.float64]:
         """Fold the fragments starting in ``region`` into the job's tracks.
 
-        One starting-in read per resource, merged by fragment start and
-        folded through :func:`fold_into_bins`, one aggregator per track.
+        One start fold per track is made before any read starts, and
+        one starting-in read per resource is merged by fragment start;
+        each fragment goes to the fold of its track, and each bin a fold
+        answers goes to its row of the block.  A track that no fragment
+        reaches still answers every bin, through its fold's ``flush``.
         A resource without the region's contig contributes nothing.
         Every read is drained, or closed on failure, before this returns,
         so no read outlives the call.  With a grouping, each resource's
         dropped fragments are counted into :attr:`dropped` and logged.
         """
+        first_bin = calc_bin_index(bin_size, region.start)
+        block = np.empty(
+            (calc_bin_index(bin_size, region.stop) - first_bin + 1,
+             len(self.job.tracks)),
+            dtype=np.float64)
+        folds = [
+            BinFragmentStartAggregator(
+                start=region.start, end=region.stop, bin_size=bin_size,
+                aggregator=track.aggregator)
+            for track in self.job.tracks
+        ]
+
+        def place(column: int, bins: list[BinValue]) -> None:
+            for bin_value in bins:
+                block[
+                    calc_bin_index(bin_size, bin_value.start) - first_bin,
+                    column] = bin_value.value
+
         dropped = [0] * len(self.scores)
         reads = [
             self._records(index, score, region, dropped)
@@ -1080,13 +1107,15 @@ class FragmentScoreBinding:
             if score.has_chromosome(region.chrom)
         ]
         try:
-            block = fold_into_bins(
-                heapq.merge(*reads, key=operator.itemgetter(0)),
-                start=region.start, end=region.stop, bin_size=bin_size,
-                aggregators=[track.aggregator for track in self.job.tracks])
+            for begin, end, track, value in heapq.merge(
+                    *reads, key=operator.itemgetter(0)):
+                place(track, folds[track].feed(
+                    FragmentValue(begin, end, value)))
         finally:
             for read in reads:
                 read.close()
+        for column, fold in enumerate(folds):
+            place(column, fold.flush())
         if self.job.grouping is not None:
             where = f"{region.chrom}:{region.start}-{region.stop}"
             for resource_id, count in zip(
@@ -1101,8 +1130,8 @@ class FragmentScoreBinding:
     def _records(
         self, index: int, score: FragmentScore, region: BedRegion,
         dropped: list[int],
-    ) -> Generator[tuple[int, int, ScoreValue], None, None]:
-        """``(start, track, value)`` per fragment of one resource.
+    ) -> Generator[tuple[int, int, int, ScoreValue], None, None]:
+        """``(start, end, track, value)`` per fragment of one resource.
 
         A fragment whose barcode maps to no track is dropped, and counted
         in ``dropped[index]``.
@@ -1116,13 +1145,13 @@ class FragmentScoreBinding:
         track_of = None if self.track_maps is None \
             else self.track_maps[index]
         try:
-            for begin, _, values in rows:
+            for begin, end, values in rows:
                 track = 0 if track_of is None \
                     else track_of.get(_as_text(values[-1]) or "")
                 if track is None:
                     dropped[index] += 1
                     continue
-                yield begin, track, \
+                yield begin, end, track, \
                     job.value if job.score_id is None else values[0]
         finally:
             rows.close()
@@ -1249,24 +1278,28 @@ class FragmentScoreBinner:
         *, base: str,
         warnings: tuple[str, ...],
     ) -> FragmentBinningJob:
-        value, aggregator = entry.value, entry.aggregate.aggregator
-        parameters: dict[str, Any] = {}
+        value, aggregate = entry.value, entry.aggregate
+        parameters: dict[str, Any] = {
+            "mode": aggregate.mode,
+            "uncovered_value": aggregate.uncovered_value,
+        }
         if value.score_id is None:
             parameters["value"] = value.value
         if grouping is not None:
             parameters.update(grouping.parameters)
-        parameters_text = (
-            json.dumps(parameters, sort_keys=True) if parameters else "")
+        parameters_text = json.dumps(parameters, sort_keys=True)
         tracks = tuple(
             Track(
                 name=f"{base}:{group}",
                 resource_ids=resource_ids,
                 group=group,
                 score_id=value.score_id or "",
-                aggregator=aggregator,
+                aggregator=aggregate.aggregator,
                 none_value_replacement=None,
                 binner=cls.kind,
                 parameters=parameters_text,
+                mode=aggregate.mode,
+                uncovered_value=aggregate.uncovered_value,
             )
             for group in groups
         )

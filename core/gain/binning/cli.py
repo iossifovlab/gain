@@ -201,8 +201,9 @@ def _print_fragment_entries(run: RunDefinition) -> None:
     """Per fragment entry: what it matched, read and produces.
 
     The resources, the metadata tables (resource ids, or the absolute
-    paths of local files), the group and track counts, and every
-    warning its resolution raised.
+    paths of local files), the group and track counts, every warning
+    its resolution raised, and the mode and uncovered value its tracks
+    share.
     """
     entries: dict[str, list[FragmentBinningJob]] = {}
     for job in run.jobs:
@@ -222,6 +223,12 @@ def _print_fragment_entries(run: RunDefinition) -> None:
         for warning in dict.fromkeys(
                 w for job in jobs for w in job.warnings):
             print(f"    warning: {warning}")
+        track = jobs[0].tracks[0]
+        uncovered = track.uncovered_value
+        print(f"    mode: {track.mode}")
+        print(
+            f"    uncovered_value: "
+            f"{'null' if uncovered is None else uncovered}")
 
 
 def _local_files(run: RunDefinition) -> list[str]:
@@ -516,17 +523,23 @@ def _tracks_table(tracks: list[Track]) -> npt.NDArray[Any]:
     track was computed from, in resource-id order -- one id for every
     track that is not pooled -- and ``group`` the track's group, empty
     for a position-score track.  A resource id never holds a comma.
+    ``mode`` is a fragment track's mode, empty for a position-score
+    track, and ``uncovered_value`` its uncovered value, NaN for none.
     """
     text = h5py.string_dtype(encoding="utf-8")
     return np.array(
         [
             (t.name, ",".join(t.resource_ids), t.group, t.score_id,
-             t.aggregator,
-             np.nan if t.none_value_replacement is None
-             else t.none_value_replacement)
+             t.aggregator, _nan_for_none(t.none_value_replacement),
+             t.mode, _nan_for_none(t.uncovered_value))
             for t in tracks
         ],
         dtype=[
             ("name", text), ("resource_ids", text), ("group", text),
             ("score_id", text),
-            ("aggregator", text), ("none_value_replacement", "<f8")])
+            ("aggregator", text), ("none_value_replacement", "<f8"),
+            ("mode", text), ("uncovered_value", "<f8")])
+
+
+def _nan_for_none(value: float | None) -> float:
+    return np.nan if value is None else value
