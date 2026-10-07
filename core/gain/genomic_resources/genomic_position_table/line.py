@@ -271,6 +271,22 @@ class LineBuffer:
             return False
         return chrom == bchrom and bend >= pos >= bbeg
 
+    def reaches(self, chrom: str, pos: int) -> bool:
+        """Tell whether a buffered record on ``chrom`` ends at or after ``pos``.
+
+        This tests the right edge of :meth:`region` only.  A ``pos`` before
+        the first buffered record passes, unlike in :meth:`contains`, and
+        :meth:`fetch` then reads from the first buffered record.
+
+        The caller decides whether the buffer is complete at ``pos``.  The
+        buffer cannot tell: a record that ends before the left edge can be
+        evicted or never read.
+        """
+        bchrom, _, bend = self.region()
+        if bchrom is None or bend is None:
+            return False
+        return chrom == bchrom and pos <= bend
+
     def find_index(self, chrom: str, pos: int) -> int:
         """Find the first index in the buffer relevant to ``pos``.
 
@@ -336,6 +352,10 @@ class LineBuffer:
         never reaches the buffer at all.
         """
         beg_index = self.find_index(chrom, pos_begin)
+        if beg_index == -1 and self.reaches(chrom, pos_begin):
+            # ``pos_begin`` lies before the first buffered record, so the
+            # scan starts at that record.
+            beg_index = 0
         if beg_index == -1:
             return
 

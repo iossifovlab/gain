@@ -517,6 +517,11 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         optimization for a given chromosome and position. Sequential access is
         used if the position is on the same chromosome and the distance between
         it and the last record in the buffer is less than the jump threshold.
+
+        A ``pos`` before the ``pos_end`` of the last record is refused.  The
+        read cascade never asks about such a ``pos``: it calls this only when
+        no buffered record reaches ``pos``, so ``pos`` is past the ``pos_end``
+        of every buffered record, the last one included.
         """
         if self.jump_threshold == 0:
             return False
@@ -677,10 +682,18 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         # Its left edge does not say so.  Pruning evicts by ``pos_end``, so a
         # record that survives can begin further left than the records evicted
         # around it, leaving ``peek_first()`` pointing below the positions the
-        # buffer just stopped being able to answer.  ``contains`` reads that
-        # edge and would wave a backward query through onto a buffer that no
-        # longer holds its records (gain#250).  The query's own start is the
-        # honest watermark, so gate on it rather than on the buffer's shape.
+        # buffer just stopped being able to answer.  A test on that edge would
+        # wave a backward query through onto a buffer that no longer holds its
+        # records (gain#250).  The query's own start is the honest watermark,
+        # so gate on it rather than on the buffer's shape.
+        #
+        # The left edge is also no reason to refuse a FORWARD query.  A region
+        # query can start in a gap before the first buffered record and still
+        # end inside the buffer: the records it wants are buffered, and any
+        # that begin before the first buffered one ended before the previous
+        # query's start.  So the buffer read tests the right edge only
+        # (``LineBuffer.reaches``), and a fresh fetch is for a backward query,
+        # a contig change, or a jump past ``jump_threshold`` (gain#340).
         #
         # Eviction is also amortized (gain#287): between walks the buffer
         # knowingly holds records that already died, which only ever makes it
@@ -741,7 +754,7 @@ class TabixGenomicPositionTable(GenomicPositionTable):
                     self.stats["not found"] += 1
                     return
 
-                if self.buffer.contains(chrom, pos_begin):
+                if self.buffer.reaches(chrom, pos_begin):
                     for record in self._gen_from_buffer_and_tabix(
                             chrom, pos_begin, pos_end):
                         self.stats["yield from buffer and tabix"] += 1
