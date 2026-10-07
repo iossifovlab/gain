@@ -8,7 +8,7 @@
 
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
-run_id="${1:-$(date +%Y%m%dT%H%M%S)-$$}"
+run_id="${1-$(date +%Y%m%d-%H%M%S)-$$}"
 vg_check_run_id "$run_id"
 run_dir="$VG_VERIFY/$run_id"
 [[ ! -e "$run_dir" ]] || vg_die "run $run_dir already exists; pick another run id"

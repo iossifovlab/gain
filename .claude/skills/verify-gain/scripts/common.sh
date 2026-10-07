@@ -14,10 +14,13 @@ vg_die() {
     exit 1
 }
 
-# vg_check_run_id <run id>: fails unless the id is a safe directory name.
+# vg_check_run_id <run id>: fails unless the id is a safe directory name
+# and a valid docker compose project suffix. Compose takes only lowercase
+# letters, digits, '-' and '_' in a project name. The leading character
+# rules out '.', '..', '-x' and '_x'.
 vg_check_run_id() {
-    [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]] \
-        || vg_die "run id '$1' may hold only letters, digits, '.', '_' and '-'"
+    [[ "$1" =~ ^[a-z0-9][a-z0-9_-]*$ ]] \
+        || vg_die "run id '$1' is not valid: use lowercase letters, digits, '_' and '-', and start with a letter or a digit (it names the compose project verify-gain-<run id>)"
 }
 
 # vg_run_dir <run id> -> prints .verify/<run id>, fails if it is not a run.
@@ -41,6 +44,7 @@ vg_isolated_env() {
         MPLCONFIGDIR="$scratch/home/.config/matplotlib"
         XDG_CACHE_HOME="$scratch/home/.cache"
         XDG_CONFIG_HOME="$scratch/home/.config"
+        TMPDIR="$scratch/tmp"
         GRR_DEFINITION_FILE="$scratch/grr.yaml"
         http_proxy=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9
         HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9
@@ -51,18 +55,104 @@ vg_isolated_env() {
 # vg_isolated <scratch dir> <cmd...>: run a command with HOME inside the
 # scratch directory (so ~/.grr_definition.yaml is never read and nothing is
 # written under the real home) and GRR_DEFINITION_FILE pointing at the run's
-# directory-GRR definition. That definition is what keeps a drive off the
-# network: the repository it names is a local directory.
+# directory-GRR definition. TMPDIR is inside the scratch directory too:
+# grr_cache_repo and the task graph write gain-annotation-work-* there,
+# not in /tmp. A drive of the HTTP GRR passes -g with the run's HTTP
+# definition, which names the run's own httpd on 127.0.0.1.
 #
 # The http(s)_proxy variables point at a closed local port. This is only a
 # backstop for clients that honour the proxy environment (curl, urllib,
 # requests). It does NOT cover gain's HTTP GRR path: fsspec's HTTPFileSystem
 # runs on aiohttp without trust_env and ignores these variables. Do not rely
-# on it to make network use fail; keep the definition a directory GRR.
+# on it to make network use fail; keep each definition a directory GRR or
+# the run's own 127.0.0.1 HTTP GRR.
 vg_isolated() {
     local scratch="$1"
     shift
-    mkdir -p "$scratch/home"
+    mkdir -p "$scratch/home" "$scratch/tmp"
     vg_isolated_env "$scratch"
     env "${VG_ENV[@]}" "$@"
+}
+
+# --- The run-scoped HTTP GRR (launch-http-grr.sh) ---------------------------
+
+# The httpd image the apache service runs. VERIFY_GAIN_HTTPD_IMAGE overrides
+# it, so the missing-image failure of doctor.sh can be proved without
+# removing httpd:latest. The image is never pulled: `up` runs --pull never.
+VG_HTTPD_IMAGE="${VERIFY_GAIN_HTTPD_IMAGE:-httpd:latest}"
+
+# vg_http_dir <run dir> -> prints the scratch directory of the HTTP GRR.
+vg_http_dir() {
+    echo "$1/scratch/http"
+}
+
+# vg_compose_project <run dir> -> prints verify-gain-<run id>.
+vg_compose_project() {
+    echo "verify-gain-$(basename "$1")"
+}
+
+# vg_compose <run dir> <compose args...>: the one place that builds the
+# docker compose arguments. Every call (up, port, ps, down) passes the same
+# -f files, the same project directory and the same -p name, so no call
+# can reach another compose project or load docker-compose.override.yaml
+# with its fixed host ports.
+vg_compose() {
+    local run_dir="$1"
+    shift
+    local override
+    override="$(vg_http_dir "$run_dir")/compose.override.yaml"
+    [[ -f "$override" ]] \
+        || vg_die "$override is missing (run launch-http-grr.sh)"
+    docker compose \
+        --project-directory "$VG_CHECKOUT" \
+        -f "$VG_CHECKOUT/docker-compose.yaml" \
+        -f "$override" \
+        -p "$(vg_compose_project "$run_dir")" \
+        "$@"
+}
+
+# vg_check_httpd_image: fails, naming the fix, unless the httpd image is
+# local. It never pulls.
+vg_check_httpd_image() {
+    command -v docker > /dev/null \
+        || vg_die "FAIL: docker is not on PATH; the HTTP GRR needs docker compose"
+    if ! docker image inspect "$VG_HTTPD_IMAGE" > /dev/null 2>&1; then
+        vg_die "FAIL: the image $VG_HTTPD_IMAGE is not local, and verify-gain never pulls it (up --pull never).
+    Fix: docker pull $VG_HTTPD_IMAGE"
+    fi
+}
+
+# vg_drive_cli <scratch dir> <evidence dir> <cmd...>: run a CLI from the
+# scratch directory under vg_isolated and keep command.txt, stdout.txt,
+# stderr.txt and exit_code.txt in the evidence directory. Sets VG_RC to
+# the CLI's exit code; never fails on it.
+vg_drive_cli() {
+    local scratch="$1" evidence="$2"
+    shift 2
+    vg_isolated_env "$scratch"
+    {
+        printf 'cd %q &&\n' "$scratch"
+        printf 'env'
+        printf ' %q' "${VG_ENV[@]}"
+        printf ' \\\n'
+        printf '%q ' "$@"
+        printf '\n'
+    } > "$evidence/command.txt"
+    VG_RC=0
+    (cd "$scratch" && vg_isolated "$scratch" "$@") \
+        > "$evidence/stdout.txt" 2> "$evidence/stderr.txt" || VG_RC=$?
+    echo "$VG_RC" > "$evidence/exit_code.txt"
+}
+
+# vg_readback <evidence dir> <cmd...>: run the read-back command, keep
+# readback.txt and readback_exit_code.txt, print the read-back and fail
+# unless it exits 0.
+vg_readback() {
+    local evidence="$1"
+    shift
+    local rb=0
+    "$@" > "$evidence/readback.txt" 2>&1 || rb=$?
+    echo "$rb" > "$evidence/readback_exit_code.txt"
+    cat "$evidence/readback.txt"
+    [[ "$rb" -eq 0 ]] || vg_die "drive: read-back failed; evidence in $evidence"
 }
