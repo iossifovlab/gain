@@ -223,7 +223,10 @@ copies:
 
 **Find the current cache directories.** The script below prints the cache
 directory of each cached repository in one or more GRR definitions. It
-includes the ids that GAIn synthesises. Save it as ``list_cache_dirs.py`` and
+includes the ids that GAIn synthesises. When a cached repository is inside
+another cached repository, the outer cache keeps the resources in
+``<cache_dir>/<repository id>.cached/``, and the script prints this directory
+too. Save it as ``list_cache_dirs.py`` and
 run it with the upgraded GAIn:
 
 .. code-block:: python
@@ -243,14 +246,18 @@ run it with the upgraded GAIn:
     )
 
 
-    def walk(repo, cache_dir=None):
+    def walk(repo, cache_dirs=()):
         if isinstance(repo, GenomicResourceCachedRepo):
-            walk(repo.child, repo.cache_url.removeprefix("file://"))
+            cache_dir = repo.cache_url.removeprefix("file://").rstrip("/")
+            walk(repo.child, (*cache_dirs, cache_dir))
         elif isinstance(repo, GenomicResourceGroupRepo):
             for child in repo.children:
-                walk(child, cache_dir)
-        elif cache_dir is not None:
-            print(f"{cache_dir.rstrip('/')}/{repo.repo_id}")
+                walk(child, cache_dirs)
+        else:
+            # The innermost cache uses the repository id. Each outer cache
+            # adds ".cached" to the id of the cache that it wraps.
+            for depth, cache_dir in enumerate(reversed(cache_dirs)):
+                print(f"{cache_dir}/{repo.repo_id}{'.cached' * depth}")
 
 
     for definition_file in sys.argv[1:]:
@@ -297,7 +304,8 @@ For the targeted option, do these steps:
    .. code-block:: bash
 
        $ find /data/grr_cache -mindepth 1 -maxdepth 1 \
-             | grep -vxF -f keep.txt | xargs -d '\n' rm -rf
+             | grep -vxF -f keep.txt \
+             | while IFS= read -r entry; do rm -rf -- "$entry"; done
 
 If you do not include a definition in step 3, step 5 deletes the cache of
 that definition. GAIn then downloads its resources again.
