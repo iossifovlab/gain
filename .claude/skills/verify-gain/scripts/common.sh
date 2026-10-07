@@ -1,0 +1,46 @@
+# shellcheck shell=bash
+# Shared helpers for the verify-gain scripts. Sourced, not executed.
+
+set -euo pipefail
+
+VG_SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# The checkout is the git worktree that holds this skill.
+VG_CHECKOUT="$(git -C "$VG_SCRIPTS" rev-parse --show-toplevel)"
+VG_VENV_BIN="$VG_CHECKOUT/.venv/bin"
+VG_VERIFY="$VG_CHECKOUT/.verify"
+
+vg_die() {
+    echo "verify-gain: $*" >&2
+    exit 1
+}
+
+# vg_run_dir <run id> -> prints .verify/<run id>, fails if it is not a run.
+vg_run_dir() {
+    local run_id="${1:-}"
+    [[ -n "$run_id" ]] || vg_die "missing <run id> argument"
+    [[ "$run_id" =~ ^[A-Za-z0-9._-]+$ ]] \
+        || vg_die "run id '$run_id' may hold only letters, digits, '.', '_' and '-'"
+    local run_dir="$VG_VERIFY/$run_id"
+    [[ -d "$run_dir/evidence" ]] \
+        || vg_die "no run at $run_dir (run launch.sh first)"
+    echo "$run_dir"
+}
+
+# vg_isolated <scratch dir> <cmd...>: run a command with HOME inside the
+# scratch directory (so ~/.grr_definition.yaml is never read and nothing is
+# written under the real home) and every HTTP(S) request routed to a closed
+# local port (so any network use fails loudly instead of succeeding quietly).
+vg_isolated() {
+    local scratch="$1"
+    shift
+    mkdir -p "$scratch/home"
+    env HOME="$scratch/home" \
+        MPLCONFIGDIR="$scratch/home/.config/matplotlib" \
+        XDG_CACHE_HOME="$scratch/home/.cache" \
+        XDG_CONFIG_HOME="$scratch/home/.config" \
+        GRR_DEFINITION_FILE="$scratch/grr.yaml" \
+        http_proxy=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 \
+        HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 \
+        no_proxy= NO_PROXY= \
+        "$@"
+}

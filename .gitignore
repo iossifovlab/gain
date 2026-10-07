@@ -1,4 +1,9 @@
-.claude
+# .claude/* (not .claude) so that the committed project skills can be
+# re-included; .claude/worktrees/ and the rest stay ignored.
+.claude/*
+!.claude/skills/
+# verify-gain run output (.claude/skills/verify-gain)
+.verify/
 .specify
 *.pyc
 __pycache__
