@@ -74,7 +74,7 @@ repositories.
 Common fields
 ^^^^^^^^^^^^^
 
-    | **id** (string, optional): Identifier for the repository. Used in log messages, to refer to the repository, and — when ``cache_dir`` is set — as the name of the repository's directory inside the cache. A repository that omits it gets a deterministic id derived from its ``url`` or ``directory`` (or from its type, for an ``embedded`` or ``group`` repository); naming it explicitly is recommended, because the synthesised name is what a populated cache directory is called.
+    | **id** (string, optional): Identifier for the repository. Used in log messages, to refer to the repository, and — when ``cache_dir`` is set — as the name of the repository's directory inside the cache. A repository that omits it gets a deterministic id derived from its ``url`` or ``directory`` (or from its type, for an ``embedded`` or ``group`` repository); naming it explicitly is recommended, because the synthesised name is what a populated cache directory is called. Release 2026.7.6 moved the cache of some repositories that omit ``id``: see :ref:`cache_relocation_2026_7_6`.
     | **type** (string, required): One of ``group``, ``directory``, ``url``, ``http``, ``s3``, or ``embedded`` (see below).
     | **cache_dir** (string, optional): Path to a **local filesystem** directory used to cache downloaded resources. May be added to any repository type, including a ``group`` (see `Resource caching`_). It must be a plain path, not a URL; a remote cache target is not supported.
 
@@ -176,6 +176,136 @@ repository being cached may be remote (``s3``, ``http``, ``url``).
 attached to a group, it caches every resource served by that group — a
 convenient way to put a single cache in front of several remote repositories at
 once.
+
+GAIn keeps the resources of each cached repository in its own subdirectory,
+``<cache_dir>/<repository id>/``. The repository id is the ``id`` of the
+repository, or the id that GAIn synthesises when the ``id`` is missing (see
+`Common fields`_).
+
+.. _cache_relocation_2026_7_6:
+
+Upgrading from a release before 2026.7.6
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Release 2026.7.6 moved some cached resources to a new location. This
+subsection is for an operator who upgrades GAIn from a release before
+2026.7.6 and keeps the old ``cache_dir``.
+
+**Which definitions are affected.** A definition is affected when it has one
+of these repositories:
+
+- a child of a cached ``group`` that omits ``id``
+- a top-level cached repository with ``id: ""``
+
+Before 2026.7.6, these repositories had an empty id and cached their resources
+directly into the root of ``cache_dir``. A definition that gives each
+repository a non-empty ``id`` is not affected.
+
+**What changed.** Since 2026.7.6, every repository has a non-empty id. The
+resources of an affected repository move from the root of ``cache_dir`` into
+``<cache_dir>/<repository id>/``. After the upgrade, GAIn downloads these
+resources again one time.
+
+**What stays behind.** The old resource directories stay at the root of
+``cache_dir``. GAIn does not use them, and GAIn does not delete them. They use
+disk space until you delete them.
+
+For example, a cached ``group`` has ``cache_dir: /data/grr_cache`` and one
+``directory`` child with ``directory: /data/grr`` and no ``id``. Release
+2026.7.5 cached the resource ``demo_score`` of this child at the root of
+``cache_dir``. After one read with the new release, the cache holds two
+copies:
+
+.. code-block:: text
+
+    /data/grr_cache/demo_score/                     <- old copy, not used
+    /data/grr_cache/data_grr_ecff7cb0/demo_score/   <- new copy
+
+**Find the current cache directories.** The script below prints the cache
+directory of each cached repository in one or more GRR definitions. It
+includes the ids that GAIn synthesises. Save it as ``list_cache_dirs.py`` and
+run it with the upgraded GAIn:
+
+.. code-block:: python
+
+    """Print the cache directories that the current GAIn version uses."""
+    import sys
+
+    from gain.genomic_resources.cached_repository import (
+        GenomicResourceCachedRepo,
+    )
+    from gain.genomic_resources.group_repository import (
+        GenomicResourceGroupRepo,
+    )
+    from gain.genomic_resources.repository_factory import (
+        build_genomic_resource_repository,
+        load_definition_file,
+    )
+
+
+    def walk(repo, cache_dir=None):
+        if isinstance(repo, GenomicResourceCachedRepo):
+            walk(repo.child, repo.cache_url.removeprefix("file://"))
+        elif isinstance(repo, GenomicResourceGroupRepo):
+            for child in repo.children:
+                walk(child, cache_dir)
+        elif cache_dir is not None:
+            print(f"{cache_dir.rstrip('/')}/{repo.repo_id}")
+
+
+    for definition_file in sys.argv[1:]:
+        walk(build_genomic_resource_repository(
+            load_definition_file(definition_file)))
+
+.. code-block:: bash
+
+    $ python list_cache_dirs.py ~/.grr_definition.yaml
+    /data/grr_cache/data_grr_ecff7cb0
+
+**Clean up the cache.** Select one of the two options.
+
+- **The simple option.** Stop every process that uses the cache. Then delete
+  the full ``cache_dir``. GAIn downloads each resource again when a process
+  uses it.
+- **The targeted option.** Keep only the directories at the root of
+  ``cache_dir`` that have the name of a current repository id. Delete all
+  other entries at the root of ``cache_dir``.
+
+For the targeted option, do these steps:
+
+1. Find every GRR definition that uses this ``cache_dir``. Two definitions can
+   share one ``cache_dir``, and each definition has its own repository ids.
+2. Stop every process that uses the cache.
+3. Run ``list_cache_dirs.py`` with all of these definitions, and write the
+   output to a file:
+
+   .. code-block:: bash
+
+       $ python list_cache_dirs.py first_definition.yaml \
+             second_definition.yaml > keep.txt
+
+4. List the entries at the root of ``cache_dir`` that are not in
+   ``keep.txt``. Write the ``cache_dir`` path exactly as ``keep.txt`` shows
+   it. Examine the list before you delete anything:
+
+   .. code-block:: bash
+
+       $ find /data/grr_cache -mindepth 1 -maxdepth 1 | grep -vxF -f keep.txt
+
+5. Delete these entries:
+
+   .. code-block:: bash
+
+       $ find /data/grr_cache -mindepth 1 -maxdepth 1 \
+             | grep -vxF -f keep.txt | xargs -d '\n' rm -rf
+
+If you do not include a definition in step 3, step 5 deletes the cache of
+that definition. GAIn then downloads its resources again.
+
+**Recommendation.** Give each repository an explicit ``id``. An explicit id
+keeps the name of the cache directory stable and readable. A synthesised id
+changes when the ``url`` or ``directory`` of the repository changes, and its
+name is hard to recognise.
 
 
 A complete annotated example
