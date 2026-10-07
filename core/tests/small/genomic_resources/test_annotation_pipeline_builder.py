@@ -164,8 +164,11 @@ def test_a_dangling_resource_id_builds_and_fails_only_on_load(
             "pipe", grr, work_dir=tmp_path / "work")
 
 
-#: A preamble-form pipeline, which ``with_annotator`` cannot express.
+#: A preamble-form pipeline, which ``with_annotator`` cannot express.  The
+#: comment line is dropped by any yaml load/dump round-trip, so a byte-for-byte
+#: comparison of the written file catches one.
 PREAMBLE_PIPELINE = """\
+# kept verbatim: a yaml round-trip would drop this comment
 preamble:
   summary: raw pipeline
 annotators:
@@ -187,7 +190,9 @@ def test_a_raw_pipeline_is_written_verbatim(
     result = annotate_position(grr, "pipe", tmp_path, "chr1", 11)
     pipeline = load_pipeline_from_file_or_resource(
         "pipe", grr, work_dir=tmp_path / "work2")
+    written = grr.get_resource("pipe").get_file_content("annotation.yaml")
 
+    assert written == PREAMBLE_PIPELINE
     assert result == {"phastCons": 0.75}
     assert pipeline.preamble is not None
     assert pipeline.preamble.summary == "raw pipeline"
