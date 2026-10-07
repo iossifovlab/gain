@@ -770,10 +770,10 @@ def test_cli_output_reads_back_to_the_input_cell_values(
     """Reading the output as ``annotate_tabular`` does gives the cells the
     input decodes to, quotes and separators included."""
     in_text = (
-        'chrom,pos,note\n'
-        'chr1,300,"b, with comma"\n'
-        'chr1,100,"q ""x"""\n'
-        'chr1,200,"""x"""\n'
+        'chrom,pos,note,"""id"""\n'
+        'chr1,300,"b, with comma",a\n'
+        'chr1,100,"q ""x""",b\n'
+        'chr1,200,"""x""",c\n'
     )
     in_file = tmp_path / "in.csv"
     in_file.write_text(in_text)
@@ -785,10 +785,11 @@ def test_cli_output_reads_back_to_the_input_cell_values(
         next(csv.reader([line], delimiter=","))
         for line in in_text.splitlines()
     ]
+    assert expected[0] == ["chrom", "pos", "note", '"id"']
     assert expected[1:] == [
-        ["chr1", "300", "b, with comma"],
-        ["chr1", "100", 'q "x"'],
-        ["chr1", "200", '"x"'],
+        ["chr1", "300", "b, with comma", "a"],
+        ["chr1", "100", 'q "x"', "b"],
+        ["chr1", "200", '"x"', "c"],
     ]
     out_rows = _read_gz_tsv_rows(out_file)
     assert out_rows[0] == expected[0]
@@ -914,16 +915,35 @@ def test_cli_rejects_a_quoted_tab_in_a_tsv_cell(tmp_path: pathlib.Path) -> None:
         cli([str(in_file), "-o", str(out_file)])
 
 
-def test_cli_accepts_a_quoted_input_separator_in_a_cell(
+def test_cli_rejects_a_multi_character_input_separator(
     tmp_path: pathlib.Path,
 ) -> None:
-    in_file = tmp_path / "in.csv"
-    in_file.write_text('chrom,pos,note\n1,10,"a,b"\n')
+    in_file = tmp_path / "in.txt"
+    in_file.write_text("chrom::pos\n1::10\n")
+    out_file = tmp_path / "out.tsv.gz"
+
+    with pytest.raises(
+            ValueError,
+            match=r"--input-separator must be a single character, got '::'"):
+        cli([str(in_file), "--in-sep", "::", "-o", str(out_file)])
+
+    assert not out_file.exists()
+
+
+def test_cli_decodes_a_quoted_cell_in_tsv_input(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Quoting is honoured for tab-separated input too, not only CSV."""
+    in_file = tmp_path / "in.tsv"
+    in_file.write_text('chrom\tpos\tnote\n1\t10\t"a, ""b"""\n')
     out_file = tmp_path / "out.tsv.gz"
 
     cli([str(in_file), "-o", str(out_file)])
 
-    assert _read_gz_tsv_rows(out_file)[1] == ["1", "10", "a,b"]
+    assert _read_gz_tsv_rows(out_file) == [
+        ["chrom", "pos", "note"],
+        ["1", "10", 'a, "b"'],
+    ]
 
 
 def test_prepared_quoted_csv_annotates_with_decoded_values(

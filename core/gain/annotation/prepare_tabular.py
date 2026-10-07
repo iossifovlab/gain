@@ -646,6 +646,12 @@ def cli(argv: list[str] | None = None) -> None:
 
     input_separator = args["input_separator"] \
         or _detect_input_separator(input_path)
+    if len(input_separator) != 1:
+        # csv.reader needs a one-character delimiter; name the flag
+        # instead of letting csv raise a bare TypeError mid-read.
+        raise ValueError(
+            f"--input-separator must be a single character, "
+            f"got {input_separator!r}")
     logger.info("input separator: %r", input_separator)
     output_path = args["output"] or _default_output_path(input_path)
     if not output_path.endswith((".gz", ".bgz")):
