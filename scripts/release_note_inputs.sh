@@ -53,6 +53,15 @@ for tag in "$prev_tag" "$new_tag"; do
     fi
 done
 
+# The new tag must be strictly ahead of the previous one; otherwise (tags
+# swapped, unrelated histories, same commit) there is no release range and
+# printing nothing would look like a release with no changes.
+status="$(gh api "repos/$repo/compare/$prev_tag...$new_tag?per_page=1" --jq .status)"
+if [ "$status" != "ahead" ]; then
+    echo "error: $new_tag is not ahead of $prev_tag in $repo (compare status: $status)" >&2
+    usage
+fi
+
 # All commits in prev..new as "<sha>\t<first parent sha>\t<subject>"; the
 # subject goes last, unescaped, so read keeps any tabs in it.
 commits_tsv="$(gh api --paginate \
@@ -77,6 +86,11 @@ while [ -n "$sha" ] && [ -n "${first_parent[$sha]+set}" ]; do
     chain+=("$sha")
     sha="${first_parent[$sha]}"
 done
+
+if [ "${#chain[@]}" -eq 0 ]; then
+    echo "error: no first-parent commits from $new_tag down to $prev_tag in $repo" >&2
+    exit 1
+fi
 
 # Resolve each commit to its merged PR (if any).
 declare -A pr_of=()
