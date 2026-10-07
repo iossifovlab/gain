@@ -22,7 +22,9 @@ from gain.genomic_resources.testing.builders import (
 
 
 def _config(resource: GenomicResource) -> dict:
-    return yaml.safe_load(resource.get_file_content("genomic_resource.yaml"))
+    config: dict = yaml.safe_load(
+        resource.get_file_content("genomic_resource.yaml"))
+    return config
 
 
 @pytest.mark.parametrize("tabix", [False, True])
