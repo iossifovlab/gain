@@ -263,6 +263,7 @@ def test_an_uncovered_value_in_fragment_start_mode_is_refused(
     message = str(excinfo.value)
     assert message.startswith("binners[0].aggregate")
     assert "uncovered_value does not apply in fragment_start mode" in message
+    assert "give mode: fragment_length or coverage_profile" in message
 
 
 @pytest.mark.parametrize("aggregate,expected", [

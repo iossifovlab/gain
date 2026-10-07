@@ -112,6 +112,28 @@ def test_the_profile_matches_a_naive_one_over_random_fragments(
     assert list(coverage_profile(fragments)) == naive_profile(fragments)
 
 
+@pytest.mark.parametrize("fragments, expected", [
+    # inf and -inf over 3-4 leave no number there: NaN, as a plain sum.
+    ([(1, 4, math.inf), (3, 6, -math.inf)], [
+        FragmentValue(1, 2, math.inf), FragmentValue(3, 4, math.nan),
+        FragmentValue(5, 6, -math.inf)]),
+    # Two 1e308 over 3-4 overflow the float range: inf, as a plain sum.
+    ([(1, 4, 1e308), (3, 6, 1e308)], [
+        FragmentValue(1, 2, 1e308), FragmentValue(3, 4, math.inf),
+        FragmentValue(5, 6, 1e308)]),
+])
+def test_a_float_sum_past_the_float_range_saturates(
+    fragments: list[tuple[int, int, float]],
+    expected: list[FragmentValue],
+) -> None:
+    profile = runs(*fragments)
+
+    assert [(r.start, r.end) for r in profile] == [
+        (r.start, r.end) for r in expected]
+    np.testing.assert_array_equal(
+        [r.value for r in profile], [r.value for r in expected])
+
+
 def test_a_fragment_out_of_start_order_is_refused() -> None:
     profile = CoverageProfile()
     profile.feed(FragmentValue(5, 9, 1))
@@ -162,9 +184,11 @@ def test_overlapping_fragments_fold_their_profile(
     np.testing.assert_array_equal([b.value for b in bins], expected)
 
 
-def test_adjacent_equal_runs_fold_as_one_run() -> None:
-    # 3-12 and 13-17 make one run of 2 over 3-17: its median in 11-20 is
-    # 2 over 7 bp against 3 uncovered.
+def test_adjacent_equal_runs_weigh_by_their_combined_length() -> None:
+    # 3-12 and 13-17 hold 2 over 7 bp of 11-20 between them, against 3
+    # uncovered, so its median is 2.  (Whether they are one run is
+    # output-neutral here; test_touching_equal_fragments_merge_into_one_run
+    # pins the merge.)
     bins = fold([(3, 12, 2), (13, 17, 2)], start=1, end=20,
                 aggregator="median")
 

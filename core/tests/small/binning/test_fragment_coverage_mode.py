@@ -318,10 +318,13 @@ def test_a_rerun_after_a_change_to_coverage_profile_bins_again(
 ) -> None:
     # The work directory is kept between the runs; the second's chunks
     # must be its own, as a fresh run in another directory computes them.
-    first = "{mode: fragment_length, aggregator: mean}"
+    # Only the mode differs between the runs: the uncovered_value is 0 in
+    # both, so the chunk key changes for the mode alone.
+    first = "{mode: fragment_length, aggregator: mean, uncovered_value: 0}"
     definition = write_run_definition(output, split_run(first))
     binning_tool(definition, grr_dir, output, "--keep-work-dir")
     before = read_matrix(output)
+    first_chunks = set(output.parent.glob("bins_work/chunks/*.npy"))
     output.unlink()
     fresh = output.parent / "fresh" / "bins.h5"
     fresh.parent.mkdir()
@@ -334,3 +337,9 @@ def test_a_rerun_after_a_change_to_coverage_profile_bins_again(
 
     np.testing.assert_array_equal(read_matrix(output), read_matrix(fresh))
     assert not np.array_equal(read_matrix(output), before)
+    # The rewritten definition alone reruns every task, so the matrix
+    # cannot tell a mode-keyed chunk from an overwritten one; the work
+    # directory can: the mode names chunks of its own.
+    chunks = set(output.parent.glob("bins_work/chunks/*.npy"))
+    assert first_chunks
+    assert first_chunks < chunks

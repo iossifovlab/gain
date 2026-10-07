@@ -574,7 +574,8 @@ class _Aggregate:
                     f"{label}: uncovered_value does not apply in "
                     f"{FRAGMENT_START} mode, where a bin reduces only the "
                     f"fragments starting in it; give mode: "
-                    f"{FRAGMENT_LENGTH}, or drop uncovered_value")
+                    f"{FRAGMENT_LENGTH} or {COVERAGE_PROFILE}, or drop "
+                    f"uncovered_value")
             return cls(mode=mode, aggregator=aggregator)
         if aggregator == "count":
             raise RunDefinitionError(

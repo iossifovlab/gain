@@ -313,9 +313,16 @@ class CoverageProfile:
 
     def _relevel(self, change: int | float) -> None:
         """The level after ``change``: int sums run on exactly, a float
-        one is summed afresh, so no rounding error accumulates."""
+        one is summed afresh, so no rounding error accumulates.  A float
+        sum past the float range -- ``inf`` against ``-inf``, or finite
+        values overflowing -- saturates to ``inf`` or NaN, as a plain
+        sum does, rather than aborting the fold."""
         if self.floating:
-            self.level = math.fsum(value for _, _, value in self.active)
+            values = [value for _, _, value in self.active]
+            try:
+                self.level = math.fsum(values)
+            except (ValueError, OverflowError):
+                self.level = sum(values)
         else:
             self.level += change
 
