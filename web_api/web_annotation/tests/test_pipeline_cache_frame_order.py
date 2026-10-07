@@ -175,3 +175,66 @@ def test_build_dropped_before_loading_is_announced_reports_no_outcome(
         cache, CONFIG, before_loading=finish_then_unload)
 
     assert statuses == [("loading", None)]
+
+
+def _put_with_raising_loaded_callback(
+    cache: LRUPipelineCache,
+    *,
+    before_loading: Callable[[], None] | None = None,
+) -> list[str]:
+    """Put ``A`` with a ``loaded`` callback that raises; return statuses."""
+    statuses: list[str] = []
+
+    def begin() -> None:
+        if before_loading is not None:
+            before_loading()
+        statuses.append("loading")
+
+    def finish() -> None:
+        statuses.append("loaded")
+        raise RuntimeError("channel layer down")
+
+    cache.put_pipeline(
+        "A", CONFIG,
+        begin_load_callback=begin,
+        finish_load_callback=finish,
+        fail_load_callback=lambda _exc: statuses.append("failed"),
+    )
+    return statuses
+
+
+def test_raising_loaded_callback_held_does_not_fail_the_build(
+    test_grr: GenomicResourceRepo,
+) -> None:
+    cache = LRUPipelineCache(test_grr, 2)
+
+    statuses = _put_with_raising_loaded_callback(
+        cache, before_loading=lambda: _wait_for_build_callbacks(cache, "A"))
+    cache._load_executor.wait_all(TIMEOUT)
+
+    assert statuses == ["loading", "loaded"]
+    assert cache.get_pipeline_future("A").exception() is None
+
+
+def test_raising_loaded_callback_live_does_not_fail_the_build(
+    test_grr: GenomicResourceRepo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release = threading.Event()
+    real_load = LRUPipelineCache._load_pipeline_raw
+
+    def gated_load(**kwargs: object) -> object:
+        assert release.wait(TIMEOUT), "build never released"
+        return real_load(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        LRUPipelineCache, "_load_pipeline_raw", staticmethod(gated_load))
+    cache = LRUPipelineCache(test_grr, 2)
+
+    statuses = _put_with_raising_loaded_callback(cache)
+    release.set()
+    _wait_for_build_callbacks(cache, "A")
+    cache._load_executor.wait_all(TIMEOUT)
+
+    assert statuses == ["loading", "loaded"]
+    assert cache.get_pipeline_future("A").exception() is None

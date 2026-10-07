@@ -309,7 +309,9 @@ class _LoadAnnouncements:
     run is held back and announced by ``begin`` right after ``loading``,
     so the terminal announcement never waits and never blocks the thread
     that reports it. Once ``dropped`` is set the terminal status is not
-    announced at all, including one still held back.
+    announced at all, including one still held back. An exception raised
+    by the terminal announcement is logged, never propagated, so it
+    cannot fail the build.
     """
 
     def __init__(
@@ -342,10 +344,7 @@ class _LoadAnnouncements:
                 self._begun = True
                 held, self._held = self._held, None
             if held is not None:
-                try:
-                    held()
-                except Exception:  # pylint: disable=broad-except
-                    logger.exception("Error announcing pipeline status")
+                held()
 
     def finish(self) -> None:
         """Announce ``loaded``, after ``loading``."""
@@ -359,9 +358,16 @@ class _LoadAnnouncements:
             self._terminal(lambda: fail(exception))
 
     def _terminal(self, announce: Callable[[], None]) -> None:
+        # A terminal announcement that raises is logged and swallowed,
+        # whether it was held or runs live on the loader thread: it must
+        # never fail the build it announces.
         def unless_dropped() -> None:
-            if not self._dropped.is_set():
+            if self._dropped.is_set():
+                return
+            try:
                 announce()
+            except Exception:  # pylint: disable=broad-except
+                logger.exception("Error announcing pipeline status")
 
         with self._lock:
             if not self._begun:
