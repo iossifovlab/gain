@@ -281,6 +281,12 @@ run it with the upgraded GAIn:
   ``cache_dir`` that have the name of a current repository id. Delete all
   other entries at the root of ``cache_dir``.
 
+The targeted option works only when no ``cache_dir`` is inside another
+``cache_dir``. For example, an inner ``cache_dir`` at
+``/data/grr_cache/inner`` is not a line in ``keep.txt``, so step 5 deletes
+the full inner cache. If one ``cache_dir`` is inside another, use the simple
+option or clean up the cache manually.
+
 For the targeted option, do these steps:
 
 1. Find every GRR definition that uses this ``cache_dir``. Two definitions can
