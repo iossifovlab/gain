@@ -26,9 +26,12 @@ cp "$scratch/in.tsv" "$evidence/input.tsv"
 
 cmd=("$VG_VENV_BIN/annotate_tabular" "$scratch/in.tsv" mini_pipeline
      -o "$scratch/out.tsv" -w "$scratch/work" -j 1)
+vg_isolated_env "$scratch"
 {
     printf 'cd %q &&\n' "$scratch"
-    printf 'HOME=%q GRR_DEFINITION_FILE=%q \\\n' "$scratch/home" "$scratch/grr.yaml"
+    printf 'env'
+    printf ' %q' "${VG_ENV[@]}"
+    printf ' \\\n'
     printf '%q ' "${cmd[@]}"
     printf '\n'
 } > "$evidence/command.txt"

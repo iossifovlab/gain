@@ -38,7 +38,7 @@ cat "$RUN/scratch/grr.yaml"
 ```yaml
 id: mini
 type: directory
-directory: <absolute checkout path>/test_fixtures/mini-GRR
+directory: '<absolute checkout path>/test_fixtures/mini-GRR'
 ```
 
 The drives pass this file as `GRR_DEFINITION_FILE` (or `-g`). They also set

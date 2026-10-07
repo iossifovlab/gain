@@ -14,10 +14,14 @@ run_dir="$VG_VERIFY/$run_id"
 [[ ! -e "$run_dir" ]] || vg_die "run $run_dir already exists; pick another run id"
 
 mkdir -p "$run_dir/scratch" "$run_dir/evidence"
+# A YAML single-quoted scalar (embedded ' doubled), so a checkout path
+# holding ': ', ' #' or a leading indicator character stays one value.
+grr_dir="$VG_CHECKOUT/test_fixtures/mini-GRR"
+q="'"
 cat > "$run_dir/scratch/grr.yaml" <<YAML
 id: mini
 type: directory
-directory: $VG_CHECKOUT/test_fixtures/mini-GRR
+directory: '${grr_dir//$q/$q$q}'
 YAML
 
 echo "verify-gain: launched run at $run_dir" >&2

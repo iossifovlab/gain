@@ -42,17 +42,27 @@ vg_run_dir() {
 # requests). It does NOT cover gain's HTTP GRR path: fsspec's HTTPFileSystem
 # runs on aiohttp without trust_env and ignores these variables. Do not rely
 # on it to make network use fail; keep the definition a directory GRR.
+# vg_isolated_env <scratch dir>: set VG_ENV to the NAME=value assignments
+# vg_isolated runs a command under. The one list both vg_isolated and the
+# command.txt evidence read, so the recorded command replays the same run.
+vg_isolated_env() {
+    local scratch="$1"
+    VG_ENV=(
+        HOME="$scratch/home"
+        MPLCONFIGDIR="$scratch/home/.config/matplotlib"
+        XDG_CACHE_HOME="$scratch/home/.cache"
+        XDG_CONFIG_HOME="$scratch/home/.config"
+        GRR_DEFINITION_FILE="$scratch/grr.yaml"
+        http_proxy=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9
+        HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9
+        no_proxy= NO_PROXY=
+    )
+}
+
 vg_isolated() {
     local scratch="$1"
     shift
     mkdir -p "$scratch/home"
-    env HOME="$scratch/home" \
-        MPLCONFIGDIR="$scratch/home/.config/matplotlib" \
-        XDG_CACHE_HOME="$scratch/home/.cache" \
-        XDG_CONFIG_HOME="$scratch/home/.config" \
-        GRR_DEFINITION_FILE="$scratch/grr.yaml" \
-        http_proxy=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 \
-        HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 \
-        no_proxy= NO_PROXY= \
-        "$@"
+    vg_isolated_env "$scratch"
+    env "${VG_ENV[@]}" "$@"
 }
