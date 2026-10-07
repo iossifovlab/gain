@@ -19,7 +19,8 @@ track per resource: one score, reduced over each bin by an aggregator such
 as ``mean`` or ``max``. A ``fragment_score`` resource — the fragments of a
 single-cell ATAC sample, or any other collection of intervals — gives one
 track per *group* of fragments: every fragment, or the fragments of each
-cell type, or the fragments of each cell, counted or summed over the bin.
+cell type, or the fragments of each cell, counted or summed over the bin,
+or reduced as a depth of coverage.
 
 
 The run definition
@@ -137,6 +138,12 @@ takes, besides ``resource_query`` and ``search_term``, these keys:
     correlation. Set a replacement, typically ``0.0``, when "no signal" is
     genuinely zero for the track, as it is for a coverage track.
 
+``name`` (optional)
+    The base of the entry's track names, in place of the resource id: a
+    track is named ``<name>/<resource id>``. Use it to bin one resource
+    in two entries that would otherwise produce the same track name; see
+    `Track names`_.
+
 A resource that defines more than one score is refused, with its scores
 listed: a track is exactly one score, and this version offers no key to pick
 among several.
@@ -144,12 +151,10 @@ among several.
 Fragment-score entries
 ^^^^^^^^^^^^^^^^^^^^^^
 
-A ``fragment_score_binner`` entry reduces, per bin, the fragments of the
-matched resources that **start** in that bin. A fragment belongs to the bin
-containing its start position and to no other bin, however far it extends:
-adjacent bins and adjacent regions see each fragment exactly once, so the
-column of a fragment count sums to the number of fragments, and pooling
-several resources is exact.
+A ``fragment_score_binner`` entry reduces, per bin, the values of the
+fragments of the matched resources. The entry's **mode** decides which
+fragments reach a bin and with what weight (see `Modes`_). The default
+mode, ``fragment_start``, counts the fragments that start in each bin.
 
 For a resource that follows the single-cell convention described below,
 the query is all an entry needs:
@@ -226,13 +231,28 @@ Besides ``resource_query`` and ``search_term``, an entry takes these keys:
     ``{value: V}`` is the constant number ``V`` for every fragment.
 
 ``aggregate`` (optional, default ``{mode: fragment_start, aggregator: sum}``)
-    How a bin reduces the values of its fragments. ``mode`` says which
-    fragments reach a bin; ``fragment_start``, the fragments that start in
-    it, is the only mode. ``aggregator`` is one of ``sum``, ``count``,
-    ``mean``, ``max``, ``min``, ``median`` and ``product``, and defaults to
-    ``sum``. One aggregator applies to every resource of the entry. With
-    the default ``value``, ``sum`` counts fragments; ``value:
-    {score_id: count}`` sums the read pairs of a single-cell resource.
+    How a bin reduces the values of its fragments, in three keys:
+
+    * ``mode`` — which fragments reach a bin, and with what weight:
+      ``fragment_start`` (the default), ``fragment_length`` or
+      ``coverage_profile``. See `Modes`_.
+    * ``aggregator`` — the reduction, ``sum`` when omitted. The
+      aggregators that each mode accepts are in `Aggregators in each
+      mode`_. One aggregator applies to every resource of the entry.
+    * ``uncovered_value`` — what each base that no fragment covers adds
+      to its bin, a number or ``null``. Only ``fragment_length`` and
+      ``coverage_profile`` take it, and each has its own default. See
+      `Uncovered bases`_.
+
+    With the default ``value``, ``sum`` in ``fragment_start`` mode counts
+    fragments. ``value: {score_id: count}`` sums the read pairs of a
+    single-cell resource.
+
+``name`` (optional)
+    The base of the entry's track names, in place of the resource query
+    of a pooled entry or the resource id of an unpooled one. Use it to
+    bin one query in two entries, for example under two modes. See
+    `Track names`_.
 
 ``meta`` (optional)
     Where the table mapping barcodes to groups comes from: exactly one of
@@ -259,8 +279,276 @@ Besides ``resource_query`` and ``search_term``, an entry takes these keys:
     with no ``group`` on a resource the convention groups). Without it,
     the convention's table is read.
 
-There is no ``none_value_replacement`` key on this kind: what an empty bin
-holds is decided by the aggregator (see `Empty bins`_).
+There is no ``none_value_replacement`` key on this kind. In the
+``fragment_length`` and ``coverage_profile`` modes, ``uncovered_value``
+says what a base without fragments adds. In ``fragment_start`` mode, the
+aggregator decides what an empty bin holds (see `Empty bins`_).
+
+.. note::
+
+    **The** ``fragment_score_binner`` **entry layout changed after the
+    2026.9.7 release.** The first published layout of this kind kept what
+    one fragment adds and how a bin reduces the values in one
+    ``aggregate`` key. Now the ``value`` key says what one fragment adds,
+    and ``aggregate`` says how a bin reduces the values. Rewrite each old
+    form as follows:
+
+    .. list-table::
+       :header-rows: 1
+       :widths: 45 55
+
+       * - Old form
+         - New form
+       * - ``aggregate: {score: S, aggregator: A}``
+         - ``value: {score_id: S}`` and ``aggregate: {aggregator: A}``
+       * - ``aggregate: {value: V, aggregator: A}``
+         - ``value: {value: V}`` and ``aggregate: {aggregator: A}``
+       * - no ``aggregate``, on a resource with an ``int`` ``count``
+           score: the sum of ``count``
+         - ``value: {score_id: count}``. Without it, the entry now counts
+           the fragments that start in each bin (see `Defaults`_).
+
+    The old keys ``aggregate.score`` and ``aggregate.value`` are refused
+    when the run definition is read. The message names the replacement:
+
+    .. code-block:: text
+
+        binners[0].aggregate: score is not an aggregate key; what one fragment adds is the entry's value key: give value: {score_id: count}
+
+Modes
+"""""
+
+``aggregate.mode`` decides which fragments reach a bin, and with what
+weight. Mode, ``value`` and ``group`` are independent: each mode operates
+with each ``value`` form and each grouping, pooled or unpooled.
+
+``fragment_start`` (the default)
+    A fragment adds its value, with a weight of 1, to the bin that holds
+    its start position. It adds nothing to other bins, however far it
+    extends. Adjacent bins and adjacent regions see each fragment exactly
+    once. Thus the column of a fragment count sums to the number of
+    fragments, and pooling several resources is exact.
+
+``fragment_length``
+    A fragment adds its value to each bin that it overlaps. The weight is
+    the number of base pairs of the overlap. A fragment that crosses a
+    region boundary is clipped to each region, so each base pair adds to
+    one region only.
+
+``coverage_profile``
+    The tool first makes the coverage profile of each track: at each
+    position, the sum of the values of the track's fragments that overlap
+    that position. Each position of a bin then adds its profile value,
+    with a weight of 1 bp. A position where the profile is 0 is
+    uncovered. With pooled resources, the profile of a group adds the
+    fragments of every resource.
+
+Two fragments in three bins
+"""""""""""""""""""""""""""
+
+The run definition below bins two fragments, ``chr1:6-14`` and
+``chr1:11-18``, on a 30-base ``chr1`` with bins of 10. Each fragment
+adds the default value 1. The entries bin one resource under the three
+modes, so each entry gets a ``name`` to keep its tracks apart:
+
+.. code-block:: yaml
+
+    input_reference_genome: genome
+
+    bins:
+      bin_size: 10
+
+    binners:
+    - fragment_score_binner:
+        resource_query: frags/worked
+        name: start
+    - fragment_score_binner:
+        resource_query: frags/worked
+        name: length
+        aggregate: {mode: fragment_length}
+    - fragment_score_binner:
+        resource_query: frags/worked
+        name: profile
+        aggregate: {mode: coverage_profile}
+    - fragment_score_binner:
+        resource_query: frags/worked
+        name: start
+        aggregate: {aggregator: mean}
+    - fragment_score_binner:
+        resource_query: frags/worked
+        name: length
+        aggregate: {mode: fragment_length, aggregator: mean}
+    - fragment_score_binner:
+        resource_query: frags/worked
+        name: length_bg
+        aggregate: {mode: fragment_length, aggregator: mean, uncovered_value: 0}
+    - fragment_score_binner:
+        resource_query: frags/worked
+        name: profile
+        aggregate: {mode: coverage_profile, aggregator: mean}
+    - fragment_score_binner:
+        resource_query: frags/worked
+        name: covered
+        aggregate: {mode: coverage_profile, aggregator: mean, uncovered_value: null}
+
+The run writes these tracks:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 22 10 16 10 10 10
+
+   * - Track
+     - ``mode``
+     - ``aggregator``
+     - ``uncovered_value``
+     - ``1-10``
+     - ``11-20``
+     - ``21-30``
+   * - ``start:all:sum``
+     - ``fragment_start``
+     - ``sum``
+     - —
+     - 1.0
+     - 1.0
+     - 0.0
+   * - ``length:all:sum``
+     - ``fragment_length``
+     - ``sum``
+     - ``null``
+     - 5.0
+     - 12.0
+     - 0.0
+   * - ``profile:all:sum``
+     - ``coverage_profile``
+     - ``sum``
+     - ``0``
+     - 5.0
+     - 12.0
+     - 0.0
+   * - ``start:all:mean``
+     - ``fragment_start``
+     - ``mean``
+     - —
+     - 1.0
+     - 1.0
+     - NaN
+   * - ``length:all:mean``
+     - ``fragment_length``
+     - ``mean``
+     - ``null``
+     - 1.0
+     - 1.0
+     - NaN
+   * - ``length_bg:all``
+     - ``fragment_length``
+     - ``mean``
+     - ``0``
+     - 0.5
+     - 0.857 (12/14)
+     - 0.0
+   * - ``profile:all:mean``
+     - ``coverage_profile``
+     - ``mean``
+     - ``0``
+     - 0.5
+     - 1.2
+     - 0.0
+   * - ``covered:all``
+     - ``coverage_profile``
+     - ``mean``
+     - ``null``
+     - 1.0
+     - 1.5
+     - NaN
+
+How to read the table:
+
+* ``fragment_start`` puts each fragment in the bin of its start: one in
+  ``1-10`` and one in ``11-20``.
+* ``fragment_length`` adds 5 bp of the first fragment to ``1-10``, and
+  4 bp of the first and 8 bp of the second to ``11-20``. The mean of
+  the value 1 over these base pairs is 1.0. With ``uncovered_value: 0``,
+  the five uncovered bases of ``1-10`` and the two of ``11-20`` also
+  add 0, so the means are 5/10 and 12/14.
+* ``coverage_profile`` makes the profile 1 on ``6-10``, 2 on ``11-14``,
+  1 on ``15-18`` and 0 elsewhere. With the default ``uncovered_value:
+  0``, the mean of ``11-20`` is the mean depth over the full bin,
+  12/10. With ``uncovered_value: null``, it is the mean depth over the
+  eight covered bases, 12/8.
+* The sums of ``fragment_length`` and ``coverage_profile`` agree, because
+  both add each covered base pair once for each fragment over it. The
+  two modes differ in the weight of a base that two fragments cover:
+  ``fragment_length`` counts it two times, and ``coverage_profile``
+  counts it one time, with the value 2.
+
+Uncovered bases
+"""""""""""""""
+
+``aggregate.uncovered_value`` is the value of each base of a region that
+no fragment of the track covers. The tool adds it to the bin with a weight
+of 1 bp for each uncovered base. In ``coverage_profile`` mode, "uncovered"
+means a profile value of 0.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 40 35
+
+   * - Mode
+     - Default
+     - Other values
+   * - ``fragment_start``
+     - not applicable
+     - refused
+   * - ``fragment_length``
+     - ``null``: the uncovered bases add nothing
+     - any number
+   * - ``coverage_profile``
+     - ``0``: an uncovered base has depth 0
+     - ``null`` or any number
+
+When the value is a number:
+
+* The tool fills only the bases of the region. A bin is already clipped to
+  its region (see `Coordinates and the grid`_), so the bin holds only
+  bases of the region.
+* A chromosome that a resource does not have is uncovered throughout. Each
+  of its bins holds the aggregate of the uncovered value over its bases:
+  with ``uncovered_value: 2``, a ``mean`` is 2 and a ``sum`` over a 10 bp
+  bin is 20.
+* No bin is empty, so the empty-bin rule of `Empty bins`_ does not apply.
+
+With ``null``, the empty-bin rule applies. The value must be finite.
+``NaN`` is refused, because the output file records ``null`` as ``NaN``.
+
+``fragment_start`` refuses the key, because a bin in this mode reduces only
+the fragments that start in it:
+
+.. code-block:: text
+
+    binners[0].aggregate: uncovered_value does not apply in fragment_start mode, where a bin reduces only the fragments starting in it; give mode: fragment_length or coverage_profile, or drop uncovered_value
+
+Aggregators in each mode
+""""""""""""""""""""""""
+
+``fragment_start`` accepts ``sum``, ``count``, ``mean``, ``max``, ``min``,
+``median`` and ``product``. ``fragment_length`` and ``coverage_profile``
+accept ``sum``, ``mean``, ``max``, ``min`` and ``median``. These two modes
+refuse two aggregators when the run definition is read:
+
+* ``count``, because with a weight it counts base pairs, not fragments.
+  For the number of covered base pairs, use ``aggregator: sum`` with
+  ``value: {value: 1}``:
+
+  .. code-block:: text
+
+      binners[0].aggregate: aggregator 'count' would count base pairs, not fragments, in fragment_length mode; for the covered base pairs give aggregator: sum with value: {value: 1}
+
+* ``product``, because with a weight it raises a value to the power of a
+  length:
+
+  .. code-block:: text
+
+      binners[0].aggregate: aggregator 'product' would weigh a value by its overlap as a power in coverage_profile mode; use one of max, mean, median, min, sum
 
 The single-cell convention
 """"""""""""""""""""""""""
@@ -331,13 +619,17 @@ explicitly, or ``pool: false``.
 Empty bins
 """"""""""
 
-A bin in which no fragment of a group starts holds the aggregator's empty
+A bin that no fragment of a group reaches holds the aggregator's empty
 value: ``0`` for ``count`` and ``sum``, which have an answer for no
 fragments, and ``NaN`` for ``mean``, ``max``, ``min``, ``median`` and
 ``product``, which have none. A chromosome a resource has no fragments on
 is treated exactly like empty bins, by the same rule, so one sample
 lacking a contig neither fails the run nor turns a pooled column into
 ``NaN``.
+
+This rule applies in ``fragment_start`` mode, and in the two other modes
+with ``uncovered_value: null``. With a numeric ``uncovered_value``, no bin
+is empty (see `Uncovered bases`_).
 
 Dropped fragments
 """""""""""""""""
@@ -427,6 +719,33 @@ Every track has a name, and names in the output are always unique.
   its sample, so a pooled track is
   ``<resource_query>:<sample_id>:<value>``.
 
+An entry's ``name`` key replaces the base of these names. Without
+``name``, the names are as above.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 35 35
+
+   * - Entry
+     - Without ``name``
+     - With ``name: N``
+   * - fragment, ``pool: true``
+     - ``<resource_query>:<group>``
+     - ``N:<group>``
+   * - fragment, ``pool: false``
+     - ``<resource id>:<group>``
+     - ``N/<resource id>:<group>``
+   * - position score
+     - ``<resource id>``
+     - ``N/<resource id>``
+
+An unpooled entry keeps the resource id in each name, so each resource
+still has its own tracks. For example, an entry with
+``resource_query: "sc/atac_fragments/*"`` and ``name: depth`` gives the
+pooled tracks ``depth:ODC`` and ``depth:PVALB``, and the same entry with
+``pool: false`` gives ``depth/sc/atac_fragments/donor1:ODC`` and its
+siblings.
+
 Tracks follow entry order, and within an entry the order of resource ids
 and then of groups. When the same name and group occur more than once in
 the expanded list — typically the same resource matched by a glob in one
@@ -436,9 +755,14 @@ that set gets ``:<aggregator>`` appended, whichever entry came first, so
 side by side, as do ``sc/atac_fragments/*:ODC:sum`` and
 ``sc/atac_fragments/*:ODC:mean``. Two entries that would still produce one
 and the same track (same name, group and aggregator) are refused, naming
-both entries: nothing in the file could tell the two columns apart. There
-is no key to rename a track; renaming is a one-line change on the tracks
-table after the fact.
+both entries: nothing in the file could tell the two columns apart. This
+happens when two entries over one query differ only in their mode, because
+the ``:<aggregator>`` suffix cannot tell modes apart. The refusal tells
+you to add ``name`` to one of the entries:
+
+.. code-block:: text
+
+    binners[4] and binners[5] both produce the track 'sc/atac_fragments/*:ODC:mean'; a resource may be binned once per aggregator and name -- add name to one of them to tell the tracks apart
 
 Coordinates and the grid
 ^^^^^^^^^^^^^^^^^^^^^^^^
@@ -594,8 +918,8 @@ computed again in full, and the file is assembled if it is missing. A run
 whose chunks
 and output are all present does nothing. The chunks are keyed by everything
 in the run definition that decides their values — resources, score,
-aggregator, replacement, group, the fragment entry's grouping and metadata
-settings, bin size and region — so two run definitions sharing a work
+aggregator, replacement, group, the fragment entry's grouping, metadata
+settings, mode and uncovered value, bin size and region — so two run definitions sharing a work
 directory share exactly the chunks they compute identically. A local
 metadata file (``meta: {file_name: ...}``) is an input of every task, so
 editing it recomputes the chunks on the next run. A rerun does not notice
@@ -631,10 +955,12 @@ understands without a library beyond ``h5py``. It holds three datasets:
     unpooled fragment track, every matched id for a pooled one. ``group``
     is the track's group, empty for a position-score track. ``score_id``
     is empty for a fragment track that counts fragments. ``mode``
-    (variable-length UTF-8) is how a fragment track's fragments reach a
-    bin, ``fragment_start``, and empty for a position-score track;
-    ``uncovered_value`` (``float64``) is what a base no fragment covers
-    adds, ``NaN`` for none, which is every track's.
+    (variable-length UTF-8) is the mode of a fragment track:
+    ``fragment_start``, ``fragment_length`` or ``coverage_profile``. It is
+    empty for a position-score track. ``uncovered_value`` (``float64``)
+    is the uncovered value of a fragment track, ``NaN`` for ``null``. It
+    is ``NaN`` for a ``fragment_start`` track and for a position-score
+    track.
 
 Row *i* of ``/bins`` describes row *i* of ``/values``, and row *j* of
 ``/tracks`` describes column *j*. The root attributes record what the run
@@ -732,7 +1058,7 @@ With ``pandas``, decoding the fixed-length chromosome names once:
     with h5py.File("binning_run.h5", "r") as h5:
         tracks = pd.DataFrame(h5["tracks"][()])
         for column in ("name", "resource_ids", "group", "score_id",
-                       "aggregator"):
+                       "aggregator", "mode"):
             tracks[column] = tracks[column].str.decode("utf-8")
         bins = pd.DataFrame(h5["bins"][()])
         bins["chrom"] = bins["chrom"].str.decode("utf-8")

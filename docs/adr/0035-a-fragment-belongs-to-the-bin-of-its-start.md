@@ -17,6 +17,10 @@
 - **Design:** `seqpipe/genomics-toolbox`
   `docs/2026-09-30-gain-fragment-binner-design.md` (decisions F1–F21). The
   numbers below cite it; the statements are this record's own.
+- **Amended by:** [ADR 0037](0037-a-fragment-can-be-binned-by-its-overlap-or-its-coverage.md),
+  which adds the `fragment_length` and `coverage_profile` modes, the
+  `uncovered_value` key and the `name` key. Start assignment stays the
+  default mode.
 - **Amends:** [ADR 0025](0025-binning-tool-writes-one-hdf5-matrix-from-a-fixed-grid.md),
   whose D2 amendment of the same date records the `/tracks` layout this kind
   needed (`group`, `resource_ids`, the local-file root attributes).
@@ -229,6 +233,11 @@ quietly empty matrix.
 
 From the design's current Out of Scope list. Each is a key or a kind that
 could be added without changing what is decided above.
+
+ADR 0037 adds overlap assignment, as the `fragment_length` and
+`coverage_profile` modes, and the `name` key. It also adds
+`uncovered_value` to those two modes. Midpoint and cut-site assignment
+stay deferred.
 
 - **Overlap, midpoint and cut-site assignment**, and any `assign:` key. Start
   assignment is the only one; the others are an interpretation of the interval
