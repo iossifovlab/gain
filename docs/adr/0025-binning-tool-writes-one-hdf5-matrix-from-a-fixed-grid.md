@@ -190,7 +190,7 @@ silently produced no column. A typo must not shrink the matrix.
 
 ### The aggregator defaults to the score's own (D8)
 
-Without `aggregator:`, a track is reduced by the `position_aggregator` its
+Without `aggregator:`, a track is reduced by the aggregator its
 score declares in its resource configuration, so a conservation score and a
 coverage track are each reduced the way their authors intended.
 `aggregator:` on an entry overrides that for every resource the entry
