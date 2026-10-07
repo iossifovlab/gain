@@ -9,8 +9,7 @@
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 run_id="${1:-$(date +%Y%m%dT%H%M%S)-$$}"
-[[ "$run_id" =~ ^[A-Za-z0-9._-]+$ ]] \
-    || vg_die "run id '$run_id' may hold only letters, digits, '.', '_' and '-'"
+vg_check_run_id "$run_id"
 run_dir="$VG_VERIFY/$run_id"
 [[ ! -e "$run_dir" ]] || vg_die "run $run_dir already exists; pick another run id"
 

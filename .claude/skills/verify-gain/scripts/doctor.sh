@@ -28,8 +28,7 @@ for cli in annotate_tabular grr_browse; do
         vg_die "doctor: FAIL: $cli is not on PATH; expected $expected.
     Fix: export PATH=\"$VG_VENV_BIN:\$PATH\""
     fi
-    if [[ "$(realpath "$found")" != "$(realpath "$expected")" \
-          && "$found" != "$expected" ]]; then
+    if [[ "$(realpath "$found")" != "$(realpath "$expected")" ]]; then
         vg_die "doctor: FAIL: $cli on PATH is $found, not this checkout's $expected.
     Fix: export PATH=\"$VG_VENV_BIN:\$PATH\" (the drives call $VG_VENV_BIN explicitly, but a shadowing CLI means an ad-hoc command would test the wrong code)"
     fi

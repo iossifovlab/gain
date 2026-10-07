@@ -14,12 +14,17 @@ vg_die() {
     exit 1
 }
 
+# vg_check_run_id <run id>: fails unless the id is a safe directory name.
+vg_check_run_id() {
+    [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]] \
+        || vg_die "run id '$1' may hold only letters, digits, '.', '_' and '-'"
+}
+
 # vg_run_dir <run id> -> prints .verify/<run id>, fails if it is not a run.
 vg_run_dir() {
     local run_id="${1:-}"
     [[ -n "$run_id" ]] || vg_die "missing <run id> argument"
-    [[ "$run_id" =~ ^[A-Za-z0-9._-]+$ ]] \
-        || vg_die "run id '$run_id' may hold only letters, digits, '.', '_' and '-'"
+    vg_check_run_id "$run_id"
     local run_dir="$VG_VERIFY/$run_id"
     [[ -d "$run_dir/evidence" ]] \
         || vg_die "no run at $run_dir (run launch.sh first)"

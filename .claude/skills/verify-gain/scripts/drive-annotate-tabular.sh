@@ -33,11 +33,9 @@ cmd=("$VG_VENV_BIN/annotate_tabular" "$scratch/in.tsv" mini_pipeline
     printf '\n'
 } > "$evidence/command.txt"
 
-set +e
+rc=0
 (cd "$scratch" && vg_isolated "$scratch" "${cmd[@]}") \
-    > "$evidence/stdout.txt" 2> "$evidence/stderr.txt"
-rc=$?
-set -e
+    > "$evidence/stdout.txt" 2> "$evidence/stderr.txt" || rc=$?
 echo "$rc" > "$evidence/exit_code.txt"
 [[ -f "$scratch/out.tsv" ]] && cp "$scratch/out.tsv" "$evidence/output.tsv"
 
@@ -48,11 +46,9 @@ fi
 [[ -f "$evidence/output.tsv" ]] || vg_die "drive: annotate_tabular exited 0 but wrote no $scratch/out.tsv"
 
 # Second, independent read of the mutation: the kept output file.
-set +e
+rb=0
 "$VG_SCRIPTS/readback-annotate-tabular.sh" "$evidence/output.tsv" \
-    > "$evidence/readback.txt" 2>&1
-rb=$?
-set -e
+    > "$evidence/readback.txt" 2>&1 || rb=$?
 echo "$rb" > "$evidence/readback_exit_code.txt"
 cat "$evidence/readback.txt"
 [[ "$rb" -eq 0 ]] || vg_die "drive: read-back failed; evidence in $evidence"
