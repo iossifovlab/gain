@@ -15,7 +15,7 @@ rather than from `master`:
 | `gain-web-e2e` (#272) | `gain-release` |
 | `gain-spliceai-integration` | `gain-vep-integration` (master-triggered + cron) |
 | `gain-conda-integration` (#1429) | |
-| `gain-python-matrix` (#1816; cron via `gain-nightly`, default `master`) | |
+| `gain-python-matrix` (#1816) | |
 
 Jenkins does **not** evaluate a "Pipeline script from SCM" definition under the
 Groovy sandbox. A `cpsScm` definition resolved from `${BRANCH_NAME}` therefore
