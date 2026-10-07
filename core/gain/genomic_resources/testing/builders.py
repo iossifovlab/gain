@@ -836,11 +836,11 @@ class _TableScoreBuilder(ExtraFilesMixin, MetaMixin):
         for column, address in self.position_columns:
             if address.column_index is None:
                 continue
-            if column in header and header.index(column) == (
-                    address.column_index):
+            landed_at = header.index(column) if column in header else None
+            if landed_at == address.column_index:
                 continue
             landed = (
-                f"at index {header.index(column)}" if column in header
+                f"at index {landed_at}" if landed_at is not None
                 else "nowhere (no row carries it)")
             raise ResourceValidationError(
                 f"with_score_line cannot synthesize a header that agrees "
