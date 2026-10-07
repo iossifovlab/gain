@@ -5,8 +5,9 @@
 // The matrix re-runs each project's pytest suite under
 // Python 3.12, 3.13, and 3.14 to catch forward-compatibility
 // breakage on newer interpreters before migration time.
-// Triggered nightly from the gain-nightly orchestrator; can also
-// be run on demand. Sends a Zulip alert on failure (topic:
+// Triggered nightly from the gain-nightly orchestrator (no
+// parameters, so BRANCH_NAME defaults to master); can also be run
+// on demand against a branch. Sends a Zulip alert on failure (topic:
 // nightly) — same topic as the orchestrator so all nightly
 // breakage lands in one thread.
 //
@@ -34,6 +35,15 @@ pipelineJob('gain-python-matrix') {
         numToKeep(40)
     }
 
+    parameters {
+        stringParam(
+            'BRANCH_NAME',
+            'master',
+            'Branch to load Jenkinsfile.python-matrix from and test. ' +
+            'Default master is what the gain-nightly trigger runs.',
+        )
+    }
+
     definition {
         cpsScm {
             scm {
@@ -41,7 +51,23 @@ pipelineJob('gain-python-matrix') {
                     remote {
                         url('https://github.com/iossifovlab/gain.git')
                     }
-                    branch('master')
+                    // Single-quoted Groovy string so `${BRANCH_NAME}` is
+                    // stored literally in the SCM config XML; Jenkins's git
+                    // plugin expands it at checkout time from the
+                    // BRANCH_NAME build parameter declared above. A manual
+                    // run against a branch therefore loads the pipeline
+                    // script from that branch, so a change to
+                    // Jenkinsfile.python-matrix (or anything it loads) can
+                    // be exercised on the matrix before it merges (#1816;
+                    // same pattern as gain-conda-integration, #598, #272).
+                    //
+                    // Loading the definition from a branch runs that
+                    // branch's Groovy unsandboxed on the controller. That
+                    // is the accepted trust model, recorded with the
+                    // condition that would force a revisit in
+                    // docs/adr/0009-jenkins-pipeline-definition-trust.md
+                    // (#643).
+                    branch('${BRANCH_NAME}')
                 }
             }
             scriptPath('Jenkinsfile.python-matrix')

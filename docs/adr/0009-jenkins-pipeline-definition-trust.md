@@ -6,15 +6,16 @@
 
 ## Context
 
-Four Jenkins jobs load their pipeline *definition* from a build parameter
+Five Jenkins jobs load their pipeline *definition* from a build parameter
 rather than from `master`:
 
 | Loads definition from `${BRANCH_NAME}` | Loads definition from `master` |
 | --- | --- |
 | `gain-core-integration` (#598) | `gain-nightly` (cron) |
-| `gain-web-e2e` (#272) | `gain-python-matrix` (cron) |
-| `gain-spliceai-integration` | `gain-release` |
-| `gain-conda-integration` (#1429) | `gain-vep-integration` (master-triggered + cron) |
+| `gain-web-e2e` (#272) | `gain-release` |
+| `gain-spliceai-integration` | `gain-vep-integration` (master-triggered + cron) |
+| `gain-conda-integration` (#1429) | |
+| `gain-python-matrix` (#1816; cron via `gain-nightly`, default `master`) | |
 
 Jenkins does **not** evaluate a "Pipeline script from SCM" definition under the
 Groovy sandbox. A `cpsScm` definition resolved from `${BRANCH_NAME}` therefore
@@ -39,7 +40,7 @@ live GitHub configuration on **2026-08-04**:
 
 So the actor the concern depends on — someone who can push a branch but cannot
 land code on `master` — does not exist here. Anyone who can push branch `x` can
-push straight to `master`, and the four jobs pinned to `master` will then load
+push straight to `master`, and the three jobs pinned to `master` will then load
 *their* definitions from it, reaching the same unsandboxed controller
 evaluation. The `master` pin is not a boundary; it is a pin to a ref that the
 same set of people can write.
@@ -57,7 +58,11 @@ branch, so that a `Jenkinsfile` change is exercisable before it merges — the
 defect #272 and #598 were filed to fix, where a pipeline change silently no-ops
 on the branch introducing it and only takes effect once merged. A job that only
 ever runs against `master` (cron, release, master-triggered) loads from
-`master`, because there is no other ref for it to mean.
+`master`, because there is no other ref for it to mean. A job with both — the
+cron run on `master` and a manual run against a branch — takes the parameter,
+defaulting to `master`: `gain-python-matrix` was moved across for exactly this
+in #1816, so a change to its matrix can be run before it merges, while the
+parameterless `gain-nightly` trigger still runs it against `master`.
 
 ### Why it was scoped this way
 
@@ -104,7 +109,7 @@ resolves its definition from a parameter-controlled ref must be reconsidered,
 along with the seed job that applies the Job DSL. This is the line in this ADR
 most likely to be needed later, and the one most likely to be missed: adding
 branch protection would look like a pure tightening while silently leaving the
-three branch-loading jobs as the way around it.
+branch-loading jobs in the table above as the way around it.
 
 The facts in *Context* are dated deliberately. They are repository
 configuration, not code, so nothing in CI fails when they change and no test
