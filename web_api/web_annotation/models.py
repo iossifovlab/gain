@@ -618,6 +618,11 @@ class BaseJob(models.Model):
         SUCCESS = 3
         FAILED = 4
 
+    class AnnotationType(models.TextChoices):  # pylint: disable=too-many-ancestors
+        """Kind of input file a job annotates."""
+        VCF = "vcf"
+        TABULAR = "tabular"
+
     #: Statuses of a job that is queued or executing in ``JOB_EXECUTOR``.
     #: Cleanup paths must never remove such a job's files: doing so unlinks
     #: ``result-<name>.vcf`` out from under the running annotation task and
