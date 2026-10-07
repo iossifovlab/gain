@@ -17,10 +17,10 @@
 // Per cell we only run pytest. Linters (ruff/mypy/pylint) are
 // not interpreter-sensitive in any useful way — the per-branch
 // Jenkinsfile CI already covers them, no value in 3x duplicate
-// reports here. External services (Apache/S3 for core,
-// MailHog for web_api) are brought up the same as in the
-// per-branch CI; the HTTP/S3/Django/aiohttp paths are exactly
-// where Python-version drift tends to surface.
+// reports here. The cells (and the Apache/S3 fixtures for
+// core) come from ci/cells.groovy, the same module the
+// per-branch CI reads; the HTTP/S3/Django/aiohttp paths are
+// exactly where Python-version drift tends to surface.
 //
 // Failure semantics: any cell failure → pipeline FAILURE →
 // existing nightly Zulip alert via the orchestrator's failure{}
@@ -231,103 +231,42 @@ pipeline {
                                 String composeNetwork =
                                     "${composeProject}_default"
 
-                                switch (env.PROJECT) {
-                                    case 'core':
-                                        try {
-                                            // -f docker-compose.yaml skips
-                                            // docker-compose.override.yaml
-                                            // (the local-dev port-publish
-                                            // file). Without this, the
-                                            // three core cells (3.12 / 3.13
-                                            // / 3.14) running in parallel
-                                            // would race on host port 28080
-                                            // / 9000 / 9001.
-                                            sh """
-                                                mkdir -p core/tests/.test_grr
-                                                docker compose -f docker-compose.yaml \\
-                                                    -p "${composeProject}" \\
-                                                    up -d --wait apache s3
-                                                docker compose -f docker-compose.yaml \\
-                                                    -p "${composeProject}" \\
-                                                    run --rm s3-setup
-                                            """
-                                            // --ignore=tests/integration to
-                                            // match the per-branch
-                                            // Jenkinsfile's core cell (#222).
-                                            // That tier belongs to
-                                            // gain-core-integration, which
-                                            // gives it a warm GRR cache dir,
-                                            // CURL_CA_BUNDLE for pysam against
-                                            // grr-seqpipe, a single-threaded
-                                            // run so workers don't race to
-                                            // populate that cache, and the
-                                            // scanpy-drift group its scanpy
-                                            // test imports. None of that is
-                                            // here, and none of it is a
-                                            // Python-version signal.
-                                            runCellPytest(
-                                                project: 'core',
-                                                pkg: 'gain',
-                                                tests: 'tests',
-                                                py: env.PY,
-                                                pytestArgs: '-n 5 --enable-http-testing --enable-s3-testing --ignore=tests/integration',
-                                                dockerRunExtra:
-                                                    "--network ${composeNetwork} " +
-                                                    '-e HTTP_HOST=apache:80 ' +
-                                                    '-e S3_HOST=s3:9000 ' +
-                                                    '-v $PWD/core/tests/.test_grr:/workspace/core/tests/.test_grr',
-                                            )
-                                        } finally {
-                                            sh """
-                                                docker compose -f docker-compose.yaml \\
-                                                    -p "${composeProject}" \\
-                                                    down -v --remove-orphans || true
-                                            """
-                                        }
-                                        break
+                                // The cell (pytest target and args,
+                                // `docker run` extras, fixtures) comes
+                                // from ci/cells.groovy, shared with the
+                                // per-branch Jenkinsfile (#1817). The
+                                // core cell's --ignore=tests/integration
+                                // is explained there.
+                                def cells = load 'ci/cells.groovy'
+                                Map cell = cells.cell(env.PROJECT)
+                                Closure runCell = { String dockerRunExtra ->
+                                    runCellPytest(
+                                        project: env.PROJECT,
+                                        pkg: cell.pkg,
+                                        tests: cell.tests,
+                                        py: env.PY,
+                                        pytestArgs: cell.pytestArgs,
+                                        dockerRunExtra: dockerRunExtra,
+                                    )
+                                }
 
-                                    case 'demo_annotator':
-                                        runCellPytest(
-                                            project: 'demo_annotator',
-                                            pkg: 'demo_annotator',
-                                            tests: 'demo_annotator/tests',
-                                            py: env.PY,
-                                            pytestArgs: '-n 5',
-                                            dockerRunExtra:
-                                                '-v /var/run/docker.sock:/var/run/docker.sock',
+                                if (cell.fixtures) {
+                                    // withFixtures uses -f
+                                    // docker-compose.yaml, which skips
+                                    // docker-compose.override.yaml (the
+                                    // local-dev port-publish file).
+                                    // Without that, the three core cells
+                                    // (3.12 / 3.13 / 3.14) running in
+                                    // parallel would race on host port
+                                    // 28080 / 9000 / 9001.
+                                    cells.withFixtures(composeProject) {
+                                        runCell(
+                                            "--network ${composeNetwork} " +
+                                            cell.dockerRunExtra,
                                         )
-                                        break
-
-                                    case 'vep_annotator':
-                                        runCellPytest(
-                                            project: 'vep_annotator',
-                                            pkg: 'vep_annotator',
-                                            tests: 'vep_annotator/tests',
-                                            py: env.PY,
-                                            pytestArgs: '-n 5',
-                                            dockerRunExtra:
-                                                '-v /var/run/docker.sock:/var/run/docker.sock',
-                                        )
-                                        break
-
-                                    case 'web_api':
-                                        // No external services: MailHog
-                                        // was removed from the test
-                                        // suite in a574c3e83; nothing
-                                        // else needs the compose stack.
-                                        runCellPytest(
-                                            project: 'web_api',
-                                            pkg: 'web_annotation',
-                                            tests: 'web_annotation/tests',
-                                            py: env.PY,
-                                            dockerRunExtra:
-                                                '-e DJANGO_SETTINGS_MODULE=' +
-                                                'web_annotation.test_settings',
-                                        )
-                                        break
-
-                                    default:
-                                        error("Unknown project: ${env.PROJECT}")
+                                    }
+                                } else {
+                                    runCell(cell.dockerRunExtra)
                                 }
                             }
                         }
