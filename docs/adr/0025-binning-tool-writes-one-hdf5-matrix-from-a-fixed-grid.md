@@ -15,7 +15,13 @@ contig is one uncovered run),
 [#1742](https://github.com/iossifovlab/gain/issues/1742) (the D2 amendment: the
 `/tracks` layout of the fragment kind, `group` and `resource_ids`, and the
 local-file root attributes; the kind's own semantics are
-[ADR 0035](0035-a-fragment-belongs-to-the-bin-of-its-start.md))
+[ADR 0035](0035-a-fragment-belongs-to-the-bin-of-its-start.md)),
+[#1794](https://github.com/iossifovlab/gain/issues/1794) (the D2 amendment:
+`/tracks.mode` and `/tracks.uncovered_value`),
+[#1792](https://github.com/iossifovlab/gain/issues/1792) (the D10 amendment: the
+`name` key; both amendments are recorded by
+[#1798](https://github.com/iossifovlab/gain/issues/1798), and the modes are
+[ADR 0037](0037-a-fragment-can-be-binned-by-its-overlap-or-its-coverage.md))
 
 Design doc of record: `seqpipe/genomics-toolbox`
 `docs/2026-09-04-gain-score-binning-design.md`, whose decisions are numbered
@@ -145,6 +151,27 @@ so every class track of that entry carries a string of 518 ids, tens of
 kilobytes per row of `/tracks`. Next to `/values` that is noise, and it was
 judged not worth a second table.
 
+**Amended by #1794 (2026-10-07): `/tracks` gains `mode` and
+`uncovered_value`.** The `fragment_score_binner` kind now has three modes
+(ADR 0037): `fragment_start`, `fragment_length` and `coverage_profile`. Two
+tracks over the same resources, group and aggregator can differ only in
+mode or in the uncovered value, so the file must record both. The design
+of record is `seqpipe/genomics-toolbox`
+`docs/2026-10-06-gain-fragment-binner-modes-design.md`, decision F29.
+
+- `/tracks.mode`, variable-length UTF-8: the mode of a fragment track. It
+  is the empty string for a position-score track.
+- `/tracks.uncovered_value`, float64: the value that each uncovered base
+  of a fragment track adds, NaN for `null`. It is NaN for a
+  `fragment_start` track, which takes no uncovered value, and for a
+  position-score track.
+
+The two fields come after the existing ones. A reader that selects fields
+by name continues to work, so this is not a break like the
+`resource_ids` rename. Both values are also in `Track.parameters`, so a
+change of either one makes a new chunk key (D13), and a rerun calculates
+the chunks again.
+
 ### Bins follow a global grid anchored at position 1 (D5, D17)
 
 Bins are `1–bin_size`, `bin_size+1–2·bin_size`, … on every chromosome,
@@ -221,6 +248,29 @@ still share a name (same resource and aggregator, differing at most in
 `none_value_replacement`) it is a parse-time error naming both entries.
 Names in `/tracks` are therefore unique. There is no `name:` key; renaming
 is a one-liner on the `/tracks` table.
+
+**Amended by #1792 (2026-10-06): each entry of both kinds accepts an
+optional `name`.** `name: N` replaces the base of the entry's track names:
+
+| Entry | Without `name` (unchanged) | With `name: N` |
+| --- | --- | --- |
+| fragment, `pool: true` | `<resource_query>:<group>` | `N:<group>` |
+| fragment, `pool: false` | `<resource id>:<group>` | `N/<resource id>:<group>` |
+| position score | `<resource id>` | `N/<resource id>` |
+
+The rule above stays. When a name and group repeat, each track of that set
+gets `:<aggregator>`, and names that still collide are refused at parse
+time. Now the refusal message tells the user to add `name`. A track name
+without `name` does not change, so a script that reads `/tracks.name`
+continues to work.
+
+The reason against the key was that the `:<aggregator>` suffix separated
+each pair of tracks that a run could hold. The fragment modes of ADR 0037
+make that false. Two entries over one query can have the same resources,
+group and aggregator and differ only in mode. The suffix cannot separate
+them, and a rename after the run cannot help a run that is refused before
+it starts. The design of record is
+`docs/2026-10-06-gain-fragment-binner-modes-design.md`, decision F30.
 
 ### Numeric only, stored as float64 (D11)
 
