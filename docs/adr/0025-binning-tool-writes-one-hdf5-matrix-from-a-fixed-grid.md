@@ -197,6 +197,9 @@ coverage track are each reduced the way their authors intended.
 matches. Two entries for two aggregators of one resource; there is no
 per-resource override inside one entry.
 
+> **Note (gain#1828):** the resource-level key is now `aggregator`. It
+> replaced `position_aggregator` in 2026.7.5 (gain#462).
+
 ### A resource with several scores is refused (D9)
 
 Every position score is assumed to define exactly one score. A matched

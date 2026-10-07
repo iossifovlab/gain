@@ -585,8 +585,7 @@ AGGREGATOR_CLASS_DICT: dict[str, type[Aggregator]] = {
 def _build_aggregator_schema() -> dict[str, Any]:
     """Derive the resource-config aggregator schema from the registry.
 
-    The cerberus fragment that validates a score's ``position_aggregator`` /
-    ``allele_aggregator`` / ``nucleotide_aggregator`` in a
+    The cerberus fragment that validates a score's ``aggregator`` in a
     ``genomic_resource.yaml``.  Generated from ``AGGREGATOR_CLASS_DICT`` --
     it was once a second, hand-maintained list of names, and it drifted
     (``count`` was registered, buildable and documented, yet rejected in a
