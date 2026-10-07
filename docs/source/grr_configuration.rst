@@ -194,9 +194,10 @@ subsection is for an operator who upgrades GAIn from a release before
 **Which definitions are affected.** A definition is affected when it has one
 of these repositories:
 
-- a repository inside a ``group``, at any depth, that omits ``id`` and has
-  cached resources. The cache can come from the ``cache_dir`` of the
-  repository itself or from the ``cache_dir`` of any enclosing ``group``.
+- a repository inside a ``group``, at any depth, that omits ``id`` or sets
+  ``id: ""``, and has cached resources. The cache can come from the
+  ``cache_dir`` of the repository itself or from the ``cache_dir`` of any
+  enclosing ``group``.
 - a top-level cached repository with ``id: ""``
 
 Before 2026.7.6, these repositories had an empty id and cached their resources
