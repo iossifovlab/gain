@@ -31,17 +31,6 @@ vg_run_dir() {
     echo "$run_dir"
 }
 
-# vg_isolated <scratch dir> <cmd...>: run a command with HOME inside the
-# scratch directory (so ~/.grr_definition.yaml is never read and nothing is
-# written under the real home) and GRR_DEFINITION_FILE pointing at the run's
-# directory-GRR definition. That definition is what keeps a drive off the
-# network: the repository it names is a local directory.
-#
-# The http(s)_proxy variables point at a closed local port. This is only a
-# backstop for clients that honour the proxy environment (curl, urllib,
-# requests). It does NOT cover gain's HTTP GRR path: fsspec's HTTPFileSystem
-# runs on aiohttp without trust_env and ignores these variables. Do not rely
-# on it to make network use fail; keep the definition a directory GRR.
 # vg_isolated_env <scratch dir>: set VG_ENV to the NAME=value assignments
 # vg_isolated runs a command under. The one list both vg_isolated and the
 # command.txt evidence read, so the recorded command replays the same run.
@@ -59,6 +48,17 @@ vg_isolated_env() {
     )
 }
 
+# vg_isolated <scratch dir> <cmd...>: run a command with HOME inside the
+# scratch directory (so ~/.grr_definition.yaml is never read and nothing is
+# written under the real home) and GRR_DEFINITION_FILE pointing at the run's
+# directory-GRR definition. That definition is what keeps a drive off the
+# network: the repository it names is a local directory.
+#
+# The http(s)_proxy variables point at a closed local port. This is only a
+# backstop for clients that honour the proxy environment (curl, urllib,
+# requests). It does NOT cover gain's HTTP GRR path: fsspec's HTTPFileSystem
+# runs on aiohttp without trust_env and ignores these variables. Do not rely
+# on it to make network use fail; keep the definition a directory GRR.
 vg_isolated() {
     local scratch="$1"
     shift
