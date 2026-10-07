@@ -241,14 +241,17 @@ stay deferred.
 
 - **Overlap, midpoint and cut-site assignment**, and any `assign:` key. Start
   assignment is the only one; the others are an interpretation of the interval
-  the resource does not declare.
+  the resource does not declare. *Amended by [ADR 0037](0037-a-fragment-can-be-binned-by-its-overlap-or-its-coverage.md): overlap assignment is
+  now the `fragment_length` and `coverage_profile` modes. Midpoint and
+  cut-site assignment stay deferred.*
 - **Splitting a pooled job across samples with a reduce step.** A pooled job's
   parallelism comes from regions only; `--task-budget` counts bases, so a
   pooled job doing N times the I/O per base is visible through the dry run,
   not corrected for. Accepted for now, including for the 518-resource study.
 - **A key choosing the pooled raw-value prefix.** It is always the `sample_id`
   label.
-- **A `name:` key**, on any kind (ADR 0025, D10's reasons hold).
+- **A `name:` key**, on any kind (ADR 0025, D10's reasons hold). *Amended
+  by [ADR 0037](0037-a-fragment-can-be-binned-by-its-overlap-or-its-coverage.md): both binner kinds now accept a `name` key.*
 - **Per-resource aggregator overrides inside one entry.** One aggregator per
   entry; two entries for two.
 - **Metadata from anything but a `data_frame` resource or a local CSV, TSV or
@@ -265,7 +268,9 @@ stay deferred.
 ## Consequences
 
 - Start assignment is the kind's semantics. A change to it, or to the
-  starting-in read it rides on, changes every fragment matrix.
+  starting-in read it rides on, changes every fragment matrix. *Amended by
+  [ADR 0037](0037-a-fragment-can-be-binned-by-its-overlap-or-its-coverage.md): start assignment is now the default mode of three. A change to
+  it changes every matrix that the default mode writes.*
 - The convention's five names are now a contract between the binner and the
   GRR's curators. Renaming a label or a column in the GRR silently changes
   which resources are grouped by default (a resource losing
