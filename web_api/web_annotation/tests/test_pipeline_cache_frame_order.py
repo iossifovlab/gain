@@ -238,3 +238,30 @@ def test_raising_loaded_callback_live_does_not_fail_the_build(
 
     assert statuses == ["loading", "loaded"]
     assert cache.get_pipeline_future("A").exception() is None
+
+
+def test_build_cancelled_while_queued_reports_no_outcome(
+    test_grr: GenomicResourceRepo,
+) -> None:
+    cache = LRUPipelineCache(test_grr, 2, load_workers=1)
+    release = threading.Event()
+    blocker = cache._load_executor.execute(
+        lambda: release.wait(TIMEOUT))
+
+    statuses: list[str] = []
+    try:
+        cache.put_pipeline(
+            "A", CONFIG,
+            begin_load_callback=lambda: statuses.append("loading"),
+            finish_load_callback=lambda: statuses.append("loaded"),
+            fail_load_callback=lambda _exc: statuses.append("failed"),
+        )
+        cancelled = cache.get_pipeline_future("A").cancel()
+    finally:
+        release.set()
+    blocker.result(TIMEOUT)
+    cache._load_executor.wait_all(TIMEOUT)
+
+    assert cancelled, "build was not still queued"
+    assert statuses == ["loading"]
+    assert cache.has_pipeline("A")

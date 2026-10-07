@@ -557,7 +557,11 @@ class LRUPipelineCache:
         right after ``loading``, on the calling thread, outside the cache
         lock. It is still announced when ``begin_load_callback`` is
         ``None`` or raises. A build whose entry leaves the cache before its
-        outcome is announced announces no outcome.
+        outcome is announced announces no outcome. Neither does a build
+        cancelled before it runs (the loader pool's ``job_timeout`` sweep,
+        or a shutdown that cancels queued work), even though its entry
+        stays cached: its subscribers stay on ``loading`` until a resync,
+        and the next put of that id rebuilds it like a failed one.
 
         A put whose cached entry already has this config starts no build:
         it announces the outcome of that entry's build if it has finished,
