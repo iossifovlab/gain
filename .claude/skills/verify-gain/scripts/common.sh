@@ -86,6 +86,12 @@ vg_http_dir() {
     echo "$1/scratch/http"
 }
 
+# vg_compose_override <run dir> -> prints the run's scratch compose
+# override file (written by launch-http-grr.sh).
+vg_compose_override() {
+    echo "$(vg_http_dir "$1")/compose.override.yaml"
+}
+
 # vg_compose_project <run dir> -> prints verify-gain-<run id>.
 vg_compose_project() {
     echo "verify-gain-$(basename "$1")"
@@ -100,7 +106,7 @@ vg_compose() {
     local run_dir="$1"
     shift
     local override
-    override="$(vg_http_dir "$run_dir")/compose.override.yaml"
+    override="$(vg_compose_override "$run_dir")"
     [[ -f "$override" ]] \
         || vg_die "$override is missing (run launch-http-grr.sh)"
     docker compose \
@@ -142,7 +148,7 @@ vg_check_project_free() {
 vg_check_project_owned() {
     local run_dir="$1" project override grr_copy ids id files source
     project="$(vg_compose_project "$run_dir")"
-    override="$(vg_http_dir "$run_dir")/compose.override.yaml"
+    override="$(vg_compose_override "$run_dir")"
     grr_copy="$(cd "$(vg_http_dir "$run_dir")/grr" 2> /dev/null && pwd -P)" \
         || vg_die "FAIL: $(vg_http_dir "$run_dir")/grr is missing; cannot prove that $project is this run's"
     ids="$(vg_project_containers "$run_dir")" \

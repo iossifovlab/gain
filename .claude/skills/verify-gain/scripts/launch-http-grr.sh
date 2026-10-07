@@ -49,7 +49,7 @@ rsync -a --exclude=/.git "$mini_grr/" "$http_dir/grr/"
 grr_copy="$(cd "$http_dir/grr" && pwd -P)"
 [[ "$grr_copy$VG_HTTPD_IMAGE" != *[\"\\$]* ]] \
     || vg_die "launch-http: the path $grr_copy or the image $VG_HTTPD_IMAGE holds '\"', '\\' or '\$'"
-cat > "$http_dir/compose.override.yaml" <<YAML
+cat > "$(vg_compose_override "$run_dir")" <<YAML
 # Written by verify-gain launch-http-grr.sh for compose project
 # $(vg_compose_project "$run_dir"). Removed by cleanup.sh.
 services:

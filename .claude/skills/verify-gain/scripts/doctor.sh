@@ -67,7 +67,7 @@ if ! grep -qE '[[:space:]]mini_pipeline$' <<<"$listing"; then
 fi
 echo "doctor: ok: grr_browse -g $scratch/grr.yaml lists mini_pipeline"
 
-if [[ -f "$(vg_http_dir "$run_dir")/compose.override.yaml" ]]; then
+if [[ -f "$(vg_compose_override "$run_dir")" ]]; then
     project="$(vg_compose_project "$run_dir")"
     # 4. The image is local.
     vg_check_httpd_image

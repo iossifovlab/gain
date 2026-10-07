@@ -32,7 +32,7 @@ if [[ -z "$listed" || "$listed" != "$expected" ]]; then
     diff <(echo "$expected") <(echo "$listed") || true
     fail=1
 fi
-if [[ "$(sort <<<"$listed" | uniq -d)" != "" ]]; then
+if [[ -n "$(uniq -d <<<"$listed")" ]]; then
     echo "readback: FAIL: a resource id is listed twice"
     fail=1
 fi

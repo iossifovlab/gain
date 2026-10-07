@@ -15,7 +15,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 run_dir="$(vg_run_dir "${1:-}")"
 project="$(vg_compose_project "$run_dir")"
-if [[ -f "$(vg_http_dir "$run_dir")/compose.override.yaml" ]]; then
+if [[ -f "$(vg_compose_override "$run_dir")" ]]; then
     # Act only on a project this run started: another checkout can use the
     # same run id, and so the same project name.
     ( vg_check_project_owned "$run_dir" ) \
