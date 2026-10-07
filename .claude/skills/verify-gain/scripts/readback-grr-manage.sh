@@ -60,8 +60,7 @@ names_added "$ev/02-repo-manifest-dry/stderr.txt" \
 r="$(rc 03-repo-manifest)"
 echo "readback: 03-repo-manifest exit $r"
 [[ "$r" == 0 ]] || bad "repo-manifest exited $r, not 0"
-grep -qx "  name: $added" "$ev/manifest.txt" 2> /dev/null \
-    || grep -qx -- "- name: $added" "$ev/manifest.txt" 2> /dev/null \
+grep -qxF -e "  name: $added" -e "- name: $added" "$ev/manifest.txt" 2> /dev/null \
     || bad "the manifest of $resource after repo-manifest does not list $added"
 
 # 04: the second dry run.
@@ -85,8 +84,9 @@ if [[ "$listed" != "$expected" ]]; then
 fi
 
 r="$(rc 06-grr-browse)"
-browsed="$(rows "$ev/06-grr-browse/stdout.txt" | awk '$(NF - 1) == "mini_copy" { print $NF }' | sort)"
-other="$(rows "$ev/06-grr-browse/stdout.txt" | awk '$(NF - 1) != "mini_copy"')"
+browse_rows="$(rows "$ev/06-grr-browse/stdout.txt")"
+browsed="$(printf "%s" "$browse_rows" | awk '$(NF - 1) == "mini_copy" { print $NF }' | sort)"
+other="$(printf "%s" "$browse_rows" | awk '$(NF - 1) != "mini_copy"')"
 echo "readback: 06-grr-browse exit $r, $(grep -c . <<<"$browsed") of $n resources listed from mini_copy"
 [[ "$r" == 0 ]] || bad "grr_browse exited $r, not 0"
 [[ -z "$other" ]] || bad "grr_browse lists a row that is not from mini_copy: $other"
