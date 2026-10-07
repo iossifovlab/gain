@@ -812,7 +812,7 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         query at 200 (which re-seeks and refills the buffer), then close the
         held generator: its prune lands on the *new* buffer with the *old*
         query's ``pos_begin``, evicting records at 200 that are live.  The
-        answer at 205 then silently loses a record -- ``contains`` still
+        answer at 205 then silently loses a record -- ``reaches`` still
         admits it, because a wide record keeps ``_max_end`` past it, and
         gain#250's fix gates on the query's start rather than on that edge.
 
