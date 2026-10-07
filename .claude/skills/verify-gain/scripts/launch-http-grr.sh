@@ -37,6 +37,10 @@ mini_grr="$VG_CHECKOUT/test_fixtures/mini-GRR"
     || vg_die "launch-http: FAIL: $mini_grr is not initialised.
     Fix: cd $VG_CHECKOUT && git submodule update --init test_fixtures/mini-GRR"
 
+# The readiness probe below needs curl. Refuse before anything is written.
+command -v curl >/dev/null \
+    || vg_die "launch-http: FAIL: curl is not on PATH; the readiness probe needs it"
+
 # 1. The scratch copy.
 mkdir -p "$http_dir/cache"
 rsync -a --exclude=/.git "$mini_grr/" "$http_dir/grr/"
@@ -78,13 +82,16 @@ port="${port_line##*:}"
 echo "$port" > "$http_dir/port"
 
 url="http://127.0.0.1:$port/"
-# Wait until httpd answers on the port (any HTTP status).
+# Wait until httpd answers on the port (any HTTP status). Only a
+# three-digit status 1xx-5xx counts: curl prints 000 or nothing on failure.
+code=""
 for _ in $(seq 1 40); do
     code="$(curl --noproxy '*' -s -o /dev/null -w '%{http_code}' "$url" || true)"
-    [[ "$code" != "000" ]] && break
+    [[ "$code" =~ ^[1-5][0-9][0-9]$ ]] && break
     sleep 0.25
 done
-[[ "$code" != "000" ]] || vg_die "launch-http: FAIL: $url does not answer"
+[[ "$code" =~ ^[1-5][0-9][0-9]$ ]] \
+    || vg_die "launch-http: FAIL: $url does not answer (last curl status: '${code}')"
 
 sq="'"
 cat > "$scratch/grr-http.yaml" <<YAML
