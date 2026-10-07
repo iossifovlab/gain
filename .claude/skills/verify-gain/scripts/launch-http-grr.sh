@@ -27,6 +27,11 @@ http_dir="$(vg_http_dir "$run_dir")"
 [[ -d "$scratch" ]] || vg_die "launch-http: $scratch is missing (run launch.sh)"
 [[ ! -e "$http_dir" ]] || vg_die "launch-http: $http_dir already exists; launch a new run"
 
+# The compose project name is global to the host. Refuse a name that
+# another checkout or an old run already uses, before anything is written:
+# without the override file, cleanup.sh never runs `down` on that project.
+vg_check_project_free "$run_dir"
+
 mini_grr="$VG_CHECKOUT/test_fixtures/mini-GRR"
 [[ -f "$mini_grr/mini_pipeline/genomic_resource.yaml" ]] \
     || vg_die "launch-http: FAIL: $mini_grr is not initialised.
@@ -57,11 +62,15 @@ services:
 YAML
 
 # 3. Start the run's own apache. The image must be local: no pull.
+# Check the project again right before `up`: it must still be free.
 vg_check_httpd_image
+vg_check_project_free "$run_dir"
 vg_compose "$run_dir" up -d --pull never --no-deps apache >&2 \
     || vg_die "launch-http: FAIL: docker compose up failed for $(vg_compose_project "$run_dir")"
 
-# 4. The ephemeral host port and the HTTP GRR definition.
+# 4. The ephemeral host port and the HTTP GRR definition. First make sure
+# that the container `up` left is this run's own.
+vg_check_project_owned "$run_dir"
 port_line="$(vg_compose "$run_dir" port apache 80)"
 port="${port_line##*:}"
 [[ "$port_line" == 127.0.0.1:* && "$port" =~ ^[0-9]+$ ]] \

@@ -94,6 +94,15 @@ in `common.sh`, with the same `-f` files, project directory and `-p` name.
 never loaded. No helper stops, restarts or removes a container by name,
 and no helper touches another compose project.
 
+The project name is global to the host, but a run id is unique only in
+one checkout. Another worktree, or an old run whose `.verify/` was
+deleted, can use the same name. So `launch-http-grr.sh` refuses when
+`docker ps -a --filter label=com.docker.compose.project=verify-gain-<run id>`
+lists any container. Doctor and Cleanup act only when every container of
+the project has this run's override in its
+`com.docker.compose.project.config_files` label and this run's copy as
+its `htdocs` mount source (`vg_check_project_owned`).
+
 `VERIFY_GAIN_HTTPD_IMAGE=<image>` replaces `httpd:latest` in the override
 and in the image check.
 
@@ -121,8 +130,11 @@ For a run with an HTTP GRR, it also fails when:
 
 - the httpd image is not local. Fix: `docker pull httpd:latest`. Doctor
   never pulls.
-- the compose project `verify-gain-<run id>` does not own exactly one
-  `apache` container (`docker compose -p verify-gain-<run id> ps -q apache`).
+- the compose project `verify-gain-<run id>` does not have exactly one
+  `apache` container (`docker compose -p verify-gain-<run id> ps -q apache`),
+  or a container of the project was not started from this run's override
+  and copy. Then another checkout uses the run id: launch a new run with
+  another run id.
 - `grr_browse -g $RUN/scratch/grr-http.yaml` fails or does not list
   `mini_pipeline` from `mini_http`. Doctor does not use a bare request for
   `.CONTENTS.json`: a GRR can ship only `.CONTENTS.json.gz`.
@@ -232,8 +244,10 @@ Cite the evidence directory, not a pasted summary, as the proof.
 
 For an HTTP run, `cleanup.sh` first runs `docker compose -p
 verify-gain-<run id> down` through `vg_compose`. That removes the
-project's container and network, and nothing of another project. Then it
-removes the scratch directory. It keeps the evidence directory:
+project's container and network, and nothing of another project. Before
+`down`, it checks that every container of the project is this run's. If
+one is not, it refuses and keeps scratch. Then it removes the scratch
+directory. It keeps the evidence directory:
 
 ```bash
 .claude/skills/verify-gain/scripts/cleanup.sh "$RUN_ID"

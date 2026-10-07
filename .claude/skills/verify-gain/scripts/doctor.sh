@@ -10,8 +10,10 @@
 # For a run with an HTTP GRR (launch-http-grr.sh wrote
 # scratch/http/compose.override.yaml), also:
 #   4. the httpd image is local (it is never pulled);
-#   5. the run's compose project verify-gain-<run id> owns exactly one
-#      apache container (docker compose -p ... ps -q apache);
+#   5. the run's compose project verify-gain-<run id> has exactly one
+#      apache container (docker compose -p ... ps -q apache), and every
+#      container of the project was started from this run's override and
+#      serves this run's copy (vg_check_project_owned);
 #   6. grr_browse -g scratch/grr-http.yaml exits 0 and lists mini_pipeline.
 #      A bare request for .CONTENTS.json is not the check: a GRR can ship
 #      only .CONTENTS.json.gz.
@@ -78,10 +80,10 @@ if [[ -f "$(vg_http_dir "$run_dir")/compose.override.yaml" ]]; then
         vg_die "doctor: FAIL: compose project $project runs $(wc -w <<<"$ids") apache containers, not 1.
     Fix: cleanup.sh $(basename "$run_dir"), then launch a new run"
     fi
-    owner="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$ids")"
-    [[ "$owner" == "$project" ]] \
-        || vg_die "doctor: FAIL: container $ids belongs to compose project '$owner', not $project"
-    echo "doctor: ok: compose project $project owns apache container $ids"
+    # The project label proves nothing: `ps -p` filters on it. Check that
+    # every container of the project runs this run's override and copy.
+    vg_check_project_owned "$run_dir"
+    echo "doctor: ok: compose project $project runs this run's apache container $ids (this run's override and copy)"
 
     # 6. The HTTP GRR definition answers.
     [[ -f "$scratch/grr-http.yaml" ]] \

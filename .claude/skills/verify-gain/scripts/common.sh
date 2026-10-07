@@ -111,6 +111,56 @@ vg_compose() {
         "$@"
 }
 
+# vg_project_containers <run dir> -> prints the IDs of every container,
+# running or not, that carries the label of the run's compose project.
+vg_project_containers() {
+    docker ps -aq --filter "label=com.docker.compose.project=$(vg_compose_project "$1")"
+}
+
+# vg_check_project_free <run dir>: fails unless no container carries the
+# label of the run's compose project. The project name is global to the
+# host, but the run id is only unique in one checkout: another worktree,
+# or a leftover of a run whose .verify/ was deleted, can use the same name.
+# A second `up` on that name would recreate the other run's container.
+vg_check_project_free() {
+    local project ids
+    project="$(vg_compose_project "$1")"
+    ids="$(vg_project_containers "$1")" \
+        || vg_die "FAIL: docker ps failed for compose project $project"
+    [[ -z "$ids" ]] || vg_die "FAIL: compose project $project already has containers: $(echo $ids).
+    Another checkout or an old run uses this run id. Launch a new run with another run id."
+}
+
+# vg_check_project_owned <run dir>: fails unless every container of the
+# run's compose project was started by this run. The project label alone
+# proves nothing (docker compose -p P ps already filters on it). The
+# check reads two things that only this run has:
+#   - the com.docker.compose.project.config_files label names this run's
+#     scratch override file;
+#   - the htdocs bind mount source is this run's scratch copy of mini-GRR.
+# A project with no containers passes.
+vg_check_project_owned() {
+    local run_dir="$1" project override grr_copy ids id files source
+    project="$(vg_compose_project "$run_dir")"
+    override="$(vg_http_dir "$run_dir")/compose.override.yaml"
+    grr_copy="$(cd "$(vg_http_dir "$run_dir")/grr" 2> /dev/null && pwd -P)" \
+        || vg_die "FAIL: $(vg_http_dir "$run_dir")/grr is missing; cannot prove that $project is this run's"
+    ids="$(vg_project_containers "$run_dir")" \
+        || vg_die "FAIL: docker ps failed for compose project $project"
+    for id in $ids; do
+        files="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' "$id")" \
+            || vg_die "FAIL: docker inspect $id failed"
+        [[ ",$files," == *",$override,"* ]] \
+            || vg_die "FAIL: container $id of $project was not started from this run's $override (config_files: $files).
+    Another checkout uses this run id. Do not act on $project from this run."
+        source="$(docker inspect -f '{{ range .Mounts }}{{ if eq .Destination "/usr/local/apache2/htdocs" }}{{ .Source }}{{ end }}{{ end }}' "$id")" \
+            || vg_die "FAIL: docker inspect $id failed"
+        [[ "$source" == "$grr_copy" ]] \
+            || vg_die "FAIL: container $id of $project serves '$source', not this run's $grr_copy.
+    Another checkout uses this run id. Do not act on $project from this run."
+    done
+}
+
 # vg_check_httpd_image: fails, naming the fix, unless the httpd image is
 # local. It never pulls.
 vg_check_httpd_image() {
