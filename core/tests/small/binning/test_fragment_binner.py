@@ -192,8 +192,8 @@ def test_a_value_given_in_aggregate_is_refused_naming_the_value_key(
 
 
 @pytest.mark.parametrize("mode", [
-    "fragment_length", "coverage_profile", "sideways", ["fragment_start"]])
-def test_a_mode_other_than_fragment_start_is_refused_naming_the_modes(
+    "coverage_profile", "sideways", ["fragment_start"]])
+def test_an_unknown_mode_is_refused_naming_the_modes(
     repo: GenomicResourceRepo, genome: ReferenceGenome, mode: Any,
 ) -> None:
     with pytest.raises(RunDefinitionError) as excinfo:
@@ -204,7 +204,77 @@ def test_a_mode_other_than_fragment_start_is_refused_naming_the_modes(
     message = str(excinfo.value)
     assert message.startswith("binners[0].aggregate")
     assert repr(mode) in message
-    assert "use one of fragment_start" in message
+    assert "use one of fragment_start, fragment_length" in message
+
+
+def length_entry(**aggregate: Any) -> dict[str, Any]:
+    """An unpooled ``frags/s1`` entry in ``fragment_length`` mode."""
+    return {"resource_query": "frags/s1", "pool": False,
+            "aggregate": {"mode": "fragment_length", **aggregate}}
+
+
+@pytest.mark.parametrize("aggregate,fragments", [
+    ({"aggregator": "count"},
+     ["aggregator 'count'", "fragment_length",
+      "aggregator: sum with value: {value: 1}"]),
+    ({"aggregator": "product"},
+     ["aggregator 'product'", "fragment_length",
+      "use one of max, mean, median, min, sum"]),
+    ({"uncovered_value": "zero"},
+     ["uncovered_value must be a number or null", "'zero'"]),
+    ({"uncovered_value": True},
+     ["uncovered_value must be a number or null", "True"]),
+])
+def test_a_length_aggregate_it_cannot_honour_is_refused(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+    aggregate: dict[str, Any], fragments: list[str],
+) -> None:
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_fragment_entry(length_entry(**aggregate), repo, genome)
+
+    message = str(excinfo.value)
+    assert message.startswith("binners[0].aggregate")
+    for fragment in fragments:
+        assert fragment in message
+
+
+@pytest.mark.parametrize("aggregate", [
+    {"uncovered_value": 0},
+    {"mode": "fragment_start", "uncovered_value": None},
+])
+def test_an_uncovered_value_in_fragment_start_mode_is_refused(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+    aggregate: dict[str, Any],
+) -> None:
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_fragment_entry(
+            {"resource_query": "frags/s1", "aggregate": aggregate},
+            repo, genome)
+
+    message = str(excinfo.value)
+    assert message.startswith("binners[0].aggregate")
+    assert "uncovered_value does not apply in fragment_start mode" in message
+
+
+@pytest.mark.parametrize("aggregate,expected", [
+    ({}, ("sum", None)),
+    ({"aggregator": "mean", "uncovered_value": 0}, ("mean", 0.0)),
+    ({"aggregator": "median", "uncovered_value": 2.5}, ("median", 2.5)),
+    ({"aggregator": "max", "uncovered_value": None}, ("max", None)),
+])
+def test_a_length_entry_carries_its_mode_and_uncovered_value(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+    aggregate: dict[str, Any], expected: tuple[str, float | None],
+) -> None:
+    run = parse_fragment_entry(length_entry(**aggregate), repo, genome)
+
+    (track,) = run.tracks
+    aggregator, uncovered = expected
+    assert (track.mode, track.aggregator, track.uncovered_value) == (
+        "fragment_length", aggregator, uncovered)
+    parameters = json.loads(track.parameters)
+    assert parameters["mode"] == "fragment_length"
+    assert parameters["uncovered_value"] == uncovered
 
 
 def test_a_constant_group_names_the_entry_s_one_track(

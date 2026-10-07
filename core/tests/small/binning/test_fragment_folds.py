@@ -13,6 +13,7 @@ import math
 import numpy as np
 import pytest
 from gain.binning.fragment_folds import (
+    BinFragmentLengthAggregator,
     BinFragmentStartAggregator,
     BinValue,
     FragmentValue,
@@ -137,3 +138,194 @@ def test_an_int_result_too_large_for_a_float_saturates(
                 start=1, end=10, aggregator=aggregator)
 
     assert bins == [(1, 10, expected)]
+
+
+def length_fold(
+    fragments: list[tuple[int, int, float]], *, start: int, end: int,
+    aggregator: str, uncovered_value: float | None = None,
+    bin_size: int = 10,
+) -> list[BinValue]:
+    """Every bin a length fold answers: those ``feed`` emits, then ``flush``."""
+    fold_ = BinFragmentLengthAggregator(
+        start=start, end=end, bin_size=bin_size, aggregator=aggregator,
+        uncovered_value=uncovered_value)
+    bins: list[BinValue] = []
+    for fragment in fragments:
+        bins.extend(fold_.feed(FragmentValue(*fragment)))
+    bins.extend(fold_.flush())
+    return bins
+
+
+def test_a_fragment_inside_one_bin_adds_its_value_weighted_by_its_length(
+) -> None:
+    # (3, 6) covers 4 bp of 1-10: a sum of 4 * 2.5; 11-20 is empty.
+    bins = length_fold([(3, 6, 2.5)], start=1, end=20, aggregator="sum")
+
+    assert bins == [(1, 10, 10.0), (11, 20, 0.0)]
+
+
+def test_a_fragment_across_two_bins_adds_its_overlap_to_each() -> None:
+    # (8, 13): 3 bp in 1-10, 3 bp in 11-20.
+    bins = length_fold([(8, 13, 2)], start=1, end=20, aggregator="sum")
+
+    assert bins == [(1, 10, 6.0), (11, 20, 6.0)]
+
+
+def test_a_fragment_across_three_bins_adds_its_overlap_to_each() -> None:
+    # (8, 23): 3 bp in 1-10, all 10 of 11-20, 3 bp in 21-30.
+    bins = length_fold([(8, 23, 1)], start=1, end=40, aggregator="sum")
+
+    assert bins == [(1, 10, 3.0), (11, 20, 10.0), (21, 30, 3.0),
+                    (31, 40, 0.0)]
+
+
+def test_overlapping_fragments_each_add_their_own_overlap() -> None:
+    # In 11-20: (5, 15) 5 bp of 1, (12, 25) 9 bp of 3 -> (5 + 27) / 14.
+    bins = length_fold([(5, 15, 1), (12, 25, 3)],
+                       start=1, end=30, aggregator="mean")
+
+    assert bins == [(1, 10, 1.0), (11, 20, 32 / 14), (21, 30, 3.0)]
+
+
+def test_a_long_fragment_still_reaches_the_bins_after_a_short_one() -> None:
+    # (5, 35) is fed first; (12, 14) starts and ends inside it, and its
+    # start answers 1-10 only: 21-30 and 31-40 still hold the long one.
+    bins = length_fold([(5, 35, 2), (12, 14, 10)],
+                       start=1, end=40, aggregator="sum")
+
+    assert bins == [(1, 10, 12.0), (11, 20, 50.0), (21, 30, 20.0),
+                    (31, 40, 10.0)]
+
+
+def test_two_fragments_with_one_start_and_different_ends() -> None:
+    # Both start at 8; (8, 12) reaches 11-20 for 2 bp, (8, 27) for 10.
+    bins = length_fold([(8, 12, 1), (8, 27, 1)],
+                       start=1, end=30, aggregator="sum")
+
+    assert bins == [(1, 10, 6.0), (11, 20, 12.0), (21, 30, 7.0)]
+
+
+def test_an_uncovered_value_fills_the_gaps_between_fragments() -> None:
+    # 1-10: (3, 4) 2 bp of 6, 8 bp uncovered of 1; 11-20: (15, 16) 2 bp
+    # of 6, 8 bp of 1; 21-30 all uncovered.
+    bins = length_fold([(3, 4, 6), (15, 16, 6)],
+                       start=1, end=30, aggregator="sum", uncovered_value=1)
+
+    assert bins == [(1, 10, 20.0), (11, 20, 20.0), (21, 30, 10.0)]
+
+
+def test_flush_fills_the_tail_to_the_region_s_end_only() -> None:
+    # The region ends at 25: 21-30 holds 21-25 uncovered, not 26-30.
+    length = BinFragmentLengthAggregator(
+        start=1, end=25, bin_size=10, aggregator="sum", uncovered_value=2)
+
+    fed = length.feed(FragmentValue(12, 13, 5))
+    flushed = length.flush()
+
+    assert fed == [(1, 10, 20.0)]
+    assert flushed == [(11, 20, 26.0), (21, 30, 10.0)]
+
+
+def test_an_uncovered_value_does_not_fill_an_edge_bin_outside_the_region(
+) -> None:
+    # 15-24: 11-20 holds 15-20 (6 bp), 21-30 holds 21-24 (4 bp).
+    bins = length_fold([], start=15, end=24, aggregator="sum",
+                       uncovered_value=1)
+
+    assert bins == [(11, 20, 6.0), (21, 30, 4.0)]
+
+
+@pytest.mark.parametrize("aggregator, empty", [
+    ("sum", 0.0), ("mean", math.nan), ("max", math.nan), ("min", math.nan),
+    ("median", math.nan),
+])
+def test_without_an_uncovered_value_an_empty_bin_holds_the_empty_value(
+    aggregator: str, empty: float,
+) -> None:
+    bins = length_fold([(3, 4, 2)], start=1, end=20, aggregator=aggregator)
+
+    np.testing.assert_equal(bins[1], (11, 20, empty))
+
+
+@pytest.mark.parametrize("aggregator, expected", [
+    # 1-10: (2, 4) 3 bp of 1, (6, 10) 5 bp of 5, 2 bp uncovered of 0;
+    # the median of 0 0 1 1 1 5 5 5 5 5 is (1 + 5) / 2.
+    ("sum", 28.0), ("mean", 2.8), ("max", 5.0), ("min", 0.0),
+    ("median", 3.0),
+])
+def test_each_aggregator_weighs_by_overlap(
+    aggregator: str, expected: float,
+) -> None:
+    bins = length_fold([(2, 4, 1), (6, 10, 5)], start=1, end=10,
+                       aggregator=aggregator, uncovered_value=0)
+
+    assert bins == [(1, 10, expected)]
+
+
+@pytest.mark.parametrize("fragment", [(14, 20, 1), (15, 35, 1)])
+def test_a_length_fold_refuses_a_fragment_outside_the_region(
+    fragment: tuple[int, int, int],
+) -> None:
+    length = BinFragmentLengthAggregator(
+        start=15, end=34, bin_size=10, aggregator="sum")
+
+    with pytest.raises(ValueError, match=(
+            rf"a fragment at \[{fragment[0]}, {fragment[1]}\] is not "
+            r"inside the binned region \[15, 34\]")):
+        length.feed(FragmentValue(*fragment))
+
+
+def test_a_length_fold_refuses_a_fragment_out_of_start_order() -> None:
+    length = BinFragmentLengthAggregator(
+        start=1, end=40, bin_size=10, aggregator="sum")
+    length.feed(FragmentValue(12, 13, 1))
+
+    with pytest.raises(ValueError, match="sorted by start"):
+        length.feed(FragmentValue(11, 30, 1))
+
+
+# The prototype's five length cases, on the global grid: a region ending
+# at 25 answers the whole bin 21-30 and fills it to 25 only.
+PROTOTYPE_FRAGMENTS = [(9, 14, 1), (14, 18, 2), (18, 26, 3)]
+
+
+def test_prototype_length() -> None:
+    bins = length_fold(PROTOTYPE_FRAGMENTS, start=1, end=30,
+                       aggregator="mean")
+
+    assert bins == [
+        (1, 10, 1.0), (11, 20, (4 * 1 + 5 * 2 + 3 * 3) / (4 + 5 + 3)),
+        (21, 30, 3.0)]
+
+
+def test_prototype_length_with_default_value() -> None:
+    bins = length_fold(PROTOTYPE_FRAGMENTS, start=1, end=30,
+                       aggregator="mean", uncovered_value=0)
+
+    assert bins == [
+        (1, 10, 2 * 1.0 / 10),
+        (11, 20, (4 * 1 + 5 * 2 + 3 * 3) / (4 + 5 + 3)),
+        (21, 30, 6 * 3.0 / 10)]
+
+
+def test_prototype_length_fragment_spanning_all_bins() -> None:
+    # The prototype's (5, 40) as its caller clips it to 1-25.
+    bins = length_fold([(5, 25, 7)], start=1, end=25, aggregator="mean")
+
+    assert bins == [(1, 10, 7.0), (11, 20, 7.0), (21, 30, 7.0)]
+
+
+def test_prototype_length_no_fragments_with_default_value() -> None:
+    bins = length_fold([], start=1, end=25, aggregator="mean",
+                       uncovered_value=0)
+
+    assert bins == [(1, 10, 0.0), (11, 20, 0.0), (21, 30, 0.0)]
+
+
+def test_prototype_length_identical_fragments_with_default_value() -> None:
+    bins = length_fold([(3, 4, 1), (3, 4, 5)], start=1, end=25,
+                       aggregator="mean", uncovered_value=0)
+
+    assert bins == [
+        (1, 10, (2 * 1 + 2 * 5 + 8 * 0) / (2 + 2 + 8)),
+        (11, 20, 0.0), (21, 30, 0.0)]

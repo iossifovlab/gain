@@ -92,9 +92,10 @@ class Track:
     differently.
 
     ``mode`` is how a fragment track's fragments reach a bin
-    (``fragment_start``), and ``uncovered_value`` what a base no fragment
-    covers adds, ``None`` for nothing; both are written to the file, and
-    a position-score track has neither -- an empty ``mode`` and ``None``.
+    (``fragment_start`` or ``fragment_length``), and ``uncovered_value``
+    what a base no fragment covers adds, ``None`` for nothing; both are
+    written to the file, and a position-score track has neither -- an
+    empty ``mode`` and ``None``.
     """
 
     name: str

@@ -3,7 +3,12 @@
 An entry names a query over ``fragment_score`` resources and produces,
 per grid bin, an aggregate over the fragments that START in that bin --
 the partition :meth:`FragmentScore.get_fragment_scores_starting_in_region`
-reads, so adjacent regions see each fragment exactly once.
+reads, so adjacent regions see each fragment exactly once -- or, in
+:data:`FRAGMENT_LENGTH` mode, over the fragments that OVERLAP it, each
+weighted by its overlap in base pairs.  That mode reads
+:meth:`FragmentScore.get_fragment_scores_overlapping_region` and clips
+each fragment to the region, so a base pair belongs to one region and no
+fragment's base pair is counted twice.
 
 An entry's keys:
 
@@ -32,12 +37,16 @@ An entry's keys:
 - ``value``: what one fragment adds, ``{score_id: S}``, the value of the
   numeric score ``S``, or ``{value: V}``, a constant; omitted, ``{value:
   1}``.
-- ``aggregate``: how a bin reduces the values, ``{mode, aggregator}``;
-  ``mode`` is :data:`FRAGMENT_START`, the only one, and ``aggregator``
-  omitted means ``sum``.  The keys ``score`` and ``value`` are refused
-  here, naming the ``value`` key.  Without ``value`` and ``aggregate``
-  an entry counts the fragments that start in each bin, whatever its
-  resources' scores.
+- ``aggregate``: how a bin reduces the values, ``{mode, aggregator,
+  uncovered_value}``; ``mode`` is :data:`FRAGMENT_START` (the default)
+  or :data:`FRAGMENT_LENGTH`, and ``aggregator`` omitted means ``sum``.
+  :data:`FRAGMENT_LENGTH` takes only :data:`LENGTH_AGGREGATORS`, and an
+  ``uncovered_value``: a number each base of the region no fragment of
+  the track covers adds, with a weight of 1 bp, or ``null`` (the
+  default), nothing; :data:`FRAGMENT_START` refuses it.  The keys
+  ``score`` and ``value`` are refused here, naming the ``value`` key.
+  Without ``value`` and ``aggregate`` an entry counts the fragments that
+  start in each bin, whatever its resources' scores.
 - ``meta``: exactly one source of the table mapping barcodes to groups
   -- ``resource_id: ID``, a ``data_frame`` resource; ``resource_label:
   LABEL``, the ``data_frame`` resource the fragment resource's label
@@ -59,9 +68,11 @@ is omitted), and on the one metadata table their ``meta`` names.
 A fragment whose barcode is not in the filtered rows, or whose row's
 group is empty, or whose ``group_score_id`` value is missing or is one
 its resource's histogram does not list, reaches no track; it is counted
-as dropped, per resource and region.  An empty bin holds the fold's
-empty value -- 0 for ``count`` and ``sum``, NaN for the others -- and so
-does every bin of a contig a resource lacks.
+as dropped, per resource and region (in :data:`FRAGMENT_LENGTH` mode,
+in every region it reaches).  An empty bin holds the fold's empty value
+-- 0 for ``count`` and ``sum``, NaN for the others -- and so does every
+bin of a contig a resource lacks; with an ``uncovered_value`` no bin is
+empty, and a contig a resource lacks is uncovered throughout.
 """
 from __future__ import annotations
 
@@ -94,6 +105,8 @@ from gain.binning.binners import (
     named_base,
 )
 from gain.binning.fragment_folds import (
+    BinFragmentAggregator,
+    BinFragmentLengthAggregator,
     BinFragmentStartAggregator,
     BinValue,
     FragmentValue,
@@ -156,14 +169,20 @@ CELL_GROUP_KEYS = frozenset(CELL_GROUP_DEFAULTS)
 VALUE_GROUP_KEY = "group_score_id"
 GROUP_KEYS = frozenset({"group", VALUE_GROUP_KEY}) | CELL_GROUP_KEYS
 VALUE_KEYS = frozenset({"score_id", "value"})
-AGGREGATE_KEYS = frozenset({"mode", "aggregator"})
+AGGREGATE_KEYS = frozenset({"mode", "aggregator", "uncovered_value"})
 #: The keys ``aggregate`` does not take, each with the ``value`` key that
 #: says what one fragment adds.
 MOVED_TO_VALUE = {"score": "score_id", "value": "value"}
 #: The fragment mode reducing, per bin, the fragments that start in it.
 FRAGMENT_START = "fragment_start"
+#: The fragment mode reducing, per bin, the fragments that overlap it,
+#: each weighted by its overlap in base pairs.
+FRAGMENT_LENGTH = "fragment_length"
 #: The accepted ``aggregate.mode`` values.
-MODES = (FRAGMENT_START,)
+MODES = (FRAGMENT_START, FRAGMENT_LENGTH)
+#: The aggregators a length-weighted mode accepts: ``count`` would count
+#: base pairs, and ``product`` raise a value to the power of a length.
+LENGTH_AGGREGATORS = ("max", "mean", "median", "min", "sum")
 META_SOURCE_KEYS = frozenset({"resource_id", "resource_label", "file_name"})
 META_FILE_KEYS = frozenset({"file_separator", "file_format"})
 META_KEYS = META_SOURCE_KEYS | META_FILE_KEYS | frozenset({"filter"})
@@ -506,15 +525,18 @@ class _Aggregate:
 
     mode: str
     aggregator: str
-    #: What a base no fragment covers adds; always ``None``, nothing.
+    #: What a base no fragment covers adds, with a weight of 1 bp;
+    #: ``None``, nothing.  Only :data:`FRAGMENT_LENGTH` takes one.
     uncovered_value: float | None = None
 
     @classmethod
     def parse(cls, label: str, config: Any) -> _Aggregate:
         """Resolve an entry's ``aggregate`` block.
 
-        The aggregator must be one the binned fold accepts.  What one
-        fragment adds is ``value``'s, and refused here.
+        The aggregator must be one the mode's fold accepts, and
+        ``uncovered_value`` a number or ``null``, given only in
+        :data:`FRAGMENT_LENGTH` mode.  What one fragment adds is
+        ``value``'s, and refused here.
         """
         if isinstance(config, dict):
             for key, value_key in MOVED_TO_VALUE.items():
@@ -535,7 +557,34 @@ class _Aggregate:
             raise RunDefinitionError(
                 f"{label}: aggregator {aggregator!r} does not produce a "
                 f"number; use one of {', '.join(sorted(EMPTY_BIN_VALUES))}")
-        return cls(mode=mode, aggregator=aggregator)
+        if mode == FRAGMENT_START:
+            if "uncovered_value" in config:
+                raise RunDefinitionError(
+                    f"{label}: uncovered_value does not apply in "
+                    f"{FRAGMENT_START} mode, where a bin reduces only the "
+                    f"fragments starting in it; give mode: "
+                    f"{FRAGMENT_LENGTH}, or drop uncovered_value")
+            return cls(mode=mode, aggregator=aggregator)
+        if aggregator == "count":
+            raise RunDefinitionError(
+                f"{label}: aggregator 'count' would count base pairs, not "
+                f"fragments, in {mode} mode; for the covered base pairs "
+                f"give aggregator: sum with value: {{value: 1}}")
+        if aggregator not in LENGTH_AGGREGATORS:
+            raise RunDefinitionError(
+                f"{label}: aggregator {aggregator!r} would weigh a value "
+                f"by its overlap as a power in {mode} mode; use one of "
+                f"{', '.join(LENGTH_AGGREGATORS)}")
+        uncovered = config.get("uncovered_value")
+        if uncovered is not None and (
+                isinstance(uncovered, bool)
+                or not isinstance(uncovered, int | float)):
+            raise RunDefinitionError(
+                f"{label}: uncovered_value must be a number or null, not "
+                f"{uncovered!r}")
+        return cls(
+            mode=mode, aggregator=aggregator,
+            uncovered_value=None if uncovered is None else float(uncovered))
 
     @classmethod
     def default(cls) -> _Aggregate:
@@ -1070,10 +1119,11 @@ class FragmentScoreBinding:
     def bin_region(
         self, region: BedRegion, bin_size: int,
     ) -> npt.NDArray[np.float64]:
-        """Fold the fragments starting in ``region`` into the job's tracks.
+        """Fold the fragments of ``region`` into the job's tracks.
 
-        One start fold per track is made before any read starts, and
-        one starting-in read per resource is merged by fragment start;
+        One fold per track, of the track's mode, is made before any read
+        starts, and one read per resource -- starting-in, or overlapping
+        with each fragment clipped to the region -- is merged by start;
         each fragment goes to the fold of its track, and each bin a fold
         answers goes to its row of the block.  A track that no fragment
         reaches still answers every bin, through its fold's ``flush``.
@@ -1088,11 +1138,7 @@ class FragmentScoreBinding:
              len(self.job.tracks)),
             dtype=np.float64)
         folds = [
-            BinFragmentStartAggregator(
-                start=region.start, end=region.stop, bin_size=bin_size,
-                aggregator=track.aggregator)
-            for track in self.job.tracks
-        ]
+            _fold_of(track, region, bin_size) for track in self.job.tracks]
 
         def place(column: int, bins: list[BinValue]) -> None:
             for bin_value in bins:
@@ -1133,15 +1179,18 @@ class FragmentScoreBinding:
     ) -> Generator[tuple[int, int, int, ScoreValue], None, None]:
         """``(start, end, track, value)`` per fragment of one resource.
 
-        A fragment whose barcode maps to no track is dropped, and counted
-        in ``dropped[index]``.
+        The fragments starting in ``region``, or in a length mode those
+        overlapping it, clipped to it.  A fragment whose barcode maps to
+        no track is dropped, and counted in ``dropped[index]``.
         """
         job = self.job
         scores = [] if job.score_id is None else [job.score_id]
         if job.grouping is not None:
             scores.append(job.grouping.score_id)
-        rows = score.get_fragment_scores_starting_in_region(
-            region.chrom, region.start, region.stop, scores=scores)
+        starting = job.tracks[0].mode == FRAGMENT_START
+        read = score.get_fragment_scores_starting_in_region if starting \
+            else score.get_fragment_scores_overlapping_region
+        rows = read(region.chrom, region.start, region.stop, scores=scores)
         track_of = None if self.track_maps is None \
             else self.track_maps[index]
         try:
@@ -1151,10 +1200,29 @@ class FragmentScoreBinding:
                 if track is None:
                     dropped[index] += 1
                     continue
-                yield begin, end, track, \
-                    job.value if job.score_id is None else values[0]
+                value = job.value if job.score_id is None else values[0]
+                if starting:
+                    yield begin, end, track, value
+                else:
+                    # A base pair belongs to one region: each adds only
+                    # the part of a fragment inside it.
+                    yield max(begin, region.start), \
+                        min(end, region.stop), track, value
         finally:
             rows.close()
+
+
+def _fold_of(
+    track: Track, region: BedRegion, bin_size: int,
+) -> BinFragmentAggregator:
+    """The streaming fold of ``track``'s mode over ``region``."""
+    if track.mode == FRAGMENT_START:
+        return BinFragmentStartAggregator(
+            start=region.start, end=region.stop, bin_size=bin_size,
+            aggregator=track.aggregator)
+    return BinFragmentLengthAggregator(
+        start=region.start, end=region.stop, bin_size=bin_size,
+        aggregator=track.aggregator, uncovered_value=track.uncovered_value)
 
 
 class FragmentScoreBinner:
