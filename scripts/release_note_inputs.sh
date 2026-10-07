@@ -104,14 +104,17 @@ for ((i = 0; i < ${#prs[@]}; i += batch)); do
         fields+=" pr$pr: pullRequest(number: $pr) { number closingIssuesReferences(first: 50) { nodes { number repository { nameWithOwner } } } }"
     done
     query="query(\$owner: String!, \$name: String!) { repository(owner: \$owner, name: \$name) {$fields } }"
-    while IFS=$'\t' read -r pr closes; do
-        [ -n "$pr" ] && closes_of["$pr"]="$closes"
-    done < <(gh api graphql -f query="$query" -f owner="$owner" -f name="$name" \
+    # A plain assignment, not a process substitution: set -e must see a
+    # failed GraphQL call, or every PR would print with no closed issues.
+    closes_tsv="$(gh api graphql -f query="$query" -f owner="$owner" -f name="$name" \
         --jq ".data.repository[] | [.number, ([.closingIssuesReferences.nodes[]
             | if .repository.nameWithOwner == \"$repo\"
               then \"#\(.number)\"
               else \"\(.repository.nameWithOwner)#\(.number)\" end]
-            | join(\", \"))] | @tsv")
+            | join(\", \"))] | @tsv")"
+    while IFS=$'\t' read -r pr closes; do
+        [ -n "$pr" ] && closes_of["$pr"]="$closes"
+    done <<< "$closes_tsv"
 done
 
 for sha in "${chain[@]}"; do
