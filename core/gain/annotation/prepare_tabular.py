@@ -11,7 +11,9 @@ columns carry chromosome / position / etc., and the same
 from __future__ import annotations
 
 import argparse
+import csv
 import gzip
+import io
 import os
 import stat
 import subprocess
@@ -69,6 +71,39 @@ def _detect_input_separator(input_path: str) -> str:
     if name.endswith(".csv"):
         return ","
     return "\t"
+
+
+def _parse_line(line: str, separator: str) -> list[str]:
+    """Decode one input line with the simple-quoting ``csv`` dialect.
+
+    This is the dialect ``annotate_tabular`` reads with: a quoted field
+    may contain the separator, and ``""`` inside quotes decodes to ``"``.
+    Parsing is line-oriented, so quoted fields cannot span lines.
+    """
+    return next(csv.reader([line], delimiter=separator), [])
+
+
+class _RowEncoder:
+    """Encode rows in the tab-delimited ``csv`` dialect, one line each.
+
+    Minimal quoting keeps every cell reading back unchanged through
+    ``csv.reader(delimiter="\\t")``, the way ``annotate_tabular`` reads
+    the output. Cells holding a tab are rejected before they get here, so
+    only cells holding a ``"`` are ever quoted, and the raw-tab split of
+    ``sort -t`` and tabix still sees one field per cell.
+    """
+
+    def __init__(self) -> None:
+        self._buffer = io.StringIO()
+        self._writer = csv.writer(
+            self._buffer, delimiter=_OUTPUT_SEPARATOR,
+            quoting=csv.QUOTE_MINIMAL, lineterminator="\n")
+
+    def encode(self, cells: Iterable[str]) -> bytes:
+        self._buffer.seek(0)
+        self._buffer.truncate()
+        self._writer.writerow(cells)
+        return self._buffer.getvalue().encode()
 
 
 def _check_no_output_separator_in_cells(cols: list[str]) -> None:
@@ -253,7 +288,7 @@ def _open_text(path: str) -> TextIO:
 def _read_header(path: str, separator: str) -> list[str]:
     with _open_text(path) as f:
         raw = f.readline()
-    return [c.strip("#") for c in raw.rstrip("\r\n").split(separator)]
+    return [c.strip("#") for c in _parse_line(raw.rstrip("\r\n"), separator)]
 
 
 def _read_first_data_row(
@@ -265,7 +300,7 @@ def _read_first_data_row(
             stripped = line.rstrip("\r\n")
             if not stripped:
                 continue
-            cols = stripped.split(separator)
+            cols = _parse_line(stripped, separator)
             return dict(zip(header, cols, strict=False))
     return None
 
@@ -319,7 +354,7 @@ def _iter_processed_rows(
     chrom_rank: dict[str, int] | None,
     unknown_chroms: dict[str, int],
 ) -> Iterable[bytes]:
-    """Yield body rows as utf-8 bytes, tab-joined.
+    """Yield body rows as utf-8 bytes in the tab-delimited csv dialect.
 
     Performs injection of computed columns and (optionally) prepends a
     numeric chromosome-order rank column. ``unknown_chroms`` is mutated
@@ -328,7 +363,7 @@ def _iter_processed_rows(
     """
     rank_prefix = chrom_rank is not None
     unknown_rank = len(chrom_rank) if chrom_rank is not None else 0
-    sep = _OUTPUT_SEPARATOR
+    encoder = _RowEncoder()
 
     with _open_text(input_path) as f_in:
         f_in.readline()  # skip header
@@ -336,7 +371,7 @@ def _iter_processed_rows(
             stripped = line.rstrip("\r\n")
             if not stripped:
                 continue
-            cols = stripped.split(input_separator)
+            cols = _parse_line(stripped, input_separator)
             _check_no_output_separator_in_cells(cols)
             if plan.inject is not None:
                 record = dict(zip(plan.output_header, cols, strict=False))
@@ -348,9 +383,9 @@ def _iter_processed_rows(
                 if rank is None:
                     unknown_chroms[chrom] = unknown_chroms.get(chrom, 0) + 1
                     rank = unknown_rank
-                yield (f"{rank}{sep}" + sep.join(cols) + "\n").encode()
+                yield encoder.encode([str(rank), *cols])
             else:
-                yield (sep.join(cols) + "\n").encode()
+                yield encoder.encode(cols)
 
 
 def _stream_input_to_bgzip(
@@ -376,8 +411,7 @@ def _stream_input_to_bgzip(
     rank_prefix = chrom_rank is not None and not skip_sort
     unknown_chroms: dict[str, int] = {}
     sep_bytes = _OUTPUT_SEPARATOR.encode()
-    header_bytes = (
-        _OUTPUT_SEPARATOR.join(plan.output_header) + "\n").encode()
+    header_bytes = _RowEncoder().encode(plan.output_header)
 
     def write_header_and(body_iter: Iterable[bytes]) -> None:
         with BGZFile(output_path, "wb", index=None) as bgz:
@@ -612,6 +646,12 @@ def cli(argv: list[str] | None = None) -> None:
 
     input_separator = args["input_separator"] \
         or _detect_input_separator(input_path)
+    if len(input_separator) != 1:
+        # csv.reader needs a one-character delimiter; name the flag
+        # instead of letting csv raise a bare TypeError mid-read.
+        raise ValueError(
+            f"--input-separator must be a single character, "
+            f"got {input_separator!r}")
     logger.info("input separator: %r", input_separator)
     output_path = args["output"] or _default_output_path(input_path)
     if not output_path.endswith((".gz", ".bgz")):
