@@ -72,7 +72,7 @@ import math
 import operator
 import os
 from collections import Counter, defaultdict
-from collections.abc import Callable, Generator, Iterable, Sequence
+from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Any, ClassVar
@@ -1094,7 +1094,7 @@ class FragmentScoreBinding:
             for track in self.job.tracks
         ]
 
-        def place(column: int, bins: Sequence[BinValue]) -> None:
+        def place(column: int, bins: list[BinValue]) -> None:
             for bin_value in bins:
                 block[
                     calc_bin_index(bin_size, bin_value.start) - first_bin,
@@ -1109,9 +1109,8 @@ class FragmentScoreBinding:
         try:
             for begin, end, track, value in heapq.merge(
                     *reads, key=operator.itemgetter(0)):
-                bins = folds[track].feed(FragmentValue(begin, end, value))
-                if bins:
-                    place(track, bins)
+                place(track, folds[track].feed(
+                    FragmentValue(begin, end, value)))
         finally:
             for read in reads:
                 read.close()

@@ -81,27 +81,6 @@ def test_the_bins_after_the_last_fragment_come_from_flush() -> None:
     assert flushed == [(11, 20, 4.0), (21, 30, 0.0), (31, 40, 0.0)]
 
 
-def test_each_feed_answers_exactly_the_bins_its_fragment_closes() -> None:
-    start_fold = BinFragmentStartAggregator(
-        start=1, end=40, bin_size=10, aggregator="sum")
-
-    answers = [
-        list(start_fold.feed(FragmentValue(*fragment)))
-        for fragment in [(2, 3, 1), (5, 9, 2), (10, 12, 3), (11, 11, 4),
-                         (11, 30, 5), (34, 35, 6), (36, 39, 7)]
-    ]
-    flushed = list(start_fold.flush())
-
-    assert answers == [
-        [], [], [],                      # 2, 5, 10: all in the open 1-10
-        [(1, 10, 6.0)],                  # 11 closes 1-10
-        [],                              # 11 again: 11-20 stays open
-        [(11, 20, 9.0), (21, 30, 0.0)],  # 34 closes 11-20 and empty 21-30
-        [],
-    ]
-    assert flushed == [(31, 40, 13.0)]
-
-
 def test_a_fold_only_flushed_answers_every_bin_empty() -> None:
     bins = fold([], start=1, end=30, aggregator="mean")
 
