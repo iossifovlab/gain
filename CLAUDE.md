@@ -149,6 +149,8 @@ bash docs/build_docs.sh && open docs/build/html/index.html
 <important if="you are on a feature or bugfix branch and tempted to touch docs/source/changes.rst">
 
 Do not. Release notes are composed once, when the version is cut; a branch leaves `changes.rst` untouched and adds no `unreleased` section (past commits that did are not the precedent, and every such edit is a guaranteed rebase conflict). Describe the user-visible change in the PR body; the notes are composed from there.
+
+**Composing release notes** (when the version is cut): run `scripts/release_note_inputs.sh <previous tag> <new tag>` to collect the inputs. It prints one tab-separated line for each first-parent commit in the range: the short SHA, the PR number, the PR title and the issues the PR closes. A commit with no PR is printed with a `no PR` marker. The script reads PR numbers from GitHub, because commit subjects often end in the closed issue's number, not the PR's. For gpf, use `scripts/release_note_inputs.sh --repo iossifovlab/gpf <previous tag> <new tag>`. It needs no gpf checkout. Then read the PR bodies of the listed PRs.
 </important>
 
 <important if="you are changing or extending an area that has an ADR, or naming a concept in an issue or docstring">
