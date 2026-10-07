@@ -143,6 +143,24 @@ _CHROM_MAPPING_FILENAME = "chrom_map.txt"
 # the config instead.
 _HEADER_MODES = ("file", "none", "list")
 
+# The base position columns :meth:`_TableScoreBuilder.with_position_column`
+# may map explicitly onto a data column.
+_POSITION_COLUMNS = ("chrom", "pos_begin", "pos_end")
+
+
+@dataclasses.dataclass(frozen=True)
+class _ColumnAddress:
+    """An explicit data-column address: by name or by 0-based index."""
+
+    column_name: str | None = None
+    column_index: int | None = None
+
+    def render(self) -> str:
+        """The ``column_name:``/``column_index:`` line of a column entry."""
+        if self.column_index is not None:
+            return f"column_index: {self.column_index}"
+        return f"column_name: {self.column_name}"
+
 
 @dataclasses.dataclass(frozen=True)
 class _TableScoreBuilder(ExtraFilesMixin, MetaMixin):
@@ -165,6 +183,10 @@ class _TableScoreBuilder(ExtraFilesMixin, MetaMixin):
       base columns are rendered by index instead -- see
       :meth:`with_header_mode`.
     * ``DEFAULT_DATA`` -- the bare-builder default data block.
+
+    Every table builder can also map a position column explicitly
+    (:meth:`with_position_column`) and declare a ``default_annotation:``
+    list (:meth:`with_default_annotation`).
     """
 
     scores: tuple[ScoreSpec, ...] = ()
@@ -196,6 +218,12 @@ class _TableScoreBuilder(ExtraFilesMixin, MetaMixin):
     # Trailing key columns to leave OUT of the table entirely; see
     # :meth:`without_key_columns`.
     dropped_key_columns: frozenset[str] = frozenset()
+    # Explicit ``chrom``/``pos_begin``/``pos_end`` addresses, in declaration
+    # order; see :meth:`with_position_column`.
+    position_columns: tuple[tuple[str, _ColumnAddress], ...] = ()
+    # The top-level ``default_annotation:`` list; ``None`` emits no key.  See
+    # :meth:`with_default_annotation`.
+    default_annotation: tuple[dict[str, Any], ...] | None = None
 
     # Subclass-provided knobs.
     SCORE_TYPE: ClassVar[str] = ""
@@ -258,6 +286,124 @@ class _TableScoreBuilder(ExtraFilesMixin, MetaMixin):
                 f"{list(self.TRAILING_COLUMNS)}")
         return dataclasses.replace(
             self, dropped_key_columns=self.dropped_key_columns | set(columns))
+
+    def with_position_column(
+        self, column: str, *,
+        column_name: str | None = None, column_index: int | None = None,
+    ) -> Self:
+        """Map a base position column onto a data column explicitly.
+
+        ``column`` is ``chrom``, ``pos_begin`` or ``pos_end``.  Address the
+        data column by ``column_name`` (a header name other than the base
+        name) or by its 0-based ``column_index`` in the authored header --
+        exactly one of the two, as with :meth:`with_score`.  A later call
+        for the same ``column`` replaces the earlier one.
+
+        The mapping is a SECOND description of the columns, beside the
+        authored header the builder otherwise derives everything from.
+        That is acceptable because tests need column names and orders the
+        base names cannot express, and it is kept from drifting by being
+        the one declaration for its column: the rendered ``table:`` entry,
+        the tabix ``seq_col``/``start_col``/``end_col`` and the header
+        validation all come from it.  The header must carry the mapped
+        name instead of the base one; an index-mapped column is not looked
+        up by name at all.
+
+        Under ``header_mode: none`` there is no header to resolve a name
+        against, so a ``column_name`` mapping is refused at realize time;
+        a ``column_index`` mapping replaces the index the header gives.
+        :meth:`with_score_line` honours a name mapping (rows are keyed by
+        the mapped name) and refuses an index mapping its synthesized
+        header does not agree with.
+        """
+        if column not in _POSITION_COLUMNS:
+            raise ResourceValidationError(
+                f"with_position_column: {column!r} is not a position "
+                f"column; expected one of {list(_POSITION_COLUMNS)}")
+        if column_name is not None and column_index is not None:
+            raise ResourceValidationError(
+                f"position column {column!r}: column_name and column_index "
+                f"are mutually exclusive; address the column one way or "
+                f"the other")
+        if column_name is None and column_index is None:
+            raise ResourceValidationError(
+                f"position column {column!r}: pass column_name or "
+                f"column_index to address the data column")
+        if column_index is not None and column_index < 0:
+            raise ResourceValidationError(
+                f"position column {column!r}: column_index must be "
+                f"non-negative, got {column_index}")
+        address = _ColumnAddress(
+            column_name=column_name, column_index=column_index)
+        return dataclasses.replace(
+            self,
+            position_columns=(
+                *((col, addr) for col, addr in self.position_columns
+                  if col != column),
+                (column, address),
+            ))
+
+    def with_default_annotation(
+        self, attributes: list[dict[str, Any]],
+    ) -> Self:
+        """Emit a top-level ``default_annotation:`` list.
+
+        Each entry is an attribute mapping such as
+        ``{"source": "phastCons", "name": "phast"}``, emitted verbatim; the
+        score reads the list back through
+        ``get_default_annotation_attributes()``.  An empty list is a legal
+        value -- a score that annotates nothing by default.  Replaces any
+        earlier list.
+        """
+        return dataclasses.replace(
+            self, default_annotation=tuple(copy.deepcopy(attributes)))
+
+    def _position_header_columns(
+        self, header: list[str],
+    ) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """The header names the position columns occupy: required, optional.
+
+        An unmapped column is looked up by its base name (``pos_end`` is
+        optional); a name-mapped one by the mapped name; an index-mapped
+        one occupies whatever name the header has at that index.
+        """
+        mapped = dict(self.position_columns)
+        required: list[str] = []
+        optional: list[str] = []
+        for column in _POSITION_COLUMNS:
+            address = mapped.get(column)
+            if address is None:
+                if column in self.LEADING_COLUMNS:
+                    required.append(column)
+                elif column in self.OPTIONAL_COLUMNS:
+                    optional.append(column)
+            elif address.column_name is not None:
+                required.append(address.column_name)
+            else:
+                assert address.column_index is not None
+                if address.column_index >= len(header):
+                    raise ResourceValidationError(
+                        f"position column {column!r}: column_index "
+                        f"{address.column_index} is out of range for a "
+                        f"{len(header)}-column header {header}")
+                required.append(header[address.column_index])
+        return tuple(required), tuple(optional)
+
+    def _position_column_indexes(self, header: list[str]) -> dict[str, int]:
+        """The header index of each position column the table carries."""
+        mapped = dict(self.position_columns)
+        indexes: dict[str, int] = {}
+        for column in _POSITION_COLUMNS:
+            address = mapped.get(column)
+            if address is None:
+                if column in header:
+                    indexes[column] = header.index(column)
+            elif address.column_index is not None:
+                indexes[column] = address.column_index
+            else:
+                assert address.column_name is not None
+                indexes[column] = header.index(address.column_name)
+        return indexes
 
     @property
     def _effective_trailing_columns(self) -> tuple[str, ...]:
@@ -335,11 +481,14 @@ class _TableScoreBuilder(ExtraFilesMixin, MetaMixin):
         line authored in :meth:`with_data` stays the single source, feeding
         the rendered config's column indices, the tabix
         ``seq_col``/``start_col``/``end_col``, and the header validation --
-        even in the modes where it is not written into the file.
+        even in the modes where it is not written into the file.  A position
+        column mapped by :meth:`with_position_column` takes its index from
+        that mapping instead.
 
         With ``"none"`` there is no header to resolve a name against, so
         every declared score must address its column by ``column_index``
-        (:meth:`with_score`); a name-addressed score is rejected at realize
+        (:meth:`with_score`), and a position column may be mapped by
+        ``column_index`` only; a name-addressed one is rejected at realize
         time rather than left to fail inside the score implementation.
         """
         if header_mode not in _HEADER_MODES:
@@ -506,16 +655,19 @@ class _TableScoreBuilder(ExtraFilesMixin, MetaMixin):
         scores = scores_or_default(self.scores)
         data = self._effective_data(scores)
         _validate_score_specs(scores)
+        header = _parse_header(data)
+        position_required, position_optional = (
+            self._position_header_columns(header))
         _validate_data_header(
             data, scores,
             base_required=(
-                self.LEADING_COLUMNS + self._effective_trailing_columns),
-            base_optional=self.OPTIONAL_COLUMNS)
+                position_required + self._effective_trailing_columns),
+            base_optional=position_optional)
         self._validate_header_mode(scores)
         self._validate_index_options()
-        # The authored header is the single column declaration; the modes
-        # that do not write it into the file still resolve their indices
-        # from it.
+        # The authored header -- plus any explicit position mapping -- is
+        # the single column declaration; the modes that do not write the
+        # header into the file still resolve their indices from it.
         write_header = self._effective_header_mode() == "file"
         sidecars = self._render_chrom_mapping_file()
         if self.tabix:
@@ -526,6 +678,7 @@ class _TableScoreBuilder(ExtraFilesMixin, MetaMixin):
             })
             _realize_tabix_table(
                 resource_dir / _TABIX_FILENAME, data,
+                self._position_column_indexes(header),
                 write_header=write_header, csi=self.csi,
                 index_filename=self.index_filename,
                 keep_conventional_index=self.keep_conventional_index)
@@ -570,6 +723,15 @@ class _TableScoreBuilder(ExtraFilesMixin, MetaMixin):
                 f"header_mode 'none' leaves no header to resolve a column "
                 f"name against; score(s) {sorted(named)} must be declared "
                 f"with column_index")
+        named_positions = [
+            column for column, address in self.position_columns
+            if address.column_name is not None
+        ]
+        if named_positions:
+            raise ResourceValidationError(
+                f"header_mode 'none' leaves no header to resolve a column "
+                f"name against; position column(s) {sorted(named_positions)} "
+                f"must be mapped with column_index")
 
     def _validate_index_options(self) -> None:
         """Reject a keep-the-conventional-index request with no second name.
@@ -621,20 +783,31 @@ class _TableScoreBuilder(ExtraFilesMixin, MetaMixin):
                 f"score(s) {sorted(indexed)} address a column by "
                 f"column_index, which needs an authored header; use "
                 f"with_data instead of with_score_line")
+        # A name-mapped position column is keyed -- and synthesized -- by
+        # its mapped name.
+        header_name = {
+            column: address.column_name
+            for column, address in self.position_columns
+            if address.column_name is not None
+        }
+        pos_end = header_name.get("pos_end", "pos_end")
         row_dicts = [dict(row) for row in self.rows]
-        uses_pos_end = any("pos_end" in rd for rd in row_dicts)
-        if uses_pos_end and not all("pos_end" in rd for rd in row_dicts):
+        uses_pos_end = any(pos_end in rd for rd in row_dicts)
+        if uses_pos_end and not all(pos_end in rd for rd in row_dicts):
             raise ResourceValidationError(
-                "with_score_line: 'pos_end' must be given on every row "
-                "or on none")
-        header = list(self.LEADING_COLUMNS)
+                f"with_score_line: {pos_end!r} must be given on every row "
+                f"or on none")
+        header = [
+            header_name.get(column, column) for column in self.LEADING_COLUMNS
+        ]
         if uses_pos_end:
-            header.append("pos_end")
+            header.append(pos_end)
         header.extend(self._effective_trailing_columns)
         header.extend(
             spec.column_name for spec in scores
             if spec.column_name is not None
         )
+        self._check_index_mappings_agree(header)
 
         lines = ["  ".join(header)]
         header_set = set(header)
@@ -651,6 +824,29 @@ class _TableScoreBuilder(ExtraFilesMixin, MetaMixin):
                     f"{sorted(extra)}; expected {header}")
             lines.append("  ".join(rd[col] for col in header))
         return "\n".join(lines) + "\n"
+
+    def _check_index_mappings_agree(self, header: list[str]) -> None:
+        """Refuse an index mapping the synthesized ``header`` contradicts.
+
+        :meth:`with_score_line` lays the columns out itself, so an explicit
+        ``column_index`` either names the position the column landed at or
+        disagrees with it -- and a header that disagrees with the config is
+        never realized.
+        """
+        for column, address in self.position_columns:
+            if address.column_index is None:
+                continue
+            if column in header and header.index(column) == (
+                    address.column_index):
+                continue
+            landed = (
+                f"at index {header.index(column)}" if column in header
+                else "nowhere (no row carries it)")
+            raise ResourceValidationError(
+                f"with_score_line cannot synthesize a header that agrees "
+                f"with position column {column!r} mapped to column_index "
+                f"{address.column_index}: it lays the column out {landed} "
+                f"in {header}; use with_data instead")
 
     def _render_config(
         self, scores: tuple[ScoreSpec, ...], filename: str, data: str,
@@ -687,22 +883,40 @@ class _TableScoreBuilder(ExtraFilesMixin, MetaMixin):
             # header the tabix index columns come from.
             config += self._render_column_indexes(header)
         else:
+            config += self._render_position_columns()
             config += self._effective_table_extra_config()
         config += "scores:\n" + render_score_specs_yaml(scores)
+        if self.default_annotation is not None:
+            config += yaml.safe_dump(
+                {"default_annotation": list(self.default_annotation)},
+                default_flow_style=False, sort_keys=False)
         return config + self.render_meta()
 
+    def _render_position_columns(self) -> str:
+        """Render the explicit position mappings as ``table:`` entries."""
+        return "".join(
+            f"    {column}:\n        {address.render()}\n"
+            for column, address in self.position_columns)
+
     def _render_column_indexes(self, header: list[str]) -> str:
-        """Render the base columns as explicit ``column_index:`` mappings."""
-        columns = [
-            *self.LEADING_COLUMNS,
-            *(column for column in self.OPTIONAL_COLUMNS if column in header),
-            *self._effective_trailing_columns,
-        ]
+        """Render the base columns as explicit ``column_index:`` mappings.
+
+        A position column mapped by :meth:`with_position_column` renders
+        its explicit index; every other base column the index the authored
+        header gives it.
+        """
+        indexes = {
+            **self._position_column_indexes(header),
+            **{
+                column: header.index(column)
+                for column in self._effective_trailing_columns
+            },
+        }
         lines: list[str] = []
-        for column in columns:
+        for column, index in indexes.items():
             lines.extend((
                 f"    {column}:",
-                f"        column_index: {header.index(column)}",
+                f"        column_index: {index}",
             ))
         return "\n".join(lines) + "\n"
 
@@ -1559,7 +1773,8 @@ def _build_single_resource(
 
 
 def _realize_tabix_table(
-    tabix_path: pathlib.Path, data: str, *,
+    tabix_path: pathlib.Path, data: str,
+    position_indexes: dict[str, int], *,
     write_header: bool = True, csi: bool = False,
     index_filename: str | None = None,
     keep_conventional_index: bool = False) -> None:
@@ -1572,9 +1787,10 @@ def _realize_tabix_table(
     it (``header_mode`` ``none``/``list``) the header line is dropped and
     the realized file carries data rows only.
 
-    Either way the seq/start/end column indices are derived from the SAME
-    authored header the config is rendered from, so an arbitrary column
-    order still indexes correctly and the two cannot drift.
+    Either way the seq/start/end columns are ``position_indexes`` -- the
+    builder's resolution of the SAME authored header (and explicit position
+    mappings) the config is rendered from -- so an arbitrary column order
+    or naming still indexes correctly and the two cannot drift.
 
     With ``index_filename`` the index pysam wrote at its conventional name
     is MOVED to that name, so the resource carries the index only under the
@@ -1585,10 +1801,9 @@ def _realize_tabix_table(
     cannot be two.  Without the flag such a name is simply already where it
     was asked to be, so nothing is moved.
     """
-    header = _parse_header(data)
-    chrom_col = header.index("chrom")
-    start_col = header.index("pos_begin")
-    end_col = header.index("pos_end") if "pos_end" in header else start_col
+    chrom_col = position_indexes["chrom"]
+    start_col = position_indexes["pos_begin"]
+    end_col = position_indexes.get("pos_end", start_col)
     content = _comment_header(data) if write_header else _strip_header(data)
     _, written_index = setup_tabix(
         tabix_path, content,
