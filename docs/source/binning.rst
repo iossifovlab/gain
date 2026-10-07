@@ -862,3 +862,5 @@ window:
           20019201 20029440                                                4.0                                                  0.0
           20029441 20039680                                                1.0                                                  0.0
           20039681 20049920                                                4.0                                                  0.0
+
+.. stacked-PR CI probe, layer 1, restacked (throwaway; will be closed unmerged)
