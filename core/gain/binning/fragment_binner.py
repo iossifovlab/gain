@@ -576,20 +576,36 @@ class _Aggregate:
                 f"by its overlap as a power in {mode} mode; use one of "
                 f"{', '.join(LENGTH_AGGREGATORS)}")
         uncovered = config.get("uncovered_value")
-        if uncovered is not None and (
-                isinstance(uncovered, bool)
-                or not isinstance(uncovered, int | float)):
-            raise RunDefinitionError(
-                f"{label}: uncovered_value must be a number or null, not "
-                f"{uncovered!r}")
         return cls(
             mode=mode, aggregator=aggregator,
-            uncovered_value=None if uncovered is None else float(uncovered))
+            uncovered_value=_uncovered_value(label, uncovered))
 
     @classmethod
     def default(cls) -> _Aggregate:
         """The aggregate of an entry that states none: the sum."""
         return cls(mode=FRAGMENT_START, aggregator="sum")
+
+
+def _uncovered_value(label: str, uncovered: Any) -> float | None:
+    """``uncovered`` as a finite float, or None; anything else is refused.
+
+    NaN is refused because it is the output's marker for no uncovered
+    value, and an infinity or an integer too large for a float because
+    neither fills a bin with a number.
+    """
+    if uncovered is None:
+        return None
+    value = math.nan
+    if not isinstance(uncovered, bool) and isinstance(uncovered, int | float):
+        try:
+            value = float(uncovered)
+        except OverflowError:
+            value = math.nan
+    if not math.isfinite(value):
+        raise RunDefinitionError(
+            f"{label}: uncovered_value must be a number or null, not "
+            f"{uncovered!r}")
+    return value
 
 
 def _score_type(

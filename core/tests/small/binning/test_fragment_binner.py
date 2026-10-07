@@ -224,6 +224,14 @@ def length_entry(**aggregate: Any) -> dict[str, Any]:
      ["uncovered_value must be a number or null", "'zero'"]),
     ({"uncovered_value": True},
      ["uncovered_value must be a number or null", "True"]),
+    ({"uncovered_value": float("nan")},
+     ["uncovered_value must be a number or null", "nan"]),
+    ({"uncovered_value": float("inf")},
+     ["uncovered_value must be a number or null", "inf"]),
+    ({"uncovered_value": -float("inf")},
+     ["uncovered_value must be a number or null", "-inf"]),
+    ({"uncovered_value": 10 ** 400},
+     ["uncovered_value must be a number or null", "1" + "0" * 400]),
 ])
 def test_a_length_aggregate_it_cannot_honour_is_refused(
     repo: GenomicResourceRepo, genome: ReferenceGenome,

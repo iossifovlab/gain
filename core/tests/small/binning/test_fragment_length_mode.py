@@ -166,6 +166,25 @@ def test_a_grouped_entry_weighs_each_class_and_counts_the_dropped(
     assert dropped == {("frags/s1", "chr1:1-40"): 2}
 
 
+def test_a_dropped_fragment_is_counted_in_every_region_it_reaches(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+) -> None:
+    # DDD (33, 34) crosses 33/34: both regions count it, the first with
+    # CCC (11, 14) too.
+    (job,) = parse_fragment_entry(
+        length(group=BY_CLASS, meta=BY_SAMPLE_LABEL), repo, genome).jobs
+    regions = [BedRegion("chr1", 1, 33), BedRegion("chr1", 34, 40)]
+
+    with discover_binner_kinds()[job.binner].bind(job, repo) as bound:
+        assert isinstance(bound, FragmentScoreBinding)
+        for region in regions:
+            bound.bin_region(region, BIN_SIZE)
+        dropped = bound.dropped
+
+    assert dropped == {
+        ("frags/s1", "chr1:1-33"): 2, ("frags/s1", "chr1:34-40"): 1}
+
+
 def test_a_pooled_entry_weighs_the_fragments_of_every_resource(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
 ) -> None:
