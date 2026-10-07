@@ -13,15 +13,18 @@ Each file here describes one user-facing CLI feature of `gain` and how
   it empty.
 - A run was launched (`scripts/launch.sh`) and Doctor (`scripts/doctor.sh
   <run id>`) passes.
-- No docker, no network, no `~/.grr_definition.yaml`.
+- No network and no `~/.grr_definition.yaml`. Only `http-grr.md` uses
+  docker: it starts its own compose project, `verify-gain-<run id>`, from a
+  local `httpd:latest` image, and Cleanup removes that project.
 
 ## Driving conventions
 
 - Call the checkout CLI as `.venv/bin/<tool>` (or through `uv run`), never the
   bare name from `PATH`: a conda env can shadow it.
 - Pass the run's GRR definition, `.verify/<run id>/scratch/grr.yaml`, as
-  `GRR_DEFINITION_FILE` or `-g`.
-- Run with `HOME` inside `.verify/<run id>/scratch/` and write every input,
+  `GRR_DEFINITION_FILE` or `-g`. For the HTTP GRR, pass
+  `.verify/<run id>/scratch/grr-http.yaml` as `-g`.
+- Run with `HOME` and `TMPDIR` inside `.verify/<run id>/scratch/` and write every input,
   output and work directory there too.
 - Use `-j 1` so a run is deterministic and a failure is one readable
   traceback.
@@ -43,3 +46,4 @@ Each file here describes one user-facing CLI feature of `gain` and how
 | Feature file | CLI | GRR | Drive helper |
 | --- | --- | --- | --- |
 | [annotate-tabular.md](annotate-tabular.md) | `annotate_tabular` | mini-GRR, `mini_pipeline` | `scripts/drive-annotate-tabular.sh` |
+| [http-grr.md](http-grr.md) | `grr_browse`, `grr_cache_repo` | HTTP GRR over a scratch copy of mini-GRR, `mini_pipeline` | `scripts/launch-http-grr.sh`, `scripts/drive-grr-browse.sh`, `scripts/drive-grr-cache-repo.sh` |
