@@ -487,52 +487,27 @@ pipeline {
                             }
                             steps {
                                 script {
-                                    try {
-                                        // Bring up apache (HTTP fixture on :28080 inside the
-                                        // network) and s3 (S3 fixture on :9000). Core tests
-                                        // reach them by service name via the compose network.
-                                        // s3-setup is a one-shot bucket setup job — run it
-                                        // inline instead of via `up --wait`, which races with
-                                        // short-lived services.
-                                        // -f docker-compose.yaml skips
-                                        // docker-compose.override.yaml
-                                        // (the local-dev port-publish file);
-                                        // without this, parallel CI builds
-                                        // on the same agent collide on host
-                                        // ports 28080 / 9000 / 9001.
-                                        sh '''
-                                            mkdir -p core/tests/.test_grr
-                                            docker compose -f docker-compose.yaml \
-                                                -p "$COMPOSE_PROJECT" \
-                                                up -d --wait apache s3
-                                            docker compose -f docker-compose.yaml \
-                                                -p "$COMPOSE_PROJECT" \
-                                                run --rm s3-setup
-                                        '''
-
+                                    // The cell and the apache + s3 fixture
+                                    // stack come from ci/cells.groovy, shared
+                                    // with Jenkinsfile.python-matrix (#1817).
+                                    def cells = load 'ci/cells.groovy'
+                                    Map cell = cells.cell('core')
+                                    cells.withFixtures(env.COMPOSE_PROJECT) {
                                         runProject(
                                             name: 'core',
-                                            pkg: 'gain',
-                                            tests: 'tests',
+                                            pkg: cell.pkg,
+                                            tests: cell.tests,
                                             mypyTarget: 'gain',
                                             mypyExtra: '--config-file /workspace/mypy.ini',
                                             // The repo-root scripts/ belongs to no
                                             // project, so no WORKDIR-relative `.`
                                             // reaches it; core lints it (#1327).
                                             lintExtra: '/workspace/scripts',
-                                            pytestArgs: '-n 5 --enable-http-testing --enable-s3-testing --ignore=tests/integration',
+                                            pytestArgs: cell.pytestArgs,
                                             dockerRunExtra:
                                                 '--network "$COMPOSE_NETWORK" ' +
-                                                '-e HTTP_HOST=apache:80 ' +
-                                                '-e S3_HOST=s3:9000 ' +
-                                                '-v $PWD/core/tests/.test_grr:/workspace/core/tests/.test_grr',
+                                                cell.dockerRunExtra,
                                         )
-                                    } finally {
-                                        sh '''
-                                            docker compose -f docker-compose.yaml \
-                                                -p "$COMPOSE_PROJECT" \
-                                                down -v --remove-orphans || true
-                                        '''
                                     }
                                 }
                             }
@@ -542,15 +517,14 @@ pipeline {
                         stage('demo_annotator') {
                             steps {
                                 script {
-                                    // demo tests spawn helper containers via the Python
-                                    // docker SDK; mount the host socket so the SDK can
-                                    // reach the daemon.
+                                    def cells = load 'ci/cells.groovy'
+                                    Map cell = cells.cell('demo_annotator')
                                     runProject(
                                         name: 'demo_annotator',
-                                        pkg: 'demo_annotator',
-                                        tests: 'demo_annotator/tests',
-                                        pytestArgs: '-n 5',
-                                        dockerRunExtra: '-v /var/run/docker.sock:/var/run/docker.sock',
+                                        pkg: cell.pkg,
+                                        tests: cell.tests,
+                                        pytestArgs: cell.pytestArgs,
+                                        dockerRunExtra: cell.dockerRunExtra,
                                     )
                                 }
                             }
@@ -560,15 +534,14 @@ pipeline {
                         stage('vep_annotator') {
                             steps {
                                 script {
-                                    // vep tests spawn helper containers via the Python
-                                    // docker SDK; mount the host socket so the SDK can
-                                    // reach the daemon.
+                                    def cells = load 'ci/cells.groovy'
+                                    Map cell = cells.cell('vep_annotator')
                                     runProject(
                                         name: 'vep_annotator',
-                                        pkg: 'vep_annotator',
-                                        tests: 'vep_annotator/tests',
-                                        pytestArgs: '-n 5',
-                                        dockerRunExtra: '-v /var/run/docker.sock:/var/run/docker.sock',
+                                        pkg: cell.pkg,
+                                        tests: cell.tests,
+                                        pytestArgs: cell.pytestArgs,
+                                        dockerRunExtra: cell.dockerRunExtra,
                                     )
                                 }
                             }
@@ -644,56 +617,20 @@ pipeline {
                         }
 
                         stage('web_api') {
-                            environment {
-                                COMPOSE_PROJECT = "gain-ci-web-api-${env.CI_TAG}"
-                                COMPOSE_NETWORK = "gain-ci-web-api-${env.CI_TAG}_default"
-                            }
                             steps {
                                 script {
-                                    try {
-                                        // MailHog catches password-reset and account-
-                                        // activation emails so the user-flow tests can
-                                        // assert against them via --mailhog.
-                                        //
-                                        // No defensive teardown before `up`. That
-                                        // guarded against a *namesake* build having
-                                        // abandoned a mail container without its
-                                        // network, which `up -d --wait` would then
-                                        // reuse while skipping network creation —
-                                        // leaving runProject's `docker run --network
-                                        // <project>_default` to fail with "network
-                                        // not found". COMPOSE_PROJECT is now scoped
-                                        // per (branch, build), so this namespace has
-                                        // no namesake to inherit from; a pre-`up`
-                                        // `down -v` would only risk destroying a live
-                                        // stack it does not own (#478).
-                                        sh '''
-                                            docker compose -f docker-compose.yaml \
-                                                -p "$COMPOSE_PROJECT" \
-                                                up -d --wait mail
-                                        '''
-        
-                                        runProject(
-                                            name: 'web_api',
-                                            pkg: 'web_annotation',
-                                            tests: 'web_annotation/tests',
-                                            mypyTarget: 'web_annotation',
-                                            mypyExtra: '--config-file /workspace/web_api/mypy.ini',
-                                            pytestArgs: '-n 5',
-                                            distPkg: 'gain-web-api',
-                                            dockerRunExtra:
-                                                '--network "$COMPOSE_NETWORK" ' +
-                                                '-e GPFWA_EMAIL_HOST=mail ' +
-                                                '-e DJANGO_SETTINGS_MODULE=' +
-                                                'web_annotation.test_settings',
-                                        )
-                                    } finally {
-                                        sh '''
-                                            docker compose -f docker-compose.yaml \
-                                                -p "$COMPOSE_PROJECT" \
-                                                down -v --remove-orphans || true
-                                        '''
-                                    }
+                                    def cells = load 'ci/cells.groovy'
+                                    Map cell = cells.cell('web_api')
+                                    runProject(
+                                        name: 'web_api',
+                                        pkg: cell.pkg,
+                                        tests: cell.tests,
+                                        mypyTarget: 'web_annotation',
+                                        mypyExtra: '--config-file /workspace/web_api/mypy.ini',
+                                        pytestArgs: cell.pytestArgs,
+                                        distPkg: 'gain-web-api',
+                                        dockerRunExtra: cell.dockerRunExtra,
+                                    )
                                 }
                             }
                             post { always { script { publishReports('web_api') } } }

@@ -481,127 +481,112 @@ pipeline {
             when { expression { env.SUPERSEDED != 'true' } }
             steps {
                 script {
-                    try {
-                        // The http/s3 fixtures the small tier's scheme
-                        // parametrizations need (#1571): apache serves
-                        // core/tests/.test_grr, s3 is the S3 endpoint,
-                        // and s3-setup is the one-shot bucket setup --
-                        // run inline rather than via `up --wait`, which
-                        // races with short-lived services. Same recipe as
-                        // the root pipeline's `core` stage, including
-                        // `-f docker-compose.yaml`, which skips the
-                        // override file's host-port publishing so
-                        // concurrent builds on one agent cannot collide.
-                        //
-                        // Both bind sources are created here as the agent
-                        // user, immediately before what consumes them.
-                        // dockerd creates a MISSING one as root:root, and
-                        // that root-owned directory is what wedges every
-                        // subsequent build in this workspace (gain#921) --
-                        // so the fix is simply to never let it be missing.
-                        // It cannot live in `Wipe workspace`: that runs
-                        // before `Checkout`, whose cold-workspace clone
-                        // path deletes the whole workspace (gain#917).
-                        // Keeping each mkdir in the same script as the
-                        // mount that needs it is what stops the two
-                        // drifting apart again.
-                        sh '''
-                            mkdir -p core/tests/.test_grr
-                            docker compose -f docker-compose.yaml \
-                                -p "$COMPOSE_PROJECT" \
-                                up -d --wait apache s3
-                            docker compose -f docker-compose.yaml \
-                                -p "$COMPOSE_PROJECT" \
-                                run --rm s3-setup
-                        '''
-                        sh '''
-                            mkdir -p reports/conda-integration
+                    // The http/s3 fixtures the small tier's scheme
+                    // parametrizations need (#1571): apache serves
+                    // core/tests/.test_grr, s3 is the S3 endpoint, and
+                    // s3-setup is the one-shot bucket setup. withFixtures()
+                    // in ci/cells.groovy owns the bring-up and the
+                    // always-run, never-failing teardown, shared with the
+                    // root pipeline's `core` stage and
+                    // Jenkinsfile.python-matrix (#1817). It also creates
+                    // core/tests/.test_grr as the agent user before anything
+                    // mounts it: dockerd creates a MISSING bind source as
+                    // root:root, and that root-owned directory is what
+                    // wedges every subsequent build in this workspace
+                    // (gain#921). That mkdir cannot live in `Wipe
+                    // workspace`: that runs before `Checkout`, whose
+                    // cold-workspace clone path deletes the whole workspace
+                    // (gain#917).
+                    //
+                    // The module is loaded from this job's own clone (the
+                    // `Checkout` stage), so it is the tree under test's.
+                    // Only the fixtures and the endpoint env are shared:
+                    // this step runs against the installed artefact and is
+                    // not the root pipeline's `core` cell.
+                    def cells = load 'ci/cells.groovy'
+                    cells.withFixtures(env.COMPOSE_PROJECT) {
+                        withEnv(["FIXTURE_ENDPOINT_ENV=${cells.fixtureEndpointEnv()}"]) {
+                            sh '''
+                                mkdir -p reports/conda-integration
 
-                            # Run as the agent user, not the image's
-                            # mambauser, so the reports land on the host
-                            # owned by the agent (same reason the root
-                            # Jenkinsfile's `Conda packages` stage does
-                            # it). HOME and MAMBA_ROOT_PREFIX point at /tmp
-                            # because /opt/conda is not writable by an
-                            # arbitrary UID; the env is solved under
-                            # /tmp/env inside the container and discarded
-                            # with it.
-                            #
-                            # micromamba's package cache is
-                            # ${HOME}/conda_pkgs_cache on the agent (#1602),
-                            # the same directory, mounted at the same
-                            # /tmp/mamba/pkgs, as the root Jenkinsfile's
-                            # `Conda packages` stage and
-                            # spliceai_annotator/ and vep_annotator/'s
-                            # Jenkinsfile.integration. The rules for sharing
-                            # it are in conda-builder/verify_packages.sh;
-                            # run.sh follows them (flock on the installs,
-                            # own entries removed on exit) except that it
-                            # copies out of the cache rather than
-                            # softlinking -- see its header. No lock() here:
-                            # that would serialise whole builds. Created
-                            # here, next to its mount, for the gain#921
-                            # reason above.
-                            #
-                            # The grr_seqpipe bind resolves the
-                            # atomic-publish symlink (<root>/grr_seqpipe ->
-                            # <root>/grr_seqpipe.<sha>) on the host at
-                            # container start, so a sync landing mid-build
-                            # cannot swap files under the suite -- the old
-                            # snapshot is retained for a window
-                            # (grr-sync#20). Mounted read-only;
-                            # GRR_INTEGRATION_DIR makes the grr_seqpipe
-                            # fixture read it as a directory repo instead
-                            # of the http one.
-                            #
-                            # The image entrypoint
-                            # (core/conda-integration/run.sh) indexes the
-                            # channel, solves, asserts the installed gain
-                            # is the artefact's, and runs the small tier,
-                            # then tests/integration -- both always, so one
-                            # tier's red cannot hide the other's. Its exit
-                            # code is non-zero if either tier's was. It
-                            # writes pytest-small.xml, pytest-integration.xml
-                            # and the explicit env lockfile into /reports.
-                            #
-                            # The container joins the fixture stack's
-                            # network and reaches apache and s3 by
-                            # service name. The http fixture in the
-                            # INSTALLED gain derives its serving directory
-                            # from its own location -- site-packages here,
-                            # not the source tree -- so HTTP_GRR_DIR points
-                            # it at the test bed's core/tests/.test_grr,
-                            # where the host directory apache serves is
-                            # bound (#1571).
-                            mkdir -p "${HOME}/conda_pkgs_cache"
-                            docker run --rm \
-                                --name gain-conda-integration-${BUILD_NUMBER} \
-                                --network "$COMPOSE_NETWORK" \
-                                --user "$(id -u):$(id -g)" \
-                                -e HOME=/tmp \
-                                -e MAMBA_ROOT_PREFIX=/tmp/mamba \
-                                -v "${HOME}/conda_pkgs_cache":/tmp/mamba/pkgs \
-                                -e PYTHON_VERSION="${PYTHON_VERSION}" \
-                                -e HTTP_HOST=apache:80 \
-                                -e S3_HOST=s3:9000 \
-                                -e HTTP_GRR_DIR=/testbed/core/tests/.test_grr \
-                                -v "$PWD/dist/conda:/dist/conda:ro" \
-                                -v "${GRR_ROOT}/grr_seqpipe:/grr/grr_seqpipe:ro" \
-                                -v "$PWD/reports/conda-integration:/reports" \
-                                -v "$PWD/core/tests/.test_grr:/testbed/core/tests/.test_grr" \
-                                -e GRR_INTEGRATION_DIR=/grr/grr_seqpipe \
-                                ${IMAGE_TAG}
-                        '''
-                    } finally {
-                        // Every exit path -- green, red, aborted mid-run --
-                        // passes through here; `|| true` because a stack
-                        // that never came up has nothing to take down and
-                        // must not turn a test verdict into a teardown one.
-                        sh '''
-                            docker compose -f docker-compose.yaml \
-                                -p "$COMPOSE_PROJECT" \
-                                down -v --remove-orphans || true
-                        '''
+                                # Run as the agent user, not the image's
+                                # mambauser, so the reports land on the host
+                                # owned by the agent (same reason the root
+                                # Jenkinsfile's `Conda packages` stage does
+                                # it). HOME and MAMBA_ROOT_PREFIX point at /tmp
+                                # because /opt/conda is not writable by an
+                                # arbitrary UID; the env is solved under
+                                # /tmp/env inside the container and discarded
+                                # with it.
+                                #
+                                # micromamba's package cache is
+                                # ${HOME}/conda_pkgs_cache on the agent (#1602),
+                                # the same directory, mounted at the same
+                                # /tmp/mamba/pkgs, as the root Jenkinsfile's
+                                # `Conda packages` stage and
+                                # spliceai_annotator/ and vep_annotator/'s
+                                # Jenkinsfile.integration. The rules for sharing
+                                # it are in conda-builder/verify_packages.sh;
+                                # run.sh follows them (flock on the installs,
+                                # own entries removed on exit) except that it
+                                # copies out of the cache rather than
+                                # softlinking -- see its header. No lock() here:
+                                # that would serialise whole builds. Created
+                                # here, next to its mount, for the gain#921
+                                # reason above.
+                                #
+                                # The grr_seqpipe bind resolves the
+                                # atomic-publish symlink (<root>/grr_seqpipe ->
+                                # <root>/grr_seqpipe.<sha>) on the host at
+                                # container start, so a sync landing mid-build
+                                # cannot swap files under the suite -- the old
+                                # snapshot is retained for a window
+                                # (grr-sync#20). Mounted read-only;
+                                # GRR_INTEGRATION_DIR makes the grr_seqpipe
+                                # fixture read it as a directory repo instead
+                                # of the http one.
+                                #
+                                # The image entrypoint
+                                # (core/conda-integration/run.sh) indexes the
+                                # channel, solves, asserts the installed gain
+                                # is the artefact's, and runs the small tier,
+                                # then tests/integration -- both always, so one
+                                # tier's red cannot hide the other's. Its exit
+                                # code is non-zero if either tier's was. It
+                                # writes pytest-small.xml, pytest-integration.xml
+                                # and the explicit env lockfile into /reports.
+                                #
+                                # The container joins the fixture stack's
+                                # network and reaches apache and s3 by
+                                # service name. The http fixture in the
+                                # INSTALLED gain derives its serving directory
+                                # from its own location -- site-packages here,
+                                # not the source tree -- so HTTP_GRR_DIR points
+                                # it at the test bed's core/tests/.test_grr,
+                                # where the host directory apache serves is
+                                # bound (#1571). FIXTURE_ENDPOINT_ENV is
+                                # ci/cells.groovy's HTTP_HOST and S3_HOST `-e`
+                                # pair, left unquoted so the shell splits it
+                                # into separate arguments.
+                                mkdir -p "${HOME}/conda_pkgs_cache"
+                                docker run --rm \
+                                    --name gain-conda-integration-${BUILD_NUMBER} \
+                                    --network "$COMPOSE_NETWORK" \
+                                    --user "$(id -u):$(id -g)" \
+                                    -e HOME=/tmp \
+                                    -e MAMBA_ROOT_PREFIX=/tmp/mamba \
+                                    -v "${HOME}/conda_pkgs_cache":/tmp/mamba/pkgs \
+                                    -e PYTHON_VERSION="${PYTHON_VERSION}" \
+                                    $FIXTURE_ENDPOINT_ENV \
+                                    -e HTTP_GRR_DIR=/testbed/core/tests/.test_grr \
+                                    -v "$PWD/dist/conda:/dist/conda:ro" \
+                                    -v "${GRR_ROOT}/grr_seqpipe:/grr/grr_seqpipe:ro" \
+                                    -v "$PWD/reports/conda-integration:/reports" \
+                                    -v "$PWD/core/tests/.test_grr:/testbed/core/tests/.test_grr" \
+                                    -e GRR_INTEGRATION_DIR=/grr/grr_seqpipe \
+                                    ${IMAGE_TAG}
+                            '''
+                        }
                     }
                 }
             }
