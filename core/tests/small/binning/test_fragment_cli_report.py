@@ -120,6 +120,26 @@ def test_dry_run_reports_each_fragment_entry_and_writes_nothing(
     assert not (tmp_path / "defs" / "bins_work").exists()
 
 
+def test_dry_run_reports_each_fragment_entry_s_mode_and_uncovered_value(
+    tmp_path: pathlib.Path, grr_dir: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    definition = run_definition(
+        tmp_path / "defs",
+        "{resource_query: frags/lab}",
+        "{resource_query: frags/bare, aggregate: {mode: fragment_start}}")
+
+    binning_tool(definition, grr_dir, tmp_path / "bins.h5", "--dry-run")
+
+    out = capsys.readouterr().out
+    entries = out.split("binners[")[1:]
+    assert len(entries) == 2
+    for entry in entries:
+        assert (
+            "    mode: fragment_start\n"
+            "    uncovered_value: null\n") in entry
+
+
 def test_a_relative_local_table_is_read_from_the_run_definition_s_directory(
     tmp_path: pathlib.Path, grr_dir: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,

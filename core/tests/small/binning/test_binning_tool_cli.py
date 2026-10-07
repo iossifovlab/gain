@@ -178,7 +178,7 @@ def test_tracks_describes_each_column_with_its_provenance(
 
     assert list(tracks.dtype.names) == [
         "name", "resource_ids", "group", "score_id", "aggregator",
-        "none_value_replacement"]
+        "none_value_replacement", "mode", "uncovered_value"]
     assert [
         (row["name"], row["resource_ids"], row["group"], row["score_id"],
          row["aggregator"])
@@ -189,6 +189,44 @@ def test_tracks_describes_each_column_with_its_provenance(
     ]
     np.testing.assert_array_equal(
         tracks["none_value_replacement"], [np.nan, np.nan])
+
+
+TWO_KIND_RUN_DEFINITION = textwrap.dedent("""
+    input_reference_genome: genome
+    bins:
+      bin_size: 10
+      regions: ["chr1:1-40", chr2]
+    binners:
+    - position_score_binner:
+        resource_query: "scores/one"
+    - fragment_score_binner:
+        resource_query: "frags/s1"
+        pool: false
+""")
+
+
+@pytest.fixture
+def two_kind_run_definition(output: pathlib.Path) -> pathlib.Path:
+    """One position-score entry and one fragment entry."""
+    return write_run_definition(output, TWO_KIND_RUN_DEFINITION)
+
+
+def test_tracks_records_each_column_s_mode_and_uncovered_value(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path,
+    two_kind_run_definition: pathlib.Path, output: pathlib.Path,
+) -> None:
+    # A position-score track has no mode; a fragment track's is how its
+    # fragments reach a bin.  Neither has an uncovered value: NaN.
+    binning_tool(two_kind_run_definition, grr_dir, output)
+
+    with h5py.File(output, "r") as h5:
+        tracks = h5["tracks"][()]
+
+    assert [(row["name"], row["mode"]) for row in tracks] == [
+        (b"scores/one", b""), (b"frags/s1:all", b"fragment_start")]
+    assert tracks.dtype["uncovered_value"] == np.float64
+    np.testing.assert_array_equal(
+        tracks["uncovered_value"], [np.nan, np.nan])
 
 
 def test_root_attributes_record_what_the_run_was(

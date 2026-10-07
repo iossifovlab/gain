@@ -19,6 +19,7 @@ and on chr2 one BBB fragment (count 6) starts in 1-10.  ``frags/s2`` has
 no chr2; on chr1 its AAA (class B in S2) starts at 4 with count 7, and
 its EEE (class T) at 12, 16 and 35 with counts 1, 4 and 2.
 """
+import json
 import pathlib
 from collections.abc import Iterator
 from typing import Any
@@ -102,6 +103,29 @@ def bin_entry(
 
 
 CHR1 = BedRegion("chr1", 1, 40)
+
+
+@pytest.mark.parametrize("aggregator", [
+    "count", "sum", "mean", "max", "min", "median", "product"])
+def test_the_start_fold_answers_the_score_s_own_binned_read(
+    repo: GenomicResourceRepo, genome: ReferenceGenome, aggregator: str,
+) -> None:
+    # 5-44 starts mid-bin: S2's AAA at 4 lies in the edge bin 1-10 yet
+    # outside the region; EEE starts at 12 and 16 (counts 1, 4) and 35 (2).
+    region = BedRegion("chr1", 5, 44)
+
+    block = bin_entry(
+        {"resource_query": "frags/s2", "pool": False,
+         "value": {"score_id": "count"},
+         "aggregate": {"aggregator": aggregator}},
+        region, repo, genome)
+
+    with FragmentScore(repo.get_resource("frags/s2")).open() as score:
+        reference = score.get_scores_in_bins(
+            region.chrom, region.start, region.stop, BIN_SIZE,
+            [ScoreAggregationQuery("count", aggregator)])
+    assert block.shape == (5, 1)
+    np.testing.assert_array_equal(block, reference)
 
 
 def test_an_entry_without_value_or_aggregate_counts_fragments(
@@ -568,3 +592,23 @@ def test_one_track_twice_under_one_aggregator_is_refused(
     assert "'frags/s1:all:sum'" in message
     assert "binners[0]" in message
     assert "binners[1]" in message
+
+
+@pytest.mark.parametrize("entry", [
+    {"resource_query": "frags/s1", "pool": False},
+    {"resource_query": "frags/*", "value": {"score_id": "count"},
+     "aggregate": {"mode": "fragment_start", "aggregator": "mean"}},
+])
+def test_a_fragment_track_carries_its_mode_into_its_chunk_key(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+    entry: dict[str, Any],
+) -> None:
+    # The parameters key a track's chunks: a mode, or an uncovered value,
+    # that differed would be another chunk.
+    run = parse_fragment_entry(entry, repo, genome)
+
+    for track in run.tracks:
+        assert (track.mode, track.uncovered_value) == ("fragment_start", None)
+        parameters = json.loads(track.parameters)
+        assert parameters["mode"] == "fragment_start"
+        assert parameters["uncovered_value"] is None
