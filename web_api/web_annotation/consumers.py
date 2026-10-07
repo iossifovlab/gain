@@ -144,7 +144,15 @@ class AnnotationStateConsumer(WebsocketConsumer):
         )
 
     def pipeline_status(self, event: Any) -> None:
-        """Relay a pipeline load status to the client, with any error reason."""
+        """Relay a pipeline load status to the client, with any error reason.
+
+        For one load, ``LRUPipelineCache.put_pipeline`` sends ``loading``
+        before that load's terminal ``loaded`` or ``failed``, so a client
+        that keeps the last status it received ends on the outcome. The
+        frames are still one-shot over a no-replay channel layer: a socket
+        that misses them gets the current status from
+        ``_resync_pipeline_status`` when it reconnects.
+        """
         payload = {
             "type": "pipeline_status",
             "pipeline_id": event["pipeline_id"],
