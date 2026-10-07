@@ -301,18 +301,73 @@ class ThreadSafePipeline(AnnotationPipeline):
         return exc_type is None
 
 
-def _unless_dropped[**P](
-    dropped: threading.Event,
-    callback: Callable[P, None] | None,
-) -> Callable[P, None] | None:
-    """Wrap a build callback so it does nothing once ``dropped`` is set."""
-    if callback is None:
-        return None
+class _LoadAnnouncements:
+    """Announce one build's status: ``loading`` first, then its outcome.
 
-    def guarded(*args: P.args, **kwargs: P.kwargs) -> None:
-        if not dropped.is_set():
-            callback(*args, **kwargs)
-    return guarded
+    ``begin`` announces ``loading``; ``finish`` and ``fail`` announce the
+    terminal status. A terminal status that arrives before ``begin`` has
+    run is held back and announced by ``begin`` right after ``loading``,
+    so the terminal announcement never waits and never blocks the thread
+    that reports it. Once ``dropped`` is set the terminal status is not
+    announced at all, including one still held back.
+    """
+
+    def __init__(
+        self,
+        dropped: threading.Event,
+        *,
+        begin: Callable[[], None] | None,
+        finish: Callable[[], None] | None,
+        fail: Callable[[BaseException], None] | None,
+    ) -> None:
+        self._dropped = dropped
+        self._begin = begin
+        self._finish = finish
+        self._fail = fail
+        self._lock = Lock()
+        self._begun = False
+        self._held: Callable[[], None] | None = None
+
+    def begin(self) -> None:
+        """Announce ``loading``, then any terminal status held back.
+
+        The held terminal status is announced even when announcing
+        ``loading`` raises.
+        """
+        try:
+            if self._begin is not None:
+                self._begin()
+        finally:
+            with self._lock:
+                self._begun = True
+                held, self._held = self._held, None
+            if held is not None:
+                try:
+                    held()
+                except Exception:  # pylint: disable=broad-except
+                    logger.exception("Error announcing pipeline status")
+
+    def finish(self) -> None:
+        """Announce ``loaded``, after ``loading``."""
+        if self._finish is not None:
+            self._terminal(self._finish)
+
+    def fail(self, exception: BaseException) -> None:
+        """Announce ``failed`` with ``exception``, after ``loading``."""
+        if self._fail is not None:
+            fail = self._fail
+            self._terminal(lambda: fail(exception))
+
+    def _terminal(self, announce: Callable[[], None]) -> None:
+        def unless_dropped() -> None:
+            if not self._dropped.is_set():
+                announce()
+
+        with self._lock:
+            if not self._begun:
+                self._held = unless_dropped
+                return
+        unless_dropped()
 
 
 @dataclass
@@ -485,7 +540,26 @@ class LRUPipelineCache:
         delete_callback: Callable[[LoadingDetails], None] | None = None,
         force: bool = False,
     ) -> None:
-        """Put a pipeline into the cache."""
+        """Put a pipeline into the cache.
+
+        A put that starts a build announces it through the callbacks:
+        ``begin_load_callback`` (``loading``) on the calling thread, then
+        exactly one of ``finish_load_callback`` (``loaded``) or
+        ``fail_load_callback`` (``failed``, with the build's exception).
+        The terminal callback never runs before ``begin_load_callback``
+        has returned: an outcome reported earlier is held and announced
+        right after ``loading``, on the calling thread, outside the cache
+        lock. It is still announced when ``begin_load_callback`` is
+        ``None`` or raises. A build whose entry leaves the cache before its
+        outcome is announced announces no outcome.
+
+        A put whose cached entry already has this config starts no build:
+        it announces the outcome of that entry's build if it has finished,
+        and nothing while it is still in flight.
+
+        The callbacks are one-shot; nothing replays a status to a
+        subscriber that missed it.
+        """
         pipeline_config_hash = hash(pipeline_config)
         started = time.time()
         thread = threading.current_thread().name
@@ -529,15 +603,19 @@ class LRUPipelineCache:
                         self._detach_pipeline_locked(evict_id, do_cancel=False))
 
                 dropped = threading.Event()
+                announcements = _LoadAnnouncements(
+                    dropped,
+                    begin=begin_load_callback,
+                    finish=finish_load_callback,
+                    fail=fail_load_callback,
+                )
                 pipeline_future = self._load_executor.execute(
                     self._load_pipeline_raw,
                     raw=pipeline_config,
                     grr=self._grr,
                     pipeline_id=pipeline_id,
-                    callback_success=_unless_dropped(
-                        dropped, finish_load_callback),
-                    callback_failure=_unless_dropped(
-                        dropped, fail_load_callback),
+                    callback_success=announcements.finish,
+                    callback_failure=announcements.fail,
                 )
 
                 loading_details = LoadingDetails(
@@ -573,8 +651,7 @@ class LRUPipelineCache:
         for old_details, old_delete_cb in detached:
             self._close_detached(old_details, old_delete_cb)
 
-        if begin_load_callback is not None:
-            begin_load_callback()
+        announcements.begin()
 
         elapsed = time.time() - started
         logger.debug(
