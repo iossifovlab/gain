@@ -35,6 +35,7 @@ from web_annotation.executor import (
 from web_annotation.messages import JOB_QUOTA_EXCEEDED
 from web_annotation.models import (
     AnonymousJob,
+    BaseJob,
     BasePipeline,
     BaseUser,
     Job,
@@ -86,7 +87,9 @@ def get_grr_pipelines(grr: GenomicResourceRepo) -> dict[str, dict[str, str]]:
 GRR_PIPELINES = get_grr_pipelines(GRR)
 
 
-def count_input_variants(input_path: str, annotation_type: str) -> int:
+def count_input_variants(
+    input_path: str, annotation_type: BaseJob.AnnotationType,
+) -> int:
     """Count variant lines in an annotation input file."""
     path = Path(input_path)
     if not path.exists():
@@ -97,7 +100,7 @@ def count_input_variants(input_path: str, annotation_type: str) -> int:
         if line.strip() and not line.startswith("#")
     )
     # Columnar input files have one header line not prefixed with '#'
-    if annotation_type == "tabular":
+    if annotation_type == BaseJob.AnnotationType.TABULAR:
         return max(0, count - 1)
     return count
 
@@ -701,7 +704,7 @@ class AnnotationMixin:
     def _create_job(
         self,
         request: Request,
-        annotation_type: str,
+        annotation_type: BaseJob.AnnotationType,
     ) -> Response | tuple[int, AnnotationPipeline, Job | AnonymousJob]:
         validation_response = self._validate_request(request)
         if validation_response is not None:

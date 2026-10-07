@@ -29,6 +29,7 @@ from web_annotation.authentication import WebAnnotationAuthentication
 from web_annotation.messages import CANNOT_BUILD_ANNOTATABLE
 from web_annotation.models import (
     AnonymousJob,
+    BaseJob,
     BaseUser,
     Job,
     User,
@@ -150,7 +151,7 @@ class JobDetail(AnnotationBaseView):
         except ObjectDoesNotExist:
             return Response(response, status=views.status.HTTP_200_OK)
 
-        if job.annotation_type == "tabular":
+        if job.annotation_type == BaseJob.AnnotationType.TABULAR:
             response["columns"] = details.columns.split(";")
             file_head = extract_head(
                 str(job.input_path),
@@ -190,7 +191,7 @@ class AnnotateVCF(AnnotationBaseView):
 
     def post(self, request: Request) -> Response:
         """Run VCF annotation job."""
-        job_or_response = self._create_job(request, "vcf")
+        job_or_response = self._create_job(request, BaseJob.AnnotationType.VCF)
         if isinstance(job_or_response, Response):
             return job_or_response
         job_name, pipeline, job = job_or_response
@@ -231,7 +232,7 @@ class AnnotateVCF(AnnotationBaseView):
                     if not attr.internal
                 )
                 variants_count = count_input_variants(
-                    job.input_path, job.annotation_type,
+                    job.input_path, BaseJob.AnnotationType.VCF,
                 )
                 request.user.quota_job_complete(
                     variants_count, attributes_count,
@@ -310,7 +311,9 @@ class AnnotateTabular(AnnotationBaseView):
     def post(self, request: Request) -> Response:
         """Run column annotation job."""
 
-        job_or_response = self._create_job(request, "tabular")
+        job_or_response = self._create_job(
+            request, BaseJob.AnnotationType.TABULAR,
+        )
         if isinstance(job_or_response, Response):
             return job_or_response
         _, pipeline, job = job_or_response
@@ -364,7 +367,7 @@ class AnnotateTabular(AnnotationBaseView):
                     if not attr.internal
                 )
                 variants_count = count_input_variants(
-                    job.input_path, job.annotation_type,
+                    job.input_path, BaseJob.AnnotationType.TABULAR,
                 )
                 request.user.quota_job_complete(
                     variants_count, attributes_count,
