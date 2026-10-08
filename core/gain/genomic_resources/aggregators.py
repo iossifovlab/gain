@@ -353,11 +353,8 @@ def _magnitude_times_power(product: float, value: float, count: int) -> float:
 
 def _saturate_past_float_range(value: Any) -> Any:
     """``value`` unchanged, or a signed infinity when no float holds it."""
-    try:
-        float(value)
-    except OverflowError:
-        return to_float64(value)
-    return value
+    saturated = to_float64(value)
+    return saturated if math.isinf(saturated) else value
 
 
 class ProductAggregator(Aggregator):
@@ -371,7 +368,7 @@ class ProductAggregator(Aggregator):
     one included: an int stays exact only while a float can hold it.  A
     weighted ``add(value, count)`` gives what ``count`` calls of
     ``add(value)`` give, in bounded time and memory.  A product that holds
-    a ``0`` is ``0``, in any order and after a saturation too (gain#1766).
+    a ``0`` is ``0``, in any order and after a saturation too.
     """
 
     def __init__(self) -> None:
