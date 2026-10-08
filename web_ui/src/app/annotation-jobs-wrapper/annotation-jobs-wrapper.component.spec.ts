@@ -5,7 +5,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { UsersService } from '../users.service';
 import { UserData } from '../users';
 import { SingleAnnotationService } from '../single-annotation.service';
-import { BehaviorSubject, Observable, of, throwError } from 'rxjs';
+import { BehaviorSubject, NEVER, Observable, of, Subject, throwError } from 'rxjs';
 import { FileContent, Job } from '../job-creation/jobs';
 import { Pipeline } from '../job-creation/pipelines';
 import { provideMonacoEditor } from 'ngx-monaco-editor-v2';
@@ -85,6 +85,9 @@ class JobsServiceMock {
 }
 
 class SocketNotificationsServiceMock {
+  public readonly opened = new Subject<void>();
+  public readonly connectionOpened$ = this.opened.asObservable();
+
   public getPipelineNotifications(): Observable<PipelineNotification> {
     return of(null);
   }
@@ -248,6 +251,105 @@ describe('AnnotationJobsWrapperComponent', () => {
     expect(unsubSpy).toHaveBeenCalledWith();
     expect(reopenSpy).toHaveBeenCalledWith();
     expect(setupSpy).toHaveBeenCalledTimes(2);
+  });
+
+  // Arm one websocket drop and reconnect. The test drives each step: the
+  // drop, the reconnect emission, and the open of the new socket.
+  function armReconnect(): {
+    drop: () => void;
+    reconnected: Subject<void>;
+    resubscribed: Subject<JobNotification>;
+    } {
+    const notifications = new Subject<JobNotification>();
+    const resubscribed = new Subject<JobNotification>();
+    jest.spyOn(socketNotificationsServiceMock, 'getJobNotifications')
+      .mockReturnValueOnce(notifications.asObservable())
+      .mockReturnValueOnce(resubscribed.asObservable());
+    const reconnected = new Subject<void>();
+    jest.spyOn(socketNotificationsServiceMock, 'reopenConnection')
+      .mockReturnValueOnce(reconnected.asObservable());
+    return {
+      drop: () => notifications.error(new Event('network error')),
+      reconnected: reconnected,
+      resubscribed: resubscribed,
+    };
+  }
+
+  it('refetches the jobs after a reconnect only once the new socket opens', () => {
+    const { drop, reconnected } = armReconnect();
+    component.currentJobId = 1;
+    component.ngOnInit();
+    const refreshSpy = jest.spyOn(component.jobsTableComponent, 'refreshTable').mockClear();
+    const detailsSpy = jest.spyOn(jobsServiceMock, 'getJobDetails').mockClear();
+
+    drop();
+    reconnected.next();
+    expect(refreshSpy).not.toHaveBeenCalled();
+    expect(detailsSpy).not.toHaveBeenCalled();
+
+    socketNotificationsServiceMock.opened.next();
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+    expect(detailsSpy).toHaveBeenCalledTimes(1);
+    expect(detailsSpy).toHaveBeenCalledWith(1);
+  });
+
+  it('sends no catch-up request for a reconnect that drops before it opens', () => {
+    const { drop, reconnected, resubscribed } = armReconnect();
+    jest.spyOn(socketNotificationsServiceMock, 'getJobNotifications')
+      .mockReturnValueOnce(NEVER);
+    jest.spyOn(socketNotificationsServiceMock, 'reopenConnection')
+      .mockReturnValueOnce(NEVER);
+    component.currentJobId = 1;
+    component.ngOnInit();
+    const refreshSpy = jest.spyOn(component.jobsTableComponent, 'refreshTable').mockClear();
+    const detailsSpy = jest.spyOn(jobsServiceMock, 'getJobDetails').mockClear();
+
+    drop();
+    reconnected.next();
+    resubscribed.error(new Event('network error'));
+    // The second reconnect never emits, so this open belongs to no
+    // reconnect that a consumer still waits on.
+    socketNotificationsServiceMock.opened.next();
+
+    expect(refreshSpy).not.toHaveBeenCalled();
+    expect(detailsSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not refetch the jobs when the first socket of the page opens', () => {
+    component.ngOnInit();
+    const refreshSpy = jest.spyOn(component.jobsTableComponent, 'refreshTable').mockClear();
+
+    socketNotificationsServiceMock.opened.next();
+
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not refetch the jobs when the socket opens after the component is destroyed', () => {
+    const { drop, reconnected } = armReconnect();
+    component.ngOnInit();
+    const refreshSpy = jest.spyOn(component.jobsTableComponent, 'refreshTable').mockClear();
+
+    drop();
+    reconnected.next();
+    component.ngOnDestroy();
+    socketNotificationsServiceMock.opened.next();
+
+    expect(refreshSpy).not.toHaveBeenCalled();
+  });
+
+  it('subscribes to the job notifications again before the catch-up refetch starts', () => {
+    const { drop, reconnected, resubscribed } = armReconnect();
+    component.ngOnInit();
+    let subscribedAtRefetch: boolean | undefined;
+    jest.spyOn(component.jobsTableComponent, 'refreshTable').mockImplementation(() => {
+      subscribedAtRefetch = resubscribed.observed;
+    });
+
+    drop();
+    reconnected.next();
+    socketNotificationsServiceMock.opened.next();
+
+    expect(subscribedAtRefetch).toBe(true);
   });
 
   it('should disable Create button if no file is uploaded', () => {

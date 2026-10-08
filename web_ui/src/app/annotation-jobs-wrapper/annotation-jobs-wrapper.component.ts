@@ -1,13 +1,16 @@
 import { Component, ViewChild, OnInit, OnDestroy, HostListener, effect, inject } from '@angular/core';
 import { JobsTableComponent } from '../jobs-table/jobs-table.component';
-import { filter, Observable, Subscription, take } from 'rxjs';
+import { filter, Observable, Subscription, switchMap, take } from 'rxjs';
 import { JobsService } from '../job-creation/jobs.service';
 import { AnnotationPipelineComponent } from '../annotation-pipeline/annotation-pipeline.component';
 import { getStatusClassName, Job, JobStatus } from '../job-creation/jobs';
 import { JobCreationComponent } from '../job-creation/job-creation.component';
 import { CommonModule } from '@angular/common';
 import { UsersService } from '../users.service';
-import { SocketNotificationsService } from '../socket-notifications/socket-notifications.service';
+import {
+  resubscribeThenAwaitOpen,
+  SocketNotificationsService,
+} from '../socket-notifications/socket-notifications.service';
 import { JobNotification } from '../socket-notifications/socket-notifications';
 import { AnnotationPipelineService } from '../annotation-pipeline.service';
 import { AnnotationPipelineStateService } from '../annotation-pipeline/annotation-pipeline-state.service';
@@ -116,16 +119,21 @@ export class AnnotationJobsWrapperComponent implements OnInit, OnDestroy {
           this.socketNotificationSubscription.unsubscribe();
           // Subscribe to reopenConnection to wait for it to complete
           this.reconnectionSubscription.unsubscribe();
-          this.reconnectionSubscription = this.socketNotificationsService.reopenConnection().subscribe({
+          this.reconnectionSubscription = this.socketNotificationsService.reopenConnection().pipe(
+            switchMap(() => resubscribeThenAwaitOpen(
+              this.socketNotificationsService.connectionOpened$,
+              () => this.setupJobWebSocketConnection()
+            ))
+          ).subscribe({
             next: () => {
-              // Reconnected - refetch jobs to catch up on missed notifications
+              // The new socket is open - refetch jobs to catch up on
+              // notifications missed while it was down.
               if (this.jobsTableComponent) {
                 this.jobsTableComponent.refreshTable();
               }
               if (this.currentJobId) {
                 this.getCurrentJobDetails(this.currentJobId);
               }
-              this.setupJobWebSocketConnection();
             },
             error: (e) => console.error('Reconnection failed:', e)
           });

@@ -2,7 +2,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { AnnotationPipelineComponent, VALIDATE_DEBOUNCE_MS } from './annotation-pipeline.component';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
-import { BehaviorSubject, Observable, of, Subject, throwError } from 'rxjs';
+import { BehaviorSubject, NEVER, Observable, of, Subject, throwError } from 'rxjs';
 import { JobCreationComponent } from '../job-creation/job-creation.component';
 import { FileContent } from '../job-creation/jobs';
 import { JobsService } from '../job-creation/jobs.service';
@@ -120,6 +120,9 @@ class AnnotationPipelineServiceMock {
 }
 
 class SocketNotificationsServiceMock {
+  public readonly opened = new Subject<void>();
+  public readonly connectionOpened$ = this.opened.asObservable();
+
   public getPipelineNotifications(): Observable<PipelineNotification> {
     return of(new PipelineNotification('id1', 'unloaded'));
   }
@@ -891,20 +894,90 @@ describe('AnnotationPipelineComponent', () => {
     expect(component.isPipelineChanged()).toBe(false);
   });
 
-  // Arm one websocket drop and reconnect; the returned function fires it.
-  function armReconnect(): () => void {
+  // Arm one websocket drop and reconnect. The test drives each step: the
+  // drop, the reconnect emission, and the open of the new socket.
+  function armReconnectSteps(): {
+    drop: () => void;
+    reconnected: Subject<void>;
+    resubscribed: Subject<PipelineNotification>;
+    } {
     const notifications = new Subject<PipelineNotification>();
+    const resubscribed = new Subject<PipelineNotification>();
     jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications')
       .mockReturnValueOnce(notifications.asObservable())
-      .mockReturnValueOnce(new Subject<PipelineNotification>().asObservable());
+      .mockReturnValueOnce(resubscribed.asObservable());
     const reconnected = new Subject<void>();
     jest.spyOn(socketNotificationsServiceMock, 'reopenConnection')
       .mockReturnValueOnce(reconnected.asObservable());
-    return () => {
-      notifications.error(new Event('network error'));
-      reconnected.next();
+    return {
+      drop: () => notifications.error(new Event('network error')),
+      reconnected: reconnected,
+      resubscribed: resubscribed,
     };
   }
+
+  // Arm one websocket drop and reconnect; the returned function fires the
+  // drop, the reconnect and the open of the new socket.
+  function armReconnect(): () => void {
+    const { drop, reconnected } = armReconnectSteps();
+    return () => {
+      drop();
+      reconnected.next();
+      socketNotificationsServiceMock.opened.next();
+    };
+  }
+
+  it('refetches the pipelines after a reconnect only once the new socket opens', () => {
+    const { drop, reconnected } = armReconnectSteps();
+    component.ngOnInit();
+    // A list loaded under another identity makes the refetch a server GET.
+    pipelineStateService.loadedWhileLoggedIn.set(!component.isUserLoggedIn);
+    const getPipelinesSpy = jest.spyOn(jobsServiceMock, 'getAnnotationPipelines').mockClear();
+
+    drop();
+    reconnected.next();
+    expect(getPipelinesSpy).not.toHaveBeenCalled();
+
+    socketNotificationsServiceMock.opened.next();
+    expect(getPipelinesSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends no catch-up request for a reconnect that drops before it opens', () => {
+    const { drop, reconnected, resubscribed } = armReconnectSteps();
+    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications')
+      .mockReturnValueOnce(NEVER);
+    jest.spyOn(socketNotificationsServiceMock, 'reopenConnection')
+      .mockReturnValueOnce(NEVER);
+    component.ngOnInit();
+    pipelineStateService.loadedWhileLoggedIn.set(!component.isUserLoggedIn);
+    const getPipelinesSpy = jest.spyOn(jobsServiceMock, 'getAnnotationPipelines').mockClear();
+
+    drop();
+    reconnected.next();
+    resubscribed.error(new Event('network error'));
+    // The second reconnect never emits, so this open belongs to no
+    // reconnect that a consumer still waits on.
+    socketNotificationsServiceMock.opened.next();
+
+    expect(getPipelinesSpy).not.toHaveBeenCalled();
+  });
+
+  it('subscribes to the pipeline notifications again before the catch-up refetch starts', () => {
+    const { drop, reconnected, resubscribed } = armReconnectSteps();
+    component.ngOnInit();
+    pipelineStateService.loadedWhileLoggedIn.set(!component.isUserLoggedIn);
+    let subscribedAtRefetch: boolean | undefined;
+    jest.spyOn(jobsServiceMock, 'getAnnotationPipelines').mockImplementationOnce(() => {
+      subscribedAtRefetch = resubscribed.observed;
+      return of(mockPipelines);
+    });
+
+    drop();
+    reconnected.next();
+    socketNotificationsServiceMock.opened.next();
+
+    expect(subscribedAtRefetch).toBe(true);
+  });
 
   it('New pipeline validates the cleared editor without waiting for the editor to report the change (#693)', () => {
     // Until monaco has loaded, the editor only stores the text it is given

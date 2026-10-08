@@ -7,7 +7,9 @@ import {
   map,
   Observable,
   shareReplay,
+  Subject,
   switchMap,
+  take,
   tap,
   throwError,
   timer,
@@ -15,6 +17,28 @@ import {
 import { webSocket, WebSocketSubject } from 'rxjs/webSocket';
 import { environment } from '../../../environments/environment';
 import { JobNotification, PipelineNotification } from './socket-notifications';
+
+/**
+ * Run `resubscribe` and emit once, on the next signal of `opened$`.
+ *
+ * A consumer calls this after `reopenConnection()` emits. The consumer
+ * subscribes to its notifications again at once, because `webSocket()`
+ * opens the socket only on the first subscription. The consumer runs its
+ * catch-up refetch when the returned observable emits. Thus a failed
+ * reconnect sends no refetch, and no notification is lost between the
+ * refetch and the open. Unsubscribe to release the wait for the open.
+ */
+export function resubscribeThenAwaitOpen(
+  opened$: Observable<void>,
+  resubscribe: () => void,
+): Observable<void> {
+  return new Observable<void>(subscriber => {
+    // Listen first: a socket can confirm its open while resubscribe() runs.
+    const opened = opened$.pipe(take(1)).subscribe(subscriber);
+    resubscribe();
+    return opened;
+  });
+}
 
 @Injectable({
   providedIn: 'root'
@@ -33,10 +57,20 @@ export class SocketNotificationsService {
   private readonly maxReconnectionAttempts = 5;
   private readonly reconnectionCooldownMs = 30000;
   private pendingReconnection$: Observable<void> | null = null;
+  private readonly connectionOpenedSubject = new Subject<void>();
+
+  /**
+   * Emits each time the current socket confirms an open. A consumer that
+   * reconnects runs its catch-up refetch on this signal, not on the
+   * emission of `reopenConnection()`, which only creates the socket.
+   * An open of a socket that a reconnect has already replaced is ignored.
+   */
+  public readonly connectionOpened$: Observable<void> =
+    this.connectionOpenedSubject.asObservable();
 
   public ensureConnected(): void {
     if (!this.socketNotifications) {
-      this.socketNotifications = webSocket({
+      const socket: WebSocketSubject<object> = webSocket({
         url: this.socketNotificationsUrl,
         openObserver: {
           // Only a confirmed connection resets the backoff counter.
@@ -44,10 +78,14 @@ export class SocketNotificationsService {
           // (e.g. on socket creation) would defeat the backoff entirely.
           next: () => {
             this.reconnectionAttempts = 0;
+            if (this.socketNotifications === socket) {
+              this.connectionOpenedSubject.next();
+            }
           },
         },
       });
-      this.socket$.next(this.socketNotifications);
+      this.socketNotifications = socket;
+      this.socket$.next(socket);
     }
   }
 
