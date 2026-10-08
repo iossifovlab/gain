@@ -25,7 +25,7 @@ the files on disk. `grr_browse` then reads the GRR through a definition.
 A user who added a file to a resource of a directory GRR runs:
 
 ```bash
-grr_manage repo-manifest -n -R /abs/path/grr    # exits 1, names the file
+grr_manage repo-manifest -n -R /abs/path/grr    # exits with the number of stale resources (1 here), names the file
 grr_manage repo-manifest -R /abs/path/grr       # exits 0, updates .MANIFEST
 grr_manage repo-manifest -n -R /abs/path/grr    # exits 0, prints nothing
 grr_manage list -R /abs/path/grr

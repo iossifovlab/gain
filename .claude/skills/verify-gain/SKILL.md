@@ -220,8 +220,9 @@ It copies `test_fixtures/mini-GRR` (without `.git`) to
 runs six steps on the absolute path of the copy: `resource-manifest -n -r
 mini_vcf_plot`, `repo-manifest -n`, `repo-manifest`, `repo-manifest -n`
 again, `list`, and `grr_browse -g $RUN/scratch/grr-copy.yaml`. The first
-two steps must exit 1, so the drive runs all six and the read-back judges
-every exit code.
+two steps must exit non-zero: step 01 exits 1, and step 02 exits with the
+number of stale resources (1 today). The drive runs all six, and the
+read-back judges every exit code.
 
 **`features/binning-tool.md`** — `binning_tool` over `mini_positionscore_bw`
 in bins of 5 bases:
@@ -281,8 +282,9 @@ exact values `0.1`, `0.2`, `0.3` at `chr1:6`, `chr2:3`, `chr2:8`; an output
 whose `pos_bw_0` column is all `0` fails it. For `annotate-vcf` it finds the
 `##INFO=<ID=pos_bw_0,` header line and compares the `pos_bw_0` strings
 `0.1`, `0.2`, `0.3` at the same positions. For `grr-manage` it checks that
-both dry runs exit 1 and name `verify_gain_added.txt`, that
-`repo-manifest` exits 0, that the second dry run exits 0, that the
+steps 01 and 02 name `verify_gain_added.txt`, that step 01 exits 1 and
+step 02 exits with the number of stale resources it reports (1 today), that
+`repo-manifest` exits 0, that the second `repo-manifest -n` exits 0, that the
 manifest lists the file, and that `grr_manage list` and `grr_browse` list
 exactly the resources of the copy. For `binning-tool` it opens `bins.h5`
 with `h5py` and compares the four bins and the values `0`, `0.1`, `0.2`,
