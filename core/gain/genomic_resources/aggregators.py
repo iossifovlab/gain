@@ -325,6 +325,20 @@ def _saturate_past_float_range(value: Any) -> Any:
     return value
 
 
+def _times_contribution(product: Any, contribution: Any) -> Any:
+    """``product * contribution`` for a non-zero product and value.
+
+    A float power of a value in (-1, 1) can underflow to a signed 0.0.
+    A saturated ``product`` keeps its infinity then, with the sign of the
+    exact product: one-at-a-time multiplication never leaves an infinity.
+    """
+    if contribution == 0 and isinstance(product, float) \
+            and math.isinf(product):
+        return math.copysign(
+            math.inf, product * math.copysign(1.0, contribution))
+    return _saturate_past_float_range(product * contribution)
+
+
 class ProductAggregator(Aggregator):
     """Aggregator that multiplies the values it is given.
 
@@ -347,13 +361,12 @@ class ProductAggregator(Aggregator):
         if value is None:
             return
         contribution = _weighted_power(value, count)
-        if self.product is None or contribution == 0:
+        if self.product is None or value == 0:
             self.product = contribution
         elif self.product != 0:
             # A 0 absorbs everything after it, a saturated infinity too:
             # the exact product is 0, where ``inf * 0`` is NaN.
-            self.product = _saturate_past_float_range(
-                self.product * contribution)
+            self.product = _times_contribution(self.product, contribution)
         self.used_count += count
 
     def _clear_internal(self) -> None:

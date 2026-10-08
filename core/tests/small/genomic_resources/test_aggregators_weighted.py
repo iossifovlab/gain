@@ -312,3 +312,27 @@ def test_a_product_that_holds_a_zero_is_zero(
         agg.add(value, count)
 
     assert agg.get_final() == 0
+
+
+@pytest.mark.parametrize("records", [
+    pytest.param([(3.0, 1000), (0.5, 2000)], id="saturated-then-tiny"),
+    pytest.param([(-3.0, 1001), (0.5, 2000)], id="neg-saturated-then-tiny"),
+    pytest.param([(3.0, 1000), (-0.5, 2001)], id="saturated-then-neg-tiny"),
+    pytest.param([(0.5, 2000), (3.0, 1000)], id="tiny-then-saturated"),
+])
+def test_a_power_that_underflows_is_not_a_held_zero(
+    records: list[tuple[float, int]],
+) -> None:
+    """``0.5 ** 2000`` underflows to 0.0, but no value of the run is 0.
+
+    A weighted ``add`` gives what replication gives: a saturated product
+    stays saturated, and an underflowed product stays 0.
+    """
+    weighted = ProductAggregator()
+    for value, count in records:
+        weighted.add(value, count)
+
+    replicated = ProductAggregator().aggregate(
+        [value for value, count in records for _ in range(count)])
+
+    assert weighted.get_final() == replicated
