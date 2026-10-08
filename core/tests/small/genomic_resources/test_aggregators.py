@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 
+from collections import Counter
 from dataclasses import fields
 
 import numpy
@@ -9,6 +10,7 @@ from gain.genomic_resources.aggregators import (
     NUMERIC_ONLY_AGGREGATORS,
     Aggregator,
     AggregatorDefinition,
+    AggregatorSource,
     BoolAggregator,
     ConcatAggregator,
     CountAggregator,
@@ -323,7 +325,33 @@ def test_the_position_query_still_binds_three_positional_arguments() -> None:
     ) == ("s", "max", 0.0)
 
 
-def test_the_three_aggregator_spellings_collapse_to_one_name() -> None:
+@pytest.mark.parametrize(
+    ("spellings", "expected"),
+    [
+        pytest.param(
+            [
+                "join(|)",
+                {"aggregator_type": "join", "parameters": ["|"]},
+                AggregatorDefinition("join", ["|"]),
+            ],
+            "join(|)",
+            id="join",
+        ),
+        pytest.param(
+            [
+                "most_common(2)",
+                {"aggregator_type": "most_common", "parameters": ["2"]},
+                {"aggregator_type": "most_common", "parameters": [2]},
+                AggregatorDefinition("most_common", ["2"]),
+            ],
+            "most_common(2)",
+            id="most_common",
+        ),
+    ],
+)
+def test_the_three_aggregator_spellings_collapse_to_one_name(
+    spellings: list[AggregatorSource], expected: str,
+) -> None:
     """An attribute may write its aggregator three ways; a query holds one.
 
     An annotation pipeline accepts a name, a ``{aggregator_type,
@@ -332,18 +360,16 @@ def test_the_three_aggregator_spellings_collapse_to_one_name() -> None:
     ``ScoreAggregationQuery``'s -- is typed to the NAME alone, so the
     three have to meet somewhere.
 
-    ``join`` is the case that can tell them apart, being the only
-    parametrized aggregator: an unparametrized one collapses to the same
-    string however it was written, so a canonicalisation that dropped the
-    parameter would still look right for every other aggregator.
+    The parametrized aggregators, ``join`` and ``most_common``, are the
+    cases that can tell the spellings apart: an unparametrized one
+    collapses to the same string however it was written, so a
+    canonicalisation that dropped the parameter would still look right
+    for every other aggregator.  ``most_common`` also takes its ``k`` as
+    an int in the mapping form, which has to print as the same name.
     """
-    spellings = [
-        "join(|)",
-        {"aggregator_type": "join", "parameters": ["|"]},
-        AggregatorDefinition("join", ["|"]),
-    ]
-
-    assert [aggregator_name(s) for s in spellings] == ["join(|)"] * 3
+    assert [aggregator_name(s) for s in spellings] == (
+        [expected] * len(spellings)
+    )
 
 
 def test_numeric_aggregators_appear_first_in_dict() -> None:
@@ -396,3 +422,98 @@ def test_a_cleared_aggregator_refolds_like_a_fresh_one(name: str) -> None:
     assert agg.get_final() == fresh.get_final()
     assert agg.get_used_count() == fresh.get_used_count()
     assert agg.get_total_count() == fresh.get_total_count()
+
+
+def _most_common(k: int, values: list[tuple[object, int]]) -> object:
+    agg = Aggregator.build(f"most_common({k})")
+    for value, count in values:
+        agg.add(value, count)
+    return agg.get_final()
+
+
+def test_most_common_ranks_values_by_weighted_frequency() -> None:
+    values = [("a", 1), ("b", 5), ("c", 2), ("a", 3)]
+
+    assert _most_common(2, values) == ["b", "a"]
+
+
+def test_most_common_breaks_a_tie_by_first_appearance() -> None:
+    values = [("a", 1), ("c", 2), ("b", 2)]
+
+    assert _most_common(3, values) == ["c", "b", "a"]
+
+
+def test_most_common_skips_none() -> None:
+    values = [(None, 10), ("a", 1), (None, 1), ("b", 2)]
+
+    assert _most_common(3, values) == ["b", "a"]
+
+
+def test_most_common_flattens_tuples_and_nested_lists() -> None:
+    values = [(("a", "b"), 1), (["b", ["c", None, ["b"]]], 2), ("a", 1)]
+
+    assert _most_common(2, values) == ["b", "a"]
+
+
+def test_most_common_of_no_values_is_an_empty_list() -> None:
+    assert _most_common(3, []) == []
+    assert _most_common(3, [(None, 4)]) == []
+
+
+@pytest.mark.parametrize("values", [
+    [("a", 1), ("b", 5), ("c", 2), ("a", 3)],
+    [("a", 1), ("c", 2), ("b", 2)],
+    [(None, 10), ("a", 1), (None, 1), ("b", 2)],
+    [(("a", "b"), 1), (["b", ["c", None, ["b"]]], 2), ("a", 1)],
+    [((1, 2), 3), (2, 1), (["x", ("y", 1)], 2)],
+    [],
+])
+@pytest.mark.parametrize("k", [1, 2, 3, 10])
+def test_most_common_is_the_top_of_a_counter_over_the_list_result(
+    values: list[tuple[object, int]], k: int,
+) -> None:
+    listed = Aggregator.build("list")
+    for value, count in values:
+        listed.add(value, count)
+    leaves = [leaf for leaf in listed.get_final() if leaf is not None]
+
+    expected = [value for value, _ in Counter(leaves).most_common(k)]
+
+    assert _most_common(k, values) == expected
+
+
+def test_most_common_applies_a_weight_without_a_loop_over_it() -> None:
+    assert _most_common(1, [("a", 10**12), ("b", 1)]) == ["a"]
+
+
+@pytest.mark.parametrize("spelling", [
+    "most_common",
+    "most_common()",
+    "most_common(0)",
+    "most_common(-1)",
+    "most_common(3.0)",
+    "most_common(abc)",
+])
+def test_most_common_refuses_a_k_that_is_not_a_positive_integer(
+    spelling: str,
+) -> None:
+    with pytest.raises((ValueError, TypeError)):
+        Aggregator.build(spelling)
+
+
+def test_most_common_accepts_an_int_k_from_the_dict_form() -> None:
+    agg = Aggregator.build(
+        {"aggregator_type": "most_common", "parameters": [2]})
+    for value, count in [("a", 1), ("b", 5), ("c", 2), ("a", 3)]:
+        agg.add(value, count)
+
+    assert agg.get_final() == ["b", "a"]
+
+
+@pytest.mark.parametrize("k", [0, -1, True, 3.0])
+def test_most_common_refuses_a_dict_form_k_that_is_not_a_positive_int(
+    k: object,
+) -> None:
+    with pytest.raises((ValueError, TypeError)):
+        Aggregator.build(
+            {"aggregator_type": "most_common", "parameters": [k]})

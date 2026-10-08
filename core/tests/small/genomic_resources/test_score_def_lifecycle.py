@@ -33,6 +33,7 @@ from gain.genomic_resources.testing.builders import (
     a_grr,
     a_position_score,
     a_vcf_info_score,
+    an_allele_score,
 )
 
 
@@ -131,6 +132,30 @@ def test_an_aggregator_the_parser_rejects_is_refused_at_construction(
         "Invalid configuration: two: score 's' states aggregator "
         "'join(a)(b)', which cannot be built: Invalid aggregator "
         "definition: 'join(a)(b)'")
+
+
+def test_a_most_common_with_a_k_of_zero_is_refused_at_construction(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``most_common(0)`` passes the schema; its constructor refuses ``k``."""
+    repo = a_grr().with_resource("alleles", (
+        an_allele_score()
+        .with_score("label", "str")
+        .with_aggregator("most_common(0)")
+        .with_allele_multiplicity("many")
+        .with_data("""
+            chrom  pos_begin  reference  alternative  label
+            chr1   10         A          C            x
+        """)
+    )).build_repo(tmp_path)
+
+    with pytest.raises(MalformedResourceError) as excinfo:
+        AlleleScore(repo.get_resource("alleles"))
+
+    assert str(excinfo.value) == (
+        "Invalid configuration: alleles: score 'label' states aggregator "
+        "'most_common(0)', which cannot be built: most_common(k) needs a "
+        "positive integer k, got '0'")
 
 
 def test_a_vcf_derived_definition_is_held_to_the_same_aggregator_rule(

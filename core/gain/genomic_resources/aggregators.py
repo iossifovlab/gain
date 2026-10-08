@@ -483,6 +483,18 @@ class JoinAggregator(Aggregator):
         )
 
 
+def _flatten(items: Iterable[Any]) -> Generator[Any, None, None]:
+    """Yield the leaves of ``items``, descending into non-string iterables."""
+    for item in items:
+        if (
+            isinstance(item, Iterable)
+            and not isinstance(item, (str, bytes))
+        ):
+            yield from _flatten(item)
+        else:
+            yield item
+
+
 class ListAggregator(Aggregator):
     """Aggregator that builds a list of all passed values."""
 
@@ -491,16 +503,6 @@ class ListAggregator(Aggregator):
     def __init__(self) -> None:
         super().__init__()
         self.values: list[tuple[Any, int]] = []
-
-    def _flatten(self, items: Any) -> Generator[Any, None, None]:
-        for item in items:
-            if (
-                isinstance(item, Iterable)
-                and not isinstance(item, (str, bytes))
-            ):
-                yield from self._flatten(item)
-            else:
-                yield item
 
     def _add_internal(self, value: Any, count: int) -> None:
         if value is not None:
@@ -511,7 +513,7 @@ class ListAggregator(Aggregator):
         self.values.clear()
 
     def get_final(self) -> Any:
-        return list(self._flatten(
+        return list(_flatten(
             value
             for value, count in self.values
             for _ in range(count)
@@ -565,6 +567,60 @@ class CounterAggregator(Aggregator):
         return dict(self.counter)
 
 
+class MostCommonAggregator(Aggregator):
+    """The ``k`` most frequent values, most frequent first.
+
+    Configured as ``most_common(k)``; ``k`` is required and must be a
+    positive integer, given as a string or, from the dict form's
+    ``parameters``, as an ``int``.  Values rank by their weighted
+    frequency, and a tie keeps the order in which the values first
+    appeared -- the order of
+    :meth:`collections.Counter.most_common`.  A multi-valued input is
+    flattened as ``list`` flattens it, and ``None`` is skipped, so the
+    answer is the first ``k`` keys of
+    ``Counter(<the list result>).most_common(k)``.  No values give ``[]``.
+    """
+
+    parametrized: ClassVar[bool] = True
+    default_parameter: ClassVar[str | None] = "3"
+    output_value_type: ClassVar[str | None] = "list"
+
+    def __init__(self, k: str | int) -> None:
+        super().__init__()
+        self.k = self._parse_k(k)
+        self.counter: Counter = Counter()
+
+    @staticmethod
+    def _parse_k(k: str | int) -> int:
+        if isinstance(k, int) and not isinstance(k, bool):
+            if k <= 0:
+                raise ValueError(
+                    f"most_common(k) needs a positive integer k, got {k!r}")
+            return k
+        if not isinstance(k, str):
+            raise TypeError(
+                f"most_common expects its k as a string or an int, "
+                f"got {k!r}")
+        if not k.strip().isdecimal() or int(k) <= 0:
+            raise ValueError(
+                f"most_common(k) needs a positive integer k, got {k!r}")
+        return int(k)
+
+    def _add_internal(self, value: Any, count: int) -> None:
+        if value is None:
+            return
+        for item in _flatten((value,)):
+            if item is not None:
+                self.counter[item] += count
+        self.used_count += count
+
+    def _clear_internal(self) -> None:
+        self.counter.clear()
+
+    def get_final(self) -> list[Any]:
+        return [value for value, _ in self.counter.most_common(self.k)]
+
+
 AGGREGATOR_CLASS_DICT: dict[str, type[Aggregator]] = {
     "max": MaxAggregator,
     "min": MinAggregator,
@@ -579,6 +635,7 @@ AGGREGATOR_CLASS_DICT: dict[str, type[Aggregator]] = {
     "list": ListAggregator,
     "bool": BoolAggregator,
     "value_count": CounterAggregator,
+    "most_common": MostCommonAggregator,
 }
 
 
