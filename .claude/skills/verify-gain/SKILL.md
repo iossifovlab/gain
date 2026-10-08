@@ -89,8 +89,8 @@ url: 'http://127.0.0.1:<port>/'
 cache_dir: '<absolute run path>/scratch/http/cache'
 ```
 
-Every compose call (`up`, `port`, `ps`, `down`) goes through `vg_compose`
-in `common.sh`, with the same `-f` files, project directory and `-p` name.
+Every compose call (`up`, `port`, `ps`, `down`) goes through
+`verify_compose` in `verify-lib.sh`, with the same `-f` files, project directory and `-p` name.
 `docker-compose.override.yaml` and its fixed ports `28080` and `29000` are
 never loaded. No helper stops, restarts or removes a container by name,
 and no helper touches another compose project.
@@ -102,7 +102,7 @@ deleted, can use the same name. So `launch-http-grr.sh` refuses when
 lists any container. Doctor and Cleanup act only when every container of
 the project has this run's override in its
 `com.docker.compose.project.config_files` label and this run's copy as
-its `htdocs` mount source (`vg_check_project_owned`).
+its `htdocs` mount source (`app_check_project_owned` in `app.sh`).
 
 `VERIFY_GAIN_HTTPD_IMAGE=<image>` replaces `httpd:latest` in the override
 and in the image check.
@@ -310,7 +310,7 @@ Cite the evidence directory, not a pasted summary, as the proof.
 ## 5. Cleanup
 
 For an HTTP run, `cleanup.sh` first runs `docker compose -p
-verify-gain-<run id> down` through `vg_compose`. That removes the
+verify-gain-<run id> down` through `verify_compose`. That removes the
 project's container and network, and nothing of another project. Before
 `down`, it checks that every container of the project is this run's. If
 one is not, it refuses and keeps scratch. Then it removes the scratch
@@ -346,7 +346,8 @@ All in `.claude/skills/verify-gain/scripts/`, all executable:
 | `drive-grr-cache-repo.sh` | `drive-grr-cache-repo.sh <run id>` | drives `grr_cache_repo mini_pipeline` against the HTTP GRR, keeps the evidence, runs the read-back |
 | `readback-grr-cache-repo.sh` | `readback-grr-cache-repo.sh <cache dir> <GRR copy>` | `cmp`s the cached `mini_pipeline` and `mini_positionscore_bw` files with the copy |
 | `cleanup.sh` | `cleanup.sh <run id>` | `docker compose -p verify-gain-<run id> down` for an HTTP run, then removes `.verify/<run id>/scratch/` |
-| `common.sh` | sourced by the others | checkout discovery, run-id validation, the isolated environment (`HOME`, `TMPDIR`, `GRR_DEFINITION_FILE`, a closed proxy for proxy-honouring clients only), `vg_compose` and the image check |
+| `app.sh` | sourced by the launch, drive, doctor and cleanup scripts (the `readback-*.sh` scripts are standalone) | the gain code: sets `VERIFY_APP=gain` and sources `verify-lib.sh`; `app_env` adds `MPLCONFIGDIR`, `GRR_DEFINITION_FILE` and a closed proxy for proxy-honouring clients only; the `.venv` path, the compose file and override, the `httpd` image and its check, the ownership check of the project's containers |
+| `verify-lib.sh` | sourced by `app.sh` only | a copy of the canonical library of `create-verify-skill` (its first line names the commit; do not edit the copy): checkout discovery, run-id validation, the isolated environment (`HOME`, `TMPDIR`, `XDG_CACHE_HOME`, `XDG_CONFIG_HOME`), `verify_drive`, `verify_readback`, `verify_compose` and the free-project check |
 
 A full run, from the checkout root:
 

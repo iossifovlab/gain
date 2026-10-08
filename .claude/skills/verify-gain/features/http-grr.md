@@ -81,7 +81,7 @@ git -C test_fixtures/mini-GRR status --porcelain                                
   `127.0.0.1:28080:80`, and the default compose project name is shared
   with CI. The helpers never load that file. Each call passes
   `-f docker-compose.yaml -f scratch/http/compose.override.yaml
-  -p verify-gain-<run id>` through `vg_compose` in `common.sh`, so two
+  -p verify-gain-<run id>` through `verify_compose` in `verify-lib.sh`, so two
   runs get two projects and two ports.
 - **Relative paths.** Compose resolves a relative path in any `-f` file
   against the project directory, not against the override file. The

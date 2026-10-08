@@ -10,13 +10,13 @@
 #   output.tsv   readback.txt  readback_exit_code.txt
 # Exits 0 only when annotate_tabular exits 0 and the read-back passes.
 
-source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/app.sh"
 
-run_dir="$(vg_run_dir "${1:-}")"
+run_dir="$(verify_run_dir "${1:-}")"
 scratch="$run_dir/scratch"
 evidence="$run_dir/evidence/annotate-tabular"
-[[ -f "$scratch/grr.yaml" ]] || vg_die "drive: $scratch/grr.yaml is missing (run launch.sh)"
-[[ ! -e "$evidence" ]] || vg_die "drive: $evidence already exists; launch a new run"
+[[ -f "$scratch/grr.yaml" ]] || verify_die "drive: $scratch/grr.yaml is missing (run launch.sh)"
+[[ ! -e "$evidence" ]] || verify_die "drive: $evidence already exists; launch a new run"
 mkdir -p "$evidence"
 
 # Positions with distinct non-zero scores (chr1:1-5 scores 0, which would
@@ -24,35 +24,16 @@ mkdir -p "$evidence"
 printf 'chrom\tpos\nchr1\t6\nchr2\t3\nchr2\t8\n' > "$scratch/in.tsv"
 cp "$scratch/in.tsv" "$evidence/input.tsv"
 
-cmd=("$VG_VENV_BIN/annotate_tabular" "$scratch/in.tsv" mini_pipeline
-     -o "$scratch/out.tsv" -w "$scratch/work" -j 1)
-vg_isolated_env "$scratch"
-{
-    printf 'cd %q &&\n' "$scratch"
-    printf 'env'
-    printf ' %q' "${VG_ENV[@]}"
-    printf ' \\\n'
-    printf '%q ' "${cmd[@]}"
-    printf '\n'
-} > "$evidence/command.txt"
-
-rc=0
-(cd "$scratch" && vg_isolated "$scratch" "${cmd[@]}") \
-    > "$evidence/stdout.txt" 2> "$evidence/stderr.txt" || rc=$?
-echo "$rc" > "$evidence/exit_code.txt"
+verify_drive "$scratch" "$evidence" \
+    "$APP_VENV_BIN/annotate_tabular" "$scratch/in.tsv" mini_pipeline \
+    -o "$scratch/out.tsv" -w "$scratch/work" -j 1
 [[ -f "$scratch/out.tsv" ]] && cp "$scratch/out.tsv" "$evidence/output.tsv"
-
-if [[ "$rc" -ne 0 ]]; then
+if [[ "$VERIFY_RC" -ne 0 ]]; then
     tail -n 20 "$evidence/stderr.txt" >&2 || true
-    vg_die "drive: annotate_tabular exited $rc; evidence in $evidence; run doctor.sh"
+    verify_die "drive: annotate_tabular exited $VERIFY_RC; evidence in $evidence; run doctor.sh"
 fi
-[[ -f "$evidence/output.tsv" ]] || vg_die "drive: annotate_tabular exited 0 but wrote no $scratch/out.tsv"
+[[ -f "$evidence/output.tsv" ]] || verify_die "drive: annotate_tabular exited 0 but wrote no $scratch/out.tsv"
 
 # Second, independent read of the mutation: the kept output file.
-rb=0
-"$VG_SCRIPTS/readback-annotate-tabular.sh" "$evidence/output.tsv" \
-    > "$evidence/readback.txt" 2>&1 || rb=$?
-echo "$rb" > "$evidence/readback_exit_code.txt"
-cat "$evidence/readback.txt"
-[[ "$rb" -eq 0 ]] || vg_die "drive: read-back failed; evidence in $evidence"
+verify_readback "$evidence" "$VERIFY_SCRIPTS/readback-annotate-tabular.sh" "$evidence/output.tsv"
 echo "drive: PASS: evidence in $evidence"
