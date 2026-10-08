@@ -344,3 +344,28 @@ def test_a_position_column_requested_as_a_value_column_stays_raw_text(
     assert pos_end.dtype == np.int64
     assert list(zip(pos_begin, pos_end, strict=True)) == [
         (rec[POS_BEGIN], rec[POS_END]) for rec in records]
+
+
+@pytest.mark.parametrize("column", [6, -7])
+def test_a_requested_column_past_the_row_width_is_an_error(
+    make_table: MakeTable, column: int,
+) -> None:
+    table = make_table([HEADER, "chr1\t1\t1\ta1\tb1\tc1"])
+
+    with pytest.raises(
+        ValueError,
+        match=rf"column {column}.*6 fields.*chr1:1-10",
+    ):
+        list(table.get_region_value_arrays("chr1", 1, 10, [3, column], 100))
+
+
+@pytest.mark.parametrize("cell", ["5.0", "1e3"])
+def test_a_non_integer_position_cell_is_an_error(
+    make_table: MakeTable, cell: str,
+) -> None:
+    table = make_table([HEADER, f"chr1\t1\t{cell}\ta1\tb1\tc1"])
+
+    with pytest.raises(ValueError, match=r"chr1:1-10000"):
+        list(table.get_region_value_arrays("chr1", 1, 10000, [3], 100))
+    with pytest.raises(ValueError, match=cell):
+        list(table.get_records_in_region("chr1", 1, 10000))
