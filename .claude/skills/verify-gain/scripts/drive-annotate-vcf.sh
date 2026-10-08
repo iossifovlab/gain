@@ -10,13 +10,13 @@
 #   output.vcf   readback.txt  readback_exit_code.txt
 # Exits 0 only when annotate_vcf exits 0 and the read-back passes.
 
-source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/app.sh"
 
-run_dir="$(vg_run_dir "${1:-}")"
+run_dir="$(verify_run_dir "${1:-}")"
 scratch="$run_dir/scratch"
 evidence="$run_dir/evidence/annotate-vcf"
-[[ -f "$scratch/grr.yaml" ]] || vg_die "drive: $scratch/grr.yaml is missing (run launch.sh)"
-[[ ! -e "$evidence" ]] || vg_die "drive: $evidence already exists; launch a new run"
+[[ -f "$scratch/grr.yaml" ]] || verify_die "drive: $scratch/grr.yaml is missing (run launch.sh)"
+[[ ! -e "$evidence" ]] || verify_die "drive: $evidence already exists; launch a new run"
 mkdir -p "$evidence"
 
 # Positions with distinct non-zero scores (chr1:1-5 scores 0, which would
@@ -32,16 +32,16 @@ printf '%s\n' \
     > "$scratch/in.vcf"
 cp "$scratch/in.vcf" "$evidence/input.vcf"
 
-vg_drive_cli "$scratch" "$evidence" \
-    "$VG_VENV_BIN/annotate_vcf" "$scratch/in.vcf" mini_pipeline \
+verify_drive "$scratch" "$evidence" \
+    "$APP_VENV_BIN/annotate_vcf" "$scratch/in.vcf" mini_pipeline \
     -g "$scratch/grr.yaml" -o "$scratch/out.vcf" -w "$scratch/work" -j 1
 [[ -f "$scratch/out.vcf" ]] && cp "$scratch/out.vcf" "$evidence/output.vcf"
-if [[ "$VG_RC" -ne 0 ]]; then
+if [[ "$VERIFY_RC" -ne 0 ]]; then
     tail -n 20 "$evidence/stderr.txt" >&2 || true
-    vg_die "drive: annotate_vcf exited $VG_RC; evidence in $evidence; run doctor.sh"
+    verify_die "drive: annotate_vcf exited $VERIFY_RC; evidence in $evidence; run doctor.sh"
 fi
-[[ -f "$evidence/output.vcf" ]] || vg_die "drive: annotate_vcf exited 0 but wrote no $scratch/out.vcf"
+[[ -f "$evidence/output.vcf" ]] || verify_die "drive: annotate_vcf exited 0 but wrote no $scratch/out.vcf"
 
 # Second, independent read of the mutation: the kept output file.
-vg_readback "$evidence" "$VG_SCRIPTS/readback-annotate-vcf.sh" "$evidence/output.vcf"
+verify_readback "$evidence" "$VERIFY_SCRIPTS/readback-annotate-vcf.sh" "$evidence/output.vcf"
 echo "drive: PASS: evidence in $evidence"

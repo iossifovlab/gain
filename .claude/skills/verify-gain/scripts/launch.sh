@@ -6,17 +6,17 @@
 # test_fixtures/mini-GRR. Prints the run id on stdout (the last line).
 # ~/.grr_definition.yaml is neither read nor changed.
 
-source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/app.sh"
 
 run_id="${1-$(date +%Y%m%d-%H%M%S)-$$}"
-vg_check_run_id "$run_id"
-run_dir="$VG_VERIFY/$run_id"
-[[ ! -e "$run_dir" ]] || vg_die "run $run_dir already exists; pick another run id"
+verify_check_run_id "$run_id"
+run_dir="$VERIFY_ROOT/$run_id"
+[[ ! -e "$run_dir" ]] || verify_die "run $run_dir already exists; pick another run id"
 
 mkdir -p "$run_dir/scratch" "$run_dir/evidence"
 # A YAML single-quoted scalar (embedded ' doubled), so a checkout path
 # holding ': ', ' #' or a leading indicator character stays one value.
-grr_dir="$VG_CHECKOUT/test_fixtures/mini-GRR"
+grr_dir="$VERIFY_CHECKOUT/test_fixtures/mini-GRR"
 q="'"
 cat > "$run_dir/scratch/grr.yaml" <<YAML
 id: mini

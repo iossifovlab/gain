@@ -11,13 +11,13 @@
 #   bins.h5  work_dir_left.txt  readback.txt  readback_exit_code.txt
 # Exits 0 only when binning_tool exits 0 and the read-back passes.
 
-source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/app.sh"
 
-run_dir="$(vg_run_dir "${1:-}")"
+run_dir="$(verify_run_dir "${1:-}")"
 scratch="$run_dir/scratch"
 evidence="$run_dir/evidence/binning-tool"
-[[ -f "$scratch/grr.yaml" ]] || vg_die "drive: $scratch/grr.yaml is missing (run launch.sh)"
-[[ ! -e "$evidence" ]] || vg_die "drive: $evidence already exists; launch a new run"
+[[ -f "$scratch/grr.yaml" ]] || verify_die "drive: $scratch/grr.yaml is missing (run launch.sh)"
+[[ ! -e "$evidence" ]] || verify_die "drive: $evidence already exists; launch a new run"
 mkdir -p "$evidence"
 
 cat > "$scratch/bin.yaml" <<'YAML'
@@ -32,8 +32,8 @@ cp "$scratch/bin.yaml" "$evidence/bin.yaml"
 
 # binning_tool writes the HDF5 file beside the run definition and its work
 # directory beside the output by default. Pass both inside scratch.
-vg_drive_cli "$scratch" "$evidence" \
-    "$VG_VENV_BIN/binning_tool" "$scratch/bin.yaml" -g "$scratch/grr.yaml" \
+verify_drive "$scratch" "$evidence" \
+    "$APP_VENV_BIN/binning_tool" "$scratch/bin.yaml" -g "$scratch/grr.yaml" \
     -o "$scratch/bins.h5" -w "$scratch/bin-work" -j 1
 [[ -f "$scratch/bins.h5" ]] && cp "$scratch/bins.h5" "$evidence/bins.h5"
 # A work directory the tool created is removed on success.
@@ -42,12 +42,12 @@ if [[ -e "$scratch/bin-work" ]]; then
 else
     echo "removed: $scratch/bin-work" > "$evidence/work_dir_left.txt"
 fi
-if [[ "$VG_RC" -ne 0 ]]; then
+if [[ "$VERIFY_RC" -ne 0 ]]; then
     tail -n 20 "$evidence/stderr.txt" >&2 || true
-    vg_die "drive: binning_tool exited $VG_RC; evidence in $evidence; run doctor.sh"
+    verify_die "drive: binning_tool exited $VERIFY_RC; evidence in $evidence; run doctor.sh"
 fi
-[[ -f "$evidence/bins.h5" ]] || vg_die "drive: binning_tool exited 0 but wrote no $scratch/bins.h5"
+[[ -f "$evidence/bins.h5" ]] || verify_die "drive: binning_tool exited 0 but wrote no $scratch/bins.h5"
 
 # Second, independent read of the mutation: the kept HDF5 file.
-vg_readback "$evidence" "$VG_SCRIPTS/readback-binning-tool.sh" "$evidence/bins.h5"
+verify_readback "$evidence" "$VERIFY_SCRIPTS/readback-binning-tool.sh" "$evidence/bins.h5"
 echo "drive: PASS: evidence in $evidence"

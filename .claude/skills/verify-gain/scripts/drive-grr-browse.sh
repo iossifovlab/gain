@@ -11,26 +11,26 @@
 #   contents.json  readback.txt  readback_exit_code.txt
 # Exits 0 only when grr_browse exits 0 and the read-back passes.
 
-source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/app.sh"
 
-run_dir="$(vg_run_dir "${1:-}")"
+run_dir="$(verify_run_dir "${1:-}")"
 scratch="$run_dir/scratch"
-http_dir="$(vg_http_dir "$run_dir")"
+http_dir="$(app_http_dir "$run_dir")"
 evidence="$run_dir/evidence/grr-browse"
-[[ -f "$scratch/grr-http.yaml" ]] || vg_die "drive: $scratch/grr-http.yaml is missing (run launch-http-grr.sh)"
-[[ ! -e "$evidence" ]] || vg_die "drive: $evidence already exists; launch a new run"
+[[ -f "$scratch/grr-http.yaml" ]] || verify_die "drive: $scratch/grr-http.yaml is missing (run launch-http-grr.sh)"
+[[ ! -e "$evidence" ]] || verify_die "drive: $evidence already exists; launch a new run"
 mkdir -p "$evidence"
 cp "$scratch/grr-http.yaml" "$evidence/grr-http.yaml"
 cp "$http_dir/grr/.CONTENTS.json" "$evidence/contents.json"
 
-vg_drive_cli "$scratch" "$evidence" \
-    "$VG_VENV_BIN/grr_browse" -g "$scratch/grr-http.yaml"
-if [[ "$VG_RC" -ne 0 ]]; then
+verify_drive "$scratch" "$evidence" \
+    "$APP_VENV_BIN/grr_browse" -g "$scratch/grr-http.yaml"
+if [[ "$VERIFY_RC" -ne 0 ]]; then
     tail -n 20 "$evidence/stderr.txt" >&2 || true
-    vg_die "drive: grr_browse exited $VG_RC; evidence in $evidence; run doctor.sh"
+    verify_die "drive: grr_browse exited $VERIFY_RC; evidence in $evidence; run doctor.sh"
 fi
 
 # Second, independent read: the listing against the served .CONTENTS.json.
-vg_readback "$evidence" "$VG_SCRIPTS/readback-grr-browse.sh" \
+verify_readback "$evidence" "$VERIFY_SCRIPTS/readback-grr-browse.sh" \
     "$evidence/stdout.txt" "$evidence/contents.json"
 echo "drive: PASS: evidence in $evidence"
