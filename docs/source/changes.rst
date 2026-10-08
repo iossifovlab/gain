@@ -1,6 +1,114 @@
 Release Notes
 =============
 
+* 2026.10.0
+    * The allele plane: ``AlleleScore`` gains the exact-allele and
+      region reads ``get_allele_scores_for_allele`` /
+      ``get_allele_score_for_allele``,
+      ``get_allele_scores_for_allele_rows`` /
+      ``get_allele_score_for_allele_rows``,
+      ``get_allele_scores_in_region_rows`` /
+      ``get_allele_score_in_region_rows`` and
+      ``get_allele_scores_for_allele_agg`` /
+      ``get_allele_score_for_allele_agg``, beside the existing
+      ``get_allele_scores_in_region_agg``. The region ``_rows`` read
+      yields ``AlleleEntry`` named tuples (``pos``, ``ref``, ``alt``,
+      ``values``) (:issue:`1750`, :issue:`1751`, :issue:`1753`,
+      :issue:`1754`).
+    * An allele score declares ``allele_multiplicity: one | many``, a
+      new top-level resource-config key (default ``one``), reported by
+      ``AlleleScore.multiplicity``. The one-row read raises
+      ``AlleleMultiplicityError`` (a ``ValueError``) on a ``many``
+      resource (:issue:`1750`, :issue:`1753`).
+    * The allele statistics build checks ``allele_multiplicity``: a
+      ``one`` resource with a repeated allele key warns now and fails
+      from the enforcement release, GAIn ``2027.1.0``
+      (``ALLELE_MULTIPLICITY_ENFORCEMENT_RELEASE``). The one-row read
+      warns once per resource on the same repeat (:issue:`1752`,
+      :issue:`1753`, :issue:`1757`).
+    * ``AlleleScore.fetch_allele_scores`` and ``fetch_allele_records``
+      are removed; use the ``get_allele_scores_for_allele*`` reads. The
+      allele annotator's exact match reads through the plane: a ``many``
+      resource folds an allele's rows by each attribute's aggregator,
+      and an exact match requires the row's own position, so a row
+      that starts earlier and spans the position no longer matches
+      (:issue:`1755`).
+    * In its default ``allele`` mode the allele annotator routes by the
+      resource's ``allele_score_mode``: on a ``substitutions`` resource
+      an indel, complex or MNV allele gets the region fold over the
+      bases it covers instead of its own line's value (:issue:`1748`).
+    * ``binning_tool`` gains the ``fragment_score_binner`` kind: tracks
+      of fragment resources (single-cell ATAC samples and other
+      interval collections), pooled or per resource, grouped by a
+      constant, by a cell-metadata table or by the raw value of a
+      ``str`` score. ``aggregate.mode`` is ``fragment_start`` (the
+      default, counting fragments), ``fragment_length`` or
+      ``coverage_profile``, and ``aggregate.uncovered_value`` sets what
+      an uncovered base adds. ``FragmentScore.get_scores_in_bins`` is
+      the binned read under it (:issue:`1203`, :issue:`1740`,
+      :issue:`1741`, :issue:`1759`, :issue:`1793`, :issue:`1794`,
+      :issue:`1795`, :issue:`1796`, :issue:`1742`, :issue:`1798`).
+    * Binner entries take a ``name`` key that sets the base of their
+      track names, so two entries over the same resource no longer
+      collide (:issue:`1792`).
+    * The ``sum`` and ``product`` aggregators are added; they keep the
+      input's numeric type, and ``binning_tool`` accepts them on
+      position-score tracks (:issue:`1739`).
+    * ``gain.grr`` is the public import path for the GRR constructors,
+      the resource builders (``*_from_resource`` /
+      ``*_from_resource_id``) and their signature types, for scripts and
+      notebooks (:issue:`1765`).
+    * A full categorical histogram past ``UNIQUE_VALUES_LIMIT`` is
+      stored gzipped as ``statistics/histogram_<id>.json.gz`` beside the
+      unchanged truncated sidecar. A rebuild drops the other encoding's
+      leftover, and the build warns when the gzipped file has no
+      ``.dvc`` pointer. Existing plain files stay valid until the next
+      rebuild (:issue:`1733`, :issue:`1734`, :issue:`1735`).
+    * A statistics rebuild reports a stale DVC-tracked histogram whose
+      blob is not pulled instead of skipping it silently
+      (:issue:`1732`).
+    * Genome statistics pack whole contigs into batch tasks, so a GRR
+      of many-scaffold genomes builds a fraction of the tasks, and a
+      contig split across regions no longer loses the base pair at each
+      region boundary (:issue:`1788`).
+    * The ``--region-size`` help of the ``grr_manage`` statistics,
+      repair and info commands names the one-region-per-contig default
+      and says that ``0`` does not split (:issue:`357`).
+    * A categorical gene score over an int column with empty cells gets
+      its categorical histogram again instead of a null one, a
+      regression since 2026.7.3 (:issue:`1744`).
+    * ``GeneScoresDb`` and the gene ``ScoreDesc`` are removed; gpf now
+      owns them. ``GeneScore.build_score_help`` renders one score's
+      help (:issue:`1729`, :issue:`1730`).
+    * The deprecated ``annotate_columns`` alias is removed; use
+      ``annotate_tabular`` (:issue:`26`).
+    * ``prepare_tabular`` parses quoted input fields the same way
+      ``annotate_tabular`` does (:issue:`145`).
+    * A forward tabix region query that starts in a gap before the
+      buffer is answered from the buffer instead of a fresh fetch
+      (:issue:`340`).
+    * gainweb sends a pipeline's ``loading`` status before its outcome,
+      so a fast build no longer leaves the editor on ``loading``
+      (:issue:`176`).
+    * The web UI's pipeline editor validates a pipeline cleared before
+      the editor has loaded, keeps validating after a failed
+      pipeline-list refetch, and marks the config dirty on a keystroke
+      during a reload (:issue:`693`, :issue:`1779`, :issue:`1777`).
+    * The daily and monthly quota refreshes run one ``UPDATE`` per
+      quota table (:issue:`807`).
+    * The password-reset form no longer truncates the request path in
+      its template context (:issue:`784`).
+    * The test-data builders gain ``an_annotation_pipeline``, and the
+      table-score builders gain explicit position-column mappings and
+      ``default_annotation`` (:issue:`317`, :issue:`318`).
+    * The docs name ``aggregator`` as the resource-level aggregator key
+      and describe the 2026.7.6 cache relocation and its cleanup
+      (:issue:`1828`, :issue:`463`).
+    * **Fixed:** `the bug issues closed in this release
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+label%3Ab
+      ug+is%3Aclosed+reason%3Acompleted+closed%3A2026-09-28T13%3A35%3A56
+      Z..2026-10-08T07%3A30%3A31Z>`__.
+
 * 2026.9.7
     * The ``kubernetes`` named-cluster type is removed; an unknown
       cluster ``type`` fails with an error listing the supported types
