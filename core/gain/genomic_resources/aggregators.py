@@ -22,6 +22,9 @@ if TYPE_CHECKING:
 #: overflows.
 _FLOAT_MAX_EXPONENT = 1024
 
+#: The bits of a float mantissa: an int of this many bits converts exactly.
+_FLOAT_MANTISSA_BITS = sys.float_info.mant_dig
+
 
 def to_float64(value: Any) -> float:
     """Convert a numeric aggregation result to a float, saturating.
@@ -323,20 +326,19 @@ def _times_power(product: Any, value: Any, count: int) -> Any:
         power = math.inf
     if math.isfinite(power) and abs(power) >= sys.float_info.min:
         return _saturate_past_float_range(product * power)
-    magnitude = _magnitude_times_power(
-        abs(float(product)), abs(float(value)), count)
+    magnitude = _magnitude_times_power(abs(product), abs(value), count)
     return -magnitude if negative else magnitude
 
 
-def _magnitude_times_power(product: float, value: float, count: int) -> float:
-    """``product * value ** count`` for non-negative floats, saturated.
+def _magnitude_times_power(product: Any, value: Any, count: int) -> float:
+    """``product * value ** count`` for non-negative numbers, saturated.
 
     The running result and the squared base are each a mantissa and a
     binary exponent, so no partial power passes the float range.  Only
     the final :func:`math.ldexp` saturates to ``inf`` or rounds to 0.0.
     """
-    mantissa, exponent = math.frexp(product)
-    base_mantissa, base_exponent = math.frexp(value)
+    mantissa, exponent = _frexp(product)
+    base_mantissa, base_exponent = _frexp(value)
     while count:
         if count & 1:
             mantissa, shift = math.frexp(mantissa * base_mantissa)
@@ -349,6 +351,20 @@ def _magnitude_times_power(product: float, value: float, count: int) -> float:
         return math.ldexp(mantissa, exponent)
     except OverflowError:
         return math.inf
+
+
+def _frexp(value: Any) -> tuple[float, int]:
+    """:func:`math.frexp` of a non-negative number, an int past floats too.
+
+    An int that no float holds, like ``10 ** 400``, keeps its top bits in
+    the mantissa and the rest in the binary exponent.
+    """
+    if isinstance(value, numbers.Integral):
+        value = int(value)
+        shift = max(value.bit_length() - _FLOAT_MANTISSA_BITS, 0)
+        mantissa, exponent = math.frexp(float(value >> shift))
+        return mantissa, exponent + shift
+    return math.frexp(value)
 
 
 def _saturate_past_float_range(value: Any) -> Any:
@@ -377,6 +393,8 @@ class ProductAggregator(Aggregator):
 
     def _add_internal(self, value: Any, count: int) -> None:
         if value is None:
+            return
+        if count == 0:
             return
         if value == 0:
             # A 0 absorbs everything after it, a saturated infinity too:

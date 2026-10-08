@@ -365,3 +365,38 @@ def test_a_weighted_power_past_the_range_folds_into_a_finite_product(
     assert replicated != 0
     assert math.isfinite(replicated)
     assert weighted.get_final() == pytest.approx(replicated, rel=1e-9, abs=0)
+
+
+@pytest.mark.parametrize("records,expected", [
+    pytest.param([(10 ** 400, 1), (10 ** 400, 1)], math.inf,
+                 id="saturated-then-huge-int"),
+    pytest.param([(1.5, 1), (10 ** 400, 1)], math.inf,
+                 id="float-then-huge-int"),
+    pytest.param([(-1.5, 1), (10 ** 400, 1)], -math.inf,
+                 id="neg-float-then-huge-int"),
+    pytest.param([(1e-300, 1), (10 ** 400, 1)], 1e100,
+                 id="tiny-float-then-huge-int"),
+])
+def test_an_int_past_the_float_range_folds_into_a_float_product(
+    records: list[tuple[Any, int]], expected: float,
+) -> None:
+    """An int score column can hold an int no float holds, like 10**400.
+
+    Folded into a float product, it gives the exact product, saturated.
+    """
+    agg = ProductAggregator()
+
+    for value, count in records:
+        agg.add(value, count)
+
+    assert agg.get_final() == pytest.approx(expected, rel=1e-9, abs=0)
+
+
+def test_zero_copies_of_a_zero_leave_the_product_unchanged() -> None:
+    """A weighted ``add(0, 0)`` is no ``add`` at all, as replication gives."""
+    agg = ProductAggregator()
+    agg.add(5, 1)
+
+    agg.add(0, 0)
+
+    assert agg.get_final() == 5
