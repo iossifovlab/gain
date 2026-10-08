@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 
+from collections import Counter
 from dataclasses import fields
 
 import numpy
@@ -396,3 +397,80 @@ def test_a_cleared_aggregator_refolds_like_a_fresh_one(name: str) -> None:
     assert agg.get_final() == fresh.get_final()
     assert agg.get_used_count() == fresh.get_used_count()
     assert agg.get_total_count() == fresh.get_total_count()
+
+
+def _most_common(k: int, values: list[tuple[object, int]]) -> object:
+    agg = Aggregator.build(f"most_common({k})")
+    for value, count in values:
+        agg.add(value, count)
+    return agg.get_final()
+
+
+def test_most_common_ranks_values_by_weighted_frequency() -> None:
+    values = [("a", 1), ("b", 5), ("c", 2), ("a", 3)]
+
+    assert _most_common(2, values) == ["b", "a"]
+
+
+def test_most_common_breaks_a_tie_by_first_appearance() -> None:
+    values = [("a", 1), ("c", 2), ("b", 2)]
+
+    assert _most_common(3, values) == ["c", "b", "a"]
+
+
+def test_most_common_skips_none() -> None:
+    values = [(None, 10), ("a", 1), (None, 1), ("b", 2)]
+
+    assert _most_common(3, values) == ["b", "a"]
+
+
+def test_most_common_flattens_tuples_and_nested_lists() -> None:
+    values = [(("a", "b"), 1), (["b", ["c", None, ["b"]]], 2), ("a", 1)]
+
+    assert _most_common(2, values) == ["b", "a"]
+
+
+def test_most_common_of_no_values_is_an_empty_list() -> None:
+    assert _most_common(3, []) == []
+    assert _most_common(3, [(None, 4)]) == []
+
+
+@pytest.mark.parametrize("values", [
+    [("a", 1), ("b", 5), ("c", 2), ("a", 3)],
+    [("a", 1), ("c", 2), ("b", 2)],
+    [(None, 10), ("a", 1), (None, 1), ("b", 2)],
+    [(("a", "b"), 1), (["b", ["c", None, ["b"]]], 2), ("a", 1)],
+    [((1, 2), 3), (2, 1), (["x", ("y", 1)], 2)],
+    [],
+])
+@pytest.mark.parametrize("k", [1, 2, 3, 10])
+def test_most_common_is_the_top_of_a_counter_over_the_list_result(
+    values: list[tuple[object, int]], k: int,
+) -> None:
+    listed = Aggregator.build("list")
+    for value, count in values:
+        listed.add(value, count)
+    leaves = [leaf for leaf in listed.get_final() if leaf is not None]
+
+    expected = [value for value, _ in Counter(leaves).most_common(k)]
+
+    assert _most_common(k, values) == expected
+
+
+def test_most_common_applies_a_weight_without_a_loop_over_it() -> None:
+    assert _most_common(1, [("a", 10**12), ("b", 1)]) == ["a"]
+
+
+@pytest.mark.parametrize("spelling", [
+    "most_common",
+    "most_common()",
+    "most_common(0)",
+    "most_common(-1)",
+    "most_common(3.0)",
+    "most_common(abc)",
+])
+def test_most_common_refuses_a_k_that_is_not_a_positive_integer(
+    spelling: str,
+) -> None:
+    with pytest.raises((ValueError, TypeError)):
+        Aggregator.build(spelling)

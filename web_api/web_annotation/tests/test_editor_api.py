@@ -378,6 +378,16 @@ def test_aggregators(
     assert by_type["join"]["default_parameter_value"] == ","
 
 
+def test_aggregators_list_most_common_with_its_default_k(
+    clients: dict[str, Client],
+) -> None:
+    response = clients["anonymous"].get("/api/editor/aggregators")
+
+    by_type = {a["aggregator_type"]: a for a in response.json()}
+    assert by_type["most_common"]["parametrized"] is True
+    assert by_type["most_common"]["default_parameter_value"] == "3"
+
+
 @pytest.mark.parametrize("current_client", ["admin", "user", "anonymous"])
 def test_annotator_creation_workflow_with_aggregator(
     current_client: str, clients: dict[str, Client],

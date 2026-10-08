@@ -220,6 +220,38 @@ def test_no_queries_folds_every_score_with_its_own_default(
         values=(0.5, ["ac", "ac2"]), allele_keys=None)
 
 
+def test_a_string_score_configured_with_most_common_folds_to_a_ranked_list(
+    tmp_path: pathlib.Path, tabix: bool,
+) -> None:
+    """``id`` states ``aggregator: most_common(2)`` in the resource config."""
+    builder = (
+        an_allele_score()
+        .with_score("id", "str")
+        .with_aggregator("most_common(2)")
+        .with_allele_multiplicity("many")
+        .with_data("""
+            chrom  pos_begin  reference  alternative  id
+            1      10         A          C            rare
+            1      10         A          C            often
+            1      10         A          C            twice
+            1      10         A          C            often
+            1      10         A          C            twice
+            1      10         A          C            often
+            1      10         A          G            other
+        """))
+    if tabix:
+        builder = builder.with_tabix()
+    repo = a_grr().with_resource("ids", builder).build_repo(tmp_path)
+    allele_score = build_allele_score_from_resource(repo.get_resource("ids"))
+
+    with allele_score.open() as score:
+        aggregate = score.get_allele_scores_for_allele_agg(
+            "1", 10, "A", "C")
+
+    assert aggregate == AlleleAggregate(
+        values=(["often", "twice"],), allele_keys=None)
+
+
 @pytest.mark.parametrize(("allele_keys", "expected"), [
     ((), ("1:10:A:C",)),
     (("freq",), ("1:10:A:C:0.2", "1:10:A:C:0.5")),
