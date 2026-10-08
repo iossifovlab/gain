@@ -2,8 +2,10 @@
 
 Each file here describes one user-facing CLI feature of `gain` and how
 `verify-gain` drives it. The drive recipes and helpers are in `../SKILL.md`.
-Every script sources `scripts/app.sh` (the gain code), which sources
-`scripts/verify-lib.sh` (the copy of the canonical library; do not edit it).
+Every launch, drive, doctor and cleanup script sources `scripts/app.sh`
+(the gain code), which sources `scripts/verify-lib.sh` (the copy of the
+canonical library; do not edit it). The `readback-*.sh` scripts are
+standalone.
 
 ## Baseline preconditions
 
