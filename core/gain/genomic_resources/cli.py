@@ -546,6 +546,19 @@ def _build_content_file(
     proto.build_content_file(failed)
 
 
+# Appended to the stored md5 of an index that left a resource out. No
+# value of `md5_contents()` ends with it, so such an index never passes the
+# short-circuit check, and the next run rebuilds it (gain#1851).
+_INCOMPLETE_INDEX_SUFFIX = ":incomplete"
+
+
+def _index_contents_md5(current_md5: str, left_out: set[str]) -> str:
+    """Return the `contents_md5` value to store with the index."""
+    if left_out:
+        return current_md5 + _INCOMPLETE_INDEX_SUFFIX
+    return current_md5
+
+
 def _create_contents_db(
     proto: FsspecReadWriteProtocol,
     already_failed: frozenset[str] = frozenset(),
@@ -590,10 +603,12 @@ def _create_contents_db(
 
     collected: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
     failed: set[str] = set()
+    skipped: set[str] = set()
     for res in proto.get_all_resources():
         if res.resource_id in already_failed:
             # Its manifest could not be verified this run; indexing it
             # would read a resource the run is already failing on (#373).
+            skipped.add(res.resource_id)
             continue
         try:
             impl = build_resource_implementation(res)
@@ -647,7 +662,10 @@ def _create_contents_db(
         )
         conn.execute(
             "INSERT INTO contents_metadata (key, value) VALUES (?, ?)",
-            ("contents_md5", current_md5),
+            (
+                "contents_md5",
+                _index_contents_md5(current_md5, failed | skipped),
+            ),
         )
 
         if columns:

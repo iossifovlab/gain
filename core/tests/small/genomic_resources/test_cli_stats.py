@@ -9,8 +9,9 @@ from typing import Any
 
 import pytest
 import pytest_mock
+from gain.genomic_resources import cli as cli_module
 from gain.genomic_resources import register_implementation
-from gain.genomic_resources.cli import cli_manage
+from gain.genomic_resources.cli import _create_contents_db, cli_manage
 from gain.genomic_resources.genomic_scores import build_score_from_resource
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
@@ -33,6 +34,7 @@ from gain.genomic_resources.resource_implementation import (
     ResourceStatistics,
 )
 from gain.genomic_resources.testing import (
+    build_filesystem_test_protocol,
     build_filesystem_test_repository,
     setup_directories,
     setup_tabix,
@@ -1213,6 +1215,73 @@ def test_contents_db_rebuilt_when_contents_change(
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
 
     assert db_path.read_bytes() != first_bytes
+
+
+def _indexed_resource_ids(root: pathlib.Path) -> list[str]:
+    conn = build_filesystem_test_protocol(
+        root, repair=False).open_repository_metadata()
+    rows = conn.execute("SELECT id FROM contents").fetchall()
+    conn.close()
+    return sorted(str(row[0]) for row in rows)
+
+
+def _repo_repair_exit_code(root: pathlib.Path) -> int | str | None:
+    try:
+        cli_manage(["repo-repair", "-R", str(root), "-j", "1"])
+    except SystemExit as exit_:
+        return exit_.code
+    return 0
+
+
+def _fail_index_walk_for(
+    mocker: pytest_mock.MockerFixture, resource_id: str,
+) -> None:
+    """Fail only the FTS index walk for one resource, as on grr_sfari."""
+    real = cli_module.validate_index_columns
+
+    def failing(res_id: str, header: tuple[str, ...]) -> None:
+        if res_id == resource_id:
+            raise ValueError(f"cannot index {res_id}")
+        real(res_id, header)
+
+    mocker.patch.object(cli_module, "validate_index_columns", failing)
+
+
+def test_contents_db_rebuilt_once_a_failed_resource_can_be_indexed(
+    tmp_path: pathlib.Path,
+    register_test_implementation: None,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    """gain#1851: an index that left a resource out is never current."""
+    setup_directories(tmp_path, {
+        "one": {GR_CONF_FILE_NAME: "type: test_resource\n"},
+        "two": {GR_CONF_FILE_NAME: "type: test_resource\n"},
+    })
+    _fail_index_walk_for(mocker, "two")
+    assert _repo_repair_exit_code(tmp_path) == 1
+    assert _indexed_resource_ids(tmp_path) == ["one"]
+    mocker.stopall()
+
+    assert _repo_repair_exit_code(tmp_path) == 0
+    assert _indexed_resource_ids(tmp_path) == ["one", "two"]
+
+
+def test_contents_db_rebuilt_once_an_already_failed_resource_passes(
+    tmp_path: pathlib.Path, register_test_implementation: None,
+) -> None:
+    """gain#1851: a resource left out as already failed leaves a gap too."""
+    setup_directories(tmp_path, {
+        "one": {GR_CONF_FILE_NAME: "type: test_resource\n"},
+        "two": {GR_CONF_FILE_NAME: "type: test_resource\n"},
+    })
+    cli_manage(["repo-manifest", "-R", str(tmp_path)])
+    proto = build_filesystem_test_protocol(tmp_path, repair=False)
+    _create_contents_db(proto, frozenset({"two"}))
+    assert _indexed_resource_ids(tmp_path) == ["one"]
+
+    _create_contents_db(proto)
+
+    assert _indexed_resource_ids(tmp_path) == ["one", "two"]
 
 
 def test_stats_csi_indexed_position_score_matches_its_tbi_twin(
