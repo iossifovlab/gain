@@ -26,13 +26,6 @@ Release Notes
       (``ALLELE_MULTIPLICITY_ENFORCEMENT_RELEASE``). The one-row read
       warns once per resource on the same repeat (:issue:`1752`,
       :issue:`1753`, :issue:`1757`).
-    * Resources with repeated allele keys: ``hg38/scores/dbSNP``,
-      ``hg38/scores/dbNSFP4.9a``, ``hg38/scores/AlphaMissense``,
-      ``hg19/scores/AlphaMissense``, ``hg19/scores/MPC``, and the
-      gnomAD v2.1.1 liftover ``genomes`` and ``exomes``. Their owners
-      add ``allele_multiplicity: many`` to each, plus a per-score
-      ``aggregator:`` wherever the default (``max`` for numbers,
-      ``list`` for strings) is not wanted.
     * ``AlleleScore.fetch_allele_scores`` and ``fetch_allele_records``
       are removed; use the ``get_allele_scores_for_allele*`` reads. The
       allele annotator's exact match reads through the plane: a ``many``
