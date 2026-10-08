@@ -1,6 +1,7 @@
 # shellcheck shell=bash
-# The gain code of the verify-gain scripts. Sourced, not executed. Every
-# other script sources this file only; it sources verify-lib.sh, the copy
+# The gain code of the verify-gain scripts. Sourced, not executed. The
+# launch, drive, doctor and cleanup scripts source this file only; the
+# readback-*.sh scripts are standalone. It sources verify-lib.sh, the copy
 # of the canonical contract code (do not edit that copy).
 
 VERIFY_APP=gain

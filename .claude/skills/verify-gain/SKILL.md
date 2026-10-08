@@ -346,7 +346,7 @@ All in `.claude/skills/verify-gain/scripts/`, all executable:
 | `drive-grr-cache-repo.sh` | `drive-grr-cache-repo.sh <run id>` | drives `grr_cache_repo mini_pipeline` against the HTTP GRR, keeps the evidence, runs the read-back |
 | `readback-grr-cache-repo.sh` | `readback-grr-cache-repo.sh <cache dir> <GRR copy>` | `cmp`s the cached `mini_pipeline` and `mini_positionscore_bw` files with the copy |
 | `cleanup.sh` | `cleanup.sh <run id>` | `docker compose -p verify-gain-<run id> down` for an HTTP run, then removes `.verify/<run id>/scratch/` |
-| `app.sh` | sourced by the others | the gain code: sets `VERIFY_APP=gain` and sources `verify-lib.sh`; `app_env` adds `MPLCONFIGDIR`, `GRR_DEFINITION_FILE` and a closed proxy for proxy-honouring clients only; the `.venv` path, the compose file and override, the `httpd` image and its check, the ownership check of the project's containers |
+| `app.sh` | sourced by the launch, drive, doctor and cleanup scripts (the `readback-*.sh` scripts are standalone) | the gain code: sets `VERIFY_APP=gain` and sources `verify-lib.sh`; `app_env` adds `MPLCONFIGDIR`, `GRR_DEFINITION_FILE` and a closed proxy for proxy-honouring clients only; the `.venv` path, the compose file and override, the `httpd` image and its check, the ownership check of the project's containers |
 | `verify-lib.sh` | sourced by `app.sh` only | a copy of the canonical library of `create-verify-skill` (its first line names the commit; do not edit the copy): checkout discovery, run-id validation, the isolated environment (`HOME`, `TMPDIR`, `XDG_CACHE_HOME`, `XDG_CONFIG_HOME`), `verify_drive`, `verify_readback`, `verify_compose` and the free-project check |
 
 A full run, from the checkout root:
