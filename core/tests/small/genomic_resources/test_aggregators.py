@@ -10,6 +10,7 @@ from gain.genomic_resources.aggregators import (
     NUMERIC_ONLY_AGGREGATORS,
     Aggregator,
     AggregatorDefinition,
+    AggregatorSource,
     BoolAggregator,
     ConcatAggregator,
     CountAggregator,
@@ -324,7 +325,33 @@ def test_the_position_query_still_binds_three_positional_arguments() -> None:
     ) == ("s", "max", 0.0)
 
 
-def test_the_three_aggregator_spellings_collapse_to_one_name() -> None:
+@pytest.mark.parametrize(
+    ("spellings", "expected"),
+    [
+        pytest.param(
+            [
+                "join(|)",
+                {"aggregator_type": "join", "parameters": ["|"]},
+                AggregatorDefinition("join", ["|"]),
+            ],
+            "join(|)",
+            id="join",
+        ),
+        pytest.param(
+            [
+                "most_common(2)",
+                {"aggregator_type": "most_common", "parameters": ["2"]},
+                {"aggregator_type": "most_common", "parameters": [2]},
+                AggregatorDefinition("most_common", ["2"]),
+            ],
+            "most_common(2)",
+            id="most_common",
+        ),
+    ],
+)
+def test_the_three_aggregator_spellings_collapse_to_one_name(
+    spellings: list[AggregatorSource], expected: str,
+) -> None:
     """An attribute may write its aggregator three ways; a query holds one.
 
     An annotation pipeline accepts a name, a ``{aggregator_type,
@@ -333,18 +360,16 @@ def test_the_three_aggregator_spellings_collapse_to_one_name() -> None:
     ``ScoreAggregationQuery``'s -- is typed to the NAME alone, so the
     three have to meet somewhere.
 
-    ``join`` is the case that can tell them apart, being the only
-    parametrized aggregator: an unparametrized one collapses to the same
-    string however it was written, so a canonicalisation that dropped the
-    parameter would still look right for every other aggregator.
+    The parametrized aggregators, ``join`` and ``most_common``, are the
+    cases that can tell the spellings apart: an unparametrized one
+    collapses to the same string however it was written, so a
+    canonicalisation that dropped the parameter would still look right
+    for every other aggregator.  ``most_common`` also takes its ``k`` as
+    an int in the mapping form, which has to print as the same name.
     """
-    spellings = [
-        "join(|)",
-        {"aggregator_type": "join", "parameters": ["|"]},
-        AggregatorDefinition("join", ["|"]),
-    ]
-
-    assert [aggregator_name(s) for s in spellings] == ["join(|)"] * 3
+    assert [aggregator_name(s) for s in spellings] == (
+        [expected] * len(spellings)
+    )
 
 
 def test_numeric_aggregators_appear_first_in_dict() -> None:
