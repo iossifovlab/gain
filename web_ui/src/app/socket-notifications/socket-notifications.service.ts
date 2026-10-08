@@ -122,9 +122,10 @@ export class SocketNotificationsService {
   }
 
   private nextReconnectDelayMs(): number {
-    // First reconnection attempt: 200ms (allow session sync in CI). Then
-    // exponential backoff: 1s, 2s, 4s, 8s (max 10s). Past the cap, keep
-    // retrying on a longer cooldown rather than refusing, so a server that
+    // Delay sequence: 200ms, 1s, 2s, 4s, 8s, then 30s for every later attempt.
+    // The first attempt is fast to allow session sync in CI; the next ones
+    // back off exponentially. Once maxReconnectionAttempts have run, keep
+    // retrying on the cooldown rather than refusing, so a server that
     // eventually returns still yields a real open that resets the counter.
     if (this.reconnectionAttempts === 0) {
       return 200;
@@ -132,6 +133,6 @@ export class SocketNotificationsService {
     if (this.reconnectionAttempts >= this.maxReconnectionAttempts) {
       return this.reconnectionCooldownMs;
     }
-    return Math.min(1000 * Math.pow(2, this.reconnectionAttempts - 1), 10000);
+    return 1000 * Math.pow(2, this.reconnectionAttempts - 1);
   }
 }
