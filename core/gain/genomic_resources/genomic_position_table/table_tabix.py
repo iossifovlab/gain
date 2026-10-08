@@ -946,12 +946,13 @@ class TabixGenomicPositionTable(GenomicPositionTable):
                 key: key + width if key < 0 else key
                 for key in (*columns, self.pos_begin_key, self.pos_end_key)
             }
-            dtypes: dict[Hashable, Any] = {
-                index[col]: object for col in columns}
             pos_begin_key = index[self.pos_begin_key]
             pos_end_key = index[self.pos_end_key]
-            dtypes[pos_begin_key] = np.int64
-            dtypes[pos_end_key] = np.int64
+            # A position column that is also a requested value column stays
+            # raw ``str`` text; its position array is converted below.
+            dtypes: dict[Hashable, Any] = {
+                pos_begin_key: np.int64, pos_end_key: np.int64}
+            dtypes.update({index[col]: object for col in columns})
 
             frame = self._parse_batch(rows, dtypes, chrom, start, end)
             pos_begin = frame[pos_begin_key].to_numpy(dtype=np.int64)

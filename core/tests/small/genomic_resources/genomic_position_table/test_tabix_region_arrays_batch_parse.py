@@ -300,3 +300,28 @@ def test_a_negative_column_index_counts_from_the_last_field(
     assert _concat(batches, -1) == [rec[PAYLOAD][-1] for rec in records]
     assert _concat(batches, -1) == ["c1", "c2"]
     assert _concat(batches, 3) == ["a1", "a2"]
+
+
+@pytest.mark.parametrize("zero_based", [False, True])
+def test_a_position_column_requested_as_a_value_column_stays_raw_text(
+    make_table: MakeTable, zero_based: bool,
+) -> None:
+    table = make_table([
+        HEADER,
+        "chr1\t10\t12\tx\ty\tz",
+        "chr1\t11\t13\tx\ty\tz",
+    ], zero_based=zero_based)
+
+    batches = list(table.get_region_value_arrays("chr1", 1, 100, [1, 2, 0], 10))
+    records = list(table.get_records_in_region("chr1", 1, 100))
+
+    assert _concat(batches, 1) == ["10", "11"]
+    assert _concat(batches, 2) == ["12", "13"]
+    for col in (0, 1, 2):
+        assert _concat(batches, col) == [rec[PAYLOAD][col] for rec in records]
+    pos_begin = np.concatenate([b[0] for b in batches])
+    pos_end = np.concatenate([b[1] for b in batches])
+    assert pos_begin.dtype == np.int64
+    assert pos_end.dtype == np.int64
+    assert list(zip(pos_begin, pos_end, strict=True)) == [
+        (rec[POS_BEGIN], rec[POS_END]) for rec in records]
