@@ -1004,6 +1004,9 @@ class TabixGenomicPositionTable(GenomicPositionTable):
                 sep="\t",
                 header=None,
                 engine="c",
+                # A bare "\r" inside a field must not end a row: pysam
+                # splits rows on "\n" only.
+                lineterminator="\n",
                 usecols=list(dtypes),
                 dtype=dtypes,
                 na_filter=False,

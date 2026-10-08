@@ -250,7 +250,7 @@ def test_query_end_cuts_the_rows_at_a_batch_boundary(
     assert _concat(batches, 5) == ["c1", "c2", "c3", "c4"]
 
 
-CELLS = ["0.25", ".", "NA", "", "#x", '"q', "1e-3", " pad "]
+CELLS = ["0.25", ".", "NA", "", "#x", '"q', "1e-3", " pad ", "a\rb"]
 
 
 @pytest.mark.parametrize("zero_based", [False, True])
@@ -282,6 +282,25 @@ def test_arrays_match_the_per_record_read(
     for col in columns:
         column = np.concatenate([b[2][col] for b in batches])[kept]
         assert list(column) == [rec[PAYLOAD][col] for rec in records]
+
+
+def test_a_carriage_return_inside_a_cell_stays_in_the_cell(
+    make_table: MakeTable,
+) -> None:
+    # A bare carriage return must not split a row: the tail of this cell
+    # looks like a whole record and would shift every later row.
+    table = make_table([
+        "#chrom\tpos_begin\tpos_end\tv\tw\tx\ty",
+        "chr1\t5\t5\t1.0\rchr1\t6\t6\t9.0",
+        "chr1\t10\t10\t2.0\ta\tb\tc",
+        "chr1\t11\t11\t3.0\td\te\tf",
+    ])
+
+    batches = list(table.get_region_value_arrays("chr1", 1, 20, [3, 4], 100))
+
+    assert list(np.concatenate([b[0] for b in batches])) == [5, 10, 11]
+    assert _concat(batches, 3) == ["1.0\rchr1", "2.0", "3.0"]
+    assert _concat(batches, 4) == ["6", "a", "d"]
 
 
 def test_a_negative_column_index_counts_from_the_last_field(
