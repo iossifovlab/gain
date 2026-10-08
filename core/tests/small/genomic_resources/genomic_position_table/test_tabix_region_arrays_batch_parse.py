@@ -282,3 +282,21 @@ def test_arrays_match_the_per_record_read(
     for col in columns:
         column = np.concatenate([b[2][col] for b in batches])[kept]
         assert list(column) == [rec[PAYLOAD][col] for rec in records]
+
+
+def test_a_negative_column_index_counts_from_the_last_field(
+    make_table: MakeTable,
+) -> None:
+    table = make_table([
+        HEADER,
+        "chr1\t1\t1\ta1\tb1\tc1",
+        "chr1\t2\t2\ta2\tb2\tc2",
+    ])
+
+    batches = list(table.get_region_value_arrays("chr1", 1, 10, [-1, 3], 100))
+    records = list(table.get_records_in_region("chr1", 1, 10))
+
+    assert set(batches[0][2]) == {-1, 3}
+    assert _concat(batches, -1) == [rec[PAYLOAD][-1] for rec in records]
+    assert _concat(batches, -1) == ["c1", "c2"]
+    assert _concat(batches, 3) == ["a1", "a2"]

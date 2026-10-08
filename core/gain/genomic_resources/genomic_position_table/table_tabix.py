@@ -929,11 +929,6 @@ class TabixGenomicPositionTable(GenomicPositionTable):
                 f"{self.get_file_chromosomes()}")
 
         columns = list(value_columns)
-        pos_begin_key = self.pos_begin_key
-        pos_end_key = self.pos_end_key
-        dtypes: dict[Hashable, Any] = dict.fromkeys(columns, object)
-        dtypes[pos_begin_key] = np.int64
-        dtypes[pos_end_key] = np.int64
         fetch_start = None if start is None else start - 1
         raw_iter = self.pysam_file.fetch(
             reference=fchrom, start=fetch_start, parser=pysam.asTuple())
@@ -943,6 +938,20 @@ class TabixGenomicPositionTable(GenomicPositionTable):
             if not rows:
                 return
             exhausted = len(rows) < batch_size
+
+            # A negative index counts from the last field, as ``row[k]``
+            # does in the per-record read; ``read_csv`` needs it resolved.
+            width = len(rows[0])
+            index = {
+                key: key + width if key < 0 else key
+                for key in (*columns, self.pos_begin_key, self.pos_end_key)
+            }
+            dtypes: dict[Hashable, Any] = {
+                index[col]: object for col in columns}
+            pos_begin_key = index[self.pos_begin_key]
+            pos_end_key = index[self.pos_end_key]
+            dtypes[pos_begin_key] = np.int64
+            dtypes[pos_end_key] = np.int64
 
             frame = self._parse_batch(rows, dtypes, chrom, start, end)
             pos_begin = frame[pos_begin_key].to_numpy(dtype=np.int64)
@@ -960,7 +969,7 @@ class TabixGenomicPositionTable(GenomicPositionTable):
             truncated = cut < len(rows)
 
             cols = {
-                col: frame[col].to_numpy(dtype=object)[:cut]
+                col: frame[index[col]].to_numpy(dtype=object)[:cut]
                 for col in columns
             }
             yield pos_begin[:cut], pos_end[:cut], cols
