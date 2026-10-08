@@ -7,7 +7,8 @@ Each file here describes one user-facing CLI feature of `gain` and how
 
 - The checkout has its own `.venv` from `uv sync` (core + web_api), so
   `.venv/bin/annotate_tabular` and `.venv/bin/grr_browse` exist and come from
-  this checkout's source.
+  this checkout's source. The same holds for `annotate_vcf`, `grr_manage`
+  and `binning_tool`, and `.venv/bin/python` imports `h5py`.
 - `test_fixtures/mini-GRR` is initialised
   (`git submodule update --init test_fixtures/mini-GRR`); a fresh worktree has
   it empty.
@@ -40,10 +41,16 @@ Each file here describes one user-facing CLI feature of `gain` and how
   default (`0`, empty, `NA`), so a broken drive cannot pass by accident.
 - The run writes only inside `.verify/<run id>/`; after Cleanup,
   `git status --porcelain` shows no run output.
+- A drive that changes a GRR (`grr-manage`) works on a scratch copy of
+  mini-GRR, never on `test_fixtures/mini-GRR`; after every run,
+  `git -C test_fixtures/mini-GRR status --porcelain` prints nothing.
 
 ## Feature index
 
 | Feature file | CLI | GRR | Drive helper |
 | --- | --- | --- | --- |
 | [annotate-tabular.md](annotate-tabular.md) | `annotate_tabular` | mini-GRR, `mini_pipeline` | `scripts/drive-annotate-tabular.sh` |
+| [annotate-vcf.md](annotate-vcf.md) | `annotate_vcf` | mini-GRR, `mini_pipeline` | `scripts/drive-annotate-vcf.sh` |
+| [grr-manage.md](grr-manage.md) | `grr_manage`, `grr_browse` | a scratch copy of mini-GRR | `scripts/drive-grr-manage.sh` |
+| [binning-tool.md](binning-tool.md) | `binning_tool` | mini-GRR, `mini_genome` and `mini_positionscore_bw` | `scripts/drive-binning-tool.sh` |
 | [http-grr.md](http-grr.md) | `grr_browse`, `grr_cache_repo` | HTTP GRR over a scratch copy of mini-GRR, `mini_pipeline` | `scripts/launch-http-grr.sh`, `scripts/drive-grr-browse.sh`, `scripts/drive-grr-cache-repo.sh` |
