@@ -8,6 +8,7 @@ import math
 import numbers
 import operator
 import re
+import sys
 from collections import Counter
 from collections.abc import Generator, Iterable
 from dataclasses import dataclass, field
@@ -295,25 +296,59 @@ class SumAggregator(Aggregator):
         return self.total
 
 
-def _weighted_power(value: Any, count: int) -> Any:
-    """``value ** count``, saturated to a signed infinity past the range.
+def _times_power(product: Any, value: Any, count: int) -> Any:
+    """``product * value ** count``, as ``count`` multiplications give it.
 
-    The sign is the sign of the exact power: negative for a negative
-    ``value`` with an odd ``count``.  An int power that surely passes the
-    range is never built: ``3 ** 10**7`` is a 15.8-million-bit int.
+    Neither ``product`` nor ``value`` is 0.  The result is the exact
+    product while a float holds it: an exact int for an int ``product``
+    and ``value``, else a float.  Past the float range it is ``inf`` or
+    ``-inf`` by the sign of the exact product.  A float result too small
+    for a float is a signed 0.0.  A power past the float range alone is
+    never built: ``3 ** 10**7`` is a 15.8-million-bit int, and
+    ``3.0 ** 1000`` raises.
     """
-    surely_past = False
-    if isinstance(value, numbers.Integral):
-        value = int(value)
-        # |value| ** count >= 2 ** ((bit_length - 1) * count) > float max.
-        surely_past = (
-            (abs(value).bit_length() - 1) * count >= _FLOAT_MAX_EXPONENT)
-    if not surely_past:
-        try:
-            return _saturate_past_float_range(value ** count)
-        except OverflowError:
-            pass  # A float power past the range raises.
-    return -math.inf if value < 0 and count % 2 else math.inf
+    negative = (product < 0) != (value < 0 and count % 2 == 1)
+    if isinstance(product, numbers.Integral) \
+            and isinstance(value, numbers.Integral):
+        product, value = int(product), int(value)
+        # |product * value ** count| >= 2 ** this, past the float max.
+        low_bits = (abs(product).bit_length() - 1
+                    + (abs(value).bit_length() - 1) * count)
+        if low_bits >= _FLOAT_MAX_EXPONENT:
+            return -math.inf if negative else math.inf
+        return _saturate_past_float_range(product * value ** count)
+    try:
+        power = float(value) ** count
+    except OverflowError:
+        power = math.inf
+    if math.isfinite(power) and abs(power) >= sys.float_info.min:
+        return _saturate_past_float_range(product * power)
+    magnitude = _magnitude_times_power(
+        abs(float(product)), abs(float(value)), count)
+    return -magnitude if negative else magnitude
+
+
+def _magnitude_times_power(product: float, value: float, count: int) -> float:
+    """``product * value ** count`` for non-negative floats, saturated.
+
+    The running result and the squared base are each a mantissa and a
+    binary exponent, so no partial power passes the float range.  Only
+    the final :func:`math.ldexp` saturates to ``inf`` or rounds to 0.0.
+    """
+    mantissa, exponent = math.frexp(product)
+    base_mantissa, base_exponent = math.frexp(value)
+    while count:
+        if count & 1:
+            mantissa, shift = math.frexp(mantissa * base_mantissa)
+            exponent += base_exponent + shift
+        count >>= 1
+        if count:
+            base_mantissa, shift = math.frexp(base_mantissa * base_mantissa)
+            base_exponent = 2 * base_exponent + shift
+    try:
+        return math.ldexp(mantissa, exponent)
+    except OverflowError:
+        return math.inf
 
 
 def _saturate_past_float_range(value: Any) -> Any:
@@ -323,20 +358,6 @@ def _saturate_past_float_range(value: Any) -> Any:
     except OverflowError:
         return to_float64(value)
     return value
-
-
-def _times_contribution(product: Any, contribution: Any) -> Any:
-    """``product * contribution`` for a non-zero product and value.
-
-    A float power of a value in (-1, 1) can underflow to a signed 0.0.
-    A saturated ``product`` keeps its infinity then, with the sign of the
-    exact product: one-at-a-time multiplication never leaves an infinity.
-    """
-    if contribution == 0 and isinstance(product, float) \
-            and math.isinf(product):
-        return math.copysign(
-            math.inf, product * math.copysign(1.0, contribution))
-    return _saturate_past_float_range(product * contribution)
 
 
 class ProductAggregator(Aggregator):
@@ -360,13 +381,14 @@ class ProductAggregator(Aggregator):
     def _add_internal(self, value: Any, count: int) -> None:
         if value is None:
             return
-        contribution = _weighted_power(value, count)
-        if self.product is None or value == 0:
-            self.product = contribution
-        elif self.product != 0:
+        if value == 0:
             # A 0 absorbs everything after it, a saturated infinity too:
             # the exact product is 0, where ``inf * 0`` is NaN.
-            self.product = _times_contribution(self.product, contribution)
+            self.product = value
+        elif self.product is None:
+            self.product = _times_power(1, value, count)
+        elif self.product != 0:
+            self.product = _times_power(self.product, value, count)
         self.used_count += count
 
     def _clear_internal(self) -> None:

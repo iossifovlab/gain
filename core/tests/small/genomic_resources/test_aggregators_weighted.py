@@ -218,7 +218,7 @@ def test_weighted_mean_is_closer_to_the_exact_mean_than_replication() -> None:
     # The two agree to well within any tolerance a consumer could care
     # about -- but they are *not* the same float, and this is the whole
     # of the observable change.
-    assert weighted == pytest.approx(replicated, rel=1e-9)
+    assert weighted == pytest.approx(replicated, rel=1e-9, abs=0)
     assert weighted != replicated
 
 
@@ -336,3 +336,32 @@ def test_a_power_that_underflows_is_not_a_held_zero(
         [value for value, count in records for _ in range(count)])
 
     assert weighted.get_final() == replicated
+
+
+@pytest.mark.parametrize("records", [
+    pytest.param([(0.5, 1000), (3.0, 1000)], id="tiny-then-huge"),
+    pytest.param([(0.001, 100), (3.0, 1000)], id="tinier-then-huge"),
+    pytest.param([(3.0, 600), (0.5, 1100)], id="large-then-tiny"),
+    pytest.param([(-3.0, 601), (0.5, 1100)], id="neg-large-then-tiny"),
+    pytest.param([(1e300, 1), (0.5, 2000)], id="huge-value-then-tiny"),
+    pytest.param([(1e-300, 1), (3.0, 1000)], id="tiny-value-then-huge"),
+])
+def test_a_weighted_power_past_the_range_folds_into_a_finite_product(
+    records: list[tuple[float, int]],
+) -> None:
+    """A run's power alone can pass the float range, the product not.
+
+    ``3.0 ** 1000`` overflows and ``0.5 ** 1100`` underflows, but the
+    product with the records before it is a finite, non-zero float.
+    The weighted ``add`` gives what replication gives.
+    """
+    weighted = ProductAggregator()
+    for value, count in records:
+        weighted.add(value, count)
+
+    replicated = ProductAggregator().aggregate(
+        [value for value, count in records for _ in range(count)])
+
+    assert replicated != 0
+    assert math.isfinite(replicated)
+    assert weighted.get_final() == pytest.approx(replicated, rel=1e-9, abs=0)
