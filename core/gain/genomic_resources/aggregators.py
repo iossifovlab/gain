@@ -5,6 +5,7 @@ from __future__ import annotations
 import abc
 import functools
 import math
+import numbers
 import operator
 import re
 from collections import Counter
@@ -14,6 +15,26 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 if TYPE_CHECKING:
     from gain.genomic_resources.score_def import ScoreValue
+
+
+#: The binary exponent past which no float exists: ``float(2 ** 1024)``
+#: overflows.
+_FLOAT_MAX_EXPONENT = 1024
+
+
+def to_float64(value: Any) -> float:
+    """Convert a numeric aggregation result to a float, saturating.
+
+    The one saturation rule for every float store of a ``sum`` or a
+    ``product``: an exact int past the float range (about 1.8e308) has no
+    float and becomes ``inf`` or ``-inf`` by its sign, as a float result
+    past the range already is.  The sign comes from a comparison, not
+    from ``math.copysign``: that converts the int and overflows again.
+    """
+    try:
+        return float(value)
+    except OverflowError:
+        return math.inf if value > 0 else -math.inf
 
 
 class Aggregator(abc.ABC):
@@ -274,11 +295,48 @@ class SumAggregator(Aggregator):
         return self.total
 
 
+def _weighted_power(value: Any, count: int) -> Any:
+    """``value ** count``, saturated to a signed infinity past the range.
+
+    The sign is the sign of the exact power: negative for a negative
+    ``value`` with an odd ``count``.  An int power that surely passes the
+    range is never built: ``3 ** 10**7`` is a 15.8-million-bit int.
+    """
+    surely_past = False
+    if isinstance(value, numbers.Integral):
+        value = int(value)
+        # |value| ** count >= 2 ** ((bit_length - 1) * count) > float max.
+        surely_past = (
+            (abs(value).bit_length() - 1) * count >= _FLOAT_MAX_EXPONENT)
+    if not surely_past:
+        try:
+            return _saturate_past_float_range(value ** count)
+        except OverflowError:
+            pass  # A float power past the range raises.
+    return -math.inf if value < 0 and count % 2 else math.inf
+
+
+def _saturate_past_float_range(value: Any) -> Any:
+    """``value`` unchanged, or a signed infinity when no float holds it."""
+    try:
+        float(value)
+    except OverflowError:
+        return to_float64(value)
+    return value
+
+
 class ProductAggregator(Aggregator):
     """Aggregator that multiplies the values it is given.
 
     The output keeps the input's type -- an ``int`` score multiplies to an
     ``int`` -- and it is ``None`` when no non-``None`` value was added.
+
+    **Past the float range.**  A product past about 1.8e308 saturates to
+    ``inf`` or ``-inf`` by the sign of the exact product, an exact int
+    one included: an int stays exact only while a float can hold it.  A
+    weighted ``add(value, count)`` gives what ``count`` calls of
+    ``add(value)`` give, in bounded time and memory.  A product that holds
+    a ``0`` is ``0``, in any order and after a saturation too (gain#1766).
     """
 
     def __init__(self) -> None:
@@ -288,11 +346,14 @@ class ProductAggregator(Aggregator):
     def _add_internal(self, value: Any, count: int) -> None:
         if value is None:
             return
-        contribution = value ** count
-        if self.product is None:
+        contribution = _weighted_power(value, count)
+        if self.product is None or contribution == 0:
             self.product = contribution
-        else:
-            self.product *= contribution
+        elif self.product != 0:
+            # A 0 absorbs everything after it, a saturated infinity too:
+            # the exact product is 0, where ``inf * 0`` is NaN.
+            self.product = _saturate_past_float_range(
+                self.product * contribution)
         self.used_count += count
 
     def _clear_internal(self) -> None:

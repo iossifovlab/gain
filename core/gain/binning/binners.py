@@ -22,6 +22,7 @@ from gain.genomic_resources.aggregators import (
     AggregatorDefinition,
     PositionScoreAggregationQuery,
     get_aggregator_class,
+    to_float64,
     validate_aggregator,
 )
 from gain.genomic_resources.genomic_scores.position import PositionScore
@@ -302,6 +303,9 @@ class PositionScoreBinding:
         the semantic reference for the global grid, the boundary split and
         first-record-wins.  A bin no record covers comes back ``None`` and
         is stored as NaN, unless the track's replacement made it count.
+        An exact int past the float range (an int ``sum`` or ``product``)
+        is stored as a signed infinity: see
+        :func:`~gain.genomic_resources.aggregators.to_float64`.
 
         Unconditionally, a chromosome the score never mentions included:
         that read folds an absent contig as one uncovered run of its own
@@ -312,7 +316,7 @@ class PositionScoreBinding:
         """
         track = self.track
         column = np.fromiter(
-            (np.nan if value is None else value
+            (np.nan if value is None else to_float64(value)
              for _, _, value in self.score.get_score_in_bins(
                  region.chrom, region.start, region.stop, bin_size,
                  score=track.score_id,
