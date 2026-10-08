@@ -504,9 +504,6 @@ class ListAggregator(Aggregator):
         super().__init__()
         self.values: list[tuple[Any, int]] = []
 
-    def _flatten(self, items: Any) -> Generator[Any, None, None]:
-        return _flatten(items)
-
     def _add_internal(self, value: Any, count: int) -> None:
         if value is not None:
             self.values.append((value, count))
@@ -516,7 +513,7 @@ class ListAggregator(Aggregator):
         self.values.clear()
 
     def get_final(self) -> Any:
-        return list(self._flatten(
+        return list(_flatten(
             value
             for value, count in self.values
             for _ in range(count)
