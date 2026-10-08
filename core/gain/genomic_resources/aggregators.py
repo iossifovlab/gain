@@ -574,8 +574,10 @@ class MostCommonAggregator(Aggregator):
     """The ``k`` most frequent values, most frequent first.
 
     Configured as ``most_common(k)``; ``k`` is required and must be a
-    positive integer.  Values rank by their weighted frequency, and a tie
-    keeps the order in which the values first appeared -- the order of
+    positive integer, given as a string or, from the dict form's
+    ``parameters``, as an ``int``.  Values rank by their weighted
+    frequency, and a tie keeps the order in which the values first
+    appeared -- the order of
     :meth:`collections.Counter.most_common`.  A multi-valued input is
     flattened as ``list`` flattens it, and ``None`` is skipped, so the
     answer is the first ``k`` keys of
@@ -586,16 +588,22 @@ class MostCommonAggregator(Aggregator):
     default_parameter: ClassVar[str | None] = "3"
     output_value_type: ClassVar[str | None] = "list"
 
-    def __init__(self, k: str) -> None:
+    def __init__(self, k: str | int) -> None:
         super().__init__()
         self.k = self._parse_k(k)
         self.counter: Counter = Counter()
 
     @staticmethod
-    def _parse_k(k: str) -> int:
+    def _parse_k(k: str | int) -> int:
+        if isinstance(k, int) and not isinstance(k, bool):
+            if k <= 0:
+                raise ValueError(
+                    f"most_common(k) needs a positive integer k, got {k!r}")
+            return k
         if not isinstance(k, str):
             raise TypeError(
-                f"most_common expects its k as a string, got {k!r}")
+                f"most_common expects its k as a string or an int, "
+                f"got {k!r}")
         if not k.strip().isdecimal() or int(k) <= 0:
             raise ValueError(
                 f"most_common(k) needs a positive integer k, got {k!r}")

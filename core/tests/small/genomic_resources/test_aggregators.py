@@ -474,3 +474,21 @@ def test_most_common_refuses_a_k_that_is_not_a_positive_integer(
 ) -> None:
     with pytest.raises((ValueError, TypeError)):
         Aggregator.build(spelling)
+
+
+def test_most_common_accepts_an_int_k_from_the_dict_form() -> None:
+    agg = Aggregator.build(
+        {"aggregator_type": "most_common", "parameters": [2]})
+    for value, count in [("a", 1), ("b", 5), ("c", 2), ("a", 3)]:
+        agg.add(value, count)
+
+    assert agg.get_final() == ["b", "a"]
+
+
+@pytest.mark.parametrize("k", [0, -1, True, 3.0])
+def test_most_common_refuses_a_dict_form_k_that_is_not_a_positive_int(
+    k: object,
+) -> None:
+    with pytest.raises((ValueError, TypeError)):
+        Aggregator.build(
+            {"aggregator_type": "most_common", "parameters": [k]})
