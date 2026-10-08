@@ -991,12 +991,12 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         Only the columns in ``dtypes`` are parsed.  A batch whose rows do not
         all have the same number of fields raises ``ValueError``.
         """
-        widths = np.fromiter(map(len, rows), dtype=np.int64, count=len(rows))
+        widths = set(map(len, rows))
         region = f"{chrom}:{start}-{end}"
-        if bool((widths != widths[0]).any()):
+        if len(widths) > 1:
             raise ValueError(
                 f"ragged rows in the tabix region {region}: a batch holds "
-                f"rows of {sorted(set(widths.tolist()))} fields")
+                f"rows of {sorted(widths)} fields")
         text = "\n".join(map(str, rows))
         try:
             return pd.read_csv(
