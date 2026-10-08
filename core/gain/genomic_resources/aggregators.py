@@ -385,6 +385,12 @@ class ProductAggregator(Aggregator):
     weighted ``add(value, count)`` gives what ``count`` calls of
     ``add(value)`` give, in bounded time and memory.  A product that holds
     a ``0`` is ``0``, in any order and after a saturation too.
+
+    The running product decides the result, as in repeated multiplication:
+    once it passes the float range it stays saturated, and once it
+    underflows it stays 0.  The result therefore depends on the input
+    order: ``(3.0, 1000)`` then ``(0.5, 2000)`` gives ``inf``, the reverse
+    order gives 0.0, and the exact product is about 1e-125.
     """
 
     def __init__(self) -> None:

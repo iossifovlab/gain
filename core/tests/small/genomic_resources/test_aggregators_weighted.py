@@ -400,3 +400,24 @@ def test_zero_copies_of_a_zero_leave_the_product_unchanged() -> None:
     agg.add(0, 0)
 
     assert agg.get_final() == 5
+
+
+@pytest.mark.parametrize("records,expected", [
+    pytest.param([(3.0, 1000), (0.5, 2000)], math.inf, id="huge-first"),
+    pytest.param([(0.5, 2000), (3.0, 1000)], 0.0, id="tiny-first"),
+])
+def test_a_saturated_running_product_stays_saturated(
+    records: list[tuple[float, int]], expected: float,
+) -> None:
+    """The running product decides the result, so the order matters.
+
+    The exact product of these records is about 1e-125, a finite float.
+    A running product past the float range stays ``inf``, and a running
+    product that underflows stays 0, as repeated multiplication gives.
+    """
+    agg = ProductAggregator()
+
+    for value, count in records:
+        agg.add(value, count)
+
+    assert agg.get_final() == expected
