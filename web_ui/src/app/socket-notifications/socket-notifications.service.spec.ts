@@ -232,29 +232,16 @@ describe('SocketNotificationsService', () => {
       service = new SocketNotificationsService();
       service.ensureConnected();
 
-      // Attempt 1: 200ms (fast first retry for CI session sync).
-      service.reopenConnection().subscribe();
-      let before = calls();
-      jest.advanceTimersByTime(199);
-      expect(calls()).toBe(before);
-      jest.advanceTimersByTime(1);
-      expect(calls()).toBe(before + 1);
-
-      // Attempt 2: exponential backoff -> 1000ms.
-      service.reopenConnection().subscribe();
-      before = calls();
-      jest.advanceTimersByTime(999);
-      expect(calls()).toBe(before);
-      jest.advanceTimersByTime(1);
-      expect(calls()).toBe(before + 1);
-
-      // Attempt 3: 2000ms.
-      service.reopenConnection().subscribe();
-      before = calls();
-      jest.advanceTimersByTime(1999);
-      expect(calls()).toBe(before);
-      jest.advanceTimersByTime(1);
-      expect(calls()).toBe(before + 1);
+      // 200ms first (fast retry for CI session sync), then exponential
+      // backoff 1s, 2s, 4s, 8s, then the 30s cooldown once 5 attempts ran.
+      for (const delayMs of [200, 1000, 2000, 4000, 8000, 30000]) {
+        service.reopenConnection().subscribe();
+        const before = calls();
+        jest.advanceTimersByTime(delayMs - 1);
+        expect(calls()).toBe(before);
+        jest.advanceTimersByTime(1);
+        expect(calls()).toBe(before + 1);
+      }
     });
 
     it('keeps retrying at a capped cooldown after the cap instead of refusing', () => {
