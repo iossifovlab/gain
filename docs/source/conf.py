@@ -55,6 +55,7 @@ extensions = [
 # a suffix; each target is relative to the old page's URL.
 redirects = {
     "binning": "cli/binning_tool.html",
+    "gain_development": "python_interface.html",
 }
 
 # Why ``sphinx.ext.autosectionlabel`` is absent (gain#1183).  It promotes every

@@ -706,7 +706,7 @@ forwarders since gain#827 -- the first was exactly
 and the second forwarded to the first -- and both raised
 ``DeprecationWarning`` on every call.  The one stated reason to keep the names,
 the getting-started guide teaching them (gain#1383), went with this change:
-``docs/source/python_interface.rst`` now reads through
+``docs/source/development/overview.rst`` now reads through
 ``fetch_region_segments_scores`` and clips in the loop.
 
 What a migrating caller has to know: ``fetch_region_segments_scores``
