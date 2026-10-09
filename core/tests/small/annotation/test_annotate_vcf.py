@@ -5,6 +5,7 @@ import textwrap
 from typing import Any
 
 import gain.annotation.annotate_vcf
+import numpy as np
 import pysam
 import pytest
 import pytest_mock
@@ -1746,6 +1747,41 @@ def test_annotate_vcf_overflow_warns_once_per_attribute(
     assert str(2**31) in message
 
 
+@pytest.mark.parametrize("batch_size", [0, 2])
+def test_annotate_vcf_integer_declaration_writes_integral_floats(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+    mocker: pytest_mock.MockerFixture,
+    batch_size: int,
+) -> None:
+    values = [5.0, np.float32(6.0), np.int64(7), np.float64(8.0)]
+    in_file = _overflow_vcf(tmp_path, "Integer", len(values))
+
+    out_file = _annotate_with_scores(
+        annotate_directory_fixture, tmp_path, in_file, values, mocker,
+        batch_size=batch_size)
+
+    with pysam.VariantFile(str(out_file)) as vcf_file:
+        result = [rec.info["score"] for rec in vcf_file.fetch()]
+    assert result == [(5,), (6,), (7,), (8,)]
+
+
+def test_annotate_vcf_float_declaration_huge_int_writes_missing_value(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    in_file = _overflow_vcf(tmp_path, "Float", 2)
+
+    out_file = _annotate_with_scores(
+        annotate_directory_fixture, tmp_path, in_file,
+        [10**400, 2.5], mocker, batch_size=0)
+
+    with pysam.VariantFile(str(out_file)) as vcf_file:
+        result = [rec.info["score"] for rec in vcf_file.fetch()]
+    assert result == [(None,), (2.5,)]
+
+
 @pytest.mark.parametrize(("value", "info_type", "expected"), [
     (5, "Integer", True),
     (2**31 - 1, "Integer", True),
@@ -1755,6 +1791,17 @@ def test_annotate_vcf_overflow_warns_once_per_attribute(
     (1.5, "Integer", False),
     (float("inf"), "Integer", False),
     (float("nan"), "Integer", False),
+    (5.0, "Integer", True),
+    (-3.0, "Integer", True),
+    (2.0**31, "Integer", False),
+    (np.float64(5.0), "Integer", True),
+    (np.float32(5.0), "Integer", True),
+    (np.float32(1.5), "Integer", False),
+    (np.int64(5), "Integer", True),
+    (np.int64(2**40), "Integer", False),
+    (10**400, "Float", False),
+    (np.float32(1.5), "Float", True),
+    (np.int64(5), "Float", True),
     ("5", "Integer", False),
     (True, "Integer", False),
     (2**40, "Float", True),

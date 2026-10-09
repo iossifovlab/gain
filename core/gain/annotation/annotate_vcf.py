@@ -225,20 +225,38 @@ _VCF_INT_MIN = -(2**31) + 1
 _VCF_INT_MAX = 2**31 - 1
 
 
-def _fits_info_type(value: Any, info_type: str | None) -> bool:
-    """Tell whether a value fits a declared VCF INFO type.
+def _coerce_info_value(
+    value: Any, info_type: str | None,
+) -> tuple[bool, Any]:
+    """Convert a value to a declared VCF INFO type.
 
-    Only ``Integer`` and ``Float`` have limits. Every other type, and the
-    missing value ``None``, fit.
+    Return ``(True, converted)`` when the value fits and ``(False, None)``
+    when it does not. Only ``Integer`` and ``Float`` have limits. Every
+    other type, and the missing value ``None``, fit unchanged. An
+    ``Integer`` accepts an integral float such as ``5.0`` and converts it
+    to ``int``.
     """
     if value is None or info_type not in {"Integer", "Float"}:
-        return True
-    if isinstance(value, bool):
-        return False
-    if info_type == "Integer":
-        return isinstance(value, numbers.Integral) \
-            and _VCF_INT_MIN <= int(value) <= _VCF_INT_MAX
-    return isinstance(value, numbers.Real)
+        return True, value
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        return False, None
+    try:
+        if info_type == "Float":
+            return True, float(value)
+        if not isinstance(value, numbers.Integral) \
+                and not float(value).is_integer():
+            return False, None
+        integer = int(value)
+    except OverflowError:
+        return False, None
+    if _VCF_INT_MIN <= integer <= _VCF_INT_MAX:
+        return True, integer
+    return False, None
+
+
+def _fits_info_type(value: Any, info_type: str | None) -> bool:
+    """Tell whether a value fits a declared VCF INFO type."""
+    return _coerce_info_value(value, info_type)[0]
 
 
 class _VCFWriter(Filter):
@@ -325,15 +343,17 @@ class _VCFWriter(Filter):
                 info_type = vcf_var.header.info[attribute.name].type
                 if info_type == "String":
                     value = _VCFWriter._convert_to_string(value)
-                elif not _fits_info_type(value, info_type):
-                    if attribute.name not in overflow_warned:
+                else:
+                    fits, converted = _coerce_info_value(value, info_type)
+                    if not fits \
+                            and attribute.name not in overflow_warned:
                         overflow_warned.add(attribute.name)
                         logger.warning(
                             "attribute %s is declared as %s in the input "
                             "VCF and the value %r does not fit; writing "
                             "the missing value for it",
                             attribute.name, info_type, value)
-                    value = None
+                    value = converted
                 buff.append(value)
         # If the all values for a given attribute are
         # empty (i.e. - "."), then that attribute has no
