@@ -41,5 +41,5 @@ A preprint describing GAIn is available on `bioRxiv <https://doi.org/10.64898/20
     web_interface
     plugin_library
     development/overview
-    gain_development
+    python_interface
     changes
