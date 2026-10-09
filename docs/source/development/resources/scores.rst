@@ -1,5 +1,5 @@
-Scores
-======
+Genomic scores
+==============
 
 A genomic score attaches values to places in the genome. GAIn has three kinds,
 and which one a resource is decides what "a place" means:
