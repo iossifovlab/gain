@@ -1719,5 +1719,6 @@ def test_annotate_vcf_override_keeps_single_fileformat_line(
         str(in_file), pipeline, str(out_file), {"batch_size": 0})
 
     header_lines = out_file.read_text().splitlines()
-    assert sum(
-        line.startswith("##fileformat=") for line in header_lines) == 1
+    assert [
+        line for line in header_lines if line.startswith("##fileformat=")
+    ] == ["##fileformat=VCFv4.3"]

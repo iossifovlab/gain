@@ -5,6 +5,7 @@ import gc
 import itertools
 import os
 import sys
+import tempfile
 import traceback
 from collections.abc import Collection, Iterable, Sequence
 from contextlib import chdir, closing
@@ -284,22 +285,25 @@ class _VCFWriter(Filter):
         """Return a header without the INFO declarations of the names.
 
         pysam cannot replace or remove an INFO declaration in place, so
-        this rebuilds the header from the records and the samples. A new
-        header carries its own ``fileformat`` line, so the rebuild skips
-        the input one.
+        this writes the header text without those lines to a temporary
+        file and reads the header back. The ``fileformat`` version of the
+        input stays the same.
         """
         if not any(name in header.info for name in names):
             return header
-        new_header = VariantHeader()
-        for record in header.records:
-            if record.type == "INFO" and record.get("ID") in names:
-                continue
-            if record.type == "GENERIC" and record.key == "fileformat":
-                continue
-            new_header.add_record(record)
-        for sample in header.samples:
-            new_header.add_sample(sample)
-        return new_header
+        info_ids = {
+            f"##INFO=<ID={name},": name for name in names
+        }
+        lines = [
+            line for line in str(header).splitlines()
+            if not line.startswith(tuple(info_ids))
+        ]
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "header.vcf"
+            path.write_text("\n".join(lines) + "\n")
+            # pylint: disable=no-member
+            with VariantFile(str(path)) as vcf_file:
+                return vcf_file.header.copy()
 
     @staticmethod
     def _convert_to_string(attr: Any) -> str:
