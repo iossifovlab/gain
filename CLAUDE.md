@@ -127,12 +127,18 @@ cd core && pylint --rcfile=../pylintrc gain ../scripts
 
 - **Merge only when the PR is up to date with `master` and its branch build is green on that tip.** `gh pr view <n> --json mergeStateStatus` saying `BEHIND` means update the branch, push, and wait for the *new* build: GitHub replays the branch onto the current `master`, Jenkins built the PR's *head*, so a behind-master PR lands a tree nobody built, and the whole-tree lint invariants are what a clean-looking replay breaks (#1108: eight commits behind, check green, `master` UNSTABLE on two files the branch never touched). `master` is not protected (#1437), so this is a rule, not a button.
 - After **every** rebase of a repo-wide mechanical sweep (ruff bump, suppression conversion, line-cap work) re-run the tool over the **entire tree**, not the commit's file list: the file that breaks is one the branch did not touch (#928, #1007). The pre-push hook does the ruff half.
-- **Merge without `--delete-branch`.** The branch-scoped downstream jobs (`gain-web-e2e`, `gain-core-integration`, `gain-conda-integration`) are triggered from the root `Jenkinsfile`'s last stages with `wait: false` and resolve the branch at their own start, minutes later; `gain-web-e2e` also loads its pipeline definition from the branch (#272), so a branch deleted at merge time gives a ~1s red build that ran nothing (#489). `delete_branch_on_merge` is deliberately **false** on `iossifovlab/gain`; leave it. Prune merged branches in a periodic sweep, reviewing first:
+- **Merge without `--delete-branch`.** The branch-scoped downstream jobs (`gain-web-e2e`, `gain-core-integration`, `gain-conda-integration`, `gain-spliceai-integration`) are triggered from the root `Jenkinsfile`'s last stages with `wait: false` and resolve the branch at their own start, minutes later; `gain-web-e2e` also loads its pipeline definition from the branch (#272), so a branch deleted at merge time gives a ~1s red build that ran nothing (#489). `delete_branch_on_merge` is deliberately **false** on `iossifovlab/gain`; leave it. Do not prune merged branches by hand: `/land-pr` deletes the branch after the downstream jobs finish, by the rule in the next section.
 
-```bash
-git fetch --prune
-git branch -r --merged origin/master | sed 's|origin/||' | grep -vE '^\s*(master|HEAD)\b'                                   # review
-git branch -r --merged origin/master | sed 's|origin/||' | grep -vE '^\s*(master|HEAD)\b' | xargs -r -n1 git push origin --delete   # delete
+## Deferred branch deletion
+
+`/land-pr` reads this block. It waits for the listed jobs to finish before it deletes the merged branch. `gain-vep-integration` does not read the branch and `gain-release` runs on tags only, so neither is listed.
+
+```
+jenkins: https://nemo.seqpipe.org
+status-context: continuous-integration/jenkins/branch
+jobs: gain-web-e2e, gain-core-integration, gain-conda-integration, gain-spliceai-integration
+sha-parameter: COMMIT_SHA
+fallback-minutes: 30
 ```
 </important>
 
