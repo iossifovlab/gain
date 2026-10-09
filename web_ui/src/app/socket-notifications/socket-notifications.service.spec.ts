@@ -1,7 +1,7 @@
 
 import { Observable, Subject, firstValueFrom } from 'rxjs';
 import { webSocket } from 'rxjs/webSocket';
-import { SocketNotificationsService } from './socket-notifications.service';
+import { SocketNotificationsService, resubscribeThenAwaitOpen } from './socket-notifications.service';
 import { JobNotification, PipelineNotification } from './socket-notifications';
 
 jest.mock('rxjs/webSocket', () => ({
@@ -468,6 +468,40 @@ describe('SocketNotificationsService', () => {
       expect(values).toStrictEqual([job1]);
       expect(errorSpy).toHaveBeenCalledWith(closeEvent);
     });
+  });
+});
+
+describe('resubscribeThenAwaitOpen', () => {
+  it('catches an open that fires while resubscribe() runs', () => {
+    const opened$ = new Subject<void>();
+    const emitted = jest.fn();
+
+    resubscribeThenAwaitOpen(opened$, () => opened$.next()).subscribe(emitted);
+
+    expect(emitted).toHaveBeenCalledTimes(1);
+  });
+
+  it('emits only once for several opens', () => {
+    const opened$ = new Subject<void>();
+    const emitted = jest.fn();
+
+    resubscribeThenAwaitOpen(opened$, () => { /* no synchronous open */ }).subscribe(emitted);
+    opened$.next();
+    opened$.next();
+
+    expect(emitted).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not emit for an open after the caller unsubscribes', () => {
+    const opened$ = new Subject<void>();
+    const emitted = jest.fn();
+
+    const subscription = resubscribeThenAwaitOpen(opened$, () => { /* no synchronous open */ })
+      .subscribe(emitted);
+    subscription.unsubscribe();
+    opened$.next();
+
+    expect(emitted).not.toHaveBeenCalled();
   });
 });
 
