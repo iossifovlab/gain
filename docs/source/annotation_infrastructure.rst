@@ -419,6 +419,8 @@ from multiple genes are returned as a list.
 
 
 
+.. _effect-annotators:
+
 Effect annotators
 ^^^^^^^^^^^^^^^^^^^^^
 

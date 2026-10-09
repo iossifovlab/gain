@@ -325,8 +325,8 @@ class AnnotationAttributes:
         return [full_desc[idx] for idx in self.value_idxs]
 
 
-def cli_columns() -> None:
-    """CLI interface for annotating variant effects in a column file."""
+def _build_columns_argument_parser() -> argparse.ArgumentParser:
+    """Build the argument parser of ``annotate_variant_effects``."""
     parser = argparse.ArgumentParser(
         description="Annotate Variant Effects in a Column File.")
 
@@ -335,7 +335,31 @@ def cli_columns() -> None:
     VariantColumnInputFile.set_argument(parser)
     VariantColumnOutputFile.set_argument(parser)
     AnnotationAttributes.set_argument(parser)
+    return parser
 
+
+def _build_vcf_argument_parser() -> argparse.ArgumentParser:
+    """Build the argument parser of ``annotate_variant_effects_vcf``."""
+    parser = argparse.ArgumentParser(
+        description="Annotate Variant Effects in a VCF file.")
+
+    VerbosityConfiguration.set_arguments(parser)
+    EffectAnnotatorBuilder.set_arguments(parser)
+    AnnotationAttributes.set_argument(
+        parser,
+        default_columns="WE:worst_effect,GE:gene_effects,ED:effect_details")
+
+    parser.add_argument("input_filename", help="input VCF variants file name")
+    parser.add_argument(
+        "output_filename", nargs="?",
+        help="output file name (default: stdout)",
+    )
+    return parser
+
+
+def cli_columns() -> None:
+    """CLI interface for annotating variant effects in a column file."""
+    parser = _build_columns_argument_parser()
     args = parser.parse_args(sys.argv[1:])
     VerbosityConfiguration.set(args)
     annotator = EffectAnnotatorBuilder(args).build_effect_annotator()
@@ -358,20 +382,7 @@ def cli_vcf() -> None:
     # pylint: disable=C0415
     import pysam
 
-    parser = argparse.ArgumentParser(
-        description="Annotate Variant Effects in a VCF file.")
-
-    VerbosityConfiguration.set_arguments(parser)
-    EffectAnnotatorBuilder.set_arguments(parser)
-    AnnotationAttributes.set_argument(
-        parser,
-        default_columns="WE:worst_effect,GE:gene_effects,ED:effect_details")
-
-    parser.add_argument("input_filename", help="input VCF variants file name")
-    parser.add_argument(
-        "output_filename", nargs="?",
-        help="output file name (default: stdout)",
-    )
+    parser = _build_vcf_argument_parser()
     args = parser.parse_args(sys.argv[1:])
     VerbosityConfiguration.set(args)
     annotator = EffectAnnotatorBuilder(args).build_effect_annotator()
