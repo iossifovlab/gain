@@ -942,6 +942,31 @@ describe('AnnotationPipelineComponent', () => {
     expect(getPipelinesSpy).toHaveBeenCalledTimes(1);
   });
 
+  it('does not refetch the pipelines when the first socket of the page opens', () => {
+    component.ngOnInit();
+    // A list loaded under another identity makes a refetch a server GET.
+    pipelineStateService.loadedWhileLoggedIn.set(!component.isUserLoggedIn);
+    const getPipelinesSpy = jest.spyOn(jobsServiceMock, 'getAnnotationPipelines').mockClear();
+
+    socketNotificationsServiceMock.opened.next();
+
+    expect(getPipelinesSpy).not.toHaveBeenCalled();
+  });
+
+  it('does not refetch the pipelines when the socket opens after the component is destroyed', () => {
+    const { drop, reconnected } = armReconnectSteps();
+    component.ngOnInit();
+    pipelineStateService.loadedWhileLoggedIn.set(!component.isUserLoggedIn);
+    const getPipelinesSpy = jest.spyOn(jobsServiceMock, 'getAnnotationPipelines').mockClear();
+
+    drop();
+    reconnected.next();
+    component.ngOnDestroy();
+    socketNotificationsServiceMock.opened.next();
+
+    expect(getPipelinesSpy).not.toHaveBeenCalled();
+  });
+
   it('sends no catch-up request for a reconnect that drops before it opens', () => {
     const { drop, reconnected, resubscribed } = armReconnectSteps();
     jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications')
