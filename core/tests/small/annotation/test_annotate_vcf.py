@@ -1,4 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import math
 import os
 import pathlib
 import textwrap
@@ -16,8 +17,8 @@ from gain.annotation.annotate_utils import (
 from gain.annotation.annotate_vcf import (
     _add_tasks_tabixed,
     _annotate_vcf,
+    _coerce_info_value,
     _count_vcf_records,
-    _fits_info_type,
     _VCFBatchSource,
     _VCFSource,
     _VCFWriter,
@@ -1783,36 +1784,44 @@ def test_annotate_vcf_float_declaration_huge_int_writes_missing_value(
 
 
 @pytest.mark.parametrize(("value", "info_type", "expected"), [
-    (5, "Integer", True),
-    (2**31 - 1, "Integer", True),
-    (-(2**31) + 1, "Integer", True),
-    (-(2**31), "Integer", False),
-    (2**31, "Integer", False),
-    (1.5, "Integer", False),
-    (float("inf"), "Integer", False),
-    (float("nan"), "Integer", False),
-    (5.0, "Integer", True),
-    (-3.0, "Integer", True),
-    (2.0**31, "Integer", False),
-    (np.float64(5.0), "Integer", True),
-    (np.float32(5.0), "Integer", True),
-    (np.float32(1.5), "Integer", False),
-    (np.int64(5), "Integer", True),
-    (np.int64(2**40), "Integer", False),
-    (10**400, "Float", False),
-    (np.float32(1.5), "Float", True),
-    (np.int64(5), "Float", True),
-    ("5", "Integer", False),
-    (True, "Integer", False),
-    (2**40, "Float", True),
-    (1.5, "Float", True),
-    (float("inf"), "Float", True),
-    (float("-inf"), "Float", True),
-    (float("nan"), "Float", True),
-    ("1.5", "Float", False),
-    (None, "Integer", True),
-    (None, "Float", True),
-    ("text", "String", True),
+    (5, "Integer", (True, 5)),
+    (2**31 - 1, "Integer", (True, 2**31 - 1)),
+    (-(2**31) + 1, "Integer", (True, -(2**31) + 1)),
+    (-(2**31), "Integer", (False, None)),
+    (2**31, "Integer", (False, None)),
+    (1.5, "Integer", (False, None)),
+    (float("inf"), "Integer", (False, None)),
+    (float("nan"), "Integer", (False, None)),
+    (5.0, "Integer", (True, 5)),
+    (-3.0, "Integer", (True, -3)),
+    (2.0**31, "Integer", (False, None)),
+    (np.float64(5.0), "Integer", (True, 5)),
+    (np.float32(5.0), "Integer", (True, 5)),
+    (np.float32(1.5), "Integer", (False, None)),
+    (np.int64(5), "Integer", (True, 5)),
+    (np.int64(2**40), "Integer", (False, None)),
+    (10**400, "Float", (False, None)),
+    (np.float32(1.5), "Float", (True, 1.5)),
+    (np.int64(5), "Float", (True, 5.0)),
+    ("5", "Integer", (False, None)),
+    ("1.5", "Float", (False, None)),
+    (True, "Integer", (False, None)),
+    (2**40, "Float", (True, float(2**40))),
+    (1.5, "Float", (True, 1.5)),
+    (float("inf"), "Float", (True, float("inf"))),
+    (float("-inf"), "Float", (True, float("-inf"))),
+    (None, "Integer", (True, None)),
+    (None, "Float", (True, None)),
+    ("text", "String", (True, "text")),
 ])
-def test_fits_info_type(value: Any, info_type: str, expected: bool) -> None:
-    assert _fits_info_type(value, info_type) is expected
+def test_coerce_info_value(
+    value: Any, info_type: str, expected: tuple[bool, Any],
+) -> None:
+    assert _coerce_info_value(value, info_type) == expected
+
+
+def test_coerce_info_value_nan_float_fits() -> None:
+    fits, converted = _coerce_info_value(float("nan"), "Float")
+
+    assert fits is True
+    assert math.isnan(converted)

@@ -254,11 +254,6 @@ def _coerce_info_value(
     return False, None
 
 
-def _fits_info_type(value: Any, info_type: str | None) -> bool:
-    """Tell whether a value fits a declared VCF INFO type."""
-    return _coerce_info_value(value, info_type)[0]
-
-
 class _VCFWriter(Filter):
     """A filter that writes variants to a VCF file."""
 
