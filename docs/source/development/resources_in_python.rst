@@ -26,7 +26,7 @@ documented on exactly one side:
   :doc:`resources/histograms`.
 
 If you are new to the Python interface, :doc:`/development/overview` is the
-getting-started guide: it connects to a repository and runs three short
+getting-started guide: it connects to a repository and runs five short
 end-to-end examples. This chapter picks up where it stops.
 
 .. rubric:: The shape of the API
