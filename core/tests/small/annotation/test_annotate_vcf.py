@@ -16,6 +16,7 @@ from gain.annotation.annotate_vcf import (
     _add_tasks_tabixed,
     _annotate_vcf,
     _count_vcf_records,
+    _fits_info_type,
     _VCFBatchSource,
     _VCFSource,
     _VCFWriter,
@@ -1634,3 +1635,137 @@ def test_annotate_vcf_cli_csi_input_produces_csi_output(
     with pysam.VariantFile(str(out_file)) as vcf_file:
         result = [vcf.info["score"][0] for vcf in vcf_file.fetch()]
     assert result == ["0.1", "0.2"]
+
+
+def _overflow_vcf(
+    tmp_path: pathlib.Path, declared_type: str, n_records: int,
+) -> pathlib.Path:
+    """Write an input VCF that declares ``score`` and carries an old value."""
+    header = textwrap.dedent(f"""
+        ##fileformat=VCFv4.2
+        ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+        ##INFO=<ID=score,Number=A,Type={declared_type},Description="Score">
+        ##contig=<ID=chr1>
+        #CHROM POS ID REF ALT QUAL FILTER INFO FORMAT m1  d1  c1
+    """)
+    rows = "".join(
+        f"chr1   {23 + idx}  .  C   T   .    .      score=7"
+        "    GT     0/1 0/0 0/0\n"
+        for idx in range(n_records))
+    in_file = tmp_path / "in.vcf"
+    setup_vcf(in_file, header + rows)
+    return in_file
+
+
+def _annotate_with_scores(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+    in_file: pathlib.Path,
+    values: list[Any],
+    mocker: pytest_mock.MockerFixture,
+    *,
+    batch_size: int,
+) -> pathlib.Path:
+    """Run annotate_vcf with an annotator that yields ``values`` as score."""
+    out_file = tmp_path / "out.vcf"
+    grr = build_genomic_resource_repository(
+        file_name=str(annotate_directory_fixture / "grr.yaml"))
+    pipeline = build_annotation_pipeline([{"position_score": "one"}], grr)
+    remaining = iter(values)
+    mocker.patch.object(
+        pipeline, "annotate",
+        side_effect=lambda *_args, **_kwargs: {"score": next(remaining)})
+    mocker.patch.object(
+        pipeline, "batch_annotate",
+        side_effect=lambda annotatables, **_kwargs: [
+            {"score": next(remaining)} for _ in annotatables])
+    annotate_vcf(
+        str(in_file), pipeline, str(out_file),
+        _build_annotate_vcf_args(batch_size=batch_size))
+    return out_file
+
+
+@pytest.mark.parametrize("batch_size", [0, 2])
+def test_annotate_vcf_integer_overflow_writes_missing_value(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+    mocker: pytest_mock.MockerFixture,
+    batch_size: int,
+) -> None:
+    values = [2**31, 2**40, float("inf"), 1.5, 5, 2**31 - 1]
+    in_file = _overflow_vcf(tmp_path, "Integer", len(values))
+
+    out_file = _annotate_with_scores(
+        annotate_directory_fixture, tmp_path, in_file, values, mocker,
+        batch_size=batch_size)
+
+    with pysam.VariantFile(str(out_file)) as vcf_file:
+        assert vcf_file.header.info["score"].type == "Integer"
+        result = [rec.info["score"] for rec in vcf_file.fetch()]
+    assert result == [
+        (None,), (None,), (None,), (None,), (5,), (2**31 - 1,)]
+
+
+def test_annotate_vcf_float_declaration_writes_inf(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    in_file = _overflow_vcf(tmp_path, "Float", 3)
+
+    out_file = _annotate_with_scores(
+        annotate_directory_fixture, tmp_path, in_file,
+        [float("inf"), float("-inf"), 3], mocker, batch_size=0)
+
+    with pysam.VariantFile(str(out_file)) as vcf_file:
+        assert vcf_file.header.info["score"].type == "Float"
+        result = [rec.info["score"][0] for rec in vcf_file.fetch()]
+    assert result == [float("inf"), float("-inf"), 3.0]
+
+
+def test_annotate_vcf_overflow_warns_once_per_attribute(
+    annotate_directory_fixture: pathlib.Path,
+    tmp_path: pathlib.Path,
+    mocker: pytest_mock.MockerFixture,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    values = [2**31, 2**40, float("inf"), 1.5]
+    in_file = _overflow_vcf(tmp_path, "Integer", len(values))
+
+    with caplog.at_level("WARNING", logger="annotate_vcf"):
+        _annotate_with_scores(
+            annotate_directory_fixture, tmp_path, in_file, values, mocker,
+            batch_size=0)
+
+    warnings = [
+        rec for rec in caplog.records
+        if rec.name == "annotate_vcf" and "score" in rec.getMessage()]
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "Integer" in message
+    assert str(2**31) in message
+
+
+@pytest.mark.parametrize(("value", "info_type", "expected"), [
+    (5, "Integer", True),
+    (2**31 - 1, "Integer", True),
+    (-(2**31) + 1, "Integer", True),
+    (-(2**31), "Integer", False),
+    (2**31, "Integer", False),
+    (1.5, "Integer", False),
+    (float("inf"), "Integer", False),
+    (float("nan"), "Integer", False),
+    ("5", "Integer", False),
+    (True, "Integer", False),
+    (2**40, "Float", True),
+    (1.5, "Float", True),
+    (float("inf"), "Float", True),
+    (float("-inf"), "Float", True),
+    (float("nan"), "Float", True),
+    ("1.5", "Float", False),
+    (None, "Integer", True),
+    (None, "Float", True),
+    ("text", "String", True),
+])
+def test_fits_info_type(value: Any, info_type: str, expected: bool) -> None:
+    assert _fits_info_type(value, info_type) is expected
