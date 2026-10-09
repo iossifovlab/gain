@@ -6,8 +6,7 @@ declared API: the pipeline you load from YAML, the annotators it drives, the
 objects an annotator receives and the attributes it declares — and the seam
 through which a package of your own becomes an annotator a pipeline can name.
 
-Where the line falls
---------------------
+.. rubric:: Where the line falls
 
 Everything here is Python. The same pipeline has a user-facing side — the
 YAML that lists its annotators, the parameters each one accepts, the
@@ -25,8 +24,7 @@ allele; its fifth walks through writing, registering and running a small
 plugin end to end. This chapter picks up where those stop: it describes each
 object those examples touch, and the contract a plugin has to keep.
 
-The shape of the API
---------------------
+.. rubric:: The shape of the API
 
 One builder function is the entry point. It takes the YAML text of a
 pipeline and a repository, and returns a pipeline whose annotators have
@@ -72,6 +70,15 @@ merges each annotator's answer back into the context before moving on. An
 annotator that depends on an earlier attribute reads it from the context and
 says so, which is what lets a reannotation know what to rerun.
 
+.. rubric:: Not covered here
+
+How to *test* an annotator. GAIn's own test fixtures live in
+``gain.genomic_resources.testing``, which is outside the declared API and is
+not documented on this site. The annotators GAIn ships — the score,
+effect, liftover and gene-set annotators, SpliceAI and VEP — are described
+from the user side on :doc:`/annotation_infrastructure`; their Python
+classes appear in the generated :doc:`module index <module_index>`.
+
 .. toctree::
    :maxdepth: 2
 
@@ -80,13 +87,3 @@ says so, which is what lets a reannotation know what to rerun.
    annotators/writing_an_annotator
    annotators/pipelines
    annotators/plugins
-
-Not covered here
-----------------
-
-How to *test* an annotator. GAIn's own test fixtures live in
-``gain.genomic_resources.testing``, which is outside the declared API and is
-not documented on this site. The annotators GAIn ships — the score,
-effect, liftover and gene-set annotators, SpliceAI and VEP — are described
-from the user side on :doc:`/annotation_infrastructure`; their Python
-classes appear in the generated :doc:`module index <module_index>`.

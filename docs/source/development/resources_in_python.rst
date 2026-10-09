@@ -5,8 +5,7 @@ This chapter is the in-depth description of the *resource* half of GAIn's
 declared API: the objects you get back when you open a repository and ask it
 for something, and the objects those hand you in turn.
 
-Where the line falls
---------------------
+.. rubric:: Where the line falls
 
 Everything here is Python. The *same* resources have a curator-facing side —
 the ``genomic_resource.yaml`` keys that define them and the ``grr_manage``
@@ -30,8 +29,7 @@ If you are new to the Python interface, :doc:`/development/overview` is the
 getting-started guide: it connects to a repository and runs three short
 end-to-end examples. This chapter picks up where it stops.
 
-The shape of the API
---------------------
+.. rubric:: The shape of the API
 
 Builder functions are the entry points. Each takes a resource id and a
 repository, and returns a typed object that knows how to read that kind of
@@ -106,6 +104,15 @@ files, through that resource's protocol. That is why a builder needs the
 repository handed to it, and why closing the repository is separate from
 closing the objects built through it.
 
+.. rubric:: Not covered here
+
+The annotation side of the declared API — pipelines, annotators, and the
+``gain.annotation.annotators`` entry-point group — is the subject of its own
+chapter, :doc:`annotators`. ``gain.genomic_resources.testing``, the task graph, and the
+effect-annotation engine are outside the declared API and are documented, to
+the extent they are, by the generated
+:doc:`module_index <module_index>`.
+
 .. toctree::
    :maxdepth: 2
 
@@ -115,13 +122,3 @@ closing the objects built through it.
    resources/scores
    resources/histograms
    resources/adding_a_resource_type
-
-Not covered here
-----------------
-
-The annotation side of the declared API — pipelines, annotators, and the
-``gain.annotation.annotators`` entry-point group — is the subject of its own
-chapter, :doc:`annotators`. ``gain.genomic_resources.testing``, the task graph, and the
-effect-annotation engine are outside the declared API and are documented, to
-the extent they are, by the generated
-:doc:`module_index <module_index>`.
