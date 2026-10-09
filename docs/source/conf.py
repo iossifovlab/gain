@@ -44,7 +44,18 @@ extensions = [
     # dependency being paid for and not used.  Per-page "last updated" stamps
     # are a cheap partial mitigation for docs staleness.
     "sphinx_last_updated_by_git",
+    # Renders a CLI's option list from its argparse parser, so a tool page
+    # cannot drift from the options the tool accepts.
+    "sphinxarg.ext",
+    # Writes a redirect page at the old URL of a moved page.
+    "sphinx_reredirects",
 ]
+
+# Old page -> new page, for pages that moved.  Each key is a docname without
+# a suffix; each target is relative to the old page's URL.
+redirects = {
+    "binning": "cli/binning_tool.html",
+}
 
 # Why ``sphinx.ext.autosectionlabel`` is absent (gain#1183).  It promotes every
 # section title to a cross-reference label.  Numpy-style docstring headings

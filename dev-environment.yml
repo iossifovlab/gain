@@ -37,8 +37,10 @@ dependencies:
   - jinja2
   - myst-parser
   - sphinx
+  - sphinx-argparse
   - sphinx-copybutton
   - sphinx-last-updated-by-git
+  - sphinx-reredirects
   - sphinx-rtd-theme
   - sphinxcontrib-httpdomain
   - sphinxcontrib-mermaid
