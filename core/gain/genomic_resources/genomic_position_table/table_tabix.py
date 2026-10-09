@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import csv
+import io
 import itertools
 from collections import Counter
 from collections.abc import Generator, Iterable
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar, Literal, cast
 
 import numpy as np
+import pandas as pd
 import pysam
 
 from gain import logging
@@ -894,13 +897,18 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         """Yield a region's rows as column arrays, without building records.
 
         A fast path for a full sequential scan (statistics): the rows are read
-        straight from ``pysam`` and returned per batch as the parsed one-based
-        ``pos_begin``/``pos_end`` int arrays plus the raw string cells of each
-        requested column index -- paying neither the per-row ``Record`` tuple
-        nor the parser call.  The one-based / zero-based transform matches
-        :func:`build_tabular_parser` exactly (``pos_begin += 1``, and a
-        single-base zero-based interval bumps ``pos_end`` too); the contig is
-        fixed by the fetch, so no per-row chromosome map is needed.
+        straight from ``pysam`` in batches of ``batch_size``, and each batch is
+        parsed by one call of the pandas C CSV parser.  Each yielded batch
+        holds the one-based ``pos_begin``/``pos_end`` ``int64`` arrays plus,
+        for each requested column index, an ``object`` array of the raw ``str``
+        cells -- paying neither the per-row ``Record`` tuple nor the parser
+        call.  A cell is never interpreted: ``"."``, ``"NA"``, an empty cell
+        and a leading ``#`` or ``"`` all come back as the text in the file,
+        and the caller decides what is no value and parses the numbers.  The
+        one-based / zero-based transform matches :func:`build_tabular_parser`
+        exactly (``pos_begin += 1``, and a single-base zero-based interval
+        bumps ``pos_end`` too); the contig is fixed by the fetch, so no
+        per-row chromosome map is needed.
 
         The read starts and stops where :meth:`get_records_in_region` would:
         ``fetch`` begins at ``start - 1`` and a row whose parsed ``pos_begin``
@@ -908,6 +916,12 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         it are not yielded), mirroring ``_gen_from_tabix``.  Records ending
         before ``start`` are still yielded here and dropped by the caller's
         clip, exactly as the per-record path drops them.
+
+        :raises ValueError: when the rows of one batch do not all have the
+            same number of fields, when a requested or position column index
+            is out of range for the row width, or when a position cell is
+            not an integer that ``int()`` accepts.  The message names the
+            contig and the query region.
         """
         assert isinstance(self.pysam_file, pysam.TabixFile)
         fchrom = self.unmap_chromosome(chrom)
@@ -917,8 +931,6 @@ class TabixGenomicPositionTable(GenomicPositionTable):
                 f"{self.get_file_chromosomes()}")
 
         columns = list(value_columns)
-        pos_begin_key = self.pos_begin_key
-        pos_end_key = self.pos_end_key
         fetch_start = None if start is None else start - 1
         raw_iter = self.pysam_file.fetch(
             reference=fchrom, start=fetch_start, parser=pysam.asTuple())
@@ -929,30 +941,87 @@ class TabixGenomicPositionTable(GenomicPositionTable):
                 return
             exhausted = len(rows) < batch_size
 
-            pos_begin = np.array(
-                [row[pos_begin_key] for row in rows]).astype(np.int64)
-            pos_end = np.array(
-                [row[pos_end_key] for row in rows]).astype(np.int64)
+            # A negative index counts from the last field, as ``row[k]``
+            # does in the per-record read; ``read_csv`` needs it resolved.
+            width = len(rows[0])
+            region = f"{chrom}:{start}-{end}"
+            index: dict[int, int] = {}
+            for key in (*columns, self.pos_begin_key, self.pos_end_key):
+                resolved = key + width if key < 0 else key
+                if not 0 <= resolved < width:
+                    raise ValueError(
+                        f"column {key} is out of range for the tabix rows "
+                        f"of {width} fields in the region {region}")
+                index[key] = resolved
+            pos_begin_key = index[self.pos_begin_key]
+            pos_end_key = index[self.pos_end_key]
+
+            # Every column is parsed as raw ``str`` text. The positions are
+            # converted by ``int()``, the same as in the per-record read.
+            frame = self._parse_batch(rows, set(index.values()), region)
+            try:
+                pos_begin = frame[pos_begin_key].to_numpy(
+                    dtype=object).astype(np.int64)
+                pos_end = frame[pos_end_key].to_numpy(
+                    dtype=object).astype(np.int64)
+            except ValueError as ex:
+                raise ValueError(
+                    f"cannot parse the positions of the tabix rows in "
+                    f"the region {region}: {ex}") from ex
             if self.zero_based:
                 single_base = pos_begin == pos_end
                 pos_end = pos_end + single_base
                 pos_begin = pos_begin + 1
 
-            truncated = False
+            cut = len(rows)
             if end is not None:
                 past_end = pos_begin > end
                 if bool(past_end.any()):
                     cut = int(np.argmax(past_end))
-                    rows = rows[:cut]
-                    pos_begin = pos_begin[:cut]
-                    pos_end = pos_end[:cut]
-                    truncated = True
+            truncated = cut < len(rows)
 
             cols = {
-                col: np.array([row[col] for row in rows], dtype=object)
+                col: frame[index[col]].to_numpy(dtype=object)[:cut]
                 for col in columns
             }
-            yield pos_begin, pos_end, cols
+            yield pos_begin[:cut], pos_end[:cut], cols
 
             if truncated or exhausted:
                 return
+
+    @staticmethod
+    def _parse_batch(
+        rows: list[Any],
+        usecols: set[int],
+        region: str,
+    ) -> pd.DataFrame:
+        """Parse one batch of raw rows with one call of the C CSV parser.
+
+        Only the columns in ``usecols`` are parsed, each as raw ``str`` text.
+        A batch whose rows do not all have the same number of fields raises
+        ``ValueError``.
+        """
+        widths = set(map(len, rows))
+        if len(widths) > 1:
+            raise ValueError(
+                f"ragged rows in the tabix region {region}: a batch holds "
+                f"rows of {sorted(widths)} fields")
+        text = "\n".join(map(str, rows))
+        try:
+            return pd.read_csv(
+                io.StringIO(text),
+                sep="\t",
+                header=None,
+                engine="c",
+                # A bare "\r" inside a field must not end a row: pysam
+                # splits rows on "\n" only.
+                lineterminator="\n",
+                usecols=sorted(usecols),
+                dtype=object,
+                na_filter=False,
+                quoting=cast(Literal[3], csv.QUOTE_NONE),
+            )
+        except (pd.errors.ParserError, ValueError) as ex:
+            raise ValueError(
+                f"cannot parse the tabix rows in the region {region}: "
+                f"{ex}") from ex
