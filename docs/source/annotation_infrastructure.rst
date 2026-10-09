@@ -1111,7 +1111,7 @@ The annotator configuration looks like this:
 
 The full VEP annotator can emit many additional VEP fields (listed below) by selecting them as
 pipeline attributes; it runs VEP with ``--everything``, so all of them are populated. VEP
-annotators are run via ``annotate_tabular`` in batch mode. See the example command at the end of
+annotators are run via :doc:`annotate_tabular <cli/annotate_tabular>` in batch mode. See the example command at the end of
 the VEP Effect Annotator section.
 
 **Core consequence and feature attributes**
@@ -1459,9 +1459,11 @@ A third tool generates a human-readable HTML description of a pipeline for docum
 
 * **annotate_tabular**: annotate delimiter-separated tabular files (TSV/CSV and similar)
 
-* **annotate_vcf**: annotate VCF/VCF.gz files
+* :doc:`annotate_vcf <cli/annotate_vcf>`: annotate VCF/VCF.gz files
 
-* **annotate_doc**: render a pipeline YAML into a readable HTML document
+* :doc:`annotate_doc <cli/annotate_doc>`: render a pipeline YAML into a readable HTML document
+
+.. _annotation-cli-notes:
 
 Notes on usage
 ^^^^^^^^^^^^^^^^^^^^^
@@ -1486,6 +1488,8 @@ Across the two annotation runners (annotate_tabular, annotate_vcf), the same bas
 
 * **Tabular inputs (annotate_tabular)**: Be explicit about annotatable columns when needed: ``annotate_tabular`` tries to infer the chromosome/position/ref/alt columns from the header, but for nonstandard headers you should pass the appropriate ``--col-*`` arguments to avoid mis-detection.
 
+
+.. _annotation-cli-annotate-tabular:
 
 annotate_tabular
 ^^^^^^^^^^^^^^^^^^^^^
@@ -1552,6 +1556,8 @@ Common options:
 
 For a full list of options run ``annotate_tabular --help``
 
+.. _annotation-cli-annotate-vcf:
+
 annotate_vcf
 ^^^^^^^^^^^^^^^^^^^^^
 
@@ -1600,6 +1606,8 @@ Common options:
 
 For a full list of options run ``annotate_vcf --help``
 
+
+.. _annotation-cli-annotate-doc:
 
 annotate_doc
 ^^^^^^^^^^^^^^^^^^^^^

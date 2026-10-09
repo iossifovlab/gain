@@ -90,6 +90,8 @@ This shows that you have access to the IossifovLab's main GRR and lists all the 
 This output contains several pieces of information. The first line shows that GAIn is using the default GRR definition, which points to the Iossifov lab's main GRR at ``https://grr.iossifovlab.com``. The next three lines show the default configuration. This section is useful for confirming that GAIn is connected to the expected GRR server. The following lines list the resources available on that server, including their type, size, and resource ID. For example, ``gene_properties/gene_scores/GTEx_V11_RNAexpression`` is the resource ID for the GTEx V11 RNA expression gene score resource. Resource IDs are used to refer to resources in annotation pipelines.
 
 
+.. _getting-started-cli-quick-test:
+
 Quick annotation test
 ---------------------
 
@@ -104,7 +106,7 @@ Download the example input CSV file (:download:`small_input.csv <files/small_inp
     :header-rows: 1
 
 
-To annotate the file, run:
+To annotate the file, run :doc:`annotate_tabular <cli/annotate_tabular>`:
 
 .. code-block:: bash
     
@@ -121,6 +123,8 @@ GAIn writes the annotated output to a new file whose name is derived from the in
 
 The output contains the original variant columns followed by the annotation attributes produced by ``pipeline/hg38_clinical_annotation``. See the `pipeline summary page <https://grr.iossifovlab.com/pipeline/hg38_clinical_annotation/index.html>`_ in the main GRR for a description of the attributes produced by this pipeline.
 
+
+.. _getting-started-cli-custom-pipeline:
 
 Custom annotation pipelines
 ---------------------------
@@ -142,7 +146,8 @@ This pipeline has an optional preamble section, which records metadata about the
 
     When building custom annotation pipelines, users can either write the pipeline directly using GAIn's YAML structure or use the pipeline authoring tool in the GAIn web interface, which simplifies pipeline creation by guiding users through annotator and resource selection.
 
-To review the attributes produced by the custom pipeline, run the following command. 
+To review the attributes produced by the custom pipeline, run the following
+:doc:`annotate_doc <cli/annotate_doc>` command.
 
 .. code-block:: bash
 
@@ -265,6 +270,8 @@ or
 Without caching, annotating a file of this size through remote resource access can take a very long time. With the required resources already cached, GAIn uses the local copies for annotation, making the same large-scale job much faster and less dependent on network performance. For example, in our test on a recent Mac laptop using cached resources, annotating 50,000 variants with ``pipeline/hg38_clinical_annotation`` took approximately 5 minutes. The input file used in this test was pre-sorted by chromosome and position, which allows GAIn to access genomic resources more efficiently. Unsorted input files can be annotated, but they will run significantly more slowly.
 
 
+.. _getting-started-cli-parallel:
+
 Parallelizing large annotation jobs
 -----------------------------------
 
@@ -285,7 +292,8 @@ For example, download the example input file (:download:`SSC_WES_variants_select
     annotate_tabular SSC_WES_variants_select.tsv.gz pipeline/hg38_clinical_annotation
 
 
-To take advantage of parallel computation, first prepare the input file for indexed genomic access:
+To take advantage of parallel computation, first prepare the input file for indexed genomic access with
+:doc:`prepare_tabular <cli/prepare_tabular>`:
 
 .. code-block:: bash
 
@@ -314,6 +322,8 @@ GAIn can also use a configured cluster that creates workers on a larger compute 
 This runs the annotation across up to 100 workers on the configured cluster. 
 
 
+.. _getting-started-cli-vcf:
+
 Annotating VCF input
 -----------------------------
 
@@ -324,7 +334,7 @@ output files are in VCF format. To annotate an example VCF file, download the ex
     :language: text
 
 
-To annotate this file, run:
+To annotate this file, run :doc:`annotate_vcf <cli/annotate_vcf>`:
 
 .. code-block:: bash
 
@@ -344,6 +354,8 @@ VCF files can also be prepared for parallel annotation. To do this, first instal
     bcftools sort small_input.vcf -o small_input.sorted.vcf.bgz -Oz -Wtbi
 
 This creates a sorted, bgzip-compressed VCF file, ``small_input.sorted.vcf.bgz``, together with its tabix index, ``small_input.sorted.vcf.bgz.tbi``. GAIn can use this indexed VCF file for parallel annotation in the same way as indexed tabular inputs.
+
+.. _getting-started-cli-positions-regions:
 
 Annotating positions and regions
 -----------------------------------
@@ -544,6 +556,8 @@ The output contains the effect annotations, the ENCODE-derived position score, a
     :file: files/small_input_multiple_grr.annotated.csv
     :header-rows: 1
 
+
+.. _getting-started-cli-reannotation:
 
 Reannotation
 ------------
