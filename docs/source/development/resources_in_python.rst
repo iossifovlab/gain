@@ -58,21 +58,21 @@ Every builder comes in two forms, ``*_from_resource_id(resource_id, grr)``
 and ``*_from_resource(resource)`` for a
 :class:`~gain.genomic_resources.repository.GenomicResource` already in hand:
 
-========================  ==============================================  =====================
-Resource                  Builder (``gain.grr``)                          Returns
-========================  ==============================================  =====================
-reference genome          ``build_reference_genome_from_resource_id``     ``ReferenceGenome``
-gene models               ``build_gene_models_from_resource_id``          ``GeneModels``
-liftover chain            ``build_liftover_chain_from_resource_id``       ``LiftoverChain``
-any genomic score         ``build_score_from_resource_id``                ``GenomicScore``
-position score            ``build_position_score_from_resource_id``       ``PositionScore``
-allele score              ``build_allele_score_from_resource_id``         ``AlleleScore``
-fragment score            ``build_fragment_score_from_resource_id``       ``FragmentScore``
-gene score                ``build_gene_score_from_resource_id``           ``GeneScore``
-gene set collection       ``build_gene_set_collection_from_resource_id``  ``GeneSetCollection``
-data frame                ``load_data_frame_from_resource_id``            a pandas DataFrame
-AnnData                   ``load_ann_data_from_resource_id``              an AnnData object
-========================  ==============================================  =====================
+=====================================================  ==============================================  =====================
+Resource                                               Builder (``gain.grr``)                          Returns
+=====================================================  ==============================================  =====================
+reference genome                                       ``build_reference_genome_from_resource_id``     ``ReferenceGenome``
+gene models                                            ``build_gene_models_from_resource_id``          ``GeneModels``
+:doc:`liftover chain <resources/liftover_chains>`      ``build_liftover_chain_from_resource_id``       ``LiftoverChain``
+any genomic score                                      ``build_score_from_resource_id``                ``GenomicScore``
+position score                                         ``build_position_score_from_resource_id``       ``PositionScore``
+allele score                                           ``build_allele_score_from_resource_id``         ``AlleleScore``
+fragment score                                         ``build_fragment_score_from_resource_id``       ``FragmentScore``
+:doc:`gene score <resources/gene_scores>`              ``build_gene_score_from_resource_id``           ``GeneScore``
+:doc:`gene set collection <resources/gene_sets>`       ``build_gene_set_collection_from_resource_id``  ``GeneSetCollection``
+:doc:`data frame <resources/data_frames_and_anndata>`  ``load_data_frame_from_resource_id``            a pandas DataFrame
+:doc:`AnnData <resources/data_frames_and_anndata>`     ``load_ann_data_from_resource_id``              an AnnData object
+=====================================================  ==============================================  =====================
 
 ``gain.grr`` also exports ``build_genomic_resource_group_repository``,
 ``get_default_grr_definition``, ``get_default_grr_definition_path``,
@@ -120,5 +120,9 @@ the extent they are, by the generated
    resources/reference_genomes
    resources/gene_models
    resources/scores
+   resources/gene_scores
    resources/histograms
+   resources/liftover_chains
+   resources/gene_sets
+   resources/data_frames_and_anndata
    resources/adding_a_resource_type
