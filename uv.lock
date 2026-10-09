@@ -1455,6 +1455,7 @@ dependencies = [
 
 [package.dev-dependencies]
 docs = [
+    { name = "gain-vep-annotator" },
     { name = "ipython" },
     { name = "jinja2" },
     { name = "myst-parser" },
@@ -1478,6 +1479,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 docs = [
+    { name = "gain-vep-annotator", editable = "vep_annotator" },
     { name = "ipython" },
     { name = "jinja2" },
     { name = "myst-parser" },

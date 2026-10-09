@@ -17,6 +17,9 @@ with ``--help``.
     annotate_doc
     annotate_variant_effects
     annotate_variant_effects_vcf
+    draw_score_histograms
+    to_gpf_gene_models_format
+    install_vep_cache
 
 GRR management
 --------------
@@ -44,6 +47,6 @@ Resource and score utilities
 ----------------------------
 
 * :doc:`binning_tool`: bin genomic scores into a fixed genome grid.
-* ``draw_score_histograms``: draw the histograms of the scores of a resource.
-* ``to_gpf_gene_models_format``: convert gene models to the GPF format.
-* ``install_vep_cache``: download and unpack a VEP cache for the VEP annotator plugin.
+* :doc:`draw_score_histograms`: draw the histograms of the scores of a resource.
+* :doc:`to_gpf_gene_models_format`: convert gene models to the GPF format.
+* :doc:`install_vep_cache`: download and unpack a VEP cache for the VEP annotator plugin.

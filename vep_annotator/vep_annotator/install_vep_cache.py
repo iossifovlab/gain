@@ -7,8 +7,8 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-def main(argv: list[str] | None = None) -> int:
-    """VEP cache installation tool"""
+def _build_argument_parser() -> argparse.ArgumentParser:
+    """Create the command line parser of the tool."""
     parser = argparse.ArgumentParser(
         description="VEP cache installer",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -25,7 +25,12 @@ def main(argv: list[str] | None = None) -> int:
         "--continue", "-c", dest="cont", default=False, action="store_true",
         help="Continue a previous partial download",
     )
+    return parser
 
+
+def main(argv: list[str] | None = None) -> int:
+    """VEP cache installation tool"""
+    parser = _build_argument_parser()
     args = parser.parse_args(argv)
 
     cache_dir = Path(args.cache_dir).absolute()
