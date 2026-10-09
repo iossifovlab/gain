@@ -49,11 +49,13 @@ Reading values
 --------------
 
 The reads answer from the in-memory table. A read with an unknown score id
-raises ``ValueError``.
+raises ``ValueError``, except ``get_gene_value``.
 
 :meth:`~gain.gene_scores.gene_scores.GeneScore.get_gene_value`
     Returns the value of one score for one gene symbol. It returns ``None``
-    when the gene is not in the table or when its value is missing.
+    when the gene is not in the table or when its value is missing. It also
+    returns ``None`` for an unknown score id and does not raise
+    ``ValueError``.
 
 :meth:`~gain.gene_scores.gene_scores.GeneScore.get_genes`
     Returns the set of gene symbols whose value lies between ``score_min``
