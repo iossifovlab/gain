@@ -15,6 +15,8 @@ with ``--help``.
     annotate_vcf
     prepare_tabular
     annotate_doc
+    annotate_variant_effects
+    annotate_variant_effects_vcf
 
 GRR management
 --------------
@@ -34,8 +36,8 @@ Annotation
 Effect annotation
 -----------------
 
-* ``annotate_variant_effects``: annotate the effects of variants on genes.
-* ``annotate_variant_effects_vcf``: annotate the effects of the variants of a
+* :doc:`annotate_variant_effects`: annotate the effects of the variants of a tabular file on genes.
+* :doc:`annotate_variant_effects_vcf`: annotate the effects of the variants of a
   VCF file on genes.
 
 Resource and score utilities
