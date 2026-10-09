@@ -1404,11 +1404,8 @@ def _task_graph_options() -> frozenset[str]:
     return frozenset(vars(parser.parse_args([]))) | {"verbose"}
 
 
-def cli_manage(cli_args: list[str] | None = None) -> None:
-    """Provide CLI for repository management."""
-    # pylint: disable=too-many-branches,too-many-statements
-    if cli_args is None:
-        cli_args = sys.argv[1:]
+def _build_manage_argument_parser() -> argparse.ArgumentParser:
+    """Build the argument parser of ``grr_manage`` and its subcommands."""
     desc = "Genomic Resource Repository Management Tool"
     parser = argparse.ArgumentParser(description=desc)
     parser.add_argument(
@@ -1430,6 +1427,15 @@ def cli_manage(cli_args: list[str] | None = None) -> None:
     _configure_repo_repair_subparser(commands_parser)
     _configure_resource_repair_subparser(commands_parser)
     _configure_repo_index_subparser(commands_parser)
+    return parser
+
+
+def cli_manage(cli_args: list[str] | None = None) -> None:
+    """Provide CLI for repository management."""
+    # pylint: disable=too-many-branches,too-many-statements
+    if cli_args is None:
+        cli_args = sys.argv[1:]
+    parser = _build_manage_argument_parser()
     args = parser.parse_args(cli_args)
     VerbosityConfiguration.set(args)
 
@@ -1690,8 +1696,8 @@ def _create_proto(
     return proto
 
 
-def cli_browse(cli_args: list[str] | None = None) -> None:
-    """Provide CLI for repository browsing."""
+def _build_browse_argument_parser() -> argparse.ArgumentParser:
+    """Build the argument parser of ``grr_browse``."""
     desc = "Genomic Resource Repository Browse Tool"
     parser = argparse.ArgumentParser(description=desc)
     parser.add_argument(
@@ -1732,7 +1738,12 @@ def cli_browse(cli_args: list[str] | None = None) -> None:
         action="store_true",
         help="Print the resource size in bytes",
     )
+    return parser
 
+
+def cli_browse(cli_args: list[str] | None = None) -> None:
+    """Provide CLI for repository browsing."""
+    parser = _build_browse_argument_parser()
     if cli_args is None:
         cli_args = sys.argv[1:]
     args = parser.parse_args(cli_args)
