@@ -102,12 +102,14 @@ deviation.
 
 A histogram file that a build wrote before the accumulators existed has no
 summary numbers (gain#1589). For such a file, ``count``, ``mean`` and ``std``
-are ``None``. The same is true when the build folded no value. Test for
-``None`` before you do arithmetic with them.
+are ``None``. When the build folded no value, ``count`` is ``0``, and only
+``mean`` and ``std`` are ``None``. Test ``mean`` and ``std`` for ``None``
+before you do arithmetic with them.
 
 ``moments_summary()`` returns the same numbers as ``(label, text)`` pairs,
 formatted for the resource summary page: ``n``, ``mean`` and ``sd``. It
-returns ``None`` when the summary numbers are unknown.
+returns ``None`` when the summary numbers are unknown or the build folded
+no value.
 
 .. _histograms-reading-categorical:
 
