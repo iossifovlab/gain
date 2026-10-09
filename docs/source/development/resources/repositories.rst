@@ -26,7 +26,7 @@ a definition dictionary instead builds exactly the repository it describes:
 
 .. code-block:: python
 
-    from gain.genomic_resources.repository_factory import build_genomic_resource_repository
+    from gain.grr import build_genomic_resource_repository
 
     # the environment's default repository
     grr = build_genomic_resource_repository()

@@ -57,8 +57,10 @@ number histogram has:
 
 .. code-block:: python
 
-    from gain.genomic_resources.repository_factory import build_genomic_resource_repository
-    from gain.genomic_resources.genomic_scores import build_score_from_resource_id
+    from gain.grr import (
+        build_genomic_resource_repository,
+        build_score_from_resource_id,
+    )
     from gain.genomic_resources.histogram import NumberHistogram
 
     grr = build_genomic_resource_repository()

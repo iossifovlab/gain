@@ -14,8 +14,10 @@ rather than read from an open file. The consequence is that
 
 .. code-block:: python
 
-    from gain.genomic_resources.repository_factory import build_genomic_resource_repository
-    from gain.genomic_resources.gene_models import build_gene_models_from_resource_id
+    from gain.grr import (
+        build_gene_models_from_resource_id,
+        build_genomic_resource_repository,
+    )
 
     grr = build_genomic_resource_repository()
     genes = build_gene_models_from_resource_id("hg38/gene_models/MANE/1.5", grr).load()
