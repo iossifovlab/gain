@@ -277,6 +277,21 @@ queries and therefore two values.
 Common to all genomic scores
 ----------------------------
 
+Histograms
+~~~~~~~~~~
+
+Each score of a resource can have a histogram of its values. Read it with
+``get_score_histogram``. The result is a number, a categorical or a null
+histogram:
+
+.. code-block:: python
+
+    hist = score.get_score_histogram("phastCons100way")
+
+Check the kind of the result before you use it. The attributes of each kind
+are described in :ref:`histograms-reading-number`,
+:ref:`histograms-reading-categorical` and :ref:`histograms-reading-null`.
+
 Score definitions
 ~~~~~~~~~~~~~~~~~
 

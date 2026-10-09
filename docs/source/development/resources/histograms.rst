@@ -44,6 +44,170 @@ Because they are aliases there is nothing to ``autoclass`` and no page anchor
 to link to — check ``type`` on the object, or match on the class, to find out
 which one you have.
 
+.. _histograms-reading-number:
+
+Reading a number histogram
+--------------------------
+
+``ScoreResource.get_score_histogram(score_id)`` reads the stored histogram of
+one score. Genomic scores and gene scores share it. It returns the
+``Histogram`` union, so the result can be any of the three kinds. Check
+``isinstance(hist, NumberHistogram)`` before you use an attribute that only a
+number histogram has:
+
+.. code-block:: python
+
+    from gain.genomic_resources.repository_factory import build_genomic_resource_repository
+    from gain.genomic_resources.genomic_scores import build_score_from_resource_id
+    from gain.genomic_resources.histogram import NumberHistogram
+
+    grr = build_genomic_resource_repository()
+    score = build_score_from_resource_id("hg38/scores/phastCons100way", grr)
+
+    hist = score.get_score_histogram("phastCons100way")
+    assert isinstance(hist, NumberHistogram)
+
+    print(len(hist.bins), len(hist.bars))
+    print(hist.bins[:3], hist.bars[:3])
+    print(hist.min_value, hist.max_value, hist.out_of_range_bins)
+
+.. code-block:: text
+
+    101 100
+    [0.   0.01 0.02] [1829125896  177725064  102444378]
+    0.0 1.0 [0, 0]
+
+``bins`` holds the bin edges, so it has one more item than ``bars``. Bar ``i``
+counts the values from ``bins[i]`` up to ``bins[i + 1]``. ``min_value`` and
+``max_value`` are the smallest and the largest value that the build saw.
+``out_of_range_bins`` is a pair of counts: the values below and the values
+above the configured view range.
+
+The histogram also keeps three summary numbers:
+
+.. code-block:: python
+
+    print(hist.count, hist.mean, hist.std)
+    print(hist.moments_summary())
+
+.. code-block:: text
+
+    2944992024 0.09809510937890936 0.23381027247397798
+    (('n', '2,944,992,024'), ('mean', '0.0981'), ('sd', '0.234'))
+
+``count`` is the n. It uses the same weights as the bars: it is
+``bars.sum()`` plus both out-of-range counts. ``mean`` is the weighted mean.
+``std`` is the population standard deviation, not the sample standard
+deviation.
+
+A histogram file that a build wrote before the accumulators existed has no
+summary numbers (gain#1589). For such a file, ``count``, ``mean`` and ``std``
+are ``None``. When the build folded no value, ``count`` is ``0``, and only
+``mean`` and ``std`` are ``None``. Test ``mean`` and ``std`` for ``None``
+before you do arithmetic with them.
+
+``moments_summary()`` returns the same numbers as ``(label, text)`` pairs,
+formatted for the resource summary page: ``n``, ``mean`` and ``sd``. It
+returns ``None`` when the summary numbers are unknown or the build folded
+no value.
+
+.. _histograms-reading-categorical:
+
+Reading a categorical histogram
+-------------------------------
+
+A categorical histogram counts each distinct value of the score. The
+``CLNVC`` score of the ClinVar resource has a few values:
+
+.. code-block:: python
+
+    from gain.genomic_resources.histogram import CategoricalHistogram
+
+    score = build_score_from_resource_id("hg38/scores/ClinVar_20240730", grr)
+
+    hist = score.get_score_histogram("CLNVC")
+    assert isinstance(hist, CategoricalHistogram)
+
+    print(hist.truncated)
+    print(hist.unique_values, hist.total_count)
+    print(hist.raw_values)
+    print(hist.display_values)
+
+.. code-block:: text
+
+    False
+    8 2906434
+    {'single_nucleotide_variant': 2667265, 'Microsatellite': 32873, 'Indel': 14277, 'Deletion': 123085, 'Duplication': 55642, 'Insertion': 11669, 'Variation': 366, 'Inversion': 1257}
+    {'single_nucleotide_variant': 2667265, 'Deletion': 123085, 'Duplication': 55642, 'Microsatellite': 32873, 'Indel': 14277, 'Insertion': 11669, 'Inversion': 1257, 'Variation': 366}
+
+The four attributes answer different questions:
+
+``raw_values``
+    The count of every value that the histogram holds.
+
+``display_values``
+    The counts that the summary page shows, selected and ordered by the
+    configuration of the histogram. For ``CLNVC`` the order is by count, from
+    the largest to the smallest.
+
+``total_count``
+    The sum of all counts.
+
+``unique_values``
+    The number of distinct values.
+
+Some scores have many distinct values. For these scores the build writes a
+second, small file next to the full histogram, called the truncated sidecar.
+Pass ``truncated=True`` to ``get_score_histogram`` to read the sidecar and to
+skip the full file:
+
+.. code-block:: python
+
+    full = score.get_score_histogram("CLNDN")
+    small = score.get_score_histogram("CLNDN", truncated=True)
+    for hist in (full, small):
+        print(hist.truncated, hist.unique_values, hist.total_count,
+              len(hist.raw_values), len(hist.display_values))
+
+.. code-block:: text
+
+    False 166335 2905739 166335 11
+    True 166335 2905739 10 10
+
+``unique_values`` and ``total_count`` describe the full histogram in both
+cases. On the truncated histogram, ``raw_values`` holds only the values that
+the sidecar kept. Use ``truncated=True`` when you need the summary and not
+every value. When a score has no sidecar, the call returns the full histogram
+with or without the argument.
+
+.. _histograms-reading-null:
+
+Reading a null histogram
+------------------------
+
+A null histogram has no counts. It has the ``reason`` that explains why. In
+ClinVar 20251019, the ``RS`` score has a null histogram:
+
+.. code-block:: python
+
+    from gain.genomic_resources.histogram import NullHistogram
+
+    score = build_score_from_resource_id("hg38/scores/ClinVar_20251019", grr)
+
+    hist = score.get_score_histogram("RS")
+    assert isinstance(hist, NullHistogram)
+
+    print(hist.reason)
+
+.. code-block:: text
+
+    Histogram is not available for this score.
+
+The reason comes from the configuration of the score, or from the statistics
+build that refused to make the histogram. For example, the build gives the
+reason ``Too many unique values 101 for categorical histogram.`` to a score
+that is over the cardinality limit described below.
+
 The null histogram is not an absence
 ------------------------------------
 
