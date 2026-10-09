@@ -7,8 +7,10 @@ reads the resource directories of a GRR, each with its
 statistics and the info pages of the resources, and the repository-global
 files: the ``.CONTENTS`` files, the search index and the repository index
 pages. Use it when you create a GRR, after you add or change a resource, and
-when you publish a GRR. Each subcommand has a ``repo-*`` form for the whole
-GRR and a ``resource-*`` form for one resource.
+when you publish a GRR. The manifest, stats, info and repair subcommands each
+have a ``repo-*`` form for the whole GRR and a ``resource-*`` form for one
+resource. The ``list``, ``repo-init`` and ``repo-index`` subcommands have only
+one form.
 
 Examples
 --------
