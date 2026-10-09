@@ -49,9 +49,10 @@ For example, users can access a reference genome, a gene models resource, or a p
 and then call resource-specific methods on the resulting Python objects. This allows GRR resources to be 
 queried directly in Python for custom analyses that are not part of a predefined annotation workflow.
 
-The examples below illustrate three uses of the Python interface: inspecting chromosome lengths from a 
-reference genome, locating a gene and retrieving scores across its interval, and summarizing the number 
-of resources available for different genome builds. 
+The examples below illustrate five uses of the Python interface: inspecting chromosome lengths from a 
+reference genome, locating a gene and retrieving scores across its interval, summarizing the number 
+of resources available for different genome builds, annotating variants with an annotation pipeline, 
+and creating an annotator plugin. 
 :doc:`resources_in_python` provides more detail on the
 Python methods available for different resource types.
 
@@ -280,7 +281,7 @@ In this example, a small annotation pipeline is defined directly as a YAML strin
     allele = VCFAllele("chr1", 11796321, "G", "A")
 
     result = pipeline.annotate(allele)
-    batchresult = pipeline.batch_annotate([allele, allele])
+    batch_result = pipeline.batch_annotate([allele, allele])
 
     print(result)
     print(batch_result)
