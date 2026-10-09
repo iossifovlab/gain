@@ -19,7 +19,7 @@ it is the name a package registers in the ``gain.annotation.annotators``
 entry-point group, and :doc:`annotators/plugins` says how the one becomes
 the other.
 
-If you are new to the Python interface, :doc:`/python_interface` is the
+If you are new to the Python interface, :doc:`/development/overview` is the
 getting-started guide. Its fourth section loads a pipeline and annotates one
 allele; its fifth walks through writing, registering and running a small
 plugin end to end. This chapter picks up where those stop: it describes each
