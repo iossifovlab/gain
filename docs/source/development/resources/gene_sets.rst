@@ -36,10 +36,12 @@ For a collection with two gene sets, the example prints:
 Loading
 -------
 
-The builder returns a collection that holds no gene sets.
-:meth:`~gain.gene_sets.gene_set.GeneSetCollection.load` reads them from the
-resource and returns the collection, so the call chains. A call to ``load``
-on a loaded collection does nothing.
+The builder memoizes collections for each resource. A second build of the
+same resource returns the same collection, and that collection may already be
+loaded. Call
+:meth:`~gain.gene_sets.gene_set.GeneSetCollection.load` before the first read.
+It reads the gene sets from the resource and returns the collection, so the
+call chains. A call to ``load`` on a loaded collection does nothing.
 :meth:`~gain.gene_sets.gene_set.GeneSetCollection.is_loaded` reports the
 state. A collection holds no file handle, so it has no ``close``.
 

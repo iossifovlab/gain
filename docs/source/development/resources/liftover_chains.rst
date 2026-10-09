@@ -36,16 +36,18 @@ two conversions print:
 The lifecycle
 -------------
 
-The builder returns a closed chain. :meth:`~gain.genomic_resources.liftover_chain.LiftoverChain.open`
-reads the chain file and returns the chain, so the call chains. A call to
-``open`` on an open chain does nothing.
+The builder memoizes chains for each resource. A second build of the same
+resource returns the same chain, and that chain may already be open. Call
+:meth:`~gain.genomic_resources.liftover_chain.LiftoverChain.open` before the
+first conversion. It reads the chain file and returns the chain, so the call
+chains. A call to ``open`` on an open chain does nothing.
 :meth:`~gain.genomic_resources.liftover_chain.LiftoverChain.is_open`
-reports the state. Call ``open`` before the first conversion: the conversion
-needs the loaded chain.
+reports the state.
 
 Unlike a genomic score, a chain is not a context manager, so there is no
 ``with`` form. :meth:`~gain.genomic_resources.liftover_chain.LiftoverChain.close`
 exists for symmetry with the other resource objects and releases nothing.
+Because builds share the chain, treat it as shared state.
 
 Converting a coordinate
 -----------------------
