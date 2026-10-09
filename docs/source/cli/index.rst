@@ -7,7 +7,6 @@ with ``--help``.
 .. toctree::
     :hidden:
 
-    binning_tool
     grr_browse
     grr_manage
     grr_cache_repo
@@ -17,6 +16,7 @@ with ``--help``.
     annotate_doc
     annotate_variant_effects
     annotate_variant_effects_vcf
+    binning_tool
     draw_score_histograms
     to_gpf_gene_models_format
     install_vep_cache

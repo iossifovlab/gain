@@ -45,6 +45,8 @@ and a list of ``binners`` entries.
         resource_query: hg38/scores/phyloP100way
         aggregator: max
         none_value_replacement: 0.0
+    - fragment_score_binner:
+        resource_query: "sc/atac_fragments/*"
 
 Every key is checked. A mistyped key anywhere in the file — ``aggregtor``
 for ``aggregator`` — is an error that names the entry, never a silently
@@ -283,38 +285,6 @@ There is no ``none_value_replacement`` key on this kind. In the
 ``fragment_length`` and ``coverage_profile`` modes, ``uncovered_value``
 says what a base without fragments adds. In ``fragment_start`` mode, the
 aggregator decides what an empty bin holds (see `Empty bins`_).
-
-.. note::
-
-    **The** ``fragment_score_binner`` **entry layout changed during
-    development.** No release contains this kind yet. The development
-    builds since the kind first appeared (#1203) kept what one fragment
-    adds and how a bin reduces the values in one ``aggregate`` key. Now
-    the ``value`` key says what one fragment adds, and ``aggregate`` says
-    how a bin reduces the values. If you used such a build, rewrite each
-    old form as follows:
-
-    .. list-table::
-       :header-rows: 1
-       :widths: 45 55
-
-       * - Old form
-         - New form
-       * - ``aggregate: {score: S, aggregator: A}``
-         - ``value: {score_id: S}`` and ``aggregate: {aggregator: A}``
-       * - ``aggregate: {value: V, aggregator: A}``
-         - ``value: {value: V}`` and ``aggregate: {aggregator: A}``
-       * - no ``aggregate``, on a resource with an ``int`` ``count``
-           score: the sum of ``count``
-         - ``value: {score_id: count}``. Without it, the entry now counts
-           the fragments that start in each bin (see `Defaults`_).
-
-    The old keys ``aggregate.score`` and ``aggregate.value`` are refused
-    when the run definition is read. The message names the replacement:
-
-    .. code-block:: text
-
-        binners[0].aggregate: score is not an aggregate key; what one fragment adds is the entry's value key: give value: {score_id: count}
 
 Modes
 """""
