@@ -99,6 +99,10 @@ For a resource with three cells and four genes, the example prints:
 
 The rows of ``obs`` are the cells, and the rows of ``var`` are the genes.
 
+The data files must be reachable as local files. This holds for directory
+GRRs and for caching protocols. Any other protocol raises ``ValueError``
+that names the resource.
+
 The ``format:`` key of the resource selects the reader. When the key is
 missing, the suffix of the ``file:`` key decides:
 
@@ -129,9 +133,11 @@ no handle.
 
 The ``matrix_free`` keyword of
 :func:`~gain.genomic_resources.ann_data_resource.load_ann_data_from_resource`
-is for tools that read only ``obs`` and ``var``. **The ``X`` it returns is a
-matrix of zeros, not the data of the resource.** Do not use it to read
-values.
+is for tools that read only ``obs`` and ``var``. It applies to the
+``10x_mtx`` and ``10x_h5`` formats only. The ``h5ad`` format ignores it,
+because the file already backs ``X``. **For a 10x resource, the ``X`` it
+returns is a matrix of zeros, not the data of the resource.** Do not use it
+to read values.
 
 API
 ---
