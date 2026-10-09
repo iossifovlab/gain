@@ -1,5 +1,5 @@
-GAIn Python interface
-======================
+Overview of the GAIn Python interface
+=====================================
 
 The command-line workflow is designed for specific GAIn tasks, such as annotating variants, positions, or regions 
 and inspecting resources in a GRR. This covers many common annotation 
@@ -52,7 +52,7 @@ queried directly in Python for custom analyses that are not part of a predefined
 The examples below illustrate three uses of the Python interface: inspecting chromosome lengths from a 
 reference genome, locating a gene and retrieving scores across its interval, and summarizing the number 
 of resources available for different genome builds. 
-:doc:`development/resources_in_python` provides more detail on the
+:doc:`resources_in_python` provides more detail on the
 Python methods available for different resource types.
 
 1: Chromosome lengths
@@ -183,7 +183,7 @@ Save this file as ``python_2.py``, and run it as before:
 
 This will produce the following image:
 
-.. figure:: figures/TP53_phastCons100way.png
+.. figure:: /figures/TP53_phastCons100way.png
 
 
 In this plot, higher ``phastCons100way`` values indicate positions that are more conserved 
@@ -384,7 +384,7 @@ The rule reads three attributes from the context: ``gnomad_v4_exome_ALL_af``, ``
 
 The ``adapter.py`` file connects the decision function to the GAIn annotation pipeline. It declares the new output attribute, ``experimental_followup``, and calls ``annotate_experimental_followup`` for each variant. The adapter receives the annotation context from GAIn, which allows the plugin to use attributes produced by earlier annotators without querying the original GRR resources directly.
 
-The full ``adapter.py`` file contains the standard wrapper code needed to expose this function as a GAIn annotator and can be downloaded :download:`here <files/adapter.py>`. In brief, it defines an ``ExperimentalFollowupAnnotator`` class, declares the ``experimental_followup`` attribute using ``AttributeSpec``, and implements the single-variant annotation method, which answers an ``AnnotatedValues`` keyed by attribute name; batch annotation comes from the base class, and is only worth overriding when the tool has a genuinely batched path. With this wrapper in place, the plugin can be included in a pipeline like any other GAIn annotator.
+The full ``adapter.py`` file contains the standard wrapper code needed to expose this function as a GAIn annotator and can be downloaded :download:`here </files/adapter.py>`. In brief, it defines an ``ExperimentalFollowupAnnotator`` class, declares the ``experimental_followup`` attribute using ``AttributeSpec``, and implements the single-variant annotation method, which answers an ``AnnotatedValues`` keyed by attribute name; batch annotation comes from the base class, and is only worth overriding when the tool has a genuinely batched path. With this wrapper in place, the plugin can be included in a pipeline like any other GAIn annotator.
 
 Before registering the plugin, make sure that experimental_followup_annotator is a Python package. This can be done by creating an empty ``__init__.py`` file:
 

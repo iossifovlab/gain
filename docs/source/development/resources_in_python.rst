@@ -26,7 +26,7 @@ documented on exactly one side:
   histogram objects a statistics build produces, are described in
   :doc:`resources/histograms`.
 
-If you are new to the Python interface, :doc:`/python_interface` is the
+If you are new to the Python interface, :doc:`/development/overview` is the
 getting-started guide: it connects to a repository and runs three short
 end-to-end examples. This chapter picks up where it stops.
 

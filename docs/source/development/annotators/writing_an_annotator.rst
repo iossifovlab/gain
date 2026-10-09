@@ -132,7 +132,7 @@ A minimal annotator
 
 The smallest complete annotator declares one attribute, reads the context,
 and answers through ``_every``. This is the shape of the plugin
-:doc:`/python_interface` builds in its fifth section, whose full adapter is
+:doc:`/development/overview` builds in its fifth section, whose full adapter is
 downloadable there:
 
 .. code-block:: python

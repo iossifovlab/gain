@@ -8,7 +8,7 @@ implementation, or write an annotator plugin. It is written for the
 contributors.
 
 If you have not used the Python interface before, start with
-:doc:`python_interface`; that page is the getting-started guide, and the
+:doc:`development/overview`; that page is the getting-started guide, and the
 split between it and this section is depth, not audience. And if what you are
 writing is pipeline YAML or a command line rather than Python, you want the
 user pages instead — :doc:`grr` for resources and repositories,
