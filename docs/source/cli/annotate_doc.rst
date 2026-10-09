@@ -45,3 +45,8 @@ them.
     :module: gain.annotation.annotate_doc
     :func: configure_argument_parser
     :prog: annotate_doc
+    :nodescription:
+
+    -o --output : @replace
+        The name of the output HTML file. Without this option, the tool
+        prints the HTML page to the standard output.

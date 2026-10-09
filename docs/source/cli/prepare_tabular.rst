@@ -45,3 +45,8 @@ Option reference
     :module: gain.annotation.prepare_tabular
     :func: _build_argument_parser
     :prog: prepare_tabular
+
+    -o --output : @replace
+        The output bgzip-compressed file path. The path must end with
+        ``.bgz`` or ``.gz``. Without this option, the tool writes
+        ``<input-stem>.sorted.tsv.bgz`` next to the input.
