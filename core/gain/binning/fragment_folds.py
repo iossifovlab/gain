@@ -34,7 +34,7 @@ from collections import deque
 from collections.abc import Iterable, Iterator
 from typing import NamedTuple
 
-from gain.genomic_resources.aggregators import Aggregator
+from gain.genomic_resources.aggregators import Aggregator, to_float64
 from gain.genomic_resources.genomic_scores.aggregation import (
     EMPTY_BIN_VALUES,
 )
@@ -388,9 +388,6 @@ def _final_value(aggregator: Aggregator, empty_value: float) -> float:
     final = aggregator.get_final()
     if final is None:
         return empty_value
-    try:
-        return float(final)
-    except OverflowError:
-        # An exact int (``sum``/``product`` of an int score) past the
-        # float range saturates, as a float result already does.
-        return math.inf if final > 0 else -math.inf
+    # An exact int (``sum`` of an int score) past the float range
+    # saturates, as a float result already does.
+    return to_float64(final)

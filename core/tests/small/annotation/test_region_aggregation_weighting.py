@@ -22,6 +22,7 @@ weighting rules apart.  No annotator in gain watches values arrive at an
 aggregator of its own any more.
 """
 
+import math
 import pathlib
 import textwrap
 from typing import Any
@@ -30,6 +31,7 @@ import pytest
 from gain.annotation.annotatable import Region
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
+from gain.binning.binners import BinningJob, PositionScoreBinner, Track
 from gain.genomic_resources.aggregators import ScoreAggregationQuery
 from gain.genomic_resources.genomic_scores import (
     build_allele_score_from_resource,
@@ -43,6 +45,7 @@ from gain.genomic_resources.testing.builders import (
     a_position_score,
     an_allele_score,
 )
+from gain.utils.regions import BedRegion
 
 
 @pytest.fixture
@@ -238,3 +241,51 @@ def test_a_fragment_counts_once_however_long_it_is(
         (0.1 * 10 + 0.2 * 181) / 191)
     assert result["frequency"] == _fragment_score_answer(
         fixture_repo, 10, 200)
+
+
+#: Runs of hundreds of bp, so a ``product`` weighs a value by a power in
+#: the hundreds: chr1:1-2000 passes the float range, 2001-4000 does not.
+_LONG_RUNS = """
+    chrom  pos_begin  pos_end  s
+    chr1   1          1001     -3.0
+    chr1   2001       2500     2.0
+    chr1   2501       3000     1.5
+"""
+
+
+@pytest.mark.parametrize("start,end,expected", [
+    (1, 2000, -math.inf),
+    (2001, 4000, 2.0 ** 500 * 1.5 ** 500),
+])
+def test_a_region_product_agrees_with_the_binner_over_long_runs(
+    tmp_path: pathlib.Path, start: int, end: int, expected: float,
+) -> None:
+    """The annotator's region ``product`` is the binner's bin (gain#1766)."""
+    repo = (
+        a_grr()
+        .with_resource("long_runs", a_position_score()
+                       .with_score("s", "float")
+                       .with_tabix()
+                       .with_data(_LONG_RUNS))
+        .build_repo(tmp_path))
+    track = Track(
+        name="long_runs", resource_ids=("long_runs",), group="",
+        score_id="s", aggregator="product", none_value_replacement=None,
+        binner="position_score_binner")
+    job = BinningJob(binner=track.binner, tracks=(track,))
+    pipeline = load_pipeline_from_yaml(textwrap.dedent("""
+        - position_score:
+            resource_id: long_runs
+            attributes:
+            - source: s
+              aggregator: product
+        """), repo)
+
+    with pipeline:
+        annotated = pipeline.annotate(Region("chr1", start, end))["s"]
+    with PositionScoreBinner.bind(job, repo) as bound:
+        binned = bound.bin_region(
+            BedRegion("chr1", start, end), end - start + 1)
+
+    assert annotated == pytest.approx(expected)
+    assert binned.tolist() == [[annotated]]

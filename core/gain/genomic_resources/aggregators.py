@@ -5,8 +5,10 @@ from __future__ import annotations
 import abc
 import functools
 import math
+import numbers
 import operator
 import re
+import sys
 from collections import Counter
 from collections.abc import Generator, Iterable
 from dataclasses import dataclass, field
@@ -14,6 +16,29 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 if TYPE_CHECKING:
     from gain.genomic_resources.score_def import ScoreValue
+
+
+#: The binary exponent past which no float exists: ``float(2 ** 1024)``
+#: overflows.
+_FLOAT_MAX_EXPONENT = 1024
+
+#: The bits of a float mantissa: an int of this many bits converts exactly.
+_FLOAT_MANTISSA_BITS = sys.float_info.mant_dig
+
+
+def to_float64(value: Any) -> float:
+    """Convert a numeric aggregation result to a float, saturating.
+
+    The one saturation rule for every float store of a ``sum`` or a
+    ``product``: an exact int past the float range (about 1.8e308) has no
+    float and becomes ``inf`` or ``-inf`` by its sign, as a float result
+    past the range already is.  The sign comes from a comparison, not
+    from ``math.copysign``: that converts the int and overflows again.
+    """
+    try:
+        return float(value)
+    except OverflowError:
+        return math.inf if value > 0 else -math.inf
 
 
 class Aggregator(abc.ABC):
@@ -274,11 +299,98 @@ class SumAggregator(Aggregator):
         return self.total
 
 
+def _times_power(product: Any, value: Any, count: int) -> Any:
+    """``product * value ** count``, as ``count`` multiplications give it.
+
+    Neither ``product`` nor ``value`` is 0.  The result is the exact
+    product while a float holds it: an exact int for an int ``product``
+    and ``value``, else a float.  Past the float range it is ``inf`` or
+    ``-inf`` by the sign of the exact product.  A float result too small
+    for a float is a signed 0.0.  A power past the float range alone is
+    never built: ``3 ** 10**7`` is a 15.8-million-bit int, and
+    ``3.0 ** 1000`` raises.
+    """
+    negative = (product < 0) != (value < 0 and count % 2 == 1)
+    if isinstance(product, numbers.Integral) \
+            and isinstance(value, numbers.Integral):
+        product, value = int(product), int(value)
+        # |product * value ** count| >= 2 ** this, past the float max.
+        low_bits = (abs(product).bit_length() - 1
+                    + (abs(value).bit_length() - 1) * count)
+        if low_bits >= _FLOAT_MAX_EXPONENT:
+            return -math.inf if negative else math.inf
+        return _saturate_past_float_range(product * value ** count)
+    try:
+        power = float(value) ** count
+    except OverflowError:
+        power = math.inf
+    if math.isfinite(power) and abs(power) >= sys.float_info.min:
+        return _saturate_past_float_range(product * power)
+    magnitude = _magnitude_times_power(abs(product), abs(value), count)
+    return -magnitude if negative else magnitude
+
+
+def _magnitude_times_power(product: Any, value: Any, count: int) -> float:
+    """``product * value ** count`` for non-negative numbers, saturated.
+
+    The running result and the squared base are each a mantissa and a
+    binary exponent, so no partial power passes the float range.  Only
+    the final :func:`math.ldexp` saturates to ``inf`` or rounds to 0.0.
+    """
+    mantissa, exponent = _frexp(product)
+    base_mantissa, base_exponent = _frexp(value)
+    while count:
+        if count & 1:
+            mantissa, shift = math.frexp(mantissa * base_mantissa)
+            exponent += base_exponent + shift
+        count >>= 1
+        if count:
+            base_mantissa, shift = math.frexp(base_mantissa * base_mantissa)
+            base_exponent = 2 * base_exponent + shift
+    try:
+        return math.ldexp(mantissa, exponent)
+    except OverflowError:
+        return math.inf
+
+
+def _frexp(value: Any) -> tuple[float, int]:
+    """:func:`math.frexp` of a non-negative number, an int past floats too.
+
+    An int that no float holds, like ``10 ** 400``, keeps its top bits in
+    the mantissa and the rest in the binary exponent.
+    """
+    if isinstance(value, numbers.Integral):
+        value = int(value)
+        shift = max(value.bit_length() - _FLOAT_MANTISSA_BITS, 0)
+        mantissa, exponent = math.frexp(float(value >> shift))
+        return mantissa, exponent + shift
+    return math.frexp(value)
+
+
+def _saturate_past_float_range(value: Any) -> Any:
+    """``value`` unchanged, or a signed infinity when no float holds it."""
+    saturated = to_float64(value)
+    return saturated if math.isinf(saturated) else value
+
+
 class ProductAggregator(Aggregator):
     """Aggregator that multiplies the values it is given.
 
     The output keeps the input's type -- an ``int`` score multiplies to an
     ``int`` -- and it is ``None`` when no non-``None`` value was added.
+
+    **Past the float range.**  A product past about 1.8e308 saturates to
+    ``inf`` or ``-inf`` by the sign of the exact product, an exact int
+    one included: an int stays exact only while a float can hold it.  A
+    weighted ``add(value, count)`` gives what ``count`` calls of
+    ``add(value)`` give, in bounded time and memory.  A product that holds
+    a ``0`` is ``0``, in any order and after a saturation too.
+
+    The running product decides the result, as in repeated multiplication:
+    once it passes the float range it stays saturated, and once it
+    underflows it stays 0.  The result therefore depends on the input
+    order: ``(3.0, 1000)`` then ``(0.5, 2000)`` gives ``inf``, the reverse
+    order gives 0.0, and the exact product is about 1e-125.
     """
 
     def __init__(self) -> None:
@@ -288,11 +400,16 @@ class ProductAggregator(Aggregator):
     def _add_internal(self, value: Any, count: int) -> None:
         if value is None:
             return
-        contribution = value ** count
-        if self.product is None:
-            self.product = contribution
-        else:
-            self.product *= contribution
+        if count == 0:
+            return
+        if value == 0:
+            # A 0 absorbs everything after it, a saturated infinity too:
+            # the exact product is 0, where ``inf * 0`` is NaN.
+            self.product = value
+        elif self.product is None:
+            self.product = _times_power(1, value, count)
+        elif self.product != 0:
+            self.product = _times_power(self.product, value, count)
         self.used_count += count
 
     def _clear_internal(self) -> None:

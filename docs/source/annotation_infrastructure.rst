@@ -138,6 +138,11 @@ The available aggregators are:
 
 - ``mean``, ``median``, ``max``, ``min``, ``sum``, ``product`` — numeric only (``int`` or ``float``).
   ``sum`` and ``product`` keep the score's own type: an ``int`` score sums to an ``int``.
+  A ``product`` past the float range (about 1.8e308) saturates to ``inf`` or ``-inf``, by the sign
+  of the exact product, also for an ``int`` score. A ``product`` that holds a ``0`` is ``0``.
+  The running product decides the result, as in repeated multiplication: once it passes the float
+  range it stays saturated, and once it underflows it stays ``0``. The result therefore depends on
+  the order of the values.
 - ``mode``, ``count``, ``concatenate``, ``join(separator)``, ``most_common(k)``, ``list``, ``bool``, ``value_count`` — applicable to any value type.
 
 ``join`` accepts a separator parameter, e.g. ``join(,)`` or ``join(;)``.

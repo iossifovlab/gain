@@ -7,6 +7,8 @@ aggregator.  The folding reads call ``add`` directly, so what these pin
 is what still runs.
 """
 
+import math
+import time
 from fractions import Fraction
 from typing import Any
 
@@ -24,6 +26,7 @@ from gain.genomic_resources.aggregators import (
     MedianAggregator,
     MinAggregator,
     ModeAggregator,
+    ProductAggregator,
 )
 
 
@@ -215,5 +218,206 @@ def test_weighted_mean_is_closer_to_the_exact_mean_than_replication() -> None:
     # The two agree to well within any tolerance a consumer could care
     # about -- but they are *not* the same float, and this is the whole
     # of the observable change.
-    assert weighted == pytest.approx(replicated, rel=1e-9)
+    assert weighted == pytest.approx(replicated, rel=1e-9, abs=0)
     assert weighted != replicated
+
+
+def test_a_weighted_float_product_past_the_float_range_saturates() -> None:
+    """``add(3.0, 1000)`` is what 1000 calls of ``add(3.0, 1)`` give: inf.
+
+    A position-score run weighs its value by its width in bp, so a run of
+    a few hundred bp reaches past the float range (gain#1766).
+    """
+    replicated = ProductAggregator().aggregate([3.0] * 1000)
+    weighted = ProductAggregator()
+
+    weighted.add(3.0, 1000)
+
+    assert weighted.get_final() == replicated == math.inf
+
+
+@pytest.mark.parametrize("value", [-3.0, -3])
+@pytest.mark.parametrize("count,expected", [
+    (1001, -math.inf),
+    (1000, math.inf),
+])
+def test_a_saturated_product_has_the_sign_of_the_exact_product(
+    value: float, count: int, expected: float,
+) -> None:
+    agg = ProductAggregator()
+
+    agg.add(value, count)
+
+    assert agg.get_final() == expected
+
+
+@pytest.mark.parametrize("value,expected", [(3, math.inf), (-3, -math.inf)])
+def test_a_weighted_int_product_never_builds_the_exact_power(
+    value: int, expected: float,
+) -> None:
+    """``add(3, 10**7)`` saturates without a 15.8-million-bit int.
+
+    The exact power takes seconds to build; the saturated answer does not.
+    """
+    agg = ProductAggregator()
+    started = time.perf_counter()
+
+    agg.add(value, 10 ** 7 + 1)
+
+    assert time.perf_counter() - started < 1.0
+    assert agg.get_final() == expected
+
+
+@pytest.mark.parametrize("value", [3, -3, 3.0, -3.0])
+@pytest.mark.parametrize("count", [1000, 1001])
+def test_a_weighted_product_matches_replication_past_the_float_range(
+    value: float, count: int,
+) -> None:
+    weighted = ProductAggregator()
+    weighted.add(value, count)
+
+    replicated = ProductAggregator().aggregate([value] * count)
+
+    assert replicated == weighted.get_final()
+    assert math.isinf(replicated)
+
+
+def test_an_int_product_stays_exact_inside_the_float_range() -> None:
+    agg = ProductAggregator()
+
+    agg.add(3, 600)
+    agg.add(2, 10)
+
+    assert agg.get_final() == 3 ** 600 * 2 ** 10
+    assert isinstance(agg.get_final(), int)
+
+
+@pytest.mark.parametrize("zero", [0, 0.0])
+@pytest.mark.parametrize("records_around_the_zero", [
+    pytest.param(lambda zero: [(zero, 1), (3.0, 1000)], id="zero-first"),
+    pytest.param(lambda zero: [(3.0, 1000), (2.0, 5), (zero, 1)],
+                 id="zero-last"),
+    pytest.param(lambda zero: [(3.0, 1000), (zero, 1), (2.0, 5)],
+                 id="zero-after-saturation"),
+    pytest.param(lambda zero: [(-3, 1001), (zero, 1), (-3, 1)],
+                 id="zero-after-int-saturation"),
+])
+def test_a_product_that_holds_a_zero_is_zero(
+    zero: float, records_around_the_zero: Any,
+) -> None:
+    """``inf * 0`` is ``nan``, but the exact product holding a 0 is 0."""
+    agg = ProductAggregator()
+
+    for value, count in records_around_the_zero(zero):
+        agg.add(value, count)
+
+    assert agg.get_final() == 0
+
+
+@pytest.mark.parametrize("records", [
+    pytest.param([(3.0, 1000), (0.5, 2000)], id="saturated-then-tiny"),
+    pytest.param([(-3.0, 1001), (0.5, 2000)], id="neg-saturated-then-tiny"),
+    pytest.param([(3.0, 1000), (-0.5, 2001)], id="saturated-then-neg-tiny"),
+    pytest.param([(0.5, 2000), (3.0, 1000)], id="tiny-then-saturated"),
+])
+def test_a_power_that_underflows_is_not_a_held_zero(
+    records: list[tuple[float, int]],
+) -> None:
+    """``0.5 ** 2000`` underflows to 0.0, but no value of the run is 0.
+
+    A weighted ``add`` gives what replication gives: a saturated product
+    stays saturated, and an underflowed product stays 0.
+    """
+    weighted = ProductAggregator()
+    for value, count in records:
+        weighted.add(value, count)
+
+    replicated = ProductAggregator().aggregate(
+        [value for value, count in records for _ in range(count)])
+
+    assert weighted.get_final() == replicated
+
+
+@pytest.mark.parametrize("records", [
+    pytest.param([(0.5, 1000), (3.0, 1000)], id="tiny-then-huge"),
+    pytest.param([(0.001, 100), (3.0, 1000)], id="tinier-then-huge"),
+    pytest.param([(3.0, 600), (0.5, 1100)], id="large-then-tiny"),
+    pytest.param([(-3.0, 601), (0.5, 1100)], id="neg-large-then-tiny"),
+    pytest.param([(1e300, 1), (0.5, 2000)], id="huge-value-then-tiny"),
+    pytest.param([(1e-300, 1), (3.0, 1000)], id="tiny-value-then-huge"),
+])
+def test_a_weighted_power_past_the_range_folds_into_a_finite_product(
+    records: list[tuple[float, int]],
+) -> None:
+    """A run's power alone can pass the float range, the product not.
+
+    ``3.0 ** 1000`` overflows and ``0.5 ** 1100`` underflows, but the
+    product with the records before it is a finite, non-zero float.
+    The weighted ``add`` gives what replication gives.
+    """
+    weighted = ProductAggregator()
+    for value, count in records:
+        weighted.add(value, count)
+
+    replicated = ProductAggregator().aggregate(
+        [value for value, count in records for _ in range(count)])
+
+    assert replicated != 0
+    assert math.isfinite(replicated)
+    assert weighted.get_final() == pytest.approx(replicated, rel=1e-9, abs=0)
+
+
+@pytest.mark.parametrize("records,expected", [
+    pytest.param([(10 ** 400, 1), (10 ** 400, 1)], math.inf,
+                 id="saturated-then-huge-int"),
+    pytest.param([(1.5, 1), (10 ** 400, 1)], math.inf,
+                 id="float-then-huge-int"),
+    pytest.param([(-1.5, 1), (10 ** 400, 1)], -math.inf,
+                 id="neg-float-then-huge-int"),
+    pytest.param([(1e-300, 1), (10 ** 400, 1)], 1e100,
+                 id="tiny-float-then-huge-int"),
+])
+def test_an_int_past_the_float_range_folds_into_a_float_product(
+    records: list[tuple[Any, int]], expected: float,
+) -> None:
+    """An int score column can hold an int no float holds, like 10**400.
+
+    Folded into a float product, it gives the exact product, saturated.
+    """
+    agg = ProductAggregator()
+
+    for value, count in records:
+        agg.add(value, count)
+
+    assert agg.get_final() == pytest.approx(expected, rel=1e-9, abs=0)
+
+
+def test_zero_copies_of_a_zero_leave_the_product_unchanged() -> None:
+    """A weighted ``add(0, 0)`` is no ``add`` at all, as replication gives."""
+    agg = ProductAggregator()
+    agg.add(5, 1)
+
+    agg.add(0, 0)
+
+    assert agg.get_final() == 5
+
+
+@pytest.mark.parametrize("records,expected", [
+    pytest.param([(3.0, 1000), (0.5, 2000)], math.inf, id="huge-first"),
+    pytest.param([(0.5, 2000), (3.0, 1000)], 0.0, id="tiny-first"),
+])
+def test_a_saturated_running_product_stays_saturated(
+    records: list[tuple[float, int]], expected: float,
+) -> None:
+    """The running product decides the result, so the order matters.
+
+    The exact product of these records is about 1e-125, a finite float.
+    A running product past the float range stays ``inf``, and a running
+    product that underflows stays 0, as repeated multiplication gives.
+    """
+    agg = ProductAggregator()
+
+    for value, count in records:
+        agg.add(value, count)
+
+    assert agg.get_final() == expected

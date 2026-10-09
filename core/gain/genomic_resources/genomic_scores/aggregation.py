@@ -65,7 +65,7 @@ from gain.genomic_resources.resource_errors import undefined_scores_message
 from gain.genomic_resources.score_def import GenomicScoreDef, ScoreValue
 from gain.utils.regions import calc_bin_index
 
-from ..aggregators import Aggregator, ScoreAggregationQuery
+from ..aggregators import Aggregator, ScoreAggregationQuery, to_float64
 
 # How each surface tells a caller to name an aggregator the score has no
 # default for.  Both live HERE, with the rule they are appended to, so the
@@ -452,13 +452,9 @@ def fold_into_bins(
             final = accumulator.get_final()
             if final is None:
                 continue
-            try:
-                block[row, column] = final
-            except OverflowError:
-                # An exact int (``sum``/``product`` of an int score) past
-                # the float range: saturate, as a float result already does.
-                # (Compared, not ``copysign``-ed: that converts it too.)
-                block[row, column] = math.inf if final > 0 else -math.inf
+            # An exact int (``sum`` of an int score) past the float range
+            # saturates, as a float result already does.
+            block[row, column] = to_float64(final)
 
     row = -1
     previous = start

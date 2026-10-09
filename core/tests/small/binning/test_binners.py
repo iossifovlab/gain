@@ -1,10 +1,14 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import math
+import pathlib
+
 import numpy as np
 import pytest
 import pytest_mock
 from gain.binning.binners import BinningJob, PositionScoreBinner, Track
 from gain.genomic_resources.genomic_scores.position import PositionScore
 from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.testing.builders import a_grr, a_position_score
 from gain.utils.regions import BedRegion
 
 BIN_SIZE = 10
@@ -159,3 +163,75 @@ def test_a_binding_opens_the_score_once_however_many_regions(
 
     assert opens.call_count == 1
     assert len(blocks) == 6
+
+
+#: Bins of 2000 bp over ``past_range`` below: chr1:1-2000 and 2001-4000.
+LONG_BIN_SIZE = 2000
+
+
+def past_range(aggregator: str) -> Track:
+    return Track(
+        name="past_range", resource_ids=("past_range",), group="",
+        score_id="s",
+        aggregator=aggregator, none_value_replacement=None,
+        binner="position_score_binner")
+
+
+def a_past_range_repo(
+    tmp_path: pathlib.Path, value_type: str, data: str,
+) -> GenomicResourceRepo:
+    return (
+        a_grr()
+        .with_resource("past_range", a_position_score()
+                       .with_score("s", value_type)
+                       .with_tabix()
+                       .with_data(data))
+        .build_repo(tmp_path))
+
+
+def bin_past_range(
+    track: Track, repo: GenomicResourceRepo,
+) -> np.ndarray:
+    with PositionScoreBinner.bind(a_job(track), repo) as bound:
+        block = bound.bin_region(BedRegion("chr1", 1, 4000), LONG_BIN_SIZE)
+    return block[:, 0]
+
+
+def test_a_product_over_runs_of_hundreds_of_bp_saturates_per_bin(
+    tmp_path: pathlib.Path,
+) -> None:
+    # (-3.0) ** 1001 and 3.0 ** 1000 have no float: each bin saturates by
+    # the sign of its exact product (gain#1766).
+    repo = a_past_range_repo(tmp_path, "float", """
+        chrom  pos_begin  pos_end  s
+        chr1   1          1001     -3.0
+        chr1   2001       3000     3.0
+    """)
+
+    values = bin_past_range(past_range("product"), repo)
+
+    np.testing.assert_array_equal(values, [-math.inf, math.inf])
+
+
+@pytest.mark.parametrize("aggregator,data", [
+    # (-10**200) ** 3 and 10**200 ** 2: exact int products past the range.
+    ("product", """
+        chrom  pos_begin  pos_end  s
+        chr1   1          3        -1""" + "0" * 200 + """
+        chr1   2001       2002     1""" + "0" * 200 + """
+    """),
+    # -2 * 10**308 and 3 * 10**308: exact int sums past the range.
+    ("sum", """
+        chrom  pos_begin  pos_end  s
+        chr1   1          2        -1""" + "0" * 308 + """
+        chr1   2001       2003     1""" + "0" * 308 + """
+    """),
+], ids=["product", "sum"])
+def test_an_int_result_past_the_float_range_is_stored_as_a_signed_inf(
+    tmp_path: pathlib.Path, aggregator: str, data: str,
+) -> None:
+    repo = a_past_range_repo(tmp_path, "int", data)
+
+    values = bin_past_range(past_range(aggregator), repo)
+
+    np.testing.assert_array_equal(values, [-math.inf, math.inf])
