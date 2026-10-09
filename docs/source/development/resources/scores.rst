@@ -66,8 +66,8 @@ score is an error, not an implicit open — a score that opened itself on first
 use would make the cost of the first read unpredictable, and would hide a
 missing ``close`` in long-running code.
 
-Reading positions
------------------
+Position scores
+---------------
 
 :class:`~gain.genomic_resources.genomic_scores.PositionScore` is the kind
 whose reads are per-base.
@@ -95,8 +95,8 @@ value type when the configuration names none.
 is the same reduction applied to a grid of fixed-width bins, which is what a
 genome-browser-style plot wants.
 
-Reading alleles
----------------
+Allele scores
+-------------
 
 :class:`~gain.genomic_resources.genomic_scores.AlleleScore` has a plane of
 reads in the same style as the position reads above and the fragment reads
@@ -247,8 +247,8 @@ matches an allele with the bare read on a ``one`` resource and with
 :meth:`~gain.genomic_resources.genomic_scores.AlleleScore.get_allele_scores_for_allele_agg`
 on a ``many`` resource, folding each attribute with its aggregator.
 
-Reading fragments
------------------
+Fragment scores
+---------------
 
 :class:`~gain.genomic_resources.genomic_scores.FragmentScore` reads intervals.
 Its method names say exactly which relation to the query region they use —
@@ -274,8 +274,11 @@ In every case ``values`` is parallel to the *queries* that were asked, not
 keyed by score id — one score asked twice with two aggregators is two
 queries and therefore two values.
 
+Common to all genomic scores
+----------------------------
+
 Score definitions
------------------
+~~~~~~~~~~~~~~~~~
 
 A score resource declares its columns in a ``scores:`` block, documented as
 YAML on :ref:`grr-position-scores` and the sibling sections for allele and
@@ -301,7 +304,7 @@ the column-array reads use, and it is the reason a large region can be read
 without building one Python object per row.
 
 Filtering
----------
+~~~~~~~~~
 
 :meth:`~gain.genomic_resources.genomic_scores.GenomicScore.compile_filter`
 turns a boolean expression over a score's own columns into a
@@ -319,7 +322,7 @@ another — expressions name columns, and the same column name on a different
 resource is a different column.
 
 Bulk reads
-----------
+~~~~~~~~~~
 
 :meth:`~gain.genomic_resources.genomic_scores.GenomicScore.fetch_records`
 yields one record per row and is the general form.
@@ -331,7 +334,7 @@ first — it answers for a specific list of scores, because support depends on
 the value types requested and not only on the backend.
 
 Chromosomes and their lengths
------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 :meth:`~gain.genomic_resources.genomic_scores.GenomicScore.get_all_chromosomes`
 lists the contigs the score's table holds, in table order, and
