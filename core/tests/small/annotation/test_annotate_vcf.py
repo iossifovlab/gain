@@ -1695,3 +1695,29 @@ def test_annotate_vcf_overrides_integer_declaration_of_attribute(
         ("2147483648",), ("1099511627776",), ("inf",), ("1.5",)]
     assert variants[4].info["score"] == ("7",)
     assert variants[4].info["other"] == 2.5
+
+
+def test_annotate_vcf_override_keeps_single_fileformat_line(
+    acgt_annotate_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
+    in_content = textwrap.dedent("""
+        ##fileformat=VCFv4.3
+        ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+        ##INFO=<ID=score,Number=1,Type=Integer,Description="Input score">
+        ##contig=<ID=chr1,length=1000>
+        #CHROM POS ID REF ALT QUAL FILTER INFO FORMAT m1  d1
+        chr1   21  .  C   T   .    .      .    GT     0/1 0/0
+    """)
+    in_file = tmp_path / "in.vcf"
+    out_file = tmp_path / "out.vcf"
+    setup_vcf(in_file, in_content)
+    pipeline = AnnotationPipeline(acgt_annotate_grr)
+    pipeline.add_annotator(_ValueByPositionAnnotator({21: 2**31}))
+
+    annotate_vcf(
+        str(in_file), pipeline, str(out_file), {"batch_size": 0})
+
+    header_lines = out_file.read_text().splitlines()
+    assert sum(
+        line.startswith("##fileformat=") for line in header_lines) == 1

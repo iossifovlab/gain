@@ -6,7 +6,7 @@ import itertools
 import os
 import sys
 import traceback
-from collections.abc import Iterable, Sequence
+from collections.abc import Collection, Iterable, Sequence
 from contextlib import chdir, closing
 from dataclasses import dataclass
 from pathlib import Path
@@ -228,11 +228,13 @@ class _VCFWriter(Filter):
         header: VariantHeader,
         annotation_attributes: Sequence[Attribute],
         attributes_to_delete: Sequence[str],
+        keep_declared: Collection[str] = (),
     ):
         self.path = path
         self.output_file: VariantFile
         self.header = self._update_header(
-            header, annotation_attributes, attributes_to_delete)
+            header, annotation_attributes, attributes_to_delete,
+            keep_declared)
         self.annotation_attributes = annotation_attributes
         self.attributes_to_delete = attributes_to_delete
 
@@ -241,21 +243,32 @@ class _VCFWriter(Filter):
         header: VariantHeader,
         annotation_attributes: Sequence[Attribute],
         attributes_to_delete: Sequence[str],
+        keep_declared: Collection[str] = (),
     ) -> VariantHeader:
-        """Update a variant file's header with annotation."""
+        """Update a variant file's header with annotation.
+
+        An annotation attribute gets the declaration ``Number=A,
+        Type=String``, also when the input header declares the name.
+        An attribute named in ``keep_declared`` keeps the input
+        declaration when the input header has one.
+        """
         header.add_meta("pipeline_annotation_tool", "GPF variant annotation.")
 
         annotation_attr_names = [attr.name for attr in annotation_attributes]
+        declared = {
+            name for name in annotation_attr_names
+            if name not in keep_declared
+        }
+        to_drop = declared | {
+            name for name in attributes_to_delete
+            if name not in annotation_attr_names
+        }
 
-        for info_key in header.info:
-            if info_key in attributes_to_delete \
-               and info_key not in annotation_attr_names:
-                header.info.remove_header(info_key)
-
-        header = _VCFWriter._drop_info_declarations(
-            header, set(annotation_attr_names))
+        header = _VCFWriter._drop_info_declarations(header, to_drop)
 
         for attribute in annotation_attributes:
+            if attribute.name in header.info:
+                continue
             description = attribute.spec.description \
                 if attribute.spec else ""
             description = description.replace("\n", " ")
@@ -270,14 +283,18 @@ class _VCFWriter(Filter):
     ) -> VariantHeader:
         """Return a header without the INFO declarations of the names.
 
-        pysam cannot replace an INFO declaration in place, so this
-        rebuilds the header from the records and the samples.
+        pysam cannot replace or remove an INFO declaration in place, so
+        this rebuilds the header from the records and the samples. A new
+        header carries its own ``fileformat`` line, so the rebuild skips
+        the input one.
         """
         if not any(name in header.info for name in names):
             return header
         new_header = VariantHeader()
         for record in header.records:
             if record.type == "INFO" and record.get("ID") in names:
+                continue
+            if record.type == "GENERIC" and record.key == "fileformat":
                 continue
             new_header.add_record(record)
         for sample in header.samples:
@@ -349,6 +366,11 @@ class _VCFWriter(Filter):
         return exc_type is None
 
     def filter(self, data: AnnotationsWithSource) -> None:
+        # The output header may not declare the deleted attributes, so
+        # the record must drop them before it moves to that header.
+        for col in self.attributes_to_delete:
+            if col in data.source.info:
+                del data.source.info[col]
         data.source.translate(self.header)
         _VCFWriter._update_variant(
             data.source,
@@ -368,9 +390,11 @@ class _VCFBatchWriter(Filter):
         header: VariantHeader,
         annotation_attributes: Sequence[Attribute],
         attributes_to_delete: Sequence[str],
+        keep_declared: Collection[str] = (),
     ):
         self.writer = _VCFWriter(
-            path, header, annotation_attributes, attributes_to_delete)
+            path, header, annotation_attributes, attributes_to_delete,
+            keep_declared)
 
     def __enter__(self) -> _VCFBatchWriter:
         self.writer.__enter__()
@@ -700,6 +724,11 @@ def _annotate_vcf_helper(
     ]
 
     attributes_to_delete = attributes_to_delete or []
+    # A reannotation copies these attributes from the input record, so
+    # they keep the declaration of the input header.
+    keep_declared = (
+        {entry.name for entry in pipeline.plan.copied}
+        if isinstance(pipeline, ReannotationPipeline) else set())
     batch_size = cast(int, args.get("batch_size", 0))
 
     source: Source
@@ -713,7 +742,8 @@ def _annotate_vcf_helper(
             _VCFWriter(output_path,
                        header,
                        annotation_attributes,
-                       attributes_to_delete),
+                       attributes_to_delete,
+                       keep_declared),
         ])
     else:
         source = _VCFBatchSource(
@@ -724,7 +754,8 @@ def _annotate_vcf_helper(
             _VCFBatchWriter(output_path,
                             header,
                             annotation_attributes,
-                            attributes_to_delete),
+                            attributes_to_delete,
+                       keep_declared),
         ])
 
     with PipelineProcessor(source, filters) as processor:
