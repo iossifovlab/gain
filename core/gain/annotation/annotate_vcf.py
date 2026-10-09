@@ -755,7 +755,7 @@ def _annotate_vcf_helper(
                             header,
                             annotation_attributes,
                             attributes_to_delete,
-                       keep_declared),
+                            keep_declared),
         ])
 
     with PipelineProcessor(source, filters) as processor:
