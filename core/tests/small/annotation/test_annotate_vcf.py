@@ -8,7 +8,7 @@ import gain.annotation.annotate_vcf
 import pysam
 import pytest
 import pytest_mock
-from gain.annotation.annotatable import VCFAllele
+from gain.annotation.annotatable import Annotatable, VCFAllele
 from gain.annotation.annotate_utils import (
     produce_partfile_paths,
 )
@@ -26,6 +26,7 @@ from gain.annotation.annotation_config import Attribute
 from gain.annotation.annotation_factory import (
     build_annotation_pipeline,
 )
+from gain.annotation.annotation_pipeline import AnnotationPipeline
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
@@ -41,6 +42,8 @@ from gain.task_graph.cli_tools import TaskGraphCli
 from gain.task_graph.graph import TaskGraph
 from gain.testing.acgt_import import acgt_grr
 from gain.utils.regions import Region
+
+from tests.small.annotation.conftest import DummyAnnotator
 
 pytestmark = pytest.mark.usefixtures("clean_genomic_context")
 
@@ -1634,3 +1637,61 @@ def test_annotate_vcf_cli_csi_input_produces_csi_output(
     with pysam.VariantFile(str(out_file)) as vcf_file:
         result = [vcf.info["score"][0] for vcf in vcf_file.fetch()]
     assert result == ["0.1", "0.2"]
+
+
+class _ValueByPositionAnnotator(DummyAnnotator):
+    """Annotator that writes a fixed value for each position."""
+
+    def __init__(self, values: dict[int, Any]) -> None:
+        super().__init__([Attribute(name="score", source="score")])
+        self.values = values
+
+    def annotate(
+        self, annotatable: Annotatable | None,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        assert annotatable is not None
+        return {"score": self.values.get(annotatable.position)}
+
+
+def test_annotate_vcf_overrides_integer_declaration_of_attribute(
+    acgt_annotate_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
+    in_content = textwrap.dedent("""
+        ##fileformat=VCFv4.2
+        ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+        ##INFO=<ID=score,Number=1,Type=Integer,Description="Input score">
+        ##INFO=<ID=other,Number=1,Type=Float,Description="Other info">
+        ##contig=<ID=chr1,length=1000>
+        #CHROM POS ID REF ALT QUAL FILTER INFO FORMAT m1  d1
+        chr1   21  .  C   T   .    .      .    GT     0/1 0/0
+        chr1   22  .  C   T   .    .      .    GT     0/1 0/0
+        chr1   23  .  C   T   .    .      .    GT     0/1 0/0
+        chr1   24  .  C   T   .    .      .    GT     0/1 0/0
+        chr1   25  .  C   T   .    .      score=7;other=2.5    GT 0/1 0/0
+    """)
+    in_file = tmp_path / "in.vcf"
+    out_file = tmp_path / "out.vcf"
+    setup_vcf(in_file, in_content)
+    pipeline = AnnotationPipeline(acgt_annotate_grr)
+    pipeline.add_annotator(_ValueByPositionAnnotator({
+        21: 2**31, 22: 2**40, 23: float("inf"), 24: 1.5,
+    }))
+
+    annotate_vcf(
+        str(in_file), pipeline, str(out_file), {"batch_size": 0})
+
+    with pysam.VariantFile(str(out_file)) as vcf_file:
+        header = vcf_file.header
+        variants = [*vcf_file.fetch()]
+    assert header.info["score"].type == "String"
+    assert header.info["score"].number == "A"
+    assert header.info["other"].type == "Float"
+    assert "chr1" in header.contigs
+    assert "GT" in header.formats
+    assert list(header.samples) == ["m1", "d1"]
+    assert [v.info["score"] for v in variants[:4]] == [
+        ("2147483648",), ("1099511627776",), ("inf",), ("1.5",)]
+    assert variants[4].info["score"] == ("7",)
+    assert variants[4].info["other"] == 2.5

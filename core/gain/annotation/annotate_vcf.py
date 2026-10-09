@@ -252,12 +252,10 @@ class _VCFWriter(Filter):
                and info_key not in annotation_attr_names:
                 header.info.remove_header(info_key)
 
-        attributes = [
-            attr for attr in annotation_attributes
-            if attr.name not in header.info
-        ]
+        header = _VCFWriter._drop_info_declarations(
+            header, set(annotation_attr_names))
 
-        for attribute in attributes:
+        for attribute in annotation_attributes:
             description = attribute.spec.description \
                 if attribute.spec else ""
             description = description.replace("\n", " ")
@@ -265,6 +263,26 @@ class _VCFWriter(Filter):
             header.info.add(attribute.name, "A", "String", description)
 
         return header
+
+    @staticmethod
+    def _drop_info_declarations(
+        header: VariantHeader, names: set[str],
+    ) -> VariantHeader:
+        """Return a header without the INFO declarations of the names.
+
+        pysam cannot replace an INFO declaration in place, so this
+        rebuilds the header from the records and the samples.
+        """
+        if not any(name in header.info for name in names):
+            return header
+        new_header = VariantHeader()
+        for record in header.records:
+            if record.type == "INFO" and record.get("ID") in names:
+                continue
+            new_header.add_record(record)
+        for sample in header.samples:
+            new_header.add_sample(sample)
+        return new_header
 
     @staticmethod
     def _convert_to_string(attr: Any) -> str:
