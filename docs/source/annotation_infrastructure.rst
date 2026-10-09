@@ -1076,13 +1076,15 @@ Selecting any attribute in the pipeline configuration replaces that default set 
 
 
 
+.. _annotation-vep-full-annotator:
+
 vep_full_annotator
 *************************
 
 The ``vep_full_annotator`` runs Ensembl VEP using a local VEP cache directory, allowing access to the broadest set of VEP output fields. This annotator is typically used when you want standard VEP annotations directly from the Ensembl cache and plan to select a subset of VEP fields as pipeline attributes.
 
 The full VEP annotator requires a VEP cache to be accessible on the local file system. The
-``gain-vep-annotator`` package ships an ``install_vep_cache`` tool that downloads and unpacks the
+``gain-vep-annotator`` package ships an :doc:`install_vep_cache <cli/install_vep_cache>` tool that downloads and unpacks the
 homo sapiens GRCh38 (hg38) cache for VEP 113:
 
 .. code:: bash

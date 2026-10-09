@@ -9,11 +9,8 @@ from gain.genomic_resources.gene_models.serialization import (
 )
 
 
-def main(argv: list[str] | None = None) -> None:
-    """Convert gene models to default GPF gene models format."""
-    if argv is None:
-        argv = sys.argv[1:]
-
+def _build_argument_parser() -> argparse.ArgumentParser:
+    """Create the command line parser of the tool."""
     parser = argparse.ArgumentParser(
         description="Convert gene models to default GPF gene models format")
 
@@ -44,7 +41,15 @@ def main(argv: list[str] | None = None) -> None:
         type=str,
         default=None,
     )
+    return parser
 
+
+def main(argv: list[str] | None = None) -> None:
+    """Convert gene models to default GPF gene models format."""
+    if argv is None:
+        argv = sys.argv[1:]
+
+    parser = _build_argument_parser()
     args = parser.parse_args(argv)
 
     gene_models = build_gene_models_from_file(

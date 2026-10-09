@@ -53,4 +53,5 @@ docs = [
     "jinja2",
     "sphinx-argparse",
     "sphinx-reredirects",
+    "gain-vep-annotator",
 ]
