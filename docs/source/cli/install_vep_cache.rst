@@ -5,13 +5,14 @@ install_vep_cache
 annotator plugin. The ``gain-vep-annotator`` package installs the tool. It
 downloads the Homo sapiens GRCh38 cache of VEP release 113 into the
 destination directory and unpacks it there. The tool refuses to write into a
-non-empty directory.
+non-empty directory. The destination directory must already exist.
 
 Examples
 --------
 
 .. code-block:: bash
 
+    mkdir -p /data/vep_cache
     install_vep_cache /data/vep_cache
 
 Downloads and unpacks the cache into ``/data/vep_cache``.

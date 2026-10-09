@@ -15,14 +15,19 @@ Examples
 
     draw_score_histograms
 
-Draws the histograms of every score resource of the GRR that contains the
-current directory.
+Draws the histograms of the score resource that contains the current
+directory. If the current directory is not inside a resource, it draws the
+histograms of every resource below the current directory. Run the command
+from the GRR root to cover the whole repository.
 
 .. code-block:: bash
 
     draw_score_histograms -R /data/grr -r hg38/scores/phyloP100way
 
 Draws the histograms of one score resource of the GRR in ``/data/grr``.
+The ``-r`` option takes a resource id or a glob pattern on resource ids, for
+example ``hg38/scores/phyloP*``. The ``-R`` option sets the repository root
+for the resource ids.
 
 Option reference
 ----------------
