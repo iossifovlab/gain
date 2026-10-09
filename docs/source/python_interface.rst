@@ -262,7 +262,7 @@ where each entry gives the number of resources of that type for the correspondin
 4: Annotating variants in Python
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The previous examples accessed GRR resources directly, through ``gain.grr``. Annotation is not part of ``gain.grr``: pipelines and annotatables are imported from ``gain.annotation``, as below. The Python interface can also be used to construct and run GAIn annotation pipelines without calling the command-line ``annotate_tabular`` or ``annotate_vcf`` tools. This is useful when variants are already available inside a Python script, notebook, or larger analysis workflow, and when users want to annotate them programmatically.
+The previous examples accessed GRR resources directly, through ``gain.grr``. Annotation is not part of ``gain.grr``: pipelines and annotatables are imported from ``gain.annotation``, as below. The Python interface can also be used to construct and run GAIn annotation pipelines without calling the command-line :doc:`annotate_tabular <cli/annotate_tabular>` or :doc:`annotate_vcf <cli/annotate_vcf>` tools. This is useful when variants are already available inside a Python script, notebook, or larger analysis workflow, and when users want to annotate them programmatically.
 
 In this example, a small annotation pipeline is defined directly as a YAML string. The pipeline contains a single ``effect_annotator``, which uses the MANE 1.5 gene models resource to predict the effect of a variant. The variant is represented as a VCFAllele object, and the pipeline is then used to annotate that allele.
 

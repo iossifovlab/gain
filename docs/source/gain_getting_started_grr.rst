@@ -1105,7 +1105,7 @@ Create a file named ``annotation_pipeline_local.yaml`` with the following conten
         resource_id: my_genescore
         input_gene_list: gene_list
 
-Run the following command to annotate your variants using this pipeline:
+Run the following :doc:`annotate_tabular <cli/annotate_tabular>` command to annotate your variants using this pipeline:
 
 .. code-block:: bash
 

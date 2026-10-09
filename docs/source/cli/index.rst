@@ -11,6 +11,10 @@ with ``--help``.
     grr_browse
     grr_manage
     grr_cache_repo
+    annotate_tabular
+    annotate_vcf
+    prepare_tabular
+    annotate_doc
 
 GRR management
 --------------
@@ -22,10 +26,10 @@ GRR management
 Annotation
 ----------
 
-* ``annotate_tabular``: annotate the variants or regions of a tabular file.
-* ``annotate_vcf``: annotate the variants of a VCF file.
-* ``prepare_tabular``: sort and tabix-index a tabular file, so that ``annotate_tabular`` can annotate it in parallel.
-* ``annotate_doc``: write the documentation of an annotation pipeline.
+* :doc:`annotate_tabular`: annotate the variants or regions of a tabular file.
+* :doc:`annotate_vcf`: annotate the variants of a VCF file.
+* :doc:`prepare_tabular`: sort and tabix-index a tabular file, so that ``annotate_tabular`` can annotate it in parallel.
+* :doc:`annotate_doc`: write the documentation of an annotation pipeline.
 
 Effect annotation
 -----------------

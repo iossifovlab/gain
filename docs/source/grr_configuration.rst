@@ -4,7 +4,8 @@ GRR configuration files
 A GRR configuration file (also called a *GRR definition file*) is a small YAML
 file that tells the GAIn command-line tools — :doc:`grr_browse <cli/grr_browse>`,
 :doc:`grr_manage <cli/grr_manage>`,
-``annotate_tabular``, ``annotate_vcf``, ``annotate_variant_effects``, and the
+:doc:`annotate_tabular <cli/annotate_tabular>`,
+:doc:`annotate_vcf <cli/annotate_vcf>`, ``annotate_variant_effects``, and the
 rest — **which Genomic Resource Repositories (GRRs) to use and in what order to
 search them**. It does not contain any genomic data itself; it only points to
 the repositories (local directories or remote URLs) where resources live and
