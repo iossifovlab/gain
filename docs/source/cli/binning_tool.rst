@@ -62,7 +62,7 @@ matrix — whoever runs it, and wherever.
 
 The GRR itself is never named in the run definition; it comes from ``-g``,
 ``--grr-directory``, or the default GRR definition, as for every GAIn tool
-(see :doc:`grr`). One run definition therefore runs unchanged on a laptop
+(see :doc:`/grr`). One run definition therefore runs unchanged on a laptop
 against a cached GRR and on a cluster node against a node-local one.
 
 Bins
@@ -103,7 +103,7 @@ way:
 
 ``search_term`` (optional)
     A full-text filter conjoined with ``resource_query``, in the syntax of
-    ``grr_browse -s`` (see :doc:`grr`). It needs a repository that carries a
+    ``grr_browse -s`` (see :doc:`/grr`). It needs a repository that carries a
     full-text index; the public IossifovLab GRR does, and a directory GRR
     has one once ``grr_manage repo-index`` has been run on it. A
     ``search_term`` on a repository without an index is an error naming the
@@ -784,10 +784,8 @@ by coordinate.
 Running the tool
 ----------------
 
-.. code-block:: bash
-
-    binning_tool RUN_DEFINITION [-o OUTPUT] [-w WORK_DIR] [--keep-work-dir] [--dry-run]
-                 [--task-budget BP] [-g GRR] [-j N] [--force] ...
+The full list of options is in the :ref:`binning-tool-option-reference`
+at the end of this page.
 
 The only positional argument is the run definition. ``-o`` names the HDF5
 file to write; by default it is the run definition's path with an ``.h5``
@@ -1080,9 +1078,9 @@ A worked example
 The run definition below bins the conservation scores of the public
 IossifovLab GRR over two megabases of chromosome 21, together with the
 structural variants of gnomAD v4.1 starting in each bin
-(:download:`binning_run.yaml <files/binning_run.yaml>`):
+(:download:`binning_run.yaml <../files/binning_run.yaml>`):
 
-.. literalinclude:: files/binning_run.yaml
+.. literalinclude:: ../files/binning_run.yaml
     :language: yaml
 
 The first entry is a glob over every resource under ``hg38/scores/``
@@ -1162,7 +1160,7 @@ window first, then widen it.
     ``this pyBigWig build has no remote-file support``, install GAIn from
     conda, or point the tool at a local copy of the repository with
     ``--grr-directory``. A GRR definition with a ``cache_dir`` (see
-    :doc:`gain_getting_started_cli`) also works, but it downloads each
+    :doc:`/gain_getting_started_cli`) also works, but it downloads each
     bigWig in full before opening it — about 60 GB for the eight scores of
     this example — whatever the size of the window.
 
@@ -1191,3 +1189,14 @@ window:
           20019201 20029440                                                4.0                                                  0.0
           20029441 20039680                                                1.0                                                  0.0
           20039681 20049920                                                4.0                                                  0.0
+
+
+.. _binning-tool-option-reference:
+
+Option reference
+----------------
+
+.. argparse::
+    :module: gain.binning.cli
+    :func: _build_argument_parser
+    :prog: binning_tool

@@ -51,4 +51,6 @@ docs = [
     "myst-parser",
     "sphinxcontrib-mermaid",
     "jinja2",
+    "sphinx-argparse",
+    "sphinx-reredirects",
 ]
