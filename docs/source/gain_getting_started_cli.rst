@@ -37,7 +37,8 @@ Then install the ``gain_core`` conda package:
 
     mamba install -c conda-forge -c bioconda -c iossifovlab gain-core
 
-This command installs GAIn and all of its dependencies. A simple test to confirm that GAIn is installed correctly is to run:
+This command installs GAIn and all of its dependencies. A simple test to confirm that GAIn is installed correctly is to run
+:doc:`grr_browse <cli/grr_browse>` with ``--version``:
 
 .. code-block:: bash
 
@@ -54,6 +55,8 @@ Note that the version number may be different depending on when you install GAIn
 
 In the sections below, we first browse the resources available for annotation, then run a small test annotation and build a custom pipeline. From there, we move to larger and more flexible workflows, including resource caching, parallel execution, VCF input, position and region annotation, public and local GRRs, and reannotation. The examples start small, but they are designed to scale. For larger datasets, caching resources locally and using indexed inputs for parallel annotation are especially important for making GAIn practical and efficient.
 
+
+.. _getting-started-cli-browse:
 
 Browse available resources
 --------------------------
@@ -207,6 +210,8 @@ This command applies the ``vep_annotation.yaml`` pipeline to the variants in ``s
     :file: files/small_input_vep.annotated.csv
     :header-rows: 1
 
+.. _getting-started-cli-caching:
+
 Caching resources
 -----------------
 
@@ -227,7 +232,8 @@ After this configuration, GAIn downloads each required resource to the specified
 
 This is especially important for large annotation pipelines. For example, a comprehensive clinical pipeline such as ``pipeline/hg38_clinical_annotation`` may require many large resources. These resources total approximately 36 GB and may take substantial time to download, depending on network speed and storage performance. This took approximately 16 minutes in our test with a Mac laptop. Once cached, however, they can be reused directly from the local cache, making future annotation jobs much faster.
 
-GAIn can automatically download required resources during annotation. For large pipelines, however, it is often better to pre-download them before starting the annotation job. GAIn provides a dedicated tool for this purpose:
+GAIn can automatically download required resources during annotation. For large pipelines, however, it is often better to pre-download them before starting the annotation job. GAIn provides a dedicated tool for this purpose,
+:doc:`grr_cache_repo <cli/grr_cache_repo>`:
 
 .. code-block:: bash
 

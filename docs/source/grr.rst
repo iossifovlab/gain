@@ -229,10 +229,12 @@ GAIn provides two command-line tools for working with genomic resources and repo
 
    * - Command
      - Description
-   * - ``grr_manage``
+   * - :doc:`grr_manage <cli/grr_manage>`
      - Create, inspect, and maintain GRRs, including manifests, statistics, information pages, and repair operations.
-   * - ``grr_browse``
+   * - :doc:`grr_browse <cli/grr_browse>`
      - Browse the resources available through a GRR definition file.
+
+.. _grr-manage-usage:
 
 grr_manage
 ^^^^^^^^^^
@@ -333,6 +335,8 @@ Options:
      - Enable verbose output.
    * - ``--logfile LOGFILE``
      - File to log output to. If not set, logs to console.
+
+.. _grr-manage-force-dry-run:
 
 Rebuilding on demand: ``--force`` and ``--dry-run``
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""
@@ -451,6 +455,8 @@ Repository/Resource options:
      - Print a summary for each resource below its listing line.
 
 
+
+.. _grr-searching-resources:
 
 Searching resources
 -------------------

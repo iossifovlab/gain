@@ -8,13 +8,16 @@ with ``--help``.
     :hidden:
 
     binning_tool
+    grr_browse
+    grr_manage
+    grr_cache_repo
 
 GRR management
 --------------
 
-* ``grr_browse``: list the resources of the configured GRRs.
-* ``grr_manage``: build and repair the index and manifest files of a GRR.
-* ``grr_cache_repo``: download the resources that an annotation pipeline uses into the GRR cache.
+* :doc:`grr_browse`: list the resources of the configured GRRs.
+* :doc:`grr_manage`: build and repair the index and manifest files of a GRR.
+* :doc:`grr_cache_repo`: download the resources that an annotation pipeline uses into the GRR cache.
 
 Annotation
 ----------

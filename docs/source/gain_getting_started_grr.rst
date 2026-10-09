@@ -2,6 +2,8 @@
 Getting started with GRR
 ========================
 
+.. _getting-started-grr-create:
+
 Create your first GRR
 ---------------------
 To create a new Genomic Resource Repository (GRR), start by making an empty directory and moving into it:
@@ -13,7 +15,7 @@ To create a new Genomic Resource Repository (GRR), start by making an empty dire
    cd my_GRR
 
 
-Initialize this directory as a GRR:
+Initialize this directory as a GRR with :doc:`grr_manage <cli/grr_manage>`:
 
 
 .. code-block:: bash
@@ -53,7 +55,7 @@ This configuration tells GAIn that, when resolving a resource ID, it should firs
 hosted by the Iossifov lab (``GRR``). If the resource is not found there, it then falls back to the local
 directory-based GRR (``my_GRR``). 
 
-You can confirm that GAIn recognizes both GRRs by running ``grr_browse``:
+You can confirm that GAIn recognizes both GRRs by running :doc:`grr_browse <cli/grr_browse>`:
 
 .. code-block:: bash
 

@@ -38,11 +38,8 @@ from gain.utils.verbosity_configuration import VerbosityConfiguration
 logger = logging.getLogger("grr_cache_repo")
 
 
-def cli_cache_repo(argv: list[str] | None = None) -> None:
-    """Cache genomic resources used by an annotation pipeline."""
-    if argv is None:
-        argv = sys.argv[1:]
-
+def _build_argument_parser() -> argparse.ArgumentParser:
+    """Build the argument parser of ``grr_cache_repo``."""
     parser = argparse.ArgumentParser(
         description="Cache the genomic resources used by an "
                     "annotation pipeline.")
@@ -55,6 +52,15 @@ def cli_cache_repo(argv: list[str] | None = None) -> None:
              "milestone log lines otherwise).")
     context_providers_add_argparser_arguments(parser)
     VerbosityConfiguration.set_arguments(parser)
+    return parser
+
+
+def cli_cache_repo(argv: list[str] | None = None) -> None:
+    """Cache genomic resources used by an annotation pipeline."""
+    if argv is None:
+        argv = sys.argv[1:]
+
+    parser = _build_argument_parser()
     args = parser.parse_args(argv)
     VerbosityConfiguration.set(args)
 
