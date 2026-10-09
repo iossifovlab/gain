@@ -1,7 +1,7 @@
 
 import { Observable, Subject, firstValueFrom } from 'rxjs';
 import { webSocket } from 'rxjs/webSocket';
-import { SocketNotificationsService } from './socket-notifications.service';
+import { SocketNotificationsService, resubscribeThenAwaitOpen } from './socket-notifications.service';
 import { JobNotification, PipelineNotification } from './socket-notifications';
 
 jest.mock('rxjs/webSocket', () => ({
@@ -314,6 +314,49 @@ describe('SocketNotificationsService', () => {
       expect((webSocket as unknown as jest.Mock).mock.calls).toHaveLength(before + 1);
     });
 
+    it('signals a confirmed open, not the elapsed reconnect timer', () => {
+      jest.useFakeTimers();
+      let openObserver!: { next: () => void };
+      (webSocket as unknown as jest.Mock).mockImplementation(
+        (config: { openObserver: { next: () => void } }) => {
+          openObserver = config.openObserver;
+          return new Subject<object>();
+        }
+      );
+      service = new SocketNotificationsService();
+      service.ensureConnected();
+      const openedSpy = jest.fn();
+      service.connectionOpened$.subscribe(openedSpy);
+
+      service.reopenConnection().subscribe();
+      jest.advanceTimersByTime(200);
+      expect(openedSpy).not.toHaveBeenCalled();
+
+      openObserver.next();
+      expect(openedSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('ignores a late open of a socket that a reconnect replaced', () => {
+      jest.useFakeTimers();
+      const openObservers: { next: () => void }[] = [];
+      (webSocket as unknown as jest.Mock).mockImplementation(
+        (config: { openObserver: { next: () => void } }) => {
+          openObservers.push(config.openObserver);
+          return new Subject<object>();
+        }
+      );
+      service = new SocketNotificationsService();
+      service.ensureConnected();
+      const openedSpy = jest.fn();
+      service.connectionOpened$.subscribe(openedSpy);
+
+      service.reopenConnection().subscribe();
+      jest.advanceTimersByTime(200);
+      openObservers[0].next();
+
+      expect(openedSpy).not.toHaveBeenCalled();
+    });
+
     it('picks the reconnect delay when subscribed, not when called', () => {
       jest.useFakeTimers();
       let openObserver!: { next: () => void };
@@ -412,6 +455,40 @@ describe('SocketNotificationsService', () => {
       expect(values).toStrictEqual([job1]);
       expect(errorSpy).toHaveBeenCalledWith(closeEvent);
     });
+  });
+});
+
+describe('resubscribeThenAwaitOpen', () => {
+  it('catches an open that fires while resubscribe() runs', () => {
+    const opened$ = new Subject<void>();
+    const emitted = jest.fn();
+
+    resubscribeThenAwaitOpen(opened$, () => opened$.next()).subscribe(emitted);
+
+    expect(emitted).toHaveBeenCalledTimes(1);
+  });
+
+  it('emits only once for several opens', () => {
+    const opened$ = new Subject<void>();
+    const emitted = jest.fn();
+
+    resubscribeThenAwaitOpen(opened$, () => { /* no synchronous open */ }).subscribe(emitted);
+    opened$.next();
+    opened$.next();
+
+    expect(emitted).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not emit for an open after the caller unsubscribes', () => {
+    const opened$ = new Subject<void>();
+    const emitted = jest.fn();
+
+    const subscription = resubscribeThenAwaitOpen(opened$, () => { /* no synchronous open */ })
+      .subscribe(emitted);
+    subscription.unsubscribe();
+    opened$.next();
+
+    expect(emitted).not.toHaveBeenCalled();
   });
 });
 

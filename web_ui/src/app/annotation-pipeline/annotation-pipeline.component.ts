@@ -25,7 +25,10 @@ import { MatDialog } from '@angular/material/dialog';
 import { EditorComponent, MonacoEditorModule } from 'ngx-monaco-editor-v2';
 import { editorConfig, initEditor } from './annotation-pipeline-editor.config';
 import { UsersService } from '../users.service';
-import { SocketNotificationsService } from '../socket-notifications/socket-notifications.service';
+import {
+  resubscribeThenAwaitOpen,
+  SocketNotificationsService,
+} from '../socket-notifications/socket-notifications.service';
 import { PipelineNotification, PipelineStatus } from '../socket-notifications/socket-notifications';
 import { NewAnnotatorComponent } from '../new-annotator/new-annotator.component';
 import { PipelineInfo } from '../annotation-pipeline';
@@ -254,12 +257,16 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
           this.socketNotificationSubscription.unsubscribe();
           // Subscribe to reopenConnection to wait for it to complete
           this.reconnectionSubscription.unsubscribe();
-          this.reconnectionSubscription = this.socketNotificationsService.reopenConnection().subscribe({
+          this.reconnectionSubscription = this.socketNotificationsService.reopenConnection().pipe(
+            switchMap(() => resubscribeThenAwaitOpen(
+              this.socketNotificationsService.connectionOpened$,
+              () => this.setupPipelineWebSocketConnection()
+            ))
+          ).subscribe({
             next: () => {
-              // Reconnected - refetch pipelines to catch up on missed
-              // notifications, keeping whatever the editor holds.
+              // The new socket is open - refetch pipelines to catch up on
+              // missed notifications, keeping whatever the editor holds.
               this.refreshPipelines();
-              this.setupPipelineWebSocketConnection();
             },
             error: (e) => console.error('Reconnection failed:', e)
           });
