@@ -15,8 +15,10 @@ returns the genome itself, so the call chains onto the builder:
 
 .. code-block:: python
 
-    from gain.genomic_resources.repository_factory import build_genomic_resource_repository
-    from gain.genomic_resources.reference_genome import build_reference_genome_from_resource_id
+    from gain.grr import (
+        build_genomic_resource_repository,
+        build_reference_genome_from_resource_id,
+    )
 
     grr = build_genomic_resource_repository()
     genome = build_reference_genome_from_resource_id("hg38/genomes/GRCh38-hg38", grr).open()

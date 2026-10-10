@@ -33,7 +33,7 @@ group — and configured:
 
 .. code-block:: python
 
-    from gain.genomic_resources.repository_factory import build_genomic_resource_repository
+    from gain.grr import build_genomic_resource_repository
     from gain.annotation.annotation_factory import load_pipeline_from_yaml
     from gain.annotation.annotatable import VCFAllele
 
