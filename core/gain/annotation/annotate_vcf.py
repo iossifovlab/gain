@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import gc
 import itertools
+import numbers
 import os
 import sys
 import traceback
@@ -219,6 +220,40 @@ class _VCFBatchSource(Source):
             yield batch
 
 
+# pysam reserves the smallest int32 as the VCF missing value for Integer.
+_VCF_INT_MIN = -(2**31) + 1
+_VCF_INT_MAX = 2**31 - 1
+
+
+def _coerce_info_value(
+    value: Any, info_type: str | None,
+) -> tuple[bool, Any]:
+    """Convert a value to a declared VCF INFO type.
+
+    Return ``(True, converted)`` when the value fits and ``(False, None)``
+    when it does not. Only ``Integer`` and ``Float`` have limits. Every
+    other type, and the missing value ``None``, fit unchanged. An
+    ``Integer`` accepts an integral float such as ``5.0`` and converts it
+    to ``int``.
+    """
+    if value is None or info_type not in {"Integer", "Float"}:
+        return True, value
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        return False, None
+    try:
+        if info_type == "Float":
+            return True, float(value)
+        if not isinstance(value, numbers.Integral) \
+                and not float(value).is_integer():
+            return False, None
+        integer = int(value)
+    except OverflowError:
+        return False, None
+    if _VCF_INT_MIN <= integer <= _VCF_INT_MAX:
+        return True, integer
+    return False, None
+
+
 class _VCFWriter(Filter):
     """A filter that writes variants to a VCF file."""
 
@@ -235,6 +270,7 @@ class _VCFWriter(Filter):
             header, annotation_attributes, attributes_to_delete)
         self.annotation_attributes = annotation_attributes
         self.attributes_to_delete = attributes_to_delete
+        self._overflow_warned: set[str] = set()
 
     @staticmethod
     def _update_header(
@@ -286,7 +322,10 @@ class _VCFWriter(Filter):
         allele_annotations: list[dict],
         attributes: Sequence[Attribute],
         attributes_to_delete: Sequence[str],
+        overflow_warned: set[str] | None = None,
     ) -> None:
+        if overflow_warned is None:
+            overflow_warned = set()
         buffers: list[list] = [[] for _ in attributes]
 
         for col in attributes_to_delete:
@@ -296,8 +335,20 @@ class _VCFWriter(Filter):
         for annotation in allele_annotations:
             for buff, attribute in zip(buffers, attributes, strict=True):
                 value = annotation.get(attribute.name)
-                if vcf_var.header.info[attribute.name].type == "String":
+                info_type = vcf_var.header.info[attribute.name].type
+                if info_type == "String":
                     value = _VCFWriter._convert_to_string(value)
+                else:
+                    fits, converted = _coerce_info_value(value, info_type)
+                    if not fits \
+                            and attribute.name not in overflow_warned:
+                        overflow_warned.add(attribute.name)
+                        logger.warning(
+                            "attribute %s is declared as %s in the input "
+                            "VCF and the value %r does not fit; writing "
+                            "the missing value for it",
+                            attribute.name, info_type, value)
+                    value = converted
                 buff.append(value)
         # If the all values for a given attribute are
         # empty (i.e. - "."), then that attribute has no
@@ -337,6 +388,7 @@ class _VCFWriter(Filter):
             [annotation.context for annotation in data.annotations],
             self.annotation_attributes,
             self.attributes_to_delete,
+            self._overflow_warned,
         )
         self.output_file.write(data.source)
 
