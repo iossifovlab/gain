@@ -26,6 +26,10 @@ rather than read from an open file. The consequence is that
 a built-but-empty object from a loaded one, which library code that accepts
 either should check rather than calling ``load`` a second time.
 
+The builders ``build_gene_models_from_resource_id`` and
+``build_gene_models_from_resource`` are documented in the
+:ref:`factories` section.
+
 Two lookups
 -----------
 
@@ -94,14 +98,13 @@ documentation below rather than as separate entries.
 API
 ---
 
-The classes and the function below are defined in the module
+The classes below are defined in the module
 ``gain.genomic_resources.gene_models``.
 
 .. currentmodule:: gain.genomic_resources.gene_models
 
 .. autosummary::
 
-   build_gene_models_from_resource_id
    GeneModels
    GeneModels.close
    GeneModels.from_transcript_models
@@ -129,8 +132,6 @@ The classes and the function below are defined in the module
    TranscriptModel.utr5_regions
    Exon
    Exon.contains
-
-.. autofunction:: build_gene_models_from_resource_id
 
 .. autoclass:: GeneModels
    :members:

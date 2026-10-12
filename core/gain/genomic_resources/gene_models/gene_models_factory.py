@@ -69,7 +69,27 @@ def build_gene_models_from_file(
 def build_gene_models_from_resource(
     resource: GenomicResource | None,
 ) -> GeneModels:
-    """Load gene models from a genomic resource."""
+    """Build the gene models of a genomic resource.
+
+    The returned object may not be loaded. Calls with the same resource
+    return the same object, so an earlier caller may have loaded it.
+
+    Parameters
+    ----------
+    resource : GenomicResource | None
+        A resource of type ``gene_models``.
+
+    Returns
+    -------
+    GeneModels
+        The gene models of the resource. Check ``is_loaded()`` or call
+        ``load()`` before any query.
+
+    Raises
+    ------
+    ValueError
+        If ``resource`` is ``None`` or is not of type ``gene_models``.
+    """
     # pylint: disable=import-outside-toplevel
     from .gene_models import GeneModels
 
@@ -89,7 +109,33 @@ def build_gene_models_from_resource(
 def build_gene_models_from_resource_id(
     resource_id: str, grr: GenomicResourceRepo | None = None,
 ) -> GeneModels:
-    """Load gene models from a genomic resource id."""
+    """Build the gene models of the resource with a given id.
+
+    The returned object may not be loaded. Calls that find the same
+    resource return the same object, so an earlier caller may have loaded it.
+
+    Parameters
+    ----------
+    resource_id : str
+        The id of a resource of type ``gene_models`` in the repository.
+    grr : GenomicResourceRepo | None
+        The repository that resolves ``resource_id``. When it is
+        ``None``, the function builds the default repository with
+        ``build_genomic_resource_repository()``.
+
+    Returns
+    -------
+    GeneModels
+        The gene models of the resource. Check ``is_loaded()`` or call
+        ``load()`` before any query.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the repository has no resource with this id.
+    ValueError
+        If the resource is not of type ``gene_models``.
+    """
     # pylint: disable=import-outside-toplevel
     from gain.genomic_resources.repository_factory import (
         build_genomic_resource_repository,
