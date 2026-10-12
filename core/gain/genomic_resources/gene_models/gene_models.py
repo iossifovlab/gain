@@ -142,8 +142,12 @@ class GeneModels(
     def gene_names(self) -> list[str]:
         """Get list of all gene names in the loaded gene models.
 
-        Returns:
-            list[str]: List of gene names (symbols).
+        Returns
+        -------
+        list[str]
+            The gene names (symbols), one for each gene. The list is
+            empty if the gene models hold no genes, for example when
+            they are not loaded yet.
 
         Example:
             >>> gene_models.load()
@@ -162,12 +166,17 @@ class GeneModels(
     ) -> list[TranscriptModel] | None:
         """Retrieve all transcript models for a specific gene.
 
-        Args:
-            name (str): The gene name/symbol to search for.
+        Parameters
+        ----------
+        name : str
+            The gene name (symbol) to search for.
 
-        Returns:
-            list[TranscriptModel] | None: List of transcript models for the
-                gene, or None if the gene is not found.
+        Returns
+        -------
+        list[TranscriptModel] | None
+            The transcript models of the gene, or ``None`` if the gene
+            models hold no gene with this name. The result is never an
+            empty list.
 
         Example:
             >>> transcripts = gene_models.gene_models_by_gene_name("BRCA1")
@@ -179,11 +188,16 @@ class GeneModels(
     def has_chromosome(self, chrom: str) -> bool:
         """Check if a chromosome has any gene models.
 
-        Args:
-            chrom (str): The chromosome name to check.
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name to check.
 
-        Returns:
-            bool: True if the chromosome has gene models, False otherwise.
+        Returns
+        -------
+        bool
+            ``True`` if at least one transcript model is on the
+            chromosome, ``False`` otherwise.
 
         Example:
             >>> if gene_models.has_chromosome("chr1"):
@@ -199,18 +213,22 @@ class GeneModels(
         This method uses an interval tree index for efficient querying of
         transcripts by genomic coordinates.
 
-        Args:
-            chrom (str): The chromosome name (e.g., "chr1", "17").
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name (for example "chr1" or "17").
+        pos_begin : int
+            The start position (1-based, inclusive).
+        pos_end : int | None, default None
+            The end position (1-based, inclusive). If ``None``, the
+            query is the single position ``pos_begin``.
 
-            pos_begin (int): The start position (1-based, inclusive).
-
-            pos_end (int | None): The end position (1-based, inclusive).
-                If None, queries a single position.
-
-        Returns:
-            list[TranscriptModel]: List of TranscriptModel objects whose
-            transcript regions overlap the query position/region.
-            Returns empty list if no overlaps found.
+        Returns
+        -------
+        list[TranscriptModel]
+            The transcript models whose transcript region overlaps the
+            query position or region. The list is empty if no transcript
+            overlaps or if the chromosome has no gene models.
 
         Example:
             >>> # Query single position
@@ -245,6 +263,11 @@ class GeneModels(
         The base resource schema plus ``filename``, ``format``,
         ``gene_mapping`` and ``chrom_mapping``.  ``filename`` is required:
         the loader reads it unconditionally.
+
+        Returns
+        -------
+        dict[str, Any]
+            The Cerberus schema of the resource config.
         """
         return {
             **get_base_resource_schema(),
@@ -267,8 +290,10 @@ class GeneModels(
         This method parses the gene model file and builds internal indexes
         for efficient querying. It is thread-safe and will only load once.
 
-        Returns:
-            GeneModels: Self, for method chaining.
+        Returns
+        -------
+        GeneModels
+            This object, for method chaining.
 
         Example:
             >>> gene_models = build_gene_models_from_file("genes.gtf")
@@ -330,8 +355,10 @@ class GeneModels(
         ``join_gene_models`` or ``from_transcript_models``. ``load()``
         on a loaded model is a no-op.
 
-        Returns:
-            bool: True if the models are loaded and indexed, False if
+        Returns
+        -------
+        bool
+            ``True`` if the models are loaded and indexed, ``False`` if
             nobody loaded them yet.
 
         Example:
@@ -348,18 +375,23 @@ class GeneModels(
         The result holds every input's transcripts, answers to the first
         input's resource, and is loaded (see ``is_loaded()``).
 
-        Args:
-            *gene_models (GeneModels): Two or more loaded GeneModels
-            objects to merge.
+        Parameters
+        ----------
+        *gene_models : GeneModels
+            Two or more loaded ``GeneModels`` objects to merge.
 
-        Returns:
-            GeneModels: New GeneModels object containing all transcripts.
+        Returns
+        -------
+        GeneModels
+            A new loaded ``GeneModels`` object that holds all
+            transcripts.
 
-        Raises:
-            ValueError: If fewer than 2 gene models are provided, or if
-                any of them was never loaded -- merging its empty
-                transcripts would silently drop everything it was meant
-                to bring.
+        Raises
+        ------
+        ValueError
+            If fewer than 2 gene models are provided, or if any of them
+            was never loaded: merging its empty transcripts would
+            silently drop everything it was meant to bring.
 
         Example:
             >>> gm1 = build_gene_models_from_file("genes1.gtf").load()
@@ -396,14 +428,18 @@ class GeneModels(
         serializers write them in that order); the resource's chrom
         mapping is not applied.
 
-        Args:
-            resource (GenomicResource): The gene models resource the
-                result answers to (``resource_id``, reference genome).
-            transcript_models (dict[str, TranscriptModel]): Transcript
-                ID to transcript model.
+        Parameters
+        ----------
+        resource : GenomicResource
+            The gene models resource the result answers to
+            (``resource_id``, reference genome).
+        transcript_models : dict[str, TranscriptModel]
+            Transcript ID to transcript model.
 
-        Returns:
-            GeneModels: A loaded model over ``resource``.
+        Returns
+        -------
+        GeneModels
+            A loaded model over ``resource``.
         """
         gm = cls(resource)
         gm._install(dict(transcript_models))
