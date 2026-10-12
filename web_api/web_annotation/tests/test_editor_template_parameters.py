@@ -124,12 +124,7 @@ DELIBERATELY_NOT_OFFERED: dict[str, frozenset[str]] = {
         # retired.
         "cnv_filter",
     }),
-    "effect_annotator": frozenset({
-        # Not documented in the annotation infrastructure docs; offering
-        # an undocumented knob in the form is premature.  Document, then
-        # offer -- gain#1209.
-        "promoter_len",
-    }),
+    "effect_annotator": frozenset(),
     "simple_effect_annotator": frozenset(),
     "liftover_annotator": frozenset(),
     "normalize_allele_annotator": frozenset(),

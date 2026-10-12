@@ -316,6 +316,14 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
                     "field_type": "string",
                     "optional": True,
                 },
+                # A count of bases, typed as `string` for the same reason:
+                # the effect annotator reads it through
+                # `ParamsUsageMonitor.get_integer`, so the text the form
+                # posts is the number it spells.
+                "promoter_len": {
+                    "field_type": "string",
+                    "optional": True,
+                },
                 "input_annotatable": {
                     "field_type": "attribute",
                     "attribute_type": "annotatable",
