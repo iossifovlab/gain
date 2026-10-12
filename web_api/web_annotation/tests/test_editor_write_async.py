@@ -610,6 +610,31 @@ async def test_async_annotator_yaml_region_length_cutoff_typed_in_the_editor(
 
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
+async def test_async_annotator_yaml_promoter_len_typed_in_the_editor() -> None:
+    """A promoter length typed into the editor form saves (gain#1209).
+
+    The same seam as the region length cutoff above: this endpoint BUILDS
+    the annotator before dumping it, and the form posts a STRING.  The
+    effect annotator reads ``promoter_len`` through
+    ``ParamsUsageMonitor.get_integer``, so the text is accepted and
+    echoed as posted.
+    """
+    client = AsyncClient()
+    response = await _post_json(client, YAML_POST_URL, {
+        "pipeline_id": "pipeline/test_pipeline",
+        "annotator_type": "effect_annotator",
+        "gene_models": "t4c8/t4c8_genes",
+        "genome": "t4c8/t4c8_genome",
+        "promoter_len": "100",
+    })
+
+    assert response.status_code == 200, response.content
+    saved = yaml.safe_load(response.json())[0]["effect_annotator"]
+    assert saved["promoter_len"] == "100"
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
 async def test_async_annotator_yaml_region_length_cutoff_not_a_number_400(
 ) -> None:
     """A cutoff that spells no number is refused before it is saved.

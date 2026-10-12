@@ -562,6 +562,38 @@ answer says the annotatable was too long rather than that it hit nothing.
 A value that is not a whole number, or one below zero, is refused when the pipeline is
 loaded, and quoting is safe, exactly as for the score annotators.
 
+**promoter_len**
+
+The optional ``promoter_len`` parameter is the length, in bases, of the promoter window
+of a transcript. The default is ``0``, and ``0`` turns promoter calls off.
+
+.. code:: yaml
+
+    - effect_annotator:
+        gene_models: hg38/gene_models/MANE/1.5
+        promoter_len: 100
+
+A whole number that is not negative is accepted, and quoting is safe:
+``promoter_len: "100"`` means the same as ``promoter_len: 100``. Any other value is
+refused when the pipeline is loaded.
+
+The window is the ``promoter_len`` bases upstream of the first exon of the transcript,
+on the strand of the transcript. It is measured from the start of the transcript, not
+from the start codon. The near base of a variant is the base of the variant that is
+closest to the transcript. A near base at distance ``promoter_len`` is inside the
+window. A near base at distance ``promoter_len + 1`` is outside it.
+
+A variant inside the window gets the effect type ``promoter``. The ``effect_details``
+attribute reports the distance of the near base as ``dist_from_5utr``. The base next to
+the exon has distance 1, on both strands. A variant with any base inside an exon gets no
+``promoter`` effect, and the other effect checkers decide its effect.
+
+When the worst effect is chosen, ``promoter`` ranks above only ``non-coding-intron``,
+``unknown``, ``intergenic`` and ``no-mutation``. A variant that is in the promoter of
+one gene and in the body of another gene reports the effect in the body as the worst
+effect. The ``promoter`` effect type belongs to none of the effect groups, such as
+``LGDs`` or ``coding``.
+
 
 simple_effect_annotator
 ************************
