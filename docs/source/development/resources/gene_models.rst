@@ -94,14 +94,14 @@ documentation below rather than as separate entries.
 API
 ---
 
-The classes and the function below are defined in the module
-``gain.genomic_resources.gene_models``.
+The classes below are defined in the module
+``gain.genomic_resources.gene_models``. The functions that build them are
+documented in :ref:`factories`.
 
 .. currentmodule:: gain.genomic_resources.gene_models
 
 .. autosummary::
 
-   build_gene_models_from_resource_id
    GeneModels
    GeneModels.close
    GeneModels.from_transcript_models
@@ -129,8 +129,6 @@ The classes and the function below are defined in the module
    TranscriptModel.utr5_regions
    Exon
    Exon.contains
-
-.. autofunction:: build_gene_models_from_resource_id
 
 .. autoclass:: GeneModels
    :members:

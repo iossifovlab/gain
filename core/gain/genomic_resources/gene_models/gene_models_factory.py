@@ -69,7 +69,26 @@ def build_gene_models_from_file(
 def build_gene_models_from_resource(
     resource: GenomicResource | None,
 ) -> GeneModels:
-    """Load gene models from a genomic resource."""
+    """Build gene models from a genomic resource.
+
+    The result is not loaded: call ``load()`` on it before you read genes
+    or transcripts. Calls with the same resource return the same object.
+
+    Parameters
+    ----------
+    resource : GenomicResource
+        A resource of type ``gene_models``.
+
+    Returns
+    -------
+    GeneModels
+        The gene models of the resource, not yet loaded.
+
+    Raises
+    ------
+    ValueError
+        If ``resource`` is ``None`` or is not of type ``gene_models``.
+    """
     # pylint: disable=import-outside-toplevel
     from .gene_models import GeneModels
 
@@ -89,7 +108,26 @@ def build_gene_models_from_resource(
 def build_gene_models_from_resource_id(
     resource_id: str, grr: GenomicResourceRepo | None = None,
 ) -> GeneModels:
-    """Load gene models from a genomic resource id."""
+    """Build gene models from a genomic resource id.
+
+    The result is not loaded: call ``load()`` on it before you read genes
+    or transcripts. Calls with the same resource return the same object.
+
+    Parameters
+    ----------
+    resource_id : str
+        The id of a resource of type ``gene_models``, for example
+        ``"hg38/gene_models/MANE/1.5"``.
+    grr : GenomicResourceRepo, optional
+        The repository that holds the resource. If ``None``, the function
+        builds the default repository with
+        ``build_genomic_resource_repository()``.
+
+    Returns
+    -------
+    GeneModels
+        The gene models of the resource, not yet loaded.
+    """
     # pylint: disable=import-outside-toplevel
     from gain.genomic_resources.repository_factory import (
         build_genomic_resource_repository,

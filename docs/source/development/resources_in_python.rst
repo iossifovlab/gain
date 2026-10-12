@@ -126,3 +126,123 @@ the extent they are, by the generated
    resources/gene_sets
    resources/data_frames_and_anndata
    resources/adding_a_resource_type
+
+
+.. _factories:
+
+Factories
+---------
+
+Every function in this section lives in the package ``gain.grr``. Import
+each one with ``from gain.grr import <name>``. The headings below show the
+bare name. The table above gives the resource and the returned type for each
+builder. The outline lists every function of the package and links each row
+to its entry.
+
+.. currentmodule:: gain.grr
+
+.. autosummary::
+   :nosignatures:
+
+   build_allele_score_from_resource
+   build_allele_score_from_resource_id
+   build_fragment_score_from_resource
+   build_fragment_score_from_resource_id
+   build_gene_models_from_resource
+   build_gene_models_from_resource_id
+   build_gene_score_from_resource
+   build_gene_score_from_resource_id
+   build_gene_set_collection_from_resource
+   build_gene_set_collection_from_resource_id
+   build_genomic_resource_group_repository
+   build_genomic_resource_repository
+   build_liftover_chain_from_resource
+   build_liftover_chain_from_resource_id
+   build_position_score_from_resource
+   build_position_score_from_resource_id
+   build_reference_genome_from_resource
+   build_reference_genome_from_resource_id
+   build_score_from_resource
+   build_score_from_resource_id
+   get_default_grr_definition
+   get_default_grr_definition_path
+   get_genomic_context
+   get_grr_from_context
+   load_ann_data_from_resource
+   load_ann_data_from_resource_id
+   load_data_frame_from_resource
+   load_data_frame_from_resource_id
+
+Gene models
+~~~~~~~~~~~
+
+.. autofunction:: build_gene_models_from_resource_id
+
+   Import it with:
+
+   .. code-block:: python
+
+      from gain.grr import build_gene_models_from_resource_id
+
+.. autofunction:: build_gene_models_from_resource
+
+   Import it with:
+
+   .. code-block:: python
+
+      from gain.grr import build_gene_models_from_resource
+
+Other factories
+~~~~~~~~~~~~~~~
+
+.. autofunction:: build_allele_score_from_resource
+
+.. autofunction:: build_allele_score_from_resource_id
+
+.. autofunction:: build_fragment_score_from_resource
+
+.. autofunction:: build_fragment_score_from_resource_id
+
+.. autofunction:: build_gene_score_from_resource
+
+.. autofunction:: build_gene_score_from_resource_id
+
+.. autofunction:: build_gene_set_collection_from_resource
+
+.. autofunction:: build_gene_set_collection_from_resource_id
+
+.. autofunction:: build_genomic_resource_group_repository
+
+.. autofunction:: build_genomic_resource_repository
+
+.. autofunction:: build_liftover_chain_from_resource
+
+.. autofunction:: build_liftover_chain_from_resource_id
+
+.. autofunction:: build_position_score_from_resource
+
+.. autofunction:: build_position_score_from_resource_id
+
+.. autofunction:: build_reference_genome_from_resource
+
+.. autofunction:: build_reference_genome_from_resource_id
+
+.. autofunction:: build_score_from_resource
+
+.. autofunction:: build_score_from_resource_id
+
+.. autofunction:: get_default_grr_definition
+
+.. autofunction:: get_default_grr_definition_path
+
+.. autofunction:: get_genomic_context
+
+.. autofunction:: get_grr_from_context
+
+.. autofunction:: load_ann_data_from_resource
+
+.. autofunction:: load_ann_data_from_resource_id
+
+.. autofunction:: load_data_frame_from_resource
+
+.. autofunction:: load_data_frame_from_resource_id
