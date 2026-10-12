@@ -15,6 +15,8 @@ author = 'iossifovlab.com'
 
 extensions = [
     "sphinx.ext.autodoc",
+    # Hand-written outlines only; no stub files are generated.
+    "sphinx.ext.autosummary",
     # Google-style (``Args:``, ``Attributes:``, ``Returns:``, ``Raises:``) and
     # numpy-style (``Parameters`` over a dashed rule) docstring sections.
     # Without napoleon, autodoc hands them to docutils as raw reStructuredText:
@@ -144,6 +146,10 @@ git_untracked_show_sourcelink = True
 autodoc_default_options = {
     "ignore-module-all": True,
 }
+
+# Short API headings: no module prefix (gain#1894).
+add_module_names = False
+autosummary_generate = False
 
 templates_path = ['_templates']
 exclude_patterns = [

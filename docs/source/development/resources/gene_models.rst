@@ -94,7 +94,41 @@ documentation below rather than as separate entries.
 API
 ---
 
+The classes and the function below are defined in the module
+``gain.genomic_resources.gene_models``.
+
 .. currentmodule:: gain.genomic_resources.gene_models
+
+.. autosummary::
+
+   build_gene_models_from_resource_id
+   GeneModels
+   GeneModels.close
+   GeneModels.from_transcript_models
+   GeneModels.gene_models_by_gene_name
+   GeneModels.gene_models_by_location
+   GeneModels.gene_names
+   GeneModels.get_schema
+   GeneModels.has_chromosome
+   GeneModels.is_loaded
+   GeneModels.join_gene_models
+   GeneModels.load
+   GeneModels.resource_id
+   TranscriptModel
+   TranscriptModel.all_regions
+   TranscriptModel.calc_frames
+   TranscriptModel.cds_len
+   TranscriptModel.cds_regions
+   TranscriptModel.is_coding
+   TranscriptModel.test_frames
+   TranscriptModel.total_len
+   TranscriptModel.update_frames
+   TranscriptModel.utr3_len
+   TranscriptModel.utr3_regions
+   TranscriptModel.utr5_len
+   TranscriptModel.utr5_regions
+   Exon
+   Exon.contains
 
 .. autofunction:: build_gene_models_from_resource_id
 
