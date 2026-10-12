@@ -125,7 +125,6 @@ DELIBERATELY_NOT_OFFERED: dict[str, frozenset[str]] = {
         "cnv_filter",
     }),
     "effect_annotator": frozenset(),
-
     "simple_effect_annotator": frozenset(),
     "liftover_annotator": frozenset(),
     "normalize_allele_annotator": frozenset(),
