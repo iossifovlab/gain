@@ -88,7 +88,8 @@ class EffectAnnotatorBuilder:
 
         parser.add_argument(
             "-pl", "--promoter-len",
-            help="promoter length",
+            help="promoter length: the number of bases upstream of the first "
+            "exon that count as promoter (0 disables promoter calls)",
             default=0,
             type=int,
         )

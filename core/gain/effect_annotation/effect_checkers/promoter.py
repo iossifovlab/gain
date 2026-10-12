@@ -7,7 +7,15 @@ from gain.genomic_resources.gene_models import TranscriptModel
 
 
 class PromoterEffectChecker(EffectChecker):
-    """Promoter effect checker class."""
+    """Promoter effect checker class.
+
+    The promoter is the window of ``promoter_len`` bases upstream of the
+    first exon. The near base of the variant must lie in the window. A
+    near base at distance ``promoter_len`` is inside, and at distance
+    ``promoter_len + 1`` it is outside. The distance of the base next to
+    the exon is 1. A variant with any base inside an exon has no promoter
+    effect.
+    """
 
     def create_effect(
         self, transcript_model: TranscriptModel,
@@ -20,12 +28,12 @@ class PromoterEffectChecker(EffectChecker):
         variant: Variant,
     ) -> AnnotationEffect:
         """Create a positive strand promoter effect."""
-        assert variant.ref_position_last is not None
         assert variant.corrected_ref_position_last is not None
 
         effect = self.create_effect(transcript_model)
         effect.dist_from_5utr = (
-            transcript_model.exons[0].start - variant.ref_position_last
+            transcript_model.exons[0].start
+            - variant.corrected_ref_position_last
         )
         return effect
 
@@ -40,16 +48,20 @@ class PromoterEffectChecker(EffectChecker):
     def get_effect(
         self, request: AnnotationRequest,
     ) -> AnnotationEffect | None:
+        """Return a promoter effect or None."""
         if request.promoter_len == 0:
             return None
 
-        assert request.variant.ref_position_last is not None
         assert request.variant.corrected_ref_position_last is not None
 
+        # The near base is the base of the variant closest to the
+        # transcript. On the "+" strand it is the inclusive last base. A
+        # near base before the first exon means no base is inside an exon.
         if (
-            request.variant.position < request.transcript_model.exons[0].start
-            and request.transcript_model.strand == "+"
-            and request.variant.ref_position_last
+            request.transcript_model.strand == "+"
+            and request.variant.corrected_ref_position_last
+            < request.transcript_model.exons[0].start
+            and request.variant.corrected_ref_position_last
             >= request.transcript_model.exons[0].start
             - request.promoter_len
         ):
