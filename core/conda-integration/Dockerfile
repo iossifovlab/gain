@@ -75,6 +75,10 @@ COPY --chown=mambauser:mambauser core/pytest.ini core/pyproject.toml \
     /testbed/core/
 COPY --chown=mambauser:mambauser test_fixtures/mini-GRR \
     /testbed/test_fixtures/mini-GRR
+# tests/small/test_docs_autosummary_outline.py reads the Gene Models page
+# source and fails, not skips, when the page is absent (#1895).
+COPY --chown=mambauser:mambauser docs/source/development/resources \
+    /testbed/docs/source/development/resources
 RUN chmod -R a+rwX /testbed
 COPY --chown=mambauser:mambauser core/conda-integration/run.sh \
     core/conda-integration/assert_installed.py /opt/conda-integration/
