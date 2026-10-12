@@ -1,6 +1,6 @@
 """Covered-position statistics for tabular genomic scores.
 
-Vocabulary per ``CONTEXT.md`` and ADR 0020: a **covered position** is a
+Vocabulary per ``GLOSSARY.md`` and ADR 0020: a **covered position** is a
 position spanned by at least one table row — value-blind, union semantics.
 A **segment** is a maximal run of touching-or-overlapping rows carrying
 equal values (the whole scanned score tuple, NA equal to NA, floats exact).

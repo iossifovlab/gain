@@ -1,6 +1,6 @@
 """Fragment count and exact fragment-length statistics for fragment scores.
 
-Vocabulary per ``CONTEXT.md``: a **fragment** is a table row AS STORED.
+Vocabulary per ``GLOSSARY.md``: a **fragment** is a table row AS STORED.
 Overlapping, nested and duplicate rows each count once, at their own
 unclipped span — there is no run algebra and no stitching here, because
 a row is owned whole by exactly one scanned region.

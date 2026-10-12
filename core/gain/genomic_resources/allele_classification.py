@@ -1,7 +1,7 @@
 """What an allele-score row's ref/alt pair is, as one of five classes.
 
 The classes and the rule that assigns them are vocabulary, defined once in
-``CONTEXT.md`` and decided in ADR 0020; :func:`classify_allele` states the
+``GLOSSARY.md`` and decided in ADR 0020; :func:`classify_allele` states the
 rule and nothing else here restates it.  The classification is what the
 allele-score statistics count, and it is deliberately independent of them:
 no accumulator, no storage, no scan -- just the rule.

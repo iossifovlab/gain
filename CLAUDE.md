@@ -17,7 +17,7 @@ GAIn (Genomic Annotation Infrastructure) is the annotation engine and genomic re
 - `web_api/` — `web_annotation` + `admin_panel` (Django); `web_ui/` — Angular; `web_e2e/` — Playwright against the deployed stack; `web_infra/` — compose files per host
 - `info_pages_e2e/` — Playwright for the GRR info pages' client-side JS, fully offline
 - `spliceai_annotator/`, `vep_annotator/`, `demo_annotator/` — Docker-based annotator plugins
-- `docs/` — Sphinx user docs (`docs/source/`, published at <https://iossifovlab.com/gaindocs/>); `docs/adr/` — internal Architecture Decision Records; `CONTEXT.md` — domain language
+- `docs/` — Sphinx user docs (`docs/source/`, published at <https://iossifovlab.com/gaindocs/>); `docs/adr/` — internal Architecture Decision Records; `GLOSSARY.md` — domain language
 - `scripts/` — repo-root scripts (`conda_env.py` and friends; linted with `core`); `test_fixtures/mini-GRR`; `typings/`; `conda-builder/`
 - Config at the **repo root**: `ruff.toml` (line-length 80, py312), `mypy.ini`, `pylintrc`, `pre-commit`, `pre-push`, `docker-compose.yaml`, `environment.yml` (generated)
 - CLIs from `core`: `grr_manage`, `grr_browse`, `annotate_tabular` / `annotate_vcf` / `annotate_doc`, `annotate_variant_effects` / `annotate_variant_effects_vcf`
@@ -162,7 +162,7 @@ Do not. Release notes are composed once, when the version is cut; a branch leave
 <important if="you are changing or extending an area that has an ADR, or naming a concept in an issue or docstring">
 
 - `docs/adr/` records what was chosen, why it was scoped that way, and what it cost. **Read the relevant ADR before changing the area it covers**; `docs/adr/README.md` has the convention, including how ADRs divide labour with the module-header "ledger" docstrings some `__init__.py` files carry. ADRs are internal and sit outside `docs/source/`.
-- `CONTEXT.md` fixes what the words mean: the terms this project uses and the ambiguities that have caused bugs (which of two things "searching by label" means; what "the label is not present in this GRR" can each be). It is grown a term at a time. **Check it before naming a concept.**
+- `GLOSSARY.md` fixes what the words mean: the terms this project uses and the ambiguities that have caused bugs (which of two things "searching by label" means; what "the label is not present in this GRR" can each be). It is grown a term at a time. **Check it before naming a concept.**
 </important>
 
 <important if="you are writing or editing a class or method docstring">
