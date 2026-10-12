@@ -33,7 +33,7 @@ extensions = [
     "sphinxcontrib.httpdomain",
     "sphinx_autorun",
     "sphinxcontrib.video",
-    # Markdown source alongside reST, so repo-root documents (CONTEXT.md and
+    # Markdown source alongside reST, so repo-root documents (GLOSSARY.md and
     # the like) can be ``include``d rather than copied into a ``.rst``.
     "myst_parser",
     # Diagrams as text in the repo -- diffable and reviewable in a PR.  Every

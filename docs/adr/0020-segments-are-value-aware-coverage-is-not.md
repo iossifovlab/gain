@@ -653,7 +653,7 @@ inside an existing run.
 column, only where that column has a non-NA value. Rejected for coverage:
 it conflates "the table has no row here" with "the row has no value for this
 column here", which are different claims (the same distinction this project
-has been burned by before — see the search-index entries in `CONTEXT.md`).
+has been burned by before — see the search-index entries in `GLOSSARY.md`).
 Coverage documents the first; per-column NA-ness is visible in the value
 statistics. This also keeps coverage per-resource — one table, not one per
 column.
@@ -702,6 +702,6 @@ indefinitely — which is accepted and made visible rather than hidden.
   (ADR 0014), no rebuild is triggered automatically. At the time of the
   change no published fragment resource had built either statistic, so
   nothing regressed in practice.
-- The definitions are vocabulary now: `CONTEXT.md` carries **segment**,
+- The definitions are vocabulary now: `GLOSSARY.md` carries **segment**,
   **covered position** and the five **allele classes**, and issue text and
   docstrings in the statistics area are held to them.

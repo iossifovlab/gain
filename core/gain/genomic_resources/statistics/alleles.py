@@ -1,6 +1,6 @@
 """Allele-content statistics for allele-score resources.
 
-Vocabulary per ``CONTEXT.md`` and ADR 0020.  Where the coverage statistic
+Vocabulary per ``GLOSSARY.md`` and ADR 0020.  Where the coverage statistic
 answers *where* a score holds data, this one answers *what* its rows are:
 how many **alleles** a resource carries, how those alleles distribute
 over the five **allele classes**, and what the classes with structure
