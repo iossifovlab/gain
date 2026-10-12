@@ -47,11 +47,15 @@ class Exon:
     ):
         """Initialize exon model.
 
-        Args:
-            start: The genomic start position of the exon (1-based).
-            stop (int): The genomic stop position of the exon
-                (1-based, closed).
-            frame (Optional[int]): The frame of the exon.
+        Parameters
+        ----------
+        start : int
+            The genomic start position of the exon (1-based, inclusive).
+        stop : int
+            The genomic stop position of the exon (1-based, inclusive).
+        frame : int | None, default None
+            The codon reading frame of the exon, as described for the
+            ``frame`` attribute above.
         """
 
         self._start = start
@@ -60,14 +64,17 @@ class Exon:
 
     @property
     def start(self) -> int:
+        """The genomic start position of the exon (1-based, inclusive)."""
         return self._start
 
     @property
     def stop(self) -> int:
+        """The genomic stop position of the exon (1-based, inclusive)."""
         return self._stop
 
     @property
     def frame(self) -> int | None:
+        """The codon reading frame of the exon, or ``None`` if not computed."""
         return self._frame
 
     def __repr__(self) -> str:
@@ -76,11 +83,17 @@ class Exon:
     def contains(self, region: tuple[int, int]) -> bool:
         """Check if this exon fully contains a genomic region.
 
-        Args:
-            region (tuple[int, int]): A (start, stop) position tuple to check.
+        Parameters
+        ----------
+        region : tuple[int, int]
+            The (start, stop) positions of the region to check
+            (1-based, inclusive).
 
-        Returns:
-            bool: True if the region is fully contained within this exon.
+        Returns
+        -------
+        bool
+            ``True`` if the region lies fully within this exon, ``False``
+            otherwise.
 
         Example:
             >>> exon = Exon(100, 200)
@@ -162,24 +175,31 @@ class TranscriptModel:
     ):
         """Initialize transcript model.
 
-        Args:
-            gene (str): The gene name.
-            tr_id (str): The transcript ID.
-            tr_name (str): The transcript name.
-            chrom (str): The chromosome name.
-            strand (str): The strand of the transcript.
-            tx (tuple[int, int]): The transcript start and end positions.
-                (1-based, closed interval)
-            cds (tuple[int, int]): The coding region start and end positions.
-                The CDS region includes the start and stop codons where the
-                source annotates them. An incomplete transcript may state a
-                coding extent without one or either codon, so neither end is
-                guaranteed to be a codon boundary.
-                (1-based, closed interval)
-            exons (Optional[list[Exon]]): The list of exons. Defaults to
-                empty list.
-            attributes (Optional[dict[str, Any]]): The additional attributes.
-                Defaults to empty dictionary.
+        Parameters
+        ----------
+        gene : str
+            The gene name.
+        tr_id : str
+            The transcript ID.
+        tr_name : str
+            The transcript name.
+        chrom : str
+            The chromosome name.
+        strand : str
+            The strand of the transcript.
+        tx : tuple[int, int]
+            The transcript start and end positions (1-based, closed
+            interval).
+        cds : tuple[int, int]
+            The coding region start and end positions (1-based, closed
+            interval). The CDS region includes the start and stop codons
+            where the source annotates them. An incomplete transcript may
+            state a coding extent without one or either codon, so neither
+            end is guaranteed to be a codon boundary.
+        exons : list[Exon] | None, default None
+            The exons in genomic order. ``None`` means no exons.
+        attributes : dict[str, Any] | None, default None
+            The additional attributes. ``None`` means no attributes.
         """
         self.gene = gene
         self.tr_id = tr_id
@@ -202,9 +222,11 @@ class TranscriptModel:
         not coding. This keeps ``is_coding()`` in step with
         :meth:`cds_regions`, which callers index into without checking.
 
-        Returns:
-            bool: True if the transcript has a coding region (CDS),
-                False for non-coding transcripts.
+        Returns
+        -------
+        bool
+            ``True`` if the transcript has a coding region (CDS),
+            ``False`` for non-coding transcripts.
 
         Example:
             >>> if transcript.is_coding():
@@ -238,9 +260,11 @@ class TranscriptModel:
         returned start is never below the first, an exon walk driven by
         these bounds always terminates inside the exon list.
 
-        Returns:
-            tuple[int, int]: The coding start and stop, clamped to the
-                first and last exon respectively.
+        Returns
+        -------
+        tuple[int, int]
+            The coding start and stop, clamped to the first and last exon
+            respectively.
         """
         if not self.exons:
             return (self.cds[0], self.cds[0] - 1)
@@ -255,17 +279,21 @@ class TranscriptModel:
         Extracts the portions of exons that contain coding sequence,
         optionally extending into splice sites.
 
-        Args:
-            ss_extend (int): Number of bases to extend into splice sites
-                at exon boundaries. Default is 0 (no extension).
-
         The CDS is intersected with the exon set first, so the result
         never leaves an exon. An empty list is returned for a non-coding
         transcript and for one whose CDS misses its exons entirely.
 
-        Returns:
-            list[BedRegion]: List of BedRegion objects representing CDS
-                segments. Returns empty list for non-coding transcripts.
+        Parameters
+        ----------
+        ss_extend : int, default 0
+            The number of bases to extend into the splice sites at the
+            exon boundaries. ``0`` means no extension.
+
+        Returns
+        -------
+        list[BedRegion]
+            The CDS segments, one for each exon the CDS touches. The list
+            is empty for a non-coding transcript.
 
         Example:
             >>> cds_regions = transcript.cds_regions()
@@ -343,13 +371,16 @@ class TranscriptModel:
         is 5' depends on the strand. ``low_end_strand`` names the
         strand for which this UTR is the one below the CDS.
 
-        Args:
-            low_end_strand (str): The strand on which this UTR
-                lies below the coding region.
+        Parameters
+        ----------
+        low_end_strand : str
+            The strand on which this UTR lies below the coding region.
 
-        Returns:
-            list[BedRegion]: The UTR segments, empty for a
-                transcript with no exonic coding sequence.
+        Returns
+        -------
+        list[BedRegion]
+            The UTR segments, empty for a transcript with no exonic
+            coding sequence.
         """
         cds_beg, cds_end = self._coding_bounds()
         if cds_beg >= cds_end:
@@ -408,9 +439,11 @@ class TranscriptModel:
         overrunning its terminal exon splits the transcript exactly as a
         flush one would.
 
-        Returns:
-            list[BedRegion]: List of 5' UTR regions. Returns empty list for
-                non-coding transcripts.
+        Returns
+        -------
+        list[BedRegion]
+            The 5' UTR regions. The list is empty for a non-coding
+            transcript.
 
         Example:
             >>> utr5 = transcript.utr5_regions()
@@ -433,9 +466,11 @@ class TranscriptModel:
         overrunning its terminal exon splits the transcript exactly as a
         flush one would.
 
-        Returns:
-            list[BedRegion]: List of 3' UTR regions. Returns empty list for
-                non-coding transcripts.
+        Returns
+        -------
+        list[BedRegion]
+            The 3' UTR regions. The list is empty for a non-coding
+            transcript.
 
         Example:
             >>> utr3 = transcript.utr3_regions()
@@ -456,15 +491,20 @@ class TranscriptModel:
         Returns all exonic regions, optionally extending into splice sites
         and promoter regions.
 
-        Args:
-            ss_extend (int): Number of bases to extend into splice sites
-                at coding exon boundaries. Default is 0.
-            prom (int): Number of bases to extend into promoter region
-                upstream of transcription start. Default is 0.
+        Parameters
+        ----------
+        ss_extend : int, default 0
+            The number of bases to extend into the splice sites at the
+            coding exon boundaries. ``0`` means no extension.
+        prom : int, default 0
+            The number of bases to extend into the promoter region
+            upstream of the transcription start. ``0`` means no
+            extension.
 
-        Returns:
-            list[BedRegion]: List of all transcript regions, potentially
-                extended based on parameters.
+        Returns
+        -------
+        list[BedRegion]
+            One region for each exon, extended as the parameters ask.
 
         Example:
             >>> # Basic exonic regions
@@ -556,6 +596,11 @@ class TranscriptModel:
 
         The sum of the exon lengths -- NOT the genomic span ``tx``, which
         includes the introns between them.
+
+        Returns
+        -------
+        int
+            The spliced length in base pairs.
         """
         length = 0
         for reg in self.exons:
@@ -567,6 +612,11 @@ class TranscriptModel:
 
         The sum of :meth:`cds_regions`, so it counts coding sequence only
         and is 0 for a non-coding transcript.
+
+        Returns
+        -------
+        int
+            The coding length in base pairs.
         """
         regions = self.cds_regions()
         length = 0
@@ -580,6 +630,11 @@ class TranscriptModel:
         The sum of :meth:`utr3_regions`.  "3'" is relative to the
         transcript's own orientation, so on a ``-`` strand transcript this
         is the lower-coordinate end.
+
+        Returns
+        -------
+        int
+            The length of the 3' UTR in base pairs.
         """
         utr3 = self.utr3_regions()
         length = 0
@@ -594,6 +649,11 @@ class TranscriptModel:
         The sum of :meth:`utr5_regions`.  "5'" is relative to the
         transcript's own orientation, so on a ``-`` strand transcript this
         is the higher-coordinate end.
+
+        Returns
+        -------
+        int
+            The length of the 5' UTR in base pairs.
         """
         utr5 = self.utr5_regions()
         length = 0
@@ -612,10 +672,19 @@ class TranscriptModel:
         so bases annotated outside the exons -- an incomplete stop codon,
         say -- shift no frame.
 
-        Returns:
-            list[int]: Reading frame for each exon. Values are:
-                - 0, 1, or 2 for coding exons (bases into current codon)
-                - -1 for non-coding exons or non-coding transcripts
+        Returns
+        -------
+        list[int]
+            The reading frame of each exon, in the order of ``exons``.
+            A value is 0, 1 or 2 for a coding exon (the bases into the
+            current codon) and -1 for a non-coding exon or a non-coding
+            transcript.
+
+        Raises
+        ------
+        ValueError
+            If the number of computed frames differs from the number of
+            exons.
 
         Example:
             >>> frames = transcript.calc_frames()
@@ -681,6 +750,11 @@ class TranscriptModel:
         Calculates reading frames using calc_frames() and updates the
         frame attribute of each Exon object.
 
+        Returns
+        -------
+        None
+            The method sets the frame of each exon in place.
+
         Example:
             >>> transcript.update_frames()
             >>> for exon in transcript.exons:
@@ -699,9 +773,12 @@ class TranscriptModel:
         Compares the frame attribute of each exon with the calculated
         frame to ensure consistency.
 
-        Returns:
-            bool: True if all exon frames match calculated values,
-                False otherwise.
+        Returns
+        -------
+        bool
+            ``True`` if the frame of each exon equals the value from
+            :meth:`calc_frames`, ``False`` otherwise. An exon whose frame
+            is ``None`` does not match.
 
         Example:
             >>> transcript.update_frames()
