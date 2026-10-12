@@ -5,6 +5,7 @@
 Quotas are used to limit the amount of requests any user can make to the API.
 Anonymous users have lesser quotas and are mapped to their IP address.
 The jobs API and single allele query API both use these quotas.
+The quota models live in `web_annotation/quota_models.py`. `web_annotation.models` re-exports them.
 
 ## Default limits
 
