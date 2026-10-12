@@ -15,6 +15,8 @@
 
 ## Context
 
+The quota models live in `web_annotation.quota_models`. `web_annotation.models` re-exports them.
+
 A quota row meters three resources — jobs, variants and attributes — over two
 periods, daily and monthly, against limits configured per quota type in
 `QUERY_QUOTAS`. Two things could own the number in a column, and until this
