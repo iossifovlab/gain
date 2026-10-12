@@ -12,7 +12,8 @@
 // `file:///channel, conda-forge, bioconda` -- no iossifovlab channel, so a
 // published gain-core can never shadow the one under test (gpf#916). The
 // test bed is a copy of core/tests, core/pytest.ini, core/pyproject.toml
-// and the test_fixtures/mini-GRR submodule only -- never core/gain -- and
+// the test_fixtures/mini-GRR submodule and the docs/source/development/
+// resources pages (#1895) only -- never core/gain -- and
 // the run asserts `gain` imports from the conda prefix at the artefact's
 // version before pytest starts. One JUnit file per tier; a red in either
 // makes the build red. See core/conda-integration/.
@@ -419,7 +420,8 @@ pipeline {
                 // Build from the repo root, like every other CI image. The
                 // image carries only micromamba + rattler-index and the
                 // test bed (core/tests, core/pytest.ini, core/pyproject.toml,
-                // test_fixtures/mini-GRR); the .conda, the GRR tree and the
+                // test_fixtures/mini-GRR, docs/source/development/resources);
+                // the .conda, the GRR tree and the
                 // reports dir are mounted at run time, so this is cheap and
                 // the solve is always fresh.
                 sh 'docker build -f core/conda-integration/Dockerfile \
