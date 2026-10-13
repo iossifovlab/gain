@@ -167,7 +167,24 @@ class _PysamFastaSequence(_SequenceBackend):
 class ReferenceGenome(
     ResourceConfigValidationMixin,
 ):
-    """Provides an interface for quering a reference genome."""
+    """Query the chromosomes and the nucleotides of a reference genome.
+
+    The genome wraps a resource of type ``genome``. The builder returns it
+    closed. Call :meth:`open` before :meth:`fetch` or :meth:`get_sequence`.
+    The chromosome accessors load the index on demand, so they answer
+    without :meth:`open`.
+
+    Attributes:
+        resource (GenomicResource): The ``genome`` resource that the object
+            wraps.
+
+        config (dict): The validated configuration of the resource.
+
+        pars (dict): The pseudoautosomal regions from the ``PARS`` key of
+            the configuration, as a mapping from the chromosome name to a
+            list of ``Region``. The mapping is empty when the
+            configuration has no ``PARS`` key.
+    """
 
     def __init__(self, resource: GenomicResource):
         self.resource = resource
@@ -228,17 +245,17 @@ class ReferenceGenome(
 
     @property
     def chromosomes(self) -> list[str]:
-        """Return a list of all chromosomes of the reference genome."""
+        """The chromosome names, in the order of the ``.fai`` index."""
         self._load_genome_index()
         return self._chromosomes
 
     @property
     def chrom_prefix(self) -> str:
-        """Return ``"chr"`` if the genome's first contig name starts with it.
+        """The prefix of the chromosome names: ``"chr"`` or ``""``.
 
-        Derived from the ``.fai`` index; otherwise ``""``.  Not
-        configurable: a ``chrom_prefix`` key in the genome's config is
-        ignored.
+        The value is ``"chr"`` when the first chromosome name starts with
+        it, and ``""`` otherwise. A ``chrom_prefix`` key in the
+        configuration does not change it.
         """
         self._load_genome_index()
         chrom = self._chromosomes[0]
@@ -273,12 +290,27 @@ class ReferenceGenome(
         self._chromosomes = list(self._chromosome_lengths.keys())
 
     def close(self) -> None:
-        """Close reference genome sequence file-like objects."""
+        """Close the sequence file and drop the loaded index.
+
+        Closing a genome that is not open does nothing.
+        """
         self._backend.close()
         self._index.clear()
 
     def open(self) -> ReferenceGenome:
-        """Open reference genome resources."""
+        """Open the sequence file of the genome.
+
+        Returns
+        -------
+        ReferenceGenome
+            The genome itself, so that the call chains onto a builder. A
+            genome that is already open is returned unchanged.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the index file or the sequence file is missing.
+        """
         if self.is_open():
             logger.info(
                 "opening already opened reference genome %s",
@@ -295,7 +327,13 @@ class ReferenceGenome(
         return self
 
     def is_open(self) -> bool:
-        """Whether :meth:`open` has run and :meth:`close` has not since."""
+        """Whether :meth:`open` has run and :meth:`close` has not since.
+
+        Returns
+        -------
+        bool
+            ``True`` when the sequence file is open.
+        """
         return self._backend.is_open()
 
     def __enter__(self) -> ReferenceGenome:
@@ -318,7 +356,23 @@ class ReferenceGenome(
                 "exception during closing reference genome")
 
     def get_chrom_length(self, chrom: str) -> int:
-        """Return the length of a specified chromosome."""
+        """Return the length of a chromosome.
+
+        Parameters
+        ----------
+        chrom : str
+            The name of the chromosome.
+
+        Returns
+        -------
+        int
+            The length of the chromosome in nucleotides.
+
+        Raises
+        ------
+        ValueError
+            If the genome has no chromosome with this name.
+        """
         self._load_genome_index()
         if chrom not in self._chromosome_lengths:
             raise ValueError(f"can't find chromosome {chrom}")
@@ -326,19 +380,45 @@ class ReferenceGenome(
         return self._chromosome_lengths[chrom]
 
     def get_all_chrom_lengths(self) -> dict[str, int]:
-        """Return list of all chromosomes lengths."""
+        """Return the lengths of all chromosomes.
+
+        Returns
+        -------
+        dict[str, int]
+            A mapping from the chromosome name to its length, in the
+            order of the ``.fai`` index. The mapping is the internal one,
+            not a copy. Do not change it.
+        """
         self._load_genome_index()
         return self._chromosome_lengths
 
     def split_into_regions(
         self, region_size: int, chromosome: str | None = None,
     ) -> Generator[Region, None, None]:
-        """
-        Split the reference genome into regions and yield them.
+        """Split the genome into regions of a given size.
 
-        Can specify a specific chromosome to limit the regions to be
-        in that chromosome only.  A ``region_size`` of 0 yields one region
-        per chromosome; a negative one is refused.
+        Parameters
+        ----------
+        region_size : int
+            The size of each region in nucleotides. The value ``0`` yields
+            one region for each chromosome.
+        chromosome : str | None
+            The chromosome to split. When it is ``None``, the method
+            splits all chromosomes.
+
+        Returns
+        -------
+        Generator[Region, None, None]
+            The regions, chromosome by chromosome. The last region of each
+            chromosome has ``stop`` set to ``None``, and it can be shorter
+            than ``region_size``.
+
+        Raises
+        ------
+        ValueError
+            If ``region_size`` is negative. The call raises. If
+            ``chromosome`` is not a chromosome of the genome, the
+            generator raises on the first step.
         """
         # Checked here, not in the generator, so the call itself fails.
         check_region_size(region_size)
@@ -372,14 +452,36 @@ class ReferenceGenome(
         self, chrom: str, start: int, stop: int | None,
         buffer_size: int = 512,
     ) -> Generator[str, None, None]:
-        """
-        Yield the nucleotides in a specific region.
+        """Yield the nucleotides of a region, one character at a time.
 
-        While line feed calculation can be inaccurate because not every fetch
-        will start at the start of a line, line feeds add extra characters
-        to read and the output is limited by the amount of nucleotides
-        expected to be read.
+        The coordinates are 1-based and both ends are included. The genome
+        must be open.
+
+        Parameters
+        ----------
+        chrom : str
+            The name of the chromosome.
+        start : int
+            The first position of the region.
+        stop : int | None
+            The last position of the region. A value past the end of the
+            chromosome is cut to the end. When it is ``None``, the region
+            runs to the end of the chromosome.
+        buffer_size : int
+            The number of characters that the reader takes from the file
+            in one step.
+
+        Returns
+        -------
+        Generator[str, None, None]
+            The nucleotides in upper case. The generator is empty when
+            the genome has no chromosome with this name. In that case a
+            warning is logged.
         """
+        # The count of line feeds is not exact, because a fetch does not
+        # always start at the start of a line. The line feeds only add
+        # characters to read. The output is limited by the number of
+        # nucleotides that the region expects.
         if chrom not in self.chromosomes:
             logger.warning(
                 "chromosome %s not found in %s",
@@ -396,11 +498,46 @@ class ReferenceGenome(
         yield from self._backend.fetch(chrom, start, length, buffer_size)
 
     def get_sequence(self, chrom: str, start: int, stop: int) -> str:
-        """Return sequence of nucleotides from specified chromosome region."""
+        """Return the nucleotides of a region as one string.
+
+        The coordinates are 1-based and both ends are included. The genome
+        must be open.
+
+        Parameters
+        ----------
+        chrom : str
+            The name of the chromosome.
+        start : int
+            The first position of the region.
+        stop : int
+            The last position of the region. A value past the end of the
+            chromosome is cut to the end.
+
+        Returns
+        -------
+        str
+            The nucleotides in upper case. The string is empty when the
+            genome has no chromosome with this name.
+        """
         return "".join(self.fetch(chrom, start, stop))
 
     def is_pseudoautosomal(self, chrom: str, pos: int) -> bool:
-        """Return true if specified position is pseudoautosomal."""
+        """Tell whether a position is in a pseudoautosomal region.
+
+        Parameters
+        ----------
+        chrom : str
+            The name of the chromosome.
+        pos : int
+            The 1-based position.
+
+        Returns
+        -------
+        bool
+            ``True`` when the position is in a region of ``pars``. The
+            value is ``False`` for a chromosome without such regions, and
+            for every position when the configuration has no ``PARS`` key.
+        """
         def in_any_region(
                 chrom: str, pos: int, regions: list[Region]) -> bool:
             return any(reg for reg in regions if reg.isin(chrom, pos))
@@ -413,12 +550,16 @@ class ReferenceGenome(
 
     @staticmethod
     def get_schema() -> dict[str, Any]:
-        """The schema a ``genome`` resource's config is checked against.
+        """Return the schema that the config of a genome is checked against.
 
-        The base resource schema plus ``filename``, ``index_file``,
-        ``PARS`` and the retired ``chrom_prefix``, still accepted -- and
-        announced -- until ``LEGACY_VOCABULARY_REMOVAL_RELEASE``.
+        Returns
+        -------
+        dict[str, Any]
+            The base resource schema, with the keys ``filename``,
+            ``index_file``, ``PARS`` and ``chrom_prefix``.
         """
+        # The retired ``chrom_prefix`` key is still accepted, and the
+        # constructor announces it, until ``LEGACY_VOCABULARY_REMOVAL_RELEASE``.
         return {
             **get_base_resource_schema(),
             **get_required_filename_schema(),
@@ -443,7 +584,21 @@ class ReferenceGenome(
 
 
 def build_reference_genome_from_file(filename: str) -> ReferenceGenome:
-    """Open a reference genome from a file."""
+    """Build a reference genome from a FASTA file.
+
+    The function wraps the file in a local resource. The genome is closed.
+
+    Parameters
+    ----------
+    filename : str
+        The path of the FASTA file. The index file ``<filename>.fai`` must
+        be next to it.
+
+    Returns
+    -------
+    ReferenceGenome
+        The closed genome. Call ``open()`` before any sequence query.
+    """
     dirname = os.path.dirname(filename)
     basename = os.path.basename(filename)
     res = build_local_resource(dirname, {
@@ -455,7 +610,23 @@ def build_reference_genome_from_file(filename: str) -> ReferenceGenome:
 
 def build_reference_genome_from_resource(
         resource: GenomicResource) -> ReferenceGenome:
-    """Open a reference genome from resource."""
+    """Build the reference genome of a genomic resource.
+
+    Parameters
+    ----------
+    resource : GenomicResource
+        A resource of type ``genome``.
+
+    Returns
+    -------
+    ReferenceGenome
+        The closed genome. Call ``open()`` before any sequence query.
+
+    Raises
+    ------
+    ValueError
+        If the resource is not of type ``genome``.
+    """
     if resource.get_type() != "genome":
         logger.error(
             "trying to open a resource %s of type "
@@ -469,6 +640,29 @@ def build_reference_genome_from_resource(
 def build_reference_genome_from_resource_id(
     resource_id: str, grr: GenomicResourceRepo | None = None,
 ) -> ReferenceGenome:
+    """Build the reference genome of the resource with a given id.
+
+    Parameters
+    ----------
+    resource_id : str
+        The id of a resource of type ``genome`` in the repository.
+    grr : GenomicResourceRepo | None
+        The repository that resolves ``resource_id``. When it is
+        ``None``, the function builds the default repository with
+        ``build_genomic_resource_repository()``.
+
+    Returns
+    -------
+    ReferenceGenome
+        The closed genome. Call ``open()`` before any sequence query.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the repository has no resource with this id.
+    ValueError
+        If the resource is not of type ``genome``.
+    """
     if grr is None:
         grr = build_genomic_resource_repository()
     return build_reference_genome_from_resource(
