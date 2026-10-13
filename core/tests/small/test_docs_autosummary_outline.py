@@ -5,7 +5,8 @@ block. These tests compare that list with the class, so a new public member
 cannot stay out of the outline without a failure. The test finds each
 ``autoclass`` directive on the pages under
 ``docs/source/development/resources``. A page that is not rolled out yet
-sits on ``NOT_ROLLED_OUT``. The page source is read as text. No Sphinx build runs.
+sits on ``NOT_ROLLED_OUT``. The page source is read as text.
+No Sphinx build runs.
 """
 import importlib
 import inspect
