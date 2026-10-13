@@ -17,7 +17,7 @@ The chapters build bottom-up, substrate before the things that consume it:
    chromosome lengths to writing, registering and running a small annotator
    plugin.
 2. :doc:`development/resources_in_python` — the resource half of the declared
-   API: repositories and resources, reference genomes, gene models, the three
+   API: the factories, repositories and resources, reference genomes, gene models, the three
    kinds of score, histograms, and the seam for adding a resource type.
 3. :doc:`development/annotators` — the annotation half: what an annotator
    receives and declares, the two classes an annotator is built on, the

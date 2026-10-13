@@ -28,7 +28,7 @@ either should check rather than calling ``load`` a second time.
 
 The builders ``build_gene_models_from_resource_id`` and
 ``build_gene_models_from_resource`` are documented in the
-:ref:`factories` section.
+:ref:`factories` chapter.
 
 Two lookups
 -----------
