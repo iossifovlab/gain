@@ -105,9 +105,32 @@ and :doc:`histograms` describes them. A gene score counts genes in each bin.
 API
 ---
 
+The classes below are defined in the module
+``gain.gene_scores.gene_scores``. ``GeneScore`` is also exported by
+``gain.grr``, as ``grr.GeneScore``. The factory pair
+``build_gene_score_from_resource_id`` and
+``build_gene_score_from_resource`` is on :doc:`factories`.
+
 .. currentmodule:: gain.gene_scores.gene_scores
 
-.. autofunction:: build_gene_score_from_resource_id
+.. autosummary::
+
+   GeneScore
+   GeneScore.HISTOGRAM_COUNT_UNIT
+   GeneScore.build_score_help
+   GeneScore.files
+   GeneScore.get_gene_value
+   GeneScore.get_genes
+   GeneScore.get_max
+   GeneScore.get_min
+   GeneScore.get_schema
+   GeneScore.get_score_df
+   GeneScore.get_values
+   GeneScore.get_x_scale
+   GeneScore.get_y_scale
+   GeneScore.to_dict
+   GeneScore.to_tsv
+   GeneScoreDef
 
 .. autoclass:: GeneScore
    :members:
