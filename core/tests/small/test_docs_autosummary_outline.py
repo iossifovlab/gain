@@ -34,7 +34,6 @@ NOT_ROLLED_OUT = frozenset({
     "histograms.rst",
     "liftover_chains.rst",
     "repositories.rst",
-    "scores.rst",
     "adding_a_resource_type.rst",
 })
 
