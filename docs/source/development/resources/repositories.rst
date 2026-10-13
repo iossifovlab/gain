@@ -130,11 +130,54 @@ never builds one.
 API
 ---
 
-.. currentmodule:: gain.genomic_resources.repository_factory
-
-.. autofunction:: build_genomic_resource_repository
+The classes below are defined in the module
+``gain.genomic_resources.repository``. ``GenomicResourceRepo`` and
+``GenomicResource`` are also exported by ``gain.grr``, as
+``grr.GenomicResourceRepo`` and ``grr.GenomicResource``. The factory
+functions are listed on the :ref:`factories` page.
 
 .. currentmodule:: gain.genomic_resources.repository
+
+.. autosummary::
+
+   GenomicResourceRepo
+   GenomicResourceRepo.close
+   GenomicResourceRepo.definition
+   GenomicResourceRepo.find_resource
+   GenomicResourceRepo.get_all_resources
+   GenomicResourceRepo.get_resource
+   GenomicResourceRepo.invalidate
+   GenomicResourceRepo.repo_id
+   GenomicResourceRepo.search_resources
+   GenomicResourceRepo.search_resources_by_child
+   GenomicResource
+   GenomicResource.file_exists
+   GenomicResource.get_config
+   GenomicResource.get_description
+   GenomicResource.get_file_content
+   GenomicResource.get_file_url
+   GenomicResource.get_full_id
+   GenomicResource.get_id
+   GenomicResource.get_labels
+   GenomicResource.get_loaded_manifest
+   GenomicResource.get_manifest
+   GenomicResource.get_meta
+   GenomicResource.get_public_url
+   GenomicResource.get_repo_public_url
+   GenomicResource.get_repo_url
+   GenomicResource.get_summary
+   GenomicResource.get_type
+   GenomicResource.get_url
+   GenomicResource.get_version_str
+   GenomicResource.open_bigwig_file
+   GenomicResource.open_fasta_file
+   GenomicResource.open_raw_file
+   GenomicResource.open_tabix_file
+   GenomicResource.open_vcf_file
+   Manifest
+   Manifest.from_file_content
+   Manifest.get_files
+   Manifest.names
 
 .. autoclass:: GenomicResourceRepo
    :members:
@@ -144,3 +187,10 @@ API
 
 .. autoclass:: Manifest
    :members:
+
+The factory function below is defined in the module
+``gain.genomic_resources.repository_factory``.
+
+.. currentmodule:: gain.genomic_resources.repository_factory
+
+.. autofunction:: build_genomic_resource_repository
