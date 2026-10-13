@@ -50,19 +50,18 @@ rows they find:
   unreduced, and **folds** (``_agg``) reduce the rows with an aggregator and
   answer an :class:`~gain.genomic_resources.genomic_scores.AlleleAggregate`.
 
-Each has a plural form, which takes a ``scores`` list, and a singular form,
-without the ``s``, which takes one ``score``; the region fold has no singular
-form. Everything after the locus is
-a keyword argument, and every read accepts a ``score_filter``. The grid
-below shows how the groups combine.
+The grid below shows how the groups combine.
 
 The allele plane
 ----------------
 
 The reads are a plane in the same style as the :doc:`position <position_scores>`
 and :doc:`fragment <fragment_scores>` reads. Each read takes its locus
-positionally and everything else as a keyword, and has a singular form for one score; what it answers depends on its
-reduction, as described after the table. The reads sit on a grid: three *loci*
+positionally and everything else as a keyword, and every read accepts a
+``score_filter``. Each has a plural form, which takes a ``scores`` list, and a
+singular form, without the ``s``, which takes one ``score``; the region fold
+has no singular form. What a read answers depends on its reduction, as
+described after the table. The reads sit on a grid: three *loci*
 (where to look) by three *reductions* (what to do with the rows found there).
 
 .. list-table:: The allele plane

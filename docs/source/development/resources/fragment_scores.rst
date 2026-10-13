@@ -81,7 +81,7 @@ also accept the two overlap-fraction thresholds
 Which relation to use
 ---------------------
 
-Its method names say exactly which relation to the query region they use —
+The method names of :class:`~gain.genomic_resources.genomic_scores.FragmentScore` say exactly which relation to the query region they use:
 ``overlapping_region`` for fragments that intersect it,
 ``starting_in_region`` for fragments that begin inside it, ``at_position``
 for those covering one point. The distinction matters: summing a score over
