@@ -207,7 +207,69 @@ on a ``many`` resource, folding each attribute with its aggregator.
 API
 ---
 
+The classes below are defined in the module
+``gain.genomic_resources.genomic_scores.allele``, and the package
+``gain.genomic_resources.genomic_scores`` exports them. ``AlleleScore`` is also
+exported by ``gain.grr``, as ``grr.AlleleScore``.
+
 .. currentmodule:: gain.genomic_resources.genomic_scores
+
+.. autosummary::
+
+   AlleleScore
+   AlleleScore.DEFAULT_AGGREGATORS
+   AlleleScore.HISTOGRAM_COUNT_UNIT
+   AlleleScore.Mode
+   AlleleScore.Multiplicity
+   AlleleScore.alleles_mode
+   AlleleScore.fetch_region_allele_arrays
+   AlleleScore.get_allele_score_for_allele
+   AlleleScore.get_allele_score_for_allele_agg
+   AlleleScore.get_allele_score_for_allele_rows
+   AlleleScore.get_allele_score_in_region_rows
+   AlleleScore.get_allele_scores_for_allele
+   AlleleScore.get_allele_scores_for_allele_agg
+   AlleleScore.get_allele_scores_for_allele_rows
+   AlleleScore.get_allele_scores_in_region_agg
+   AlleleScore.get_allele_scores_in_region_rows
+   AlleleScore.get_schema
+   AlleleScore.multiplicity
+   AlleleScore.substitutions_mode
+   AlleleScore.supports_region_allele_arrays
+   AlleleAggregate
+   AlleleEntry
+   AlleleMultiplicityError
+   allele_key
+
+Inherited from ``GenomicScore``, which has its own page,
+:doc:`scores`:
+
+.. autosummary::
+
+   GenomicScore.aggregate_region
+   GenomicScore.chrom_length_source
+   GenomicScore.chrom_length_sources
+   GenomicScore.close
+   GenomicScore.compile_filter
+   GenomicScore.fetch_records
+   GenomicScore.fetch_region_segments_scores
+   GenomicScore.fetch_region_value_arrays
+   GenomicScore.get_all_chrom_lengths
+   GenomicScore.get_all_chromosomes
+   GenomicScore.get_chrom_length
+   GenomicScore.get_chrom_length_source
+   GenomicScore.get_config
+   GenomicScore.get_default_annotation_attribute
+   GenomicScore.get_default_annotation_attributes
+   GenomicScore.get_score_value_from_record
+   GenomicScore.get_score_values_from_record
+   GenomicScore.has_chromosome
+   GenomicScore.is_open
+   GenomicScore.open
+   GenomicScore.record_weights
+   GenomicScore.resource_files
+   GenomicScore.supports_region_value_arrays
+   GenomicScore.values_from_records
 
 .. autoclass:: AlleleScore
    :members:

@@ -29,7 +29,6 @@ GENE_MODELS_PAGE = RESOURCES_DIR / "gene_models.rst"
 # Pages whose API section is not rolled out yet. The slice of a page
 # removes the page from this set.
 NOT_ROLLED_OUT = frozenset({
-    "allele_scores.rst",
     "fragment_scores.rst",
     "gene_scores.rst",
     "gene_sets.rst",
