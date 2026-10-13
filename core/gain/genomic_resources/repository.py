@@ -3320,9 +3320,12 @@ class GenomicResourceRepo(abc.ABC):
 
         Raises
         ------
+        FileNotFoundError
+            If no resource matches and the repository is backed by a
+            protocol (directory, http, s3, in-memory).
         ValueError
-            If no resource matches the id, the constraint and the
-            repository id.
+            If no resource matches and the repository is a group
+            repository.
         """
         # Every repository answers to its own id, so passing
         # ``repo.repo_id`` is the same as passing nothing (#447).
