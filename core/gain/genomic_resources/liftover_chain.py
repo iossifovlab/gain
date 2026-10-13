@@ -286,10 +286,12 @@ def build_liftover_chain_from_resource_id(
     Returns
     -------
     LiftoverChain
-        The memoized chain. It is not open until the caller calls ``open``.
+        The memoized chain. It may already be open.
 
     Raises
     ------
+    FileNotFoundError
+        If the repository has no resource with this id.
     ValueError
         If the type of the resource is not ``liftover_chain``.
     """
