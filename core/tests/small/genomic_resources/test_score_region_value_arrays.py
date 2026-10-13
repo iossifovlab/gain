@@ -8,6 +8,7 @@ method it cannot honour.
 """
 # pylint: disable=C0116,W0212,W0621
 import pathlib
+from collections.abc import Iterator
 
 import numpy as np
 import pytest
@@ -156,8 +157,22 @@ def test_fetching_value_arrays_for_an_unknown_chromosome_is_refused(
         score.fetch_region_value_arrays("chrZZ", 1, 20, ["s1"])
 
 
+@pytest.fixture(autouse=True)
+def _position_score_keeps_inheriting_the_array_producer() -> Iterator[None]:
+    """Fail a test that leaves the producer in ``PositionScore.__dict__``.
+
+    ``fetch_region_value_arrays`` belongs to ``GenomicScore``.  Restoring a
+    patch with ``PositionScore.name = original`` writes the inherited function
+    into the subclass, and the docs outline test, which reads ``vars(cls)``,
+    then fails on whichever xdist worker ran the patching test first (#1937).
+    """
+    yield
+    assert "fetch_region_value_arrays" not in vars(PositionScore)
+
+
 def test_eligible_scan_uses_the_array_producer_not_the_record_path(
     tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An eligible bulk scan must actually take the array fast path.
 
@@ -180,12 +195,9 @@ def test_eligible_scan_uses_the_array_producer_not_the_record_path(
         calls += 1
         return original(self, *args, **kwargs)  # type: ignore[arg-type]
 
-    PositionScore.fetch_region_value_arrays = counting_fetch  # type: ignore[method-assign,assignment]
-    try:
-        scan.do_min_max_bulk(
-            resource, ["s1"], "chr1", 1, 20)
-    finally:
-        PositionScore.fetch_region_value_arrays = original  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        PositionScore, "fetch_region_value_arrays", counting_fetch)
+    scan.do_min_max_bulk(resource, ["s1"], "chr1", 1, 20)
 
     assert calls == 1, (
         f"bulk scan used the array producer {calls} times; expected 1 "
