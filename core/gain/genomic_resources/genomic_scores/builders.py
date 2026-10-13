@@ -162,9 +162,25 @@ def build_fragment_score_from_resource(
 ) -> FragmentScore:
     """Build a fragment score from a fragment-score resource.
 
-    A fresh score every call, as the position and allele factories give:
-    the caller owns what it gets back and may close it without affecting
-    anyone else.
+    Every call builds a new score. You own the score and can close it
+    without any effect on other scores built from the same resource. The
+    score is closed: call ``open()`` before the first read.
+
+    Parameters
+    ----------
+    resource : GenomicResource
+        A resource of type ``fragment_score``, or of the older type
+        ``cnv_collection``, which gives a deprecation warning.
+
+    Returns
+    -------
+    FragmentScore
+        A new, closed fragment score.
+
+    Raises
+    ------
+    ValueError
+        If the type of the resource is not a fragment score type.
     """
     return FragmentScore(resource)
 
@@ -172,7 +188,30 @@ def build_fragment_score_from_resource(
 def build_fragment_score_from_resource_id(
     resource_id: str, grr: GenomicResourceRepo | None = None,
 ) -> FragmentScore:
-    """Build a fragment score from a `cnv_collection` resource id."""
+    """Build a fragment score from the id of a fragment-score resource.
+
+    Parameters
+    ----------
+    resource_id : str
+        The id of a resource of type ``fragment_score``, or of the older
+        type ``cnv_collection``, which gives a deprecation warning.
+    grr : GenomicResourceRepo | None, default None
+        The repository that holds the resource. ``None`` builds the
+        default repository.
+
+    Returns
+    -------
+    FragmentScore
+        A new, closed fragment score. Call ``open()`` before the first
+        read.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the repository has no resource with this id.
+    ValueError
+        If the type of the resource is not a fragment score type.
+    """
     if grr is None:
         grr = build_genomic_resource_repository()
     return build_fragment_score_from_resource(grr.get_resource(resource_id))

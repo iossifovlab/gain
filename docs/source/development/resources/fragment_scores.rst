@@ -88,7 +88,57 @@ query windows, and the ``starting_in`` form is the one that tiles.
 API
 ---
 
+The classes below are defined in the module
+``gain.genomic_resources.genomic_scores``. ``FragmentScore`` is also exported
+by ``gain.grr``, as ``grr.FragmentScore``.
+
 .. currentmodule:: gain.genomic_resources.genomic_scores
+
+.. autosummary::
+
+   FragmentScore
+   FragmentScore.DEFAULT_AGGREGATORS
+   FragmentScore.HISTOGRAM_COUNT_UNIT
+   FragmentScore.get_fragment_score_at_position
+   FragmentScore.get_fragment_score_overlapping_region
+   FragmentScore.get_fragment_score_overlapping_region_agg
+   FragmentScore.get_fragment_score_starting_in_region
+   FragmentScore.get_fragment_scores_at_position
+   FragmentScore.get_fragment_scores_overlapping_region
+   FragmentScore.get_fragment_scores_overlapping_region_agg
+   FragmentScore.get_fragment_scores_starting_in_region
+   FragmentScore.get_schema
+   FragmentScore.get_scores_in_bins
+   FragmentAggregate
+
+Inherited from ``GenomicScore``. The entries link to the page :doc:`scores`.
+
+.. autosummary::
+
+   GenomicScore.aggregate_region
+   GenomicScore.chrom_length_source
+   GenomicScore.chrom_length_sources
+   GenomicScore.close
+   GenomicScore.compile_filter
+   GenomicScore.fetch_records
+   GenomicScore.fetch_region_segments_scores
+   GenomicScore.fetch_region_value_arrays
+   GenomicScore.get_all_chrom_lengths
+   GenomicScore.get_all_chromosomes
+   GenomicScore.get_chrom_length
+   GenomicScore.get_chrom_length_source
+   GenomicScore.get_config
+   GenomicScore.get_default_annotation_attribute
+   GenomicScore.get_default_annotation_attributes
+   GenomicScore.get_score_value_from_record
+   GenomicScore.get_score_values_from_record
+   GenomicScore.has_chromosome
+   GenomicScore.is_open
+   GenomicScore.open
+   GenomicScore.record_weights
+   GenomicScore.resource_files
+   GenomicScore.supports_region_value_arrays
+   GenomicScore.values_from_records
 
 .. autoclass:: FragmentScore
    :members:
