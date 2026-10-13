@@ -259,11 +259,16 @@ def register_context(context: GenomicContext) -> None:
 
 
 def get_genomic_context() -> GenomicContext:
-    """Return a priority context that merges every registered context.
+    """Return a genomic context that merges every registered context.
 
-    The returned :class:`PriorityGenomicContext` respects the registration
-    order, giving precedence to contexts added most recently when multiple
-    contexts expose the same key.
+    When two contexts expose the same key, the context that was registered
+    last wins.
+
+    Returns
+    -------
+    GenomicContext
+        A :class:`PriorityGenomicContext` over a snapshot of the registered
+        contexts. A context registered later is not part of it.
     """
     contexts = _REGISTERED_CONTEXTS[:]
     return PriorityGenomicContext(contexts)
@@ -284,7 +289,24 @@ def build_cli_genomic_context(
 
 
 def get_grr_from_context(context: GenomicContext) -> GenomicResourceRepo:
-    """Get the genomic resource repository from the genomic context."""
+    """Return the repository that a genomic context exposes.
+
+    Parameters
+    ----------
+    context : GenomicContext
+        The context to ask, for example the result of
+        :func:`get_genomic_context`.
+
+    Returns
+    -------
+    GenomicResourceRepo
+        The repository of the context. The function never returns ``None``.
+
+    Raises
+    ------
+    ValueError
+        If the context exposes no repository.
+    """
     grr = context.get_genomic_resources_repository()
     if grr is None:
         raise ValueError("no valid GRR configured")

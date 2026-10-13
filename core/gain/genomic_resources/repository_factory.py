@@ -601,7 +601,18 @@ GRR_DEFINITION_FILE_ENV = "GRR_DEFINITION_FILE"
 
 
 def get_default_grr_definition_path() -> str | None:
-    """Return a path to default genomic resources repository definition."""
+    """Return the path of the default repository definition file.
+
+    The environment variable ``GRR_DEFINITION_FILE`` has priority. The
+    function does not check that the file it names exists. Otherwise, the
+    function looks for ``.grr_definition.yaml`` in the home directory.
+
+    Returns
+    -------
+    str or None
+        The path of the definition file. ``None`` means that the variable
+        is not set and the home directory has no ``.grr_definition.yaml``.
+    """
     env_repo_definition_path = os.environ.get(GRR_DEFINITION_FILE_ENV)
     if env_repo_definition_path is not None:
         logger.debug(
@@ -620,7 +631,26 @@ def get_default_grr_definition_path() -> str | None:
 
 
 def get_default_grr_definition() -> dict[str, Any]:
-    """Return default genomic resources repository definition."""
+    """Return the definition of the default repository.
+
+    The function loads the file that
+    :func:`get_default_grr_definition_path` finds. When there is no such
+    file, it returns a copy of the built-in definition of the public
+    IossifovLab GRR.
+
+    Returns
+    -------
+    dict
+        A definition that ``build_genomic_resource_repository`` accepts.
+        The caller can change the dictionary.
+
+    Raises
+    ------
+    OSError
+        If the definition file cannot be read.
+    yaml.YAMLError
+        If the definition file is not valid YAML.
+    """
     logger.info("using default GRR definitions")
     definition_path = get_default_grr_definition_path()
     if definition_path:
@@ -763,13 +793,60 @@ def _build_group_repository(
 def build_genomic_resource_group_repository(
         repo_id: str,
         children: list[GenomicResourceRepo]) -> GenomicResourceRepo:
+    """Build a repository that groups other repositories.
+
+    A lookup in the group asks its children.
+
+    Parameters
+    ----------
+    repo_id : str
+        The identifier of the group repository.
+    children : list of GenomicResourceRepo
+        The repositories to group. They must be built already.
+
+    Returns
+    -------
+    GenomicResourceRepo
+        The group repository. It has no ``definition``, because the
+        function takes repositories and not a definition.
+    """
     return GenomicResourceGroupRepo(children, repo_id)
 
 
 def build_genomic_resource_repository(
         definition: dict | None = None,
         file_name: str | None = None) -> GenomicResourceRepo:
-    """Build a GRR using a definition dict or yaml file."""
+    """Build a repository from a definition dictionary or a YAML file.
+
+    Call the function with no arguments to build the default repository.
+    The environment decides which repository that is: see
+    :func:`get_default_grr_definition`.
+
+    Parameters
+    ----------
+    definition : dict or None, default None
+        The definition of the repository. The key ``type`` selects the
+        kind of repository, for example ``directory``, ``http``, ``s3`` or
+        ``group``. The key ``cache_dir`` adds a local cache to any kind.
+        ``None`` or an empty dictionary means that the function takes the
+        definition from ``file_name`` or from the default definition.
+    file_name : str or None, default None
+        The path of a YAML file that holds the definition. Do not pass it
+        together with a non-empty ``definition``.
+
+    Returns
+    -------
+    GenomicResourceRepo
+        The repository. Its ``definition`` property holds the definition
+        that built it.
+
+    Raises
+    ------
+    ValueError
+        If both ``definition`` and ``file_name`` are given, if no
+        definition is found, or if the definition is not valid. The
+        message does not contain passwords.
+    """
     if not definition:
         if file_name is not None:
             definition = load_definition_file(file_name)

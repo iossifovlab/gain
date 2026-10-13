@@ -755,13 +755,25 @@ class Manifest:
 
     @staticmethod
     def from_file_content(file_content: str) -> Manifest:
-        """Create a manifest from raw YAML file content.
+        """Create a manifest from the YAML content of a manifest file.
 
-        Args:
-            file_content: YAML-formatted string containing manifest entries
+        Parameters
+        ----------
+        file_content : str
+            YAML text that holds a list of entries with the keys ``name``,
+            ``size`` and ``md5``. Empty YAML text gives an empty manifest.
 
-        Returns:
-            Manifest object with entries parsed from the content
+        Returns
+        -------
+        Manifest
+            The manifest with one entry for each item of the list.
+
+        Raises
+        ------
+        KeyError
+            If an item of the list has no ``name``, ``size`` or ``md5`` key.
+        yaml.YAMLError
+            If the text is not valid YAML.
         """
         manifest_entries = yaml.safe_load(file_content)
         if manifest_entries is None:
@@ -771,13 +783,25 @@ class Manifest:
     @staticmethod
     def from_manifest_entries(
             manifest_entries: list[dict[str, Any]]) -> Manifest:
-        """Create a manifest from parsed manifest entry dictionaries.
+        """Create a manifest from a list of entry dictionaries.
 
-        Args:
-            manifest_entries: List of dicts with 'name', 'size', 'md5' keys
+        Parameters
+        ----------
+        manifest_entries : list of dict
+            Dictionaries with the keys ``name``, ``size`` and ``md5``.
+            An empty list gives an empty manifest.
 
-        Returns:
-            Manifest object populated with the provided entries
+        Returns
+        -------
+        Manifest
+            The manifest with one entry for each dictionary.
+
+        Raises
+        ------
+        KeyError
+            If a dictionary has no ``name``, ``size`` or ``md5`` key.
+
+        :meta private:
         """
         result = Manifest()
         for data in manifest_entries:
@@ -787,10 +811,13 @@ class Manifest:
         return result
 
     def get_files(self) -> list[tuple[str, int]]:
-        """Get list of all files with their sizes.
+        """Return the name and size of each file in the manifest.
 
-        Returns:
-            List of (filename, size) tuples for all files in manifest
+        Returns
+        -------
+        list of tuple of (str, int)
+            A ``(name, size)`` pair for each file. The list is empty when
+            the manifest has no entries.
         """
         return [
             (entry.name, entry.size)
@@ -818,37 +845,54 @@ class Manifest:
         return str(self.entries)
 
     def to_manifest_entries(self) -> list[dict[str, Any]]:
-        """Convert manifest to list of dictionaries for serialization.
+        """Return the entries as dictionaries, ready to serialise.
 
-        Returns:
-            List of dictionaries with 'name', 'size', 'md5' keys,
-            sorted by filename
+        Returns
+        -------
+        list of dict
+            A dictionary with the keys ``name``, ``size`` and ``md5`` for
+            each entry, sorted by file name. The list is empty when the
+            manifest has no entries.
+
+        :meta private:
         """
         return [
             asdict(entry) for entry in sorted(self.entries.values())]
 
     def add(self, entry: ManifestEntry) -> None:
-        """Add or update a manifest entry.
+        """Add an entry, or replace the entry with the same name.
 
-        Args:
-            entry: ManifestEntry to add to the manifest
+        Parameters
+        ----------
+        entry : ManifestEntry
+            The entry to store under ``entry.name``.
+
+        :meta private:
         """
         self.entries[entry.name] = entry
 
     def update(self, entries: dict[str, ManifestEntry]) -> None:
-        """Add or update multiple manifest entries.
+        """Add or replace several entries.
 
-        Args:
-            entries: Dictionary mapping filenames to ManifestEntry objects
+        Parameters
+        ----------
+        entries : dict of str to ManifestEntry
+            The entries to store. The method uses ``entry.name`` as the key,
+            not the key of the dictionary.
+
+        :meta private:
         """
         for entry in entries.values():
             self.add(entry)
 
     def names(self) -> set[str]:
-        """Get set of all filenames in the manifest.
+        """Return the names of the files in the manifest.
 
-        Returns:
-            Set of filenames tracked by this manifest
+        Returns
+        -------
+        set of str
+            The file names. The set is empty when the manifest has no
+            entries.
         """
         return set(self.entries.keys())
 
@@ -1087,23 +1131,33 @@ class GenomicResource:
         # a dict and unhashable; leaving it out only coarsens the hash.
         return hash((self.resource_id, self.version))
 
+    # The key is for memoising an object built from a resource: gene
+    # models, a gene score, a gene set collection, a liftover chain. Two
+    # resources that would build different objects have different keys.
+    #
+    # The config is part of the key because a resource at the repository
+    # root, spelled ".", takes its whole meaning from it: its id and
+    # repository url alone do not separate it from another root resource
+    # over the same directory. The repository url is part of the key too,
+    # so the same resource reached through two repositories is memoised
+    # once per repository.
+    #
+    # The key is finer than value identity, never coarser, so a miss
+    # costs a rebuild rather than a wrong answer.
     def get_memo_key(self) -> tuple[str, str, str]:
-        """Return a key identifying everything this resource denotes.
+        """Return a key that identifies everything this resource denotes.
 
-        For memoising an object *built from* a resource -- gene models, a
-        gene score, a gene set collection, a liftover chain. Two resources
-        that would build different objects have different keys.
+        Returns
+        -------
+        tuple of (str, str, str)
+            The full id, the repository url and a key of the config.
 
-        The config is part of the key because a resource at the repository
-        root, spelled ``"."``, takes its whole meaning from it: its id and
-        repository url alone do not separate it from another root resource
-        over the same directory. The repository url is part of the key too,
-        so the same resource reached through two repositories is memoised
-        once per repository.
+        Raises
+        ------
+        ValueError
+            If the resource has no config.
 
-        The key is finer than value identity, never coarser, so a miss
-        costs a rebuild rather than a wrong answer. Raises ``ValueError``
-        if the resource carries no config.
+        :meta private:
         """
         return (
             self.get_full_id(),
@@ -1112,78 +1166,103 @@ class GenomicResource:
         )
 
     def invalidate(self) -> None:
-        """Clean up cached attributes like manifest, etc."""
+        """Drop the cached manifest.
+
+        The next call to :meth:`get_manifest` loads the manifest again.
+
+        :meta private:
+        """
         self._manifest = None
 
     def get_id(self) -> str:
-        """Return genomic resource ID."""
+        """Return the id of the resource, without the version.
+
+        Returns
+        -------
+        str
+            The id, for example ``hg38/gene_models/MANE/1.3``.
+        """
         return self.resource_id
 
+    # The full id is also the path component of the resource under the url
+    # of a repository: a protocol addresses the directory of the resource by
+    # joining this string onto the repository root, so the suffix is part
+    # of where a versioned resource is stored, not only of how it is shown.
     def get_full_id(self) -> str:
-        """Return a string combining resource ID and version.
+        """Return the id of the resource together with its version.
 
-        Returns a string of the form aa/bb/cc(3.2) for a genomic resource
-        with id aa/bb/cc and version 3.2. If the version is 0 the string
-        will be aa/bb/cc.
-
-        This is also the resource's path component under a repository's
-        url: a protocol addresses the resource's directory by joining this
-        string onto the repository root, so the suffix is part of *where*
-        a versioned resource is stored, not merely of how it is displayed.
+        Returns
+        -------
+        str
+            ``aa/bb/cc(3.2)`` for the id ``aa/bb/cc`` and the version 3.2.
+            The string is ``aa/bb/cc`` when the version is 0.
         """
         return f"{self.resource_id}{version_tuple_to_suffix(self.version)}"
 
+    # The return type is not optional and the method never returns None,
+    # so a caller has nothing to re-check (gain#1010).
     def get_config(self) -> dict[str, Any]:
-        """Return the resource configuration.
+        """Return the configuration of the resource.
 
-        Raises ``ValueError`` if the resource carries no config. The
-        return type is not optional and this never returns ``None``,
-        so a caller has nothing to re-check (gain#1010).
+        Returns
+        -------
+        dict
+            The content of ``genomic_resource.yaml``. The method never
+            returns ``None``.
+
+        Raises
+        ------
+        ValueError
+            If the resource has no config.
         """
         if self.config is None:
             raise ValueError(
                 f"use of unconfigured genomic resource: {self.resource_id}")
         return self.config
 
+    # ``meta`` is free-form YAML, so what is there is whatever the curator
+    # wrote: ``meta: |`` followed by prose parses to a string, and only the
+    # resource types that run the base schema are refused for it. The block
+    # is narrowed rather than trusted, so that every reader of the block
+    # sees a mapping whatever the resource says. A non-mapping reads as
+    # absent metadata and is reported.
+    #
+    # The narrowing is shallow. It promises a mapping at the top level and
+    # says nothing about what a field inside holds, which is just as
+    # free-form. A reader of a field narrows that field itself, the way
+    # ``get_labels`` narrows ``meta.labels`` on top of this and
+    # ``get_description`` settles for ``str()`` on whatever it finds.
+    #
+    # This is the single seam through which the ``meta`` block is read, by
+    # ``get_description``, ``get_summary``, ``get_labels`` and the index-row
+    # collector alike. Narrowing it in one reader and not in the others is
+    # what gain#1004 was: ``get_labels`` coped while the two beside it
+    # raised a bare ``AttributeError``, which aborted the repository-wide
+    # index build.
+    #
+    # Narrowing the block does not make every derived value agree. The
+    # index row used to collect ``description`` and ``summary`` with its own
+    # ``.get`` calls, so it missed the description fall-back that
+    # ``get_summary`` applies, and a resource with a description and no
+    # summary indexed an empty ``summary`` column (gain#1008). Both now
+    # derive through ``_description_in`` and ``_summary_in``, the single
+    # spelling of what each field is. A reader that holds the block derives
+    # from those and does not reach into it.
+    #
+    # Reading never validates (ADR 0008) and never raises. The method is on
+    # the path of every repository-wide walk: a label search, the index
+    # build, ``grr_manage list``. One malformed resource must cost that walk
+    # only itself (gain#464, gain#503).
     def get_meta(self) -> dict[str, Any]:
-        """Return the resource's ``meta`` block, narrowed to a mapping.
+        """Return the ``meta`` block of the resource.
 
-        ``meta`` is free-form YAML, so what is there is whatever the
-        curator wrote -- ``meta: |`` followed by prose parses to a string,
-        and only the resource types that run the base schema are refused
-        for it.  It is narrowed rather than trusted, so that every reader
-        of the block sees a mapping whatever the resource says: a
-        non-mapping reads as absent metadata and is reported.
-
-        The narrowing is SHALLOW -- it promises a mapping at the top level
-        and says nothing about what any field inside holds, which is just
-        as free-form.  A reader of a field narrows that field itself, the
-        way :meth:`get_labels` narrows ``meta.labels`` on top of this and
-        ``get_description`` settles for ``str()`` on whatever it finds.
-
-        This is the single seam through which the ``meta`` *block* is
-        read -- by ``get_description``, ``get_summary``, ``get_labels``
-        and the FTS index-row collector alike -- because narrowing it in
-        one reader and not the others is what gain#1004 was: ``get_labels``
-        coped while the two beside it raised a bare ``AttributeError``,
-        which aborted the repository-wide index build outright.
-
-        Narrowing the block is not on its own enough to make every
-        *derived* value agree.  The index row used to collect
-        ``description`` and ``summary`` out of this mapping with its own
-        ``.get`` calls, so it missed the description fall-back
-        :meth:`get_summary` applies and a resource carrying a description
-        and no summary indexed an empty ``summary`` column (gain#1008).
-        Both now derive through :func:`_description_in` and
-        :func:`_summary_in`, which are the single spelling of what each
-        field *is*: a reader holding this block derives from those rather
-        than reaching into it, so a second spelling cannot drift from the
-        accessors again.
-
-        Reading never validates (ADR 0008) and never raises: this is on
-        the path of every repository-wide walk -- a label search, the
-        index build, ``grr_manage list`` -- and one malformed resource
-        must cost that walk only itself (gain#464, gain#503).
+        Returns
+        -------
+        dict
+            The ``meta`` block of the config. The dictionary is empty when
+            the block is absent, is ``null`` or is not a mapping. A block
+            that is not a mapping is also reported in the log. The method
+            does not validate the fields inside the block.
         """
         meta = self.get_config().get("meta")
         if meta is None:
@@ -1202,48 +1281,98 @@ class GenomicResource:
         return meta
 
     def get_description(self) -> str:
-        """Return resource description."""
+        """Return the description of the resource.
+
+        Returns
+        -------
+        str
+            The ``description`` field of the ``meta`` block. The string is
+            empty when the resource has no description.
+        """
         return _description_in(self.get_meta())
 
     def get_summary(self) -> str | None:
-        """Return resource summary."""
+        """Return the summary of the resource.
+
+        Returns
+        -------
+        str or None
+            The ``summary`` field of the ``meta`` block. When the resource
+            has no summary, the method returns the description. ``None``
+            means that the resource has neither.
+        """
         return _summary_in(self.get_meta())
 
     def get_repo_url(self) -> str:
-        """Return repository's URL."""
+        """Return the url of the repository that serves the resource.
+
+        Returns
+        -------
+        str
+            A filesystem path for a directory repository, or an
+            ``http(s)://`` or ``s3://`` url.
+        """
         return self.proto.get_url()
 
     def get_repo_public_url(self) -> str:
-        """Return repository's URL."""
+        """Return the public url of the repository that serves the resource.
+
+        Returns
+        -------
+        str
+            The public address of the repository, as set in its
+            definition.
+        """
         return self.proto.get_public_url()
 
     def get_public_url(self) -> str:
-        """Return this resource's address on the GRR's public mirror."""
+        """Return the address of the resource on the public mirror.
+
+        Returns
+        -------
+        str
+            The public url of the repository joined with the full id of
+            the resource.
+        """
         return _join_resource_path(
             self.get_repo_public_url(), self.get_full_id())
 
     def get_url(self) -> str:
-        """Return this resource's address on the repository's own url."""
+        """Return the address of the resource on its repository.
+
+        Returns
+        -------
+        str
+            The url of the repository joined with the full id of the
+            resource.
+        """
         return _join_resource_path(
             self.get_repo_url(), self.get_full_id())
 
+    # ``meta`` and ``meta.labels`` are both free-form YAML, so what is in
+    # either is whatever the curator wrote: a scalar, a list and an int are
+    # all things a resource can declare, and only the resource types that
+    # run the base schema are refused for it. Both levels are narrowed
+    # rather than trusted. A non-mapping reads as no labels and is
+    # reported, so that every caller sees a mapping whatever the resource
+    # says (gain#654). ``get_meta`` narrows the outer level for every
+    # ``meta`` reader (gain#1004). This method is the inner half of the
+    # two-tier narrowing and holds to the same never-validates,
+    # never-raises contract.
+    #
+    # The values are returned as written. How a value is read, a list as a
+    # set of alternatives and everything else as its ``str()``, is
+    # ``gain.genomic_resources.resource_query.label_alternatives``.
     def get_labels(self) -> dict[str, Any]:
-        """Return resource labels.
+        """Return the labels of the resource.
 
-        ``meta`` and ``meta.labels`` are both free-form YAML, so what is
-        in either is whatever the curator wrote -- a scalar, a list and an
-        int are all things a resource can declare, and only the resource
-        types that run the base schema are refused for it.  Both levels
-        are narrowed rather than trusted: a non-mapping reads as no labels
-        and is reported, so that every caller sees a mapping whatever the
-        resource says (gain#654).  The outer level is narrowed by
-        :meth:`get_meta`, which every ``meta`` reader shares (gain#1004);
-        this is the inner half of the two-tier narrowing described there,
-        and it holds to the same never-validates, never-raises contract.
-
-        The values are returned as written.  How a value is *read* -- a
-        list as a set of alternatives, everything else as its ``str()`` --
-        is :func:`~gain.genomic_resources.resource_query.label_alternatives`.
+        Returns
+        -------
+        dict
+            The ``labels`` mapping of the ``meta`` block, with the values
+            as the curator wrote them. The dictionary is empty when the
+            resource has no labels or when ``labels`` is not a mapping.
+            The second case is also reported in the log.
         """
         labels = self.get_meta().get("labels")
         if labels is None:
@@ -1261,13 +1390,11 @@ class GenomicResource:
         return labels
 
     def _warn_not_a_mapping(self, what: str, value: Any) -> None:
-        """Report a ``meta`` level that is not the mapping it must be.
-
-        Worded for the level it is given rather than for ``labels``: it
-        is shared by every reader of the block since gain#1004, and a
-        scalar ``meta`` costs the resource its description and summary as
-        well as its labels.
-        """
+        """Report a ``meta`` level that is not the mapping it must be."""
+        # The wording names the level it is given and not ``labels``. Every
+        # reader of the block shares the method since gain#1004, and a
+        # scalar ``meta`` costs the resource its description and summary
+        # as well as its labels.
         logger.warning(
             "resource <%s>: %s is a %s, not a mapping; reading it as "
             "absent -- fix the resource's 'genomic_resource.yaml'",
@@ -1275,7 +1402,20 @@ class GenomicResource:
             what, type(value).__name__)
 
     def get_type(self) -> str:
-        """Return resource type as defined in 'genomic_resource.yaml'."""
+        """Return the type of the resource.
+
+        Returns
+        -------
+        str
+            The ``type`` field of ``genomic_resource.yaml``, for example
+            ``position_score``. A resource without the field has the type
+            ``basic``.
+
+        Raises
+        ------
+        ValueError
+            If the resource has no config.
+        """
         config = self.get_config()
         config_type = config.get("type")
         if config_type is None:
@@ -1283,38 +1423,75 @@ class GenomicResource:
         return cast(str, config_type)
 
     def get_version_str(self) -> str:
-        """Return version string of the form '3.1'."""
+        """Return the version of the resource as a string.
+
+        Returns
+        -------
+        str
+            The version in the form ``3.1``.
+        """
         return version_tuple_to_string(self.version)
 
     def file_exists(self, filename: str) -> bool:
-        """Check if filename exists in this resource."""
+        """Check whether a file exists in the resource.
+
+        Parameters
+        ----------
+        filename : str
+            The name of the file, relative to the resource directory.
+
+        Returns
+        -------
+        bool
+            ``True`` if the file exists, else ``False``.
+        """
         return self.proto.file_exists(self, filename)
 
+    # The manifest is returned through a local variable and never by a
+    # second read of ``_manifest``. An ``invalidate`` between the store and
+    # the second read would make the method return ``None`` (#519).
     def get_manifest(self) -> Manifest:
-        """Load resource manifest if it exists. Otherwise builds it."""
-        # Returned through a local, never by re-reading ``_manifest``: an
-        # ``invalidate`` landing between the store and a second read would
-        # otherwise make this return ``None`` (#519).
+        """Return the manifest of the resource, and build it if it is missing.
+
+        The build reads every file of the resource. It needs a read-write
+        protocol. Use :meth:`get_loaded_manifest` to avoid the build.
+
+        Returns
+        -------
+        Manifest
+            The stored manifest, or a new manifest when the resource has
+            none. The method never returns ``None``.
+
+        Raises
+        ------
+        Exception
+            If the resource has no stored manifest and the protocol is
+            read-only, for example a read-only mount.
+        """
         manifest = self._manifest
         if manifest is None:
             manifest = self._manifest = self.proto.get_manifest(self)
         return manifest
 
+    # The method works through a local variable, as ``get_manifest`` does
+    # (#519). The stakes are higher here: ``None`` is a meaningful answer,
+    # "no stored manifest". A re-read caught by an ``invalidate`` would
+    # make a resource that has a manifest look like one that does not.
+    # The ``FileNotFoundError`` branch returns directly, so the answer
+    # stays reachable for a resource that has no manifest.
+    #
+    # ``get_manifest`` falls back to building the manifest on a read-write
+    # protocol. That is an md5 scan of every byte of the resource, it
+    # writes ``.grr/*.state`` files, and it fails on a read-only mount.
     def get_loaded_manifest(self) -> Manifest | None:
-        """Return the resource manifest without ever building one.
+        """Return the stored manifest of the resource, and never build one.
 
-        :meth:`get_manifest` falls back to *building* the manifest on a
-        read-write protocol -- an md5 scan of every byte of the resource
-        that also writes ``.grr/*.state`` files, and that fails outright on
-        a read-only GRR mount.  A pure read path that merely wants to
-        consult the manifest uses this instead and copes with ``None``.
+        Returns
+        -------
+        Manifest or None
+            The stored manifest. ``None`` means that the resource has no
+            stored manifest.
         """
-        # Through a local, as in :meth:`get_manifest` (#519).  The stakes are
-        # higher here: ``None`` is a meaningful answer -- "no stored manifest"
-        # -- so a re-read caught by an ``invalidate`` does more than break the
-        # annotation, it makes a resource that has a manifest look like one
-        # that does not.  The ``FileNotFoundError`` branch returns directly,
-        # keeping that answer reachable for a resource genuinely without one.
         manifest = self._manifest
         if manifest is None:
             try:
@@ -1324,11 +1501,25 @@ class GenomicResource:
         return manifest
 
     def get_file_url(self, filename: str) -> str:
-        """The URL of ``filename`` in this resource, per its protocol.
+        """Return the address of a file of the resource.
 
-        A filesystem path for a directory repository, an ``http(s)://``
-        or ``s3://`` URL otherwise.  The name is validated; the file
-        need not exist.
+        The method does not check that the file exists.
+
+        Parameters
+        ----------
+        filename : str
+            The name of the file, relative to the resource directory.
+
+        Returns
+        -------
+        str
+            A filesystem path for a directory repository. Otherwise, an
+            ``http(s)://`` or ``s3://`` url.
+
+        Raises
+        ------
+        ValueError
+            If the name is not a valid file name for a resource.
         """
         return self.proto.get_resource_file_url(self, filename)
 
@@ -1338,39 +1529,167 @@ class GenomicResource:
         uncompress: bool = True,
         mode: str = "t",
     ) -> Any:
-        """Return the content of file in a resource."""
+        """Return the content of a file of the resource.
+
+        Parameters
+        ----------
+        filename : str
+            The name of the file, relative to the resource directory.
+        uncompress : bool, default True
+            If ``True``, decompress a compressed file before the method
+            returns the content.
+        mode : str, default "t"
+            ``"t"`` returns the content as ``str``. ``"b"`` returns
+            ``bytes``.
+
+        Returns
+        -------
+        str or bytes
+            The content of the file. The value is empty when the file is
+            empty.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the file does not exist.
+        """
         return self.proto.get_file_content(
             self, filename, uncompress=uncompress, mode=mode)
 
     def open_raw_file(
             self, filename: str, mode: str = "rt",
             **kwargs: str | bool | None) -> IO:
-        """Open a file in the resource and returns a File-like object."""
+        """Open a file of the resource.
+
+        The same call works for a local directory, an HTTP mirror and an
+        S3 bucket. Close the returned object, or use it in a ``with``
+        block.
+
+        Parameters
+        ----------
+        filename : str
+            The name of the file, relative to the resource directory.
+        mode : str, default "rt"
+            The open mode. Text and binary read modes work for every
+            repository. Write modes work for a read-write repository.
+        **kwargs
+            Options that the protocol passes to the open call.
+
+        Returns
+        -------
+        IO
+            A file-like object.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the file does not exist and the mode reads.
+        """
         return self.proto.open_raw_file(
             self, filename, mode, **kwargs)
 
     def open_tabix_file(
             self, filename: str,
             index_filename: str | None = None) -> pysam.TabixFile:
-        """Open a tabix file and returns a pysam.TabixFile."""
+        """Open a tabix file of the resource.
+
+        Parameters
+        ----------
+        filename : str
+            The name of the bgzipped data file.
+        index_filename : str or None, default None
+            The name of the index file. ``None`` means that the method
+            looks for the ``.tbi`` index and then for the ``.csi`` index
+            next to the data file.
+
+        Returns
+        -------
+        pysam.TabixFile
+            The open file. Close it after use.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the data file or the index file does not exist.
+        """
         return self.proto.open_tabix_file(self, filename, index_filename)
 
     def open_vcf_file(
             self, filename: str,
             index_filename: str | None = None) -> pysam.VariantFile:
-        """Open a vcf file and returns a pysam.VariantFile."""
+        """Open a VCF file of the resource.
+
+        Parameters
+        ----------
+        filename : str
+            The name of the VCF file.
+        index_filename : str or None, default None
+            The name of the index file. ``None`` means that the method
+            looks for the index next to the data file.
+
+        Returns
+        -------
+        pysam.VariantFile
+            The open file. Close it after use.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the data file or the index file does not exist.
+        """
         return self.proto.open_vcf_file(self, filename, index_filename)
 
     def open_fasta_file(
             self, filename: str,
             index_filename: str | None = None,
             compressed_index_filename: str | None = None) -> pysam.FastaFile:
-        """Open a bgzipped fasta file and return a pysam.FastaFile."""
+        """Open a bgzipped FASTA file of the resource.
+
+        Parameters
+        ----------
+        filename : str
+            The name of the bgzipped FASTA file.
+        index_filename : str or None, default None
+            The name of the ``.fai`` index. ``None`` means the name of the
+            data file with the suffix ``.fai``.
+        compressed_index_filename : str or None, default None
+            The name of the ``.gzi`` index of the compressed file.
+            ``None`` means the name of the data file with the suffix
+            ``.gzi``.
+
+        Returns
+        -------
+        pysam.FastaFile
+            The open file. Close it after use.
+
+        Raises
+        ------
+        ValueError
+            If the ``.gzi`` index of the compressed file does not exist.
+        FileNotFoundError
+            If the data file or the ``.fai`` index does not exist.
+        """
         return self.proto.open_fasta_file(
             self, filename, index_filename, compressed_index_filename)
 
     def open_bigwig_file(self, filename: str) -> Any:
-        """Open a bigwig file and return it."""
+        """Open a bigWig file of the resource.
+
+        Parameters
+        ----------
+        filename : str
+            The name of the bigWig file.
+
+        Returns
+        -------
+        pyBigWig.pyBigWig
+            The open file. Close it after use.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the file does not exist.
+        """
         return self.proto.open_bigwig_file(self, filename)
 
 
@@ -2925,9 +3244,8 @@ class GenomicResourceRepo(abc.ABC):
         repo.get_resource("hg19/genome", ">=2.0")  # Version 2.0 or higher
         repo.get_resource("hg19/genome", "=2.1")   # Exact version 2.1
 
-    Attributes:
-        repo_id: Unique identifier for this repository
-        definition: Configuration dict used to create this repository
+    Build a repository with ``grr.build_genomic_resource_repository``.
+    The properties ``repo_id`` and ``definition`` describe the repository.
     """
 
     def __init__(self, repo_id: str):
@@ -2935,15 +3253,18 @@ class GenomicResourceRepo(abc.ABC):
         self._definition: dict[str, Any] | None = None
 
     def close(self) -> None:
-        """Release any resources held by this repository."""
+        """Release the resources that the repository holds.
+
+        After the call, :attr:`definition` is ``None``.
+        """
         self._definition = None
 
     @property
     def definition(self) -> dict[str, Any] | None:
-        """Get a copy of the repository configuration definition.
+        """The definition that built the repository, as a copy.
 
-        Returns:
-            Deep copy of definition dict, or None if not set
+        ``None`` means that nobody set a definition, or that the
+        repository is closed.
         """
         if self._definition:
             return copy.deepcopy(self._definition)
@@ -2960,47 +3281,77 @@ class GenomicResourceRepo(abc.ABC):
 
     @abc.abstractmethod
     def invalidate(self) -> None:
-        """Clear cached state and force reload on next access.
+        """Drop the cached state of the repository.
 
-        Implementations should clear any cached resource lists, metadata,
-        or file contents to ensure fresh data is loaded.
+        The next access loads the resource list, the metadata and the
+        file contents again.
         """
 
     @property
     def repo_id(self) -> str:
-        """Get the repository identifier.
-
-        Returns:
-            Repository ID string
-        """
+        """The identifier of the repository."""
         return self._repo_id
 
     @abc.abstractmethod
     def get_resource(
             self, resource_id: str, version_constraint: str | None = None,
             repository_id: str | None = None) -> GenomicResource:
-        """Return one resource with id qual to resource_id.
+        """Return the resource with the given id.
 
-        If resource is not found, exception is raised.
+        Use this method when the id is a constant and its absence is a
+        bug. Use :meth:`find_resource` when absence is an ordinary result.
 
-        ``repository_id`` restricts the lookup to the repository carrying
-        that id, anywhere in this repository's tree -- including this
-        repository itself: every repository answers to its own id, so
-        passing ``repo.repo_id`` is equivalent to passing nothing (#447). A
-        falsy ``repository_id`` is no filter at all.
+        Parameters
+        ----------
+        resource_id : str
+            The id of the resource, without the version.
+        version_constraint : str or None, default None
+            A constraint such as ``">=2.0"`` or ``"=2.1"``. ``None``
+            selects the latest version.
+        repository_id : str or None, default None
+            Restricts the lookup to the repository with this id, anywhere
+            in the tree of this repository. An empty string or ``None``
+            means no restriction.
+
+        Returns
+        -------
+        GenomicResource
+            The matching resource. The method never returns ``None``.
+
+        Raises
+        ------
+        ValueError
+            If no resource matches the id, the constraint and the
+            repository id.
         """
+        # Every repository answers to its own id, so passing
+        # ``repo.repo_id`` is the same as passing nothing (#447).
 
     @abc.abstractmethod
     def find_resource(
             self, resource_id: str, version_constraint: str | None = None,
             repository_id: str | None = None) -> GenomicResource | None:
-        """Return one resource with id qual to resource_id.
+        """Return the resource with the given id, or ``None``.
 
-        If resource is not found, None is returned.
+        Use this method when the id comes from outside and absence is an
+        ordinary result. Use :meth:`get_resource` when absence is a bug.
 
-        ``repository_id`` selects a repository by id under the same rule as
-        :meth:`get_resource` -- a repository answers to its own id, and a
-        falsy id is no filter.
+        Parameters
+        ----------
+        resource_id : str
+            The id of the resource, without the version.
+        version_constraint : str or None, default None
+            A constraint such as ``">=2.0"``. ``None`` selects the latest
+            version.
+        repository_id : str or None, default None
+            Restricts the lookup to the repository with this id. The rule
+            is the same as for :meth:`get_resource`.
+
+        Returns
+        -------
+        GenomicResource or None
+            The matching resource. ``None`` means that no resource matches
+            the id, the constraint and the repository id.
         """
 
     @abc.abstractmethod
@@ -3010,16 +3361,43 @@ class GenomicResourceRepo(abc.ABC):
         resource_type: str | None = None,
         resource_query: str | None = None,
     ) -> Generator[GenomicResource, None, list[tuple[str, str]] | None]:
-        """Search resources by FTS term, type and/or wildcard query.
+        """Search the resources by a full-text term, a type or a query.
 
-        All supplied filters conjoin.
+        The method returns a generator, so it reads the repository lazily.
+        A resource must match every filter that you supply.
 
-        The generator's return value carries the ``(repository id, reason)``
-        pairs of the children a group skipped while still answering (ADR
-        0012, gain#686); ``None`` and ``[]`` both mean nothing was skipped.
-        A ``for`` loop discards it, which is exactly right for a caller
-        that does not present totals.
+        Parameters
+        ----------
+        search_term : str or None, default None
+            A full-text term. ``None`` means no full-text filter.
+        resource_type : str or None, default None
+            A resource type, for example ``position_score``. ``None`` means
+            no type filter.
+        resource_query : str or None, default None
+            A wildcard query over the ids and the labels of the resources.
+            ``None`` means no query filter.
+
+        Yields
+        ------
+        GenomicResource
+            A matching resource. With no filter, every resource matches.
+
+        Returns
+        -------
+        list of tuple of (str, str) or None
+            The generator returns, when it ends, a ``(repository id,
+            reason)`` pair for each child that a group repository skipped
+            while it still answered. ``None`` and an empty list both mean
+            that nothing was skipped. A ``for`` loop discards this value.
+
+        Raises
+        ------
+        SearchTermError
+            If the search term cannot be parsed.
+        SearchIndexUnavailableError
+            If the repository has no usable search index.
         """
+        # The skip list is described in ADR 0012 (gain#686).
 
     def search_resources_by_child(
         self,
@@ -3030,25 +3408,52 @@ class GenomicResourceRepo(abc.ABC):
         tuple[GenomicResourceRepo, GenomicResource], None,
         list[tuple[str, str]] | None,
     ]:
-        """Search, pairing each hit with the repository that serves it.
+        """Search the resources, and pair each hit with its repository.
 
-        For a repository that serves resources itself the answer is always
-        this one, which is what this implementation says. A group overrides
-        it to name the child the resource actually came from, so a caller
-        that has to label a hit -- ``grr_manage list`` prints the id beside
-        every row -- does not have to take a group apart to find out.
+        The filters mean the same as for :meth:`search_resources`.
 
-        The filters mean exactly what they mean for
-        :meth:`search_resources`, which is the projection of this -- and
-        the return value carries the same skips.
+        Parameters
+        ----------
+        search_term : str or None, default None
+            A full-text term. ``None`` means no full-text filter.
+        resource_type : str or None, default None
+            A resource type. ``None`` means no type filter.
+        resource_query : str or None, default None
+            A wildcard query over the ids and the labels. ``None`` means
+            no query filter.
+
+        Yields
+        ------
+        tuple of (GenomicResourceRepo, GenomicResource)
+            A matching resource and the repository that serves it. For a
+            group, this is the child that holds the resource.
+
+        Returns
+        -------
+        list of tuple of (str, str) or None
+            The skipped children, as for :meth:`search_resources`.
         """
+        # A repository that serves resources itself is always the answer,
+        # which is what this implementation returns. A group overrides the
+        # method to name the child the resource came from, so a caller that
+        # labels a hit does not take the group apart. ``grr_manage list``
+        # prints the id beside every row.
         return _map_relaying_skips(
             self.search_resources(search_term, resource_type, resource_query),
             lambda res: (self, res))
 
     @abc.abstractmethod
     def get_all_resources(self) -> Generator[GenomicResource, None, None]:
-        """Return a generator over all resource in the repository."""
+        """Return a generator over all resources of the repository.
+
+        Read the generator lazily. A repository can be large.
+
+        Yields
+        ------
+        GenomicResource
+            A resource of the repository. A repository without resources
+            yields nothing.
+        """
 
 
 class GenomicResourceProtocolRepo(GenomicResourceRepo):
