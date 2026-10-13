@@ -14,13 +14,10 @@ rather than read from an open file. The consequence is that
 
 .. code-block:: python
 
-    from gain.grr import (
-        build_gene_models_from_resource_id,
-        build_genomic_resource_repository,
-    )
+    import gain.grr as grr
 
-    grr = build_genomic_resource_repository()
-    genes = build_gene_models_from_resource_id("hg38/gene_models/MANE/1.5", grr).load()
+    repo = grr.build_genomic_resource_repository()
+    genes = grr.build_gene_models_from_resource_id("hg38/gene_models/MANE/1.5", repo).load()
 
 :meth:`~gain.genomic_resources.gene_models.GeneModels.is_loaded` distinguishes
 a built-but-empty object from a loaded one, which library code that accepts

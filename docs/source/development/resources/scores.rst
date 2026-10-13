@@ -26,13 +26,10 @@ type and returns the matching class:
 
 .. code-block:: python
 
-    from gain.grr import (
-        build_genomic_resource_repository,
-        build_score_from_resource_id,
-    )
+    import gain.grr as grr
 
-    grr = build_genomic_resource_repository()
-    score = build_score_from_resource_id("hg38/scores/phastCons100way", grr)
+    repo = grr.build_genomic_resource_repository()
+    score = grr.build_score_from_resource_id("hg38/scores/phastCons100way", repo)
 
 They share the base class
 :class:`~gain.genomic_resources.genomic_scores.GenomicScore`, which owns
@@ -57,7 +54,7 @@ closing:
 
 .. code-block:: python
 
-    with build_score_from_resource_id("hg38/scores/phastCons100way", grr).open() as score:
+    with grr.build_score_from_resource_id("hg38/scores/phastCons100way", repo).open() as score:
         print(score.get_scores_at_position("chr21", 5_030_000))
 
 Omitting the ``.open()`` raises ``ValueError: genomic score <id> is not
@@ -177,7 +174,7 @@ answered:
 
 .. code-block:: python
 
-    with build_score_from_resource_id("hg38/scores/phastCons100way", grr).open() as score:
+    with grr.build_score_from_resource_id("hg38/scores/phastCons100way", repo).open() as score:
         score.chrom_length_sources
         # [<ChromLengthSource.REFERENCE_GENOME: 'reference_genome'>,
         #  <ChromLengthSource.TABIX_ESTIMATE: 'tabix_estimate'>]

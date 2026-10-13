@@ -140,7 +140,7 @@ it only takes effect once the registering module has been imported.
     register_implementation("my_resource_type", MyResourceImplementation)
 
     builder = get_resource_implementation_builder("my_resource_type")
-    impl = builder(grr.get_resource("my/resource/id"))
+    impl = builder(repo.get_resource("my/resource/id"))
 
 A note on the shipped registrations: two keys may point at the same class.
 ``cnv_collection`` and ``fragment_score`` both map to

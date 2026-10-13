@@ -20,14 +20,11 @@ object:
 
 .. code-block:: python
 
-    from gain.grr import (
-        build_allele_score_from_resource_id,
-        build_genomic_resource_repository,
-    )
+    import gain.grr as grr
 
-    grr = build_genomic_resource_repository()
-    with build_allele_score_from_resource_id(
-            "hg38/scores/CADD_v1.7", grr).open() as score:
+    repo = grr.build_genomic_resource_repository()
+    with grr.build_allele_score_from_resource_id(
+            "hg38/scores/CADD_v1.7", repo).open() as score:
         print(score.get_allele_scores_for_allele("chr1", 69_094, "G", "A"))
 
 The score is built closed; see :doc:`scores` for the lifecycle. Three
@@ -110,7 +107,7 @@ The ``reserved`` cells have a name and a meaning but no method yet.
 
 .. code-block:: python
 
-    with build_score_from_resource_id("hg38/scores/CADD_v1.7", grr).open() as score:
+    with grr.build_score_from_resource_id("hg38/scores/CADD_v1.7", repo).open() as score:
         score.get_allele_scores_for_allele("chr1", 69_094, "G", "A")
         # the values of the allele's only row, or None
         for entry in score.get_allele_scores_in_region_rows("chr1", 69_094, 69_096):

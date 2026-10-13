@@ -26,13 +26,10 @@ returns a pandas ``DataFrame``:
 
 .. code-block:: python
 
-    from gain.grr import (
-        build_genomic_resource_repository,
-        load_data_frame_from_resource_id,
-    )
+    import gain.grr as grr
 
-    grr = build_genomic_resource_repository()
-    frame = load_data_frame_from_resource_id("tables/gene_annotations", grr)
+    repo = grr.build_genomic_resource_repository()
+    frame = grr.load_data_frame_from_resource_id("tables/gene_annotations", repo)
 
     print(type(frame).__name__, frame.shape)
     print(frame)
@@ -66,13 +63,10 @@ returns an ``AnnData`` object:
 
 .. code-block:: python
 
-    from gain.grr import (
-        build_genomic_resource_repository,
-        load_ann_data_from_resource_id,
-    )
+    import gain.grr as grr
 
-    grr = build_genomic_resource_repository()
-    ann_data = load_ann_data_from_resource_id("single_cell/pbmc_demo", grr)
+    repo = grr.build_genomic_resource_repository()
+    ann_data = grr.load_ann_data_from_resource_id("single_cell/pbmc_demo", repo)
 
     print(type(ann_data).__name__, ann_data.shape)
     print(ann_data.obs)

@@ -31,7 +31,10 @@ end-to-end examples. This chapter picks up where it stops.
 
 .. rubric:: The shape of the API
 
-Builder functions are the entry points. Each takes a resource id and a
+Builder functions are the entry points. The examples import the package as
+``import gain.grr as grr`` and call them through it,
+``grr.build_score_from_resource_id(...)``. A repository in an example is
+named ``repo``. Each function takes a resource id and a
 repository, and returns a typed object that knows how to read that kind of
 resource. All of them, the repository constructors and the GAIn types they
 return are imported from one package, ``gain.grr``. The data-frame and
@@ -41,18 +44,13 @@ of these is re-exported:
 
 .. code-block:: python
 
-    from gain.grr import (
-        build_gene_models_from_resource_id,
-        build_genomic_resource_repository,
-        build_reference_genome_from_resource_id,
-        build_score_from_resource_id,
-    )
+    import gain.grr as grr
 
-    grr = build_genomic_resource_repository()
+    repo = grr.build_genomic_resource_repository()
 
-    genome = build_reference_genome_from_resource_id("hg38/genomes/GRCh38-hg38", grr)
-    genes = build_gene_models_from_resource_id("hg38/gene_models/MANE/1.5", grr)
-    score = build_score_from_resource_id("hg38/scores/phastCons100way", grr)
+    genome = grr.build_reference_genome_from_resource_id("hg38/genomes/GRCh38-hg38", repo)
+    genes = grr.build_gene_models_from_resource_id("hg38/gene_models/MANE/1.5", repo)
+    score = grr.build_score_from_resource_id("hg38/scores/phastCons100way", repo)
 
 Every builder comes in two forms, ``*_from_resource_id(resource_id, grr)``
 and ``*_from_resource(resource)`` for a

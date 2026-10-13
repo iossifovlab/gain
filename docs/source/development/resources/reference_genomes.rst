@@ -15,13 +15,10 @@ returns the genome itself, so the call chains onto the builder:
 
 .. code-block:: python
 
-    from gain.grr import (
-        build_genomic_resource_repository,
-        build_reference_genome_from_resource_id,
-    )
+    import gain.grr as grr
 
-    grr = build_genomic_resource_repository()
-    genome = build_reference_genome_from_resource_id("hg38/genomes/GRCh38-hg38", grr).open()
+    repo = grr.build_genomic_resource_repository()
+    genome = grr.build_reference_genome_from_resource_id("hg38/genomes/GRCh38-hg38", repo).open()
 
 In anything longer than a script, wrap it in a ``with`` block so the handle is
 released on an exception too. Note that **entering the context manager does
@@ -32,7 +29,7 @@ the ``.open()``:
 
 .. code-block:: python
 
-    with build_reference_genome_from_resource_id("hg38/genomes/GRCh38-hg38", grr).open() as genome:
+    with grr.build_reference_genome_from_resource_id("hg38/genomes/GRCh38-hg38", repo).open() as genome:
         print(genome.get_sequence("chr21", 5_030_000, 5_030_060))
 
 Dropping the ``.open()`` fails less obviously here than it does for a score:

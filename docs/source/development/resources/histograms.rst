@@ -57,14 +57,11 @@ number histogram has:
 
 .. code-block:: python
 
-    from gain.grr import (
-        build_genomic_resource_repository,
-        build_score_from_resource_id,
-    )
+    import gain.grr as grr
     from gain.genomic_resources.histogram import NumberHistogram
 
-    grr = build_genomic_resource_repository()
-    score = build_score_from_resource_id("hg38/scores/phastCons100way", grr)
+    repo = grr.build_genomic_resource_repository()
+    score = grr.build_score_from_resource_id("hg38/scores/phastCons100way", repo)
 
     hist = score.get_score_histogram("phastCons100way")
     assert isinstance(hist, NumberHistogram)
@@ -125,7 +122,7 @@ A categorical histogram counts each distinct value of the score. The
 
     from gain.genomic_resources.histogram import CategoricalHistogram
 
-    score = build_score_from_resource_id("hg38/scores/ClinVar_20240730", grr)
+    score = grr.build_score_from_resource_id("hg38/scores/ClinVar_20240730", repo)
 
     hist = score.get_score_histogram("CLNVC")
     assert isinstance(hist, CategoricalHistogram)
@@ -194,7 +191,7 @@ ClinVar 20251019, the ``RS`` score has a null histogram:
 
     from gain.genomic_resources.histogram import NullHistogram
 
-    score = build_score_from_resource_id("hg38/scores/ClinVar_20251019", grr)
+    score = grr.build_score_from_resource_id("hg38/scores/ClinVar_20251019", repo)
 
     hist = score.get_score_histogram("RS")
     assert isinstance(hist, NullHistogram)
@@ -244,7 +241,7 @@ yourself:
 
     from gain.genomic_resources.histogram import load_histogram
 
-    res = grr.get_resource("hg38/scores/phastCons100way")
+    res = repo.get_resource("hg38/scores/phastCons100way")
     hist = load_histogram(res, "statistics/histogram_phastCons100way.json")
     print(hist.type, hist.values_domain())     # number_histogram [0, 1]
 

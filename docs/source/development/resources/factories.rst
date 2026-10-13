@@ -11,6 +11,11 @@ DataFrame and an AnnData object. The other builders return the typed object
 that the name of the resource kind suggests. For example,
 ``build_score_from_resource_id`` returns a ``GenomicScore``.
 
+The examples in this chapter import the package under the name ``grr`` and
+call the functions through it: ``grr.build_genomic_resource_repository()``.
+A repository in an example is named ``repo``. The factories name that
+parameter ``grr``, so pass the repository as the second positional argument.
+
 .. currentmodule:: gain.grr
 
 Repositories
@@ -49,15 +54,7 @@ See :doc:`gene models <gene_models>`.
 
 .. autofunction:: build_gene_models_from_resource_id
 
-   .. code-block:: python
-
-       from gain.grr import build_gene_models_from_resource_id
-
 .. autofunction:: build_gene_models_from_resource
-
-   .. code-block:: python
-
-       from gain.grr import build_gene_models_from_resource
 
 Liftover chains
 ---------------
