@@ -7,6 +7,10 @@ the two key columns a position row does not have -- see
 the shared type rather than a separate one.
 """
 
+# pylint: disable=too-many-lines
+# The numpy docstrings of the public reads (gain#1911) put the module over
+# the cap.  The reads are one class and share one walk, so they stay together.
+
 from __future__ import annotations
 
 import copy
@@ -71,20 +75,26 @@ from .records import (
 logger = logging.getLogger(__name__)
 
 
+# ``values`` is parallel to the queries and is never keyed by score id:
+# one score asked twice with two aggregators is two queries and therefore
+# two values, which a mapping keyed by score id would silently collapse to
+# one.  ``allele_keys`` follows D1 and D2 of the allele folding-read design
+# (gain#1132).  The keys are built off the same walk the values were folded
+# from, so nothing a caller can do makes the two disagree about which
+# records were seen.
 @dataclass(frozen=True)
 class AlleleAggregate:
-    """What one folding read reduced a region to, off a single walk.
+    """The answer of a folding read: one value per query, and the allele keys.
 
-    ``values`` is parallel to the QUERIES asked, never keyed by score id:
-    one score asked twice with two aggregators is two queries and
-    therefore two values, which a mapping keyed by score id would
-    silently collapse to one.
-
-    ``allele_keys`` is ``None`` unless the read was asked for them; when
-    asked, the distinct keys in first-seen order (D1, D2 of the allele
-    folding-read design, gain#1132).  Built off the same walk the values
-    were folded from, so nothing a caller can do makes the two disagree
-    about which records were seen.
+    Attributes:
+        values (tuple[ScoreValue, ...]): One value for each query of the
+            read, in the order asked. A query is a score with an
+            aggregator, so one score asked with two aggregators gives two
+            values.
+        allele_keys (tuple[str, ...] | None): The distinct allele keys of
+            the rows that were folded, in the order the rows were first
+            seen. The value is ``None`` when the read was not asked for
+            keys. See :func:`allele_key` for the format.
     """
 
     values: tuple[ScoreValue, ...]
@@ -94,10 +104,16 @@ class AlleleAggregate:
 class AlleleEntry(NamedTuple):
     """One allele row of a region, as the unreduced region read yields it.
 
-    ``pos``, ``ref`` and ``alt`` are the row's own key columns, read off
-    the record verbatim; a table declaring only one of the two nucleotide
-    columns yields ``None`` for the other.  ``values`` is parallel to the
-    scores the read was asked for, in the order asked.
+    Attributes:
+        pos (int): The position of the row.
+        ref (str | None): The reference nucleotides of the row, as the
+            table holds them. The value is ``None`` when the table has no
+            reference column.
+        alt (str | None): The alternative nucleotides of the row, as the
+            table holds them. The value is ``None`` when the table has no
+            alternative column.
+        values (tuple[ScoreValue, ...]): The values of the scores that the
+            read was asked for, in the order asked.
     """
 
     pos: int
@@ -106,26 +122,44 @@ class AlleleEntry(NamedTuple):
     values: tuple[ScoreValue, ...]
 
 
+# The one statement of the key's spelling: the folding read builds the key
+# per record and the annotator's exact-match path builds it from the
+# annotatable, and the two must not drift.  It lives next to the score and
+# not in the annotator because the key is the identity of the record, which
+# is knowledge of the score layer.  The nucleotides are omitted when either
+# is absent, because ``1:10:None:C`` would name an allele that does not
+# exist.
 def allele_key(
     chrom: str, pos: int, ref: str | None, alt: str | None,
     suffix: Sequence[ScoreValue] = (),
 ) -> str:
-    """The allele key: ``chrom:pos[:ref:alt][:v1,v2]``.
+    """Build the allele key, ``chrom:pos[:ref:alt][:v1,v2]``.
 
-    An allele's identity as annotation output spells it, and the ONE
-    statement of that spelling: the folding read builds it per record and
-    the annotator's exact-match path builds it from the annotatable, and
-    the two must not drift.  It lives on the score rather than in the
-    annotator because the key is the record's identity, which is
-    score-layer knowledge.
+    The key is the identity of an allele as annotation output spells it.
 
-    The nucleotides are omitted when EITHER is absent: a table may declare
-    only one of the two key columns, and ``1:10:None:C`` would name an
-    allele that does not exist.  ``suffix`` is the values of the scores a
-    caller asked to append, in the order asked, each rendered as
-    :func:`~gain.utils.stringify.stringify` renders it for output and
-    joined with ``,``; it is part of the key's identity, so two records at
-    one allele that differ in a suffixed score are two keys.
+    Parameters
+    ----------
+    chrom : str
+        The chromosome name.
+    pos : int
+        The position of the allele.
+    ref : str or None
+        The reference nucleotides. The key has no ``:ref:alt`` part when
+        this or ``alt`` is ``None``.
+    alt : str or None
+        The alternative nucleotides.
+    suffix : Sequence[ScoreValue], optional
+        The values of the scores to append, in the order asked. Each value
+        is rendered as :func:`~gain.utils.stringify.stringify` renders it
+        for output, and the values are joined with ``,``. The suffix is
+        part of the identity: two rows of one allele that differ in a
+        suffixed score give two keys. The default is an empty sequence,
+        which appends nothing.
+
+    Returns
+    -------
+    str
+        The key, for example ``1:10:A:G`` or ``1:10:A:G:0.5,2``.
     """
     key = f"{chrom}:{pos}"
     if ref is not None and alt is not None:
@@ -150,18 +184,22 @@ def _allele_pos(record: Record) -> int:
 
 
 class AlleleMultiplicityError(ValueError):
-    """An allele score's rows disagree with its ``allele_multiplicity``.
+    """The rows of an allele score disagree with its ``allele_multiplicity``.
 
-    Carries the resource it is about and, when the refusal concerns one
-    allele, that allele as ``(chrom, pos, ref, alt)``; ``allele`` is
-    ``None`` otherwise.  The message is ``detail`` prefixed with the
-    resource id and, when known, the allele spelled by :func:`allele_key`
-    -- the spelling annotation output uses -- so the two read alike::
+    The message is ``detail`` with a prefix: the resource id and, when the
+    refusal concerns one allele, the allele spelled by :func:`allele_key`::
 
         AlleleMultiplicityError(
             "scores/x", "holds 2 rows but declares allele_multiplicity: one",
             allele=("1", 10, "A", "G"))
         # allele score 'scores/x', allele 1:10:A:G: holds 2 rows ...
+
+    Attributes:
+        resource_id (str): The id of the resource that the error is about.
+        allele (tuple[str, int, str | None, str | None] | None): The
+            allele as ``(chrom, pos, ref, alt)``. The value is ``None``
+            when the refusal does not concern one allele.
+        detail (str): The message without the prefix.
     """
 
     def __init__(
@@ -327,10 +365,14 @@ class AlleleScore(GenomicScore):
           aggregator specification
     """
 
+    #: The unit that the histograms of this kind count: ``"alleles"``.
     HISTOGRAM_COUNT_UNIT: ClassVar[str] = "alleles"
 
     # The alleles at a position reduce by ``max``, not ``mean``: a variant's
     # score is the worst of the alleles it could be, not their average.
+    #: The aggregator that a query uses when it names none, by the value
+    #: type of the score: ``max`` for numbers, ``list`` for strings and none
+    #: for booleans.
     DEFAULT_AGGREGATORS: ClassVar[dict[str, str | None]] = {
         "float": "max",
         "int": "max",
@@ -344,29 +386,63 @@ class AlleleScore(GenomicScore):
         left: int,  # ruff: ignore[unused-class-method-argument]
         right: int,  # ruff: ignore[unused-class-method-argument]
     ) -> int:
-        """An allele line counts once.
+        """Return the weight of an allele row, which is always 1.
 
-        Several records share a position -- one per ref/alt pair -- and
-        each weighs 1.  Structurally so: :meth:`fetch_region_segments_scores`
-        yields ``(pos, pos, values)``, collapsing the record to a point
-        however wide an optional ``pos_end`` column reaches, so a span
-        weight would not merely be a different choice, it would disagree
-        with the per-record read.
+        This is a hook for the folding reads. Do not call it.
 
-        A constant, which is elementwise: the base's
-        :meth:`~.base.GenomicScore.record_weights` fills it out to a
-        batch's shape.
+        :meta private:
+
+        Parameters
+        ----------
+        left : int
+            The first position of the row. The value is not used.
+        right : int
+            The last position of the row. The value is not used.
+
+        Returns
+        -------
+        int
+            ``1``.
         """
+        # Several records share a position, one per ref/alt pair, and each
+        # weighs 1.  The weight is structural: fetch_region_segments_scores
+        # yields (pos, pos, values), which collapses the record to a point
+        # however wide an optional pos_end column reaches.  A span weight
+        # would not only be a different choice, it would disagree with the
+        # per-record read.  The weight is a constant, which is elementwise:
+        # GenomicScore.record_weights fills it out to the shape of a batch.
         return 1
 
     class Mode(enum.Enum):
-        """Allele score mode."""
+        """The allele score mode, as the resource declares it.
+
+        ``SUBSTITUTIONS`` is the mode ``substitutions`` and ``ALLELES`` is
+        the mode ``alleles``. No read consults the mode. The allele score
+        annotator uses it to route an allele.
+        """
 
         SUBSTITUTIONS = 1
         ALLELES = 2
 
         @staticmethod
         def from_name(name: str) -> AlleleScore.Mode:
+            """Return the mode that has the given configuration name.
+
+            Parameters
+            ----------
+            name : str
+                ``"substitutions"`` or ``"alleles"``.
+
+            Returns
+            -------
+            AlleleScore.Mode
+                The mode of the name.
+
+            Raises
+            ------
+            ValueError
+                If the name is neither of the two.
+            """
             if name == "substitutions":
                 return AlleleScore.Mode.SUBSTITUTIONS
             if name == "alleles":
@@ -374,13 +450,15 @@ class AlleleScore(GenomicScore):
             raise ValueError(f"unknown allele mode: {name}")
 
     class Multiplicity(enum.Enum):
-        """How many table rows one allele key may have (gain#1749, A3).
+        """How many table rows one allele may have.
 
-        Rows, not values: several records sharing one
-        ``(chrom, pos, ref, alt)`` -- one per transcript, say -- not a
-        multi-valued field inside one record.  Declared by the resource's
-        top-level ``allele_multiplicity``; ``one`` when undeclared.
+        The resource declares it with the top-level key
+        ``allele_multiplicity``. ``ONE`` is the default. ``MANY`` means
+        that several rows may hold one ``(chrom, pos, ref, alt)``, for
+        example one row for each transcript.
         """
+        # Rows, not values: several records sharing one allele, not a
+        # multi-valued field inside one record (gain#1749, A3).
 
         ONE = "one"
         MANY = "many"
@@ -413,32 +491,37 @@ class AlleleScore(GenomicScore):
 
     @property
     def multiplicity(self) -> AlleleScore.Multiplicity:
-        """How many table rows one allele key may have.
+        """The number of rows that one allele may have in the table.
 
-        :meth:`get_allele_scores_for_allele` and its singular consult
-        it: they answer one row, so they refuse a ``many`` resource and
-        treat several rows of one allele on a ``one`` resource as a data
-        error.  The ``_rows`` and ``_agg`` reads do not consult it.  The
-        allele statistics build reads it too: on a ``one`` resource it
-        reports the first allele key that several rows hold.
+        Only the bare reads consult it, such as
+        :meth:`get_allele_scores_for_allele`.
         """
+        # The allele statistics build reads it too: on a ``one`` resource it
+        # reports the first allele key that several rows hold.  The _rows
+        # and _agg reads do not consult it.
         return self._multiplicity
 
     def substitutions_mode(self) -> bool:
-        """Return True if the score is in substitutions mode."""
+        """Return whether the mode of the resource is ``substitutions``."""
         return self.mode == AlleleScore.Mode.SUBSTITUTIONS
 
     def alleles_mode(self) -> bool:
-        """Return True if the score is in alleles mode."""
+        """Return whether the mode of the resource is ``alleles``."""
         return self.mode == AlleleScore.Mode.ALLELES
 
     @staticmethod
     def get_schema() -> dict[str, Any]:
-        """The :class:`GenomicScore` schema plus the allele-specific keys.
+        """Return the schema of the resource configuration.
 
-        ``allele_score_mode``, ``merge_vcf_scores``, and the table's
-        ``reference``, ``alternative`` and ``variant`` column
-        definitions.
+        The schema is the :class:`GenomicScore` schema plus the keys
+        ``allele_score_mode``, ``allele_multiplicity`` and
+        ``merge_vcf_scores``, and the ``reference``, ``alternative`` and
+        ``variant`` column definitions of the table.
+
+        Returns
+        -------
+        dict[str, Any]
+            A new schema in the Cerberus format. The caller may change it.
         """
         schema = copy.deepcopy(GenomicScore.get_schema())
 
@@ -629,13 +712,34 @@ class AlleleScore(GenomicScore):
     def resolve_aggregation_queries(
         self, queries: Sequence[ScoreAggregationQuery] | None,
     ) -> list[tuple[str, str]]:
-        """Resolve each query to its ``(score_id, aggregator NAME)`` pair.
+        """Resolve each query to a ``(score_id, aggregator name)`` pair.
 
-        The shared :func:`~.aggregation.resolve_aggregation_queries` on
-        this score, made public so ``AlleleScoreAnnotator`` can refuse a
-        bad attribute as the pipeline loads (D6 of the allele folding-read
-        design) -- see that function for why it stops at the name.
+        This is a hook for the allele score annotator. The annotator calls
+        it when the pipeline loads, to refuse a bad attribute early.
+
+        :meta private:
+
+        Parameters
+        ----------
+        queries : Sequence[ScoreAggregationQuery] or None
+            The queries to resolve. ``None`` means every score of the
+            resource, each with its default aggregator.
+
+        Returns
+        -------
+        list[tuple[str, str]]
+            One pair for each query, in the order asked.
+
+        Raises
+        ------
+        ValueError
+            If a query names an unknown score, or has no aggregator to
+            resolve to.
         """
+        # The shared aggregation.resolve_aggregation_queries on this score,
+        # made public so AlleleScoreAnnotator can refuse a bad attribute as
+        # the pipeline loads (D6 of the allele folding-read design).  That
+        # function says why it stops at the aggregator name.
         return resolve_aggregation_queries(
             queries,
             score_definitions=self.score_definitions,
@@ -645,15 +749,33 @@ class AlleleScore(GenomicScore):
     def resolve_allele_key_scores(
         self, allele_keys: Sequence[str],
     ) -> list[GenomicScoreDef]:
-        """The definitions of the scores an allele-key request suffixes.
+        """Resolve the score ids that suffix the allele keys.
 
-        The other half of what :meth:`get_allele_scores_in_region_agg`
-        checks on the call, made askable without reading: the same
-        refusal every allele read gives an unknown score id, with the
-        valid names listed, which is how the annotator refuses a bad
-        ``include_attributes`` as the pipeline loads rather than per
-        record.
+        This is a hook for the allele score annotator. The annotator calls
+        it when the pipeline loads, to refuse a bad ``include_attributes``
+        early.
+
+        :meta private:
+
+        Parameters
+        ----------
+        allele_keys : Sequence[str]
+            The score ids to resolve.
+
+        Returns
+        -------
+        list[GenomicScoreDef]
+            The definitions of the scores, in the order asked.
+
+        Raises
+        ------
+        ValueError
+            If a score id is unknown. The message lists the valid ids.
         """
+        # The other half of what get_allele_scores_in_region_agg checks on
+        # the call, made askable without reading.  The annotator uses it to
+        # refuse a bad ``include_attributes`` as the pipeline loads rather
+        # than per record.
         return self._resolve_score_defs(list(allele_keys))
 
     def get_allele_scores_in_region_agg(
@@ -663,38 +785,63 @@ class AlleleScore(GenomicScore):
         allele_keys: Sequence[str] | None = None,
         score_filter: ScoreFilter | None = None,
     ) -> AlleleAggregate | None:
-        """Reduce the alleles in a region to one value per query, or ``None``.
+        """Reduce the alleles in a region to one value per query.
 
-        The kind's folding read: the records overlapping the region that
-        ``score_filter`` keeps, reduced in ONE walk that holds no record.
-        ``queries`` of ``None`` means every score the resource defines,
-        each with its own default aggregator;
-        a query's own aggregator wins over the default.  An allele line
-        is weighed by :meth:`record_weight`, which counts it once.
+        Fold the rows that overlap the region and that ``score_filter``
+        keeps, in one walk that holds no row. An allele row weighs 1.
 
-        ``None`` is absent data, judged before ``score_filter`` and with
-        ownership checked first, through :meth:`_selected_allele_records`,
-        which states the contract.  An :class:`AlleleAggregate` whose fold saw
-        nothing is the other answer: records were there and the filter
-        rejected every one, so each aggregator answers for an empty
-        selection (``list`` gives ``[]``, ``max`` gives ``None``, ...).
-        That asymmetry with the fragment kind's folding read is a property
-        of the data, and ADR 0017's Consequences say why.
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name.
+        start : int
+            The first position of the region, 1-based.
+        end : int
+            The last position of the region.
+        queries : Sequence[ScoreAggregationQuery] or None, optional
+            What to compute. Each query is a score with an optional
+            aggregator, and the aggregator of the query wins over the
+            default aggregator of the score. ``None``, the default, means
+            every score of the resource with its default aggregator.
+        allele_keys : Sequence[str] or None, optional
+            The score ids that suffix each allele key. ``None``, the
+            default, builds no keys. An empty sequence builds the bare
+            ``chrom:pos:ref:alt`` keys. See :func:`allele_key`.
+        score_filter : ScoreFilter or None, optional
+            Keep only the rows that this filter accepts. Build the filter
+            with :meth:`compile_filter` of this score. ``None``, the
+            default, keeps every row.
 
-        ``allele_keys`` of ``None`` -- the default -- builds no keys, so a
-        caller that wants none pays nothing per record for them.  A
-        sequence, possibly empty, asks for the keys and names the score
-        ids to suffix each with: ``()`` is the bare ``chrom:pos:ref:alt``.
-        :func:`allele_key` states the format; the keys come back distinct
-        and in first-seen order, off the same walk the values were folded
-        from.
+        Returns
+        -------
+        AlleleAggregate or None
+            ``None`` when no row overlaps the region. The check happens
+            before the filter. Otherwise an :class:`AlleleAggregate`. When
+            the filter rejects every row, each aggregator answers for an
+            empty selection: ``max`` gives ``None`` and ``list`` gives
+            ``[]``. The keys are distinct and in the order the rows were
+            first seen.
 
-        The REQUEST is checked when this is called: an unknown score id --
-        in a query or in ``allele_keys`` -- a query with no aggregator to
-        resolve to, an unknown contig and a foreign filter are all refused
-        before a record is read.  Aggregators are built fresh per call
-        (:func:`~.aggregation.build_region_aggregators`).
+        Raises
+        ------
+        ValueError
+            If a score id of ``queries`` or ``allele_keys`` is unknown, if
+            a query has no aggregator to resolve to, or if the contig is
+            not in the resource.
+        ScoreFilterError
+            If ``score_filter`` was compiled for another resource.
+
+        Notes
+        -----
+        The call checks the request before it reads a row.
+
         """
+        # ``None`` is judged before the filter and ownership is checked
+        # first, through _selected_allele_records, which states the
+        # contract.  The asymmetry with the fragment kind's folding read
+        # is a property of the data, and the Consequences of ADR 0017 say
+        # why.  Aggregators are built fresh for each call
+        # (build_region_aggregators).
         requests = self.resolve_aggregation_queries(queries)
         aggregators = build_region_aggregators(
             requests, resource_id=self.resource_id)
@@ -747,35 +894,60 @@ class AlleleScore(GenomicScore):
         allele_keys: Sequence[str] | None = None,
         score_filter: ScoreFilter | None = None,
     ) -> AlleleAggregate | None:
-        """Reduce one allele's rows to one value per query, or ``None``.
+        """Reduce the rows of one allele to one value per query.
 
-        Folds exactly the rows :meth:`get_allele_scores_for_allele_rows`
-        answers -- those at ``(chrom, pos, ref, alt)``, exact on the
-        position too, so a row starting earlier whose span reaches ``pos``
-        is not folded -- with the queries, defaults, aggregators, record
-        weight and :class:`AlleleAggregate` of
-        :meth:`get_allele_scores_in_region_agg`.  ``values`` is parallel
-        to the queries; ``queries`` of ``None`` means every score the
-        resource defines, each with its own default aggregator.
+        Fold the rows at exactly ``(chrom, pos, ref, alt)``. A row that
+        starts earlier and whose span reaches ``pos`` is not folded. The
+        read folds the rows that :meth:`get_allele_scores_for_allele_rows`
+        answers, with the queries, the aggregators and the
+        :class:`AlleleAggregate` of :meth:`get_allele_scores_in_region_agg`.
+        The read is allowed on both multiplicities and does not consult
+        ``allele_score_mode``. On a ``one`` resource it folds the single
+        row.
 
-        ``None`` is an allele no row holds, judged BEFORE ``score_filter``.
-        Rows the filter rejects in full fold to an empty selection: an
-        :class:`AlleleAggregate` in which each aggregator answers for no
-        rows (``max`` and ``count`` give ``None``, ``list`` gives
-        ``[]``), exactly as the region fold answers an all-filtered
-        region.
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name.
+        pos : int
+            The position of the allele.
+        ref : str
+            The reference nucleotides.
+        alt : str
+            The alternative nucleotides.
+        queries : Sequence[ScoreAggregationQuery] or None, optional
+            What to compute. ``None``, the default, means every score of
+            the resource with its default aggregator.
+        allele_keys : Sequence[str] or None, optional
+            As in :meth:`get_allele_scores_in_region_agg`. The answer has
+            the one key ``chrom:pos:ref:alt``, or several keys when a
+            suffixed score differs across the rows.
+        score_filter : ScoreFilter or None, optional
+            Keep only the rows that this filter accepts. ``None``, the
+            default, keeps every row.
 
-        ``allele_keys`` behaves as in the region fold: ``None`` builds no
-        keys, a sequence asks for them, suffixed with those scores.  The
-        answer is the one key ``chrom:pos:ref:alt``, or several when a
-        suffixed score differs across the rows.
+        Returns
+        -------
+        AlleleAggregate or None
+            ``None`` when no row holds the allele. The check happens before
+            the filter. When the filter rejects every row, the answer is an
+            :class:`AlleleAggregate` in which each aggregator answers for
+            no rows: ``max`` and ``count`` give ``None``, and ``list``
+            gives ``[]``.
 
-        Allowed on both multiplicities and blind to
-        ``allele_score_mode``: on a ``one`` resource it folds the single
-        row.  The request is checked when this is called, before any row
-        is read: an unknown score id, a query with no aggregator to
-        resolve to, a bad aggregator, an unknown contig and a filter
-        compiled for another resource are refused.
+        Raises
+        ------
+        ValueError
+            If a score id is unknown, if a query has no aggregator to
+            resolve to, if an aggregator is bad, or if the contig is not in
+            the resource.
+        ScoreFilterError
+            If ``score_filter`` was compiled for another resource.
+
+        Notes
+        -----
+        The call checks the request before it reads a row.
+
         """
         requests = self.resolve_aggregation_queries(queries)
         aggregators = build_region_aggregators(
@@ -799,19 +971,47 @@ class AlleleScore(GenomicScore):
         aggregator: str | None = None,
         score_filter: ScoreFilter | None = None,
     ) -> AlleleAggregate | None:
-        """Reduce one allele's rows for ONE score, or ``None``.
+        """Reduce the rows of one allele for one score.
 
-        The singular form of :meth:`get_allele_scores_for_allele_agg`,
-        which documents the rows folded and the refusals; ``score`` of
-        ``None`` is honoured only when the resource declares exactly one,
-        and ``aggregator`` of ``None`` is that score's default.
+        The singular form of :meth:`get_allele_scores_for_allele_agg`. It
+        does not unwrap the answer: the :class:`AlleleAggregate` has a
+        ``values`` tuple of one element.
 
-        It does not unwrap: it answers the same :class:`AlleleAggregate`,
-        whose ``values`` is a one-element tuple, as
-        :meth:`FragmentScore.get_fragment_score_overlapping_region_agg()
-        <.fragment.FragmentScore.get_fragment_score_overlapping_region_agg>`
-        does.
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name.
+        pos : int
+            The position of the allele.
+        ref : str
+            The reference nucleotides.
+        alt : str
+            The alternative nucleotides.
+        score : str or None, optional
+            The score id. ``None``, the default, is accepted only when the
+            resource defines exactly one score.
+        aggregator : str or None, optional
+            The aggregator name. ``None``, the default, is the default
+            aggregator of the score.
+        score_filter : ScoreFilter or None, optional
+            Keep only the rows that this filter accepts.
+
+        Returns
+        -------
+        AlleleAggregate or None
+            As :meth:`get_allele_scores_for_allele_agg`.
+
+        Raises
+        ------
+        ValueError
+            As :meth:`get_allele_scores_for_allele_agg`. Also when
+            ``score`` is ``None`` and the resource defines several scores.
+        ScoreFilterError
+            If ``score_filter`` was compiled for another resource.
+
         """
+        # Not unwrapped, as FragmentScore.get_fragment_score_overlapping_
+        # region_agg does not unwrap its answer.
         return self.get_allele_scores_for_allele_agg(
             chrom, pos, ref, alt,
             queries=[ScoreAggregationQuery(
@@ -826,26 +1026,56 @@ class AlleleScore(GenomicScore):
     ) -> list[tuple[ScoreValue, ...]]:
         """Return the values of every row of one allele, in file order.
 
-        One tuple per row at exactly ``(chrom, pos, ref, alt)`` that
-        ``score_filter`` keeps, each parallel to ``scores`` -- every score
-        the resource defines when ``scores`` is ``None``.  Several rows may
-        carry one allele, and all of them are answered: this read neither
-        reduces them nor looks at ``allele_score_mode``.
+        Several rows may carry one allele, and all of them are answered.
+        The read does not reduce the rows and does not consult
+        ``allele_score_mode``. The match is exact on the position and on
+        the nucleotides: a row that starts earlier and whose span reaches
+        ``pos`` is not this allele.
 
-        ``[]`` is the answer both for an allele no row carries and for one
-        whose every row the filter rejected; this read does not tell the
-        two apart.  An unknown score id, an unknown contig and a filter
-        compiled for another resource are refused when this is called.
-        Materialised: a point holds a handful of rows.
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name.
+        pos : int
+            The position of the allele.
+        ref : str
+            The reference nucleotides.
+        alt : str
+            The alternative nucleotides.
+        scores : Sequence[str] or None, optional
+            The score ids to read. ``None``, the default, means every
+            score of the resource.
+        score_filter : ScoreFilter or None, optional
+            Keep only the rows that this filter accepts. The filter is
+            evaluated on every row that overlaps the position, not only on
+            the rows of the allele. ``None``, the default, keeps every row.
 
-        Exact on the position as well as the nucleotides: a row starting
-        earlier whose span reaches ``pos`` is not this allele.
+        Returns
+        -------
+        list[tuple[ScoreValue, ...]]
+            One tuple for each row that the filter keeps, parallel to
+            ``scores``. The list is empty both when no row carries the
+            allele and when the filter rejects every row. The read does
+            not tell the two cases apart.
 
-        The region walk of :meth:`get_allele_scores_in_region_rows` at the
-        one position.  The requested values are read only off rows
-        matching the allele; ``score_filter``, being part of that shared
-        walk, is still evaluated on every row overlapping the position.
+        Raises
+        ------
+        ValueError
+            If a score id is unknown, or if the contig is not in the
+            resource.
+        ScoreFilterError
+            If ``score_filter`` was compiled for another resource.
+
+        Notes
+        -----
+        The call checks the request before it reads a row.
+
         """
+        # Materialised: a point holds a handful of rows.  The read is the
+        # region walk of get_allele_scores_in_region_rows at the one
+        # position.  The requested values are read only off rows matching
+        # the allele, but score_filter, being part of that shared walk, is
+        # still evaluated on every row overlapping the position.
         score_defs = self._resolve_score_defs(scores)
         self._check_allele_region_request(chrom, score_filter)
         extract = self._extract_value
@@ -881,38 +1111,67 @@ class AlleleScore(GenomicScore):
         scores: Sequence[str] | None = None,
         score_filter: ScoreFilter | None = None,
     ) -> tuple[ScoreValue, ...] | None:
-        """Return the values of one allele's only row, or ``None``.
+        """Return the values of the only row of one allele.
 
-        The row at exactly ``(chrom, pos, ref, alt)``, its values parallel
-        to ``scores`` -- every score the resource defines, in definition
-        order, when ``scores`` is ``None``.  The walk and the match are
-        those of :meth:`get_allele_scores_for_allele_rows`: exact on the
-        position too, so a row starting earlier whose span reaches ``pos``
-        is not this allele.  ``None`` is an allele no row holds, or one
-        whose row ``score_filter`` rejects.  ``allele_score_mode`` is not
-        consulted.
+        The match is exact on the position and on the nucleotides: a row
+        that starts earlier and whose span reaches ``pos`` is not this
+        allele. The read does not consult ``allele_score_mode``.
 
-        An answer of one row is what the resource's
-        :attr:`multiplicity` promises:
+        The read answers one row, as the :attr:`multiplicity` of the
+        resource promises. A resource that declares
+        ``allele_multiplicity: many`` is refused, because one allele may
+        hold several rows. On a ``one`` resource, several rows that hold
+        the allele are a data error. The rows are counted before
+        ``score_filter``, so a filter that hides one of them does not hide
+        the error. Until
+        :func:`~gain.genomic_resources.resource_types.allele_multiplicity_enforced`
+        answers true, the read warns once for each process and answers the
+        first row. The filter applies to that row alone.
 
-        - a resource declaring ``allele_multiplicity: many`` is refused
-          with :class:`AlleleMultiplicityError` before anything is read;
-          its rows are read through the ``_rows`` reads, or reduced by an
-          ``_agg`` read;
-        - on a ``one`` resource, several rows holding the allele are a
-          data error.  The rows are counted BEFORE ``score_filter``, so a
-          filter hiding one of them does not hide the error.  Once
-          :func:`~gain.genomic_resources.resource_types.allele_multiplicity_enforced`
-          answers true, that is an :class:`AlleleMultiplicityError`
-          naming the resource and the allele.  Until then, the first row
-          is answered -- filtered as a lone row would be, so a filter
-          rejecting it answers ``None`` -- and the resource is warned
-          about once per process.
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name.
+        pos : int
+            The position of the allele.
+        ref : str
+            The reference nucleotides.
+        alt : str
+            The alternative nucleotides.
+        scores : Sequence[str] or None, optional
+            The score ids to read. ``None``, the default, means every
+            score of the resource, in definition order.
+        score_filter : ScoreFilter or None, optional
+            Keep the row only if this filter accepts it. ``None``, the
+            default, accepts every row.
 
-        The request is checked first, when this is called: an unknown
-        score id, an unknown contig and a filter compiled for another
-        resource are refused, on any resource, ahead of the ``many``
-        refusal.
+        Returns
+        -------
+        tuple[ScoreValue, ...] or None
+            The values of the row, parallel to ``scores``. ``None`` when no
+            row holds the allele, or when ``score_filter`` rejects the
+            row.
+
+        Raises
+        ------
+        AlleleMultiplicityError
+            If the resource declares ``allele_multiplicity: many``. Also
+            if several rows hold the allele on a ``one`` resource, once
+            the enforcement release is reached. Read every row with
+            :meth:`get_allele_scores_for_allele_rows`, or reduce the rows
+            with :meth:`get_allele_scores_for_allele_agg`.
+        ValueError
+            If a score id is unknown, or if the contig is not in the
+            resource.
+        ScoreFilterError
+            If ``score_filter`` was compiled for another resource.
+
+        Notes
+        -----
+        The call checks the request before it reads a row, and before the
+        ``many`` refusal: an unknown score id, an unknown contig and a
+        foreign filter are refused on any resource.
+
         """
         score_defs = self._resolve_score_defs(scores)
         self._check_allele_region_request(chrom, score_filter)
@@ -951,11 +1210,43 @@ class AlleleScore(GenomicScore):
         score: str | None = None,
         score_filter: ScoreFilter | None = None,
     ) -> ScoreValue | None:
-        """Return one score's value at one allele's only row, or ``None``.
+        """Return the value of one score at the only row of one allele.
 
-        The singular form of :meth:`get_allele_scores_for_allele`, which
-        documents the row answered and the refusals; ``score`` of ``None``
-        is honoured only when the resource declares exactly one.
+        The singular form of :meth:`get_allele_scores_for_allele`.
+
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name.
+        pos : int
+            The position of the allele.
+        ref : str
+            The reference nucleotides.
+        alt : str
+            The alternative nucleotides.
+        score : str or None, optional
+            The score id. ``None``, the default, is accepted only when the
+            resource defines exactly one score.
+        score_filter : ScoreFilter or None, optional
+            Keep the row only if this filter accepts it.
+
+        Returns
+        -------
+        ScoreValue or None
+            The value of the score. ``None`` when no row holds the allele,
+            or when ``score_filter`` rejects the row. The value itself may
+            also be ``None`` when the row has no value for the score.
+
+        Raises
+        ------
+        AlleleMultiplicityError
+            As :meth:`get_allele_scores_for_allele`.
+        ValueError
+            As :meth:`get_allele_scores_for_allele`. Also when ``score`` is
+            ``None`` and the resource defines several scores.
+        ScoreFilterError
+            If ``score_filter`` was compiled for another resource.
+
         """
         values = self.get_allele_scores_for_allele(
             chrom, pos, ref, alt,
@@ -971,25 +1262,52 @@ class AlleleScore(GenomicScore):
         scores: Sequence[str] | None = None,
         score_filter: ScoreFilter | None = None,
     ) -> Generator[AlleleEntry, None, None]:
-        """Yield an :class:`AlleleEntry` per row overlapping a region.
+        """Yield an :class:`AlleleEntry` for each row that overlaps a region.
 
-        One entry per row ``score_filter`` keeps, in the table's position
-        order, with ``values`` parallel to ``scores`` -- every score the
-        resource defines when ``scores`` is ``None``.  Rows sharing an
-        allele are each yielded; nothing is reduced, and
-        ``allele_score_mode`` is not consulted.
+        The entries come in the position order of the table. Rows that
+        share an allele are each yielded. The read does not reduce the
+        rows and does not consult ``allele_score_mode``.
 
-        A region no row overlaps and a region whose every row the filter
-        rejected both yield nothing.  :meth:`get_allele_scores_in_region_agg`
-        reduces the same walk and tells those two apart.
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name.
+        start : int
+            The first position of the region, 1-based.
+        end : int
+            The last position of the region.
+        scores : Sequence[str] or None, optional
+            The score ids to read. ``None``, the default, means every
+            score of the resource.
+        score_filter : ScoreFilter or None, optional
+            Keep only the rows that this filter accepts. ``None``, the
+            default, keeps every row.
 
-        The REQUEST is checked when this is called; the READING is lazy.  An
-        unknown score id, an unknown contig and a filter compiled for
-        another resource are refused before a generator is returned.  The
-        table is not read until the first ``next()``, so several unstarted
-        generators may be created at once; as with every region read of a
-        table, iterate one at a time -- materialise what has to outlive
-        the next read.
+        Returns
+        -------
+        Generator[AlleleEntry, None, None]
+            One entry for each row that the filter keeps, with ``values``
+            parallel to ``scores``. The generator yields nothing both when
+            no row overlaps the region and when the filter rejects every
+            row. :meth:`get_allele_scores_in_region_agg` tells the two
+            cases apart.
+
+        Raises
+        ------
+        ValueError
+            If a score id is unknown, or if the contig is not in the
+            resource.
+        ScoreFilterError
+            If ``score_filter`` was compiled for another resource.
+
+        Notes
+        -----
+        The call checks the request, and the errors above are raised
+        before the generator is returned. The table is read lazily, on the
+        first ``next()``. Iterate one generator at a time, as with every
+        region read of a table, and materialise what has to outlive the
+        next read.
+
         """
         score_defs = self._resolve_score_defs(scores)
         self._check_allele_region_request(chrom, score_filter)
@@ -1002,11 +1320,41 @@ class AlleleScore(GenomicScore):
         score: str | None = None,
         score_filter: ScoreFilter | None = None,
     ) -> list[ScoreValue]:
-        """Return one score's value for every row of one allele.
+        """Return the value of one score for every row of one allele.
 
-        The singular form of :meth:`get_allele_scores_for_allele_rows`,
-        which documents the rows answered and the refusals; ``score`` of
-        ``None`` is honoured only when the resource declares exactly one.
+        The singular form of :meth:`get_allele_scores_for_allele_rows`.
+
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name.
+        pos : int
+            The position of the allele.
+        ref : str
+            The reference nucleotides.
+        alt : str
+            The alternative nucleotides.
+        score : str or None, optional
+            The score id. ``None``, the default, is accepted only when the
+            resource defines exactly one score.
+        score_filter : ScoreFilter or None, optional
+            Keep only the rows that this filter accepts.
+
+        Returns
+        -------
+        list[ScoreValue]
+            One value for each row that the filter keeps, in file order.
+            The list is empty when no row carries the allele or when the
+            filter rejects every row.
+
+        Raises
+        ------
+        ValueError
+            As :meth:`get_allele_scores_for_allele_rows`. Also when
+            ``score`` is ``None`` and the resource defines several scores.
+        ScoreFilterError
+            If ``score_filter`` was compiled for another resource.
+
         """
         return [
             values[0]
@@ -1024,12 +1372,45 @@ class AlleleScore(GenomicScore):
     ) -> Generator[
         tuple[int, str | None, str | None, ScoreValue], None, None,
     ]:
-        """Yield ``(pos, ref, alt, value)`` per row overlapping a region.
+        """Yield ``(pos, ref, alt, value)`` for each row that overlaps a region.
 
-        The singular form of :meth:`get_allele_scores_in_region_rows`,
-        which documents the rows yielded, the refusals checked on the call
-        and the one-live-read limit; ``score`` of ``None`` is honoured only
-        when the resource declares exactly one.
+        The singular form of :meth:`get_allele_scores_in_region_rows`.
+
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name.
+        start : int
+            The first position of the region, 1-based.
+        end : int
+            The last position of the region.
+        score : str or None, optional
+            The score id. ``None``, the default, is accepted only when the
+            resource defines exactly one score.
+        score_filter : ScoreFilter or None, optional
+            Keep only the rows that this filter accepts.
+
+        Returns
+        -------
+        Generator[tuple[int, str or None, str or None, ScoreValue], None, None]
+            One tuple for each row that the filter keeps. The generator
+            yields nothing when no row overlaps the region or when the
+            filter rejects every row. ``ref`` or ``alt`` is ``None`` when
+            the table has no such column.
+
+        Raises
+        ------
+        ValueError
+            As :meth:`get_allele_scores_in_region_rows`. Also when
+            ``score`` is ``None`` and the resource defines several scores.
+        ScoreFilterError
+            If ``score_filter`` was compiled for another resource.
+
+        Notes
+        -----
+        The call checks the request. The table is read lazily, as in
+        :meth:`get_allele_scores_in_region_rows`.
+
         """
         entries = self.get_allele_scores_in_region_rows(
             chrom, start, end,
@@ -1080,39 +1461,47 @@ class AlleleScore(GenomicScore):
         return _AlleleKeyCollector(key_of)
 
     def supports_region_allele_arrays(self, scores: list[str]) -> bool:
-        """Whether :meth:`fetch_region_allele_arrays` will serve these scores.
+        """Return whether :meth:`fetch_region_allele_arrays` serves the scores.
 
-        :meth:`GenomicScore.supports_region_value_arrays()
-        <.base.GenomicScore.supports_region_value_arrays>` -- the backend and
-        the score value types -- plus the one condition that is this read's
-        alone: the table must declare at least one of the two key columns,
-        or there is nothing for it to carry that the shared read does not
-        already give.
+        The answer needs the conditions of
+        :meth:`~gain.genomic_resources.genomic_scores.GenomicScore.supports_region_value_arrays`
+        (the backend and the value types of the scores) and one more: the
+        table must declare at least one of the ``reference`` and
+        ``alternative`` columns. One column is enough. A bigWig-backed
+        score has no such columns and is not served.
 
-        The columns are configured **independently**, and one of them is
-        enough.  A table declaring only ``alternative`` is served, with the
-        missing side yielded as the ``None`` the record carries for it; that
-        is what keeps this read and :meth:`GenomicScore.fetch_records()
-        <.base.GenomicScore.fetch_records>` the
-        same answer rather than two.  A bigWig-backed score is turned away
-        here without being named: it has no such columns to declare.
+        The method works on a score that is not open. In one case the
+        answer is conservative there: a table with ``header_mode: file``
+        that names its key columns only in its data file answers ``False``
+        until the score is opened, and ``True`` after.
 
-        Answerable on an UNOPENED score, as its counterpart is -- and, in one
-        case, **conservative** there rather than exact.  A table's key columns
-        are resolved when it opens (``_set_core_column_keys``), from the
-        config and, failing that, from the header.  So this asks the same two
-        questions in the same order, using whichever of them can be answered
-        yet: the declaration always, and the header when the table already
-        has one (``header_mode: list`` names it in the config, and an opened
-        table has read it).
+        Parameters
+        ----------
+        scores : list[str]
+            The score ids that the caller wants to read.
 
-        That leaves exactly one gap: a ``header_mode: file`` table that names
-        its key columns nowhere but inside its own data file answers ``False``
-        until it is opened and ``True`` after.  The asymmetry is the file's,
-        not this method's -- a header cannot be known without reading it --
-        and it errs the safe way, because a caller told ``False`` reads
-        per-record and gets the same rows.
+        Returns
+        -------
+        bool
+            ``True`` if :meth:`fetch_region_allele_arrays` accepts the
+            scores. If the answer is ``False``, read per record with
+            :meth:`~gain.genomic_resources.genomic_scores.GenomicScore.fetch_records`.
+            The rows are the same.
+
         """
+        # The key columns of a table are resolved when it opens
+        # (_set_core_column_keys), from the config and, failing that, from
+        # the header.  This method asks the same two questions in the same
+        # order, with whichever of them can be answered yet: the
+        # declaration always, and the header when the table already has
+        # one.  The one gap is the file's, not the method's: a header
+        # cannot be known without reading it.  The answer errs the safe
+        # way, because a caller told False reads per record and gets the
+        # same rows.  Only the key columns that the table declares count,
+        # and they are configured independently: a table that declares
+        # only ``alternative`` is served, with the missing side yielded as
+        # the None that the record carries for it.  That keeps this read
+        # and GenomicScore.fetch_records the same answer.
         return self._allele_arrays_refusal_reason(scores) is None
 
     def _allele_arrays_refusal_reason(self, scores: list[str]) -> str | None:
@@ -1147,43 +1536,70 @@ class AlleleScore(GenomicScore):
         *,
         batch_size: int = DEFAULT_VALUE_ARRAYS_BATCH_SIZE,
     ) -> Generator[AlleleRecordArrays, None, None]:
-        """Fetch a region as column arrays, nucleotides included.
+        """Fetch a region as column arrays, with the nucleotides.
 
-        :meth:`GenomicScore.fetch_region_value_arrays()
-        <.base.GenomicScore.fetch_region_value_arrays>` widened by the two
-        columns an allele row has and a position row does not, for a caller
-        scanning a whole region for allele *content* rather than values --
-        the allele statistics, above all.  Each batch is that method's
-        ``(pos_begin, pos_end, {score_id: values})`` followed by the
-        ``reference`` and ``alternative`` arrays, as
-        :class:`~.records.AlleleRecordArrays`.
+        The read widens
+        :meth:`~gain.genomic_resources.genomic_scores.GenomicScore.fetch_region_value_arrays`
+        with the ``reference`` and ``alternative`` columns. It is meant for
+        a caller that scans a whole region for allele content, such as the
+        allele statistics.
 
-        ``batch_size`` is capped exactly as there, by
-        ``VALUE_ARRAYS_CELL_BUDGET`` -- and the ``reference`` and
-        ``alternative`` columns count toward the budget like any score, so a
-        batch holds at most ``budget // (len(scores) + 2)`` rows.
+        The nucleotides are raw and the scores are parsed. An NA sentinel
+        of a score arrives as the non-value of the score. The two nucleotide
+        columns go through no parsing: no upper-casing, no stripping and no
+        sentinel handling. A caller that wants them normalised does it
+        once, where the meaning is known.
 
-        **The nucleotides are RAW; the scores beside them are parsed.**  That
-        asymmetry is deliberate and is the whole contract.  A score column
-        goes through its definition's column parse, so an NA sentinel arrives
-        as that score's non-value; these two columns go through nothing at
-        all.  Whatever the row held is what the array holds -- no
-        upper-casing, no stripping, no sentinel handling -- because
-        :func:`~.genomic_position_table.record.build_tabular_parser` reads
-        them equally verbatim, and a
-        consumer reading a region through this method and a region through
-        :meth:`GenomicScore.fetch_records()
-        <.base.GenomicScore.fetch_records>` must be handed the same strings
-        rather than two dialects of them.  Whoever wants them normalised
-        normalises them, once, where the meaning of the normalisation is
-        known.
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name.
+        pos_begin : int or None
+            The first position of the region, 1-based. ``None`` means the
+            start of the chromosome.
+        pos_end : int or None
+            The last position of the region. ``None`` means the end of the
+            chromosome.
+        scores : list[str]
+            The score ids to read.
+        batch_size : int, optional
+            The most rows in a batch. The reference and alternative columns
+            count toward ``VALUE_ARRAYS_CELL_BUDGET`` like two scores, so a
+            batch holds at most ``budget // (len(scores) + 2)`` rows. The
+            default is 100000.
 
-        Refused, rather than emulated, for a score this facade cannot serve
-        it for -- ask :meth:`supports_region_allele_arrays` first.  The
-        guards run when this method is CALLED, not on the first ``next()``,
-        which is why the streaming half lives in ``_allele_array_batches``
-        rather than a ``yield`` here.
+        Returns
+        -------
+        Generator[AlleleRecordArrays, None, None]
+            The batches, in position order. A batch has the position
+            arrays and the value arrays of
+            :meth:`~gain.genomic_resources.genomic_scores.GenomicScore.fetch_region_value_arrays`,
+            followed by the ``reference`` and ``alternative`` arrays. A
+            key column that the table does not declare is an array of
+            ``None``.
+
+        Raises
+        ------
+        TypeError
+            If the score does not serve the read for ``scores``. Ask
+            :meth:`supports_region_allele_arrays` first.
+        ValueError
+            If the score is not open, or if the contig is not in the
+            resource.
+
+        Notes
+        -----
+        The call checks the request. The errors above are raised when the
+        method is called and not on the first ``next()``.
+
         """
+        # The guards run when the method is called, not on the first
+        # next(), which is why the streaming half lives in
+        # _allele_array_batches and not in a ``yield`` here.  The
+        # nucleotides are raw because build_tabular_parser reads them
+        # equally verbatim, and a consumer that reads a region through
+        # this method and through GenomicScore.fetch_records must get the
+        # same strings and not two dialects of them.
         reason = self._allele_arrays_refusal_reason(scores)
         if reason is not None:
             raise TypeError(

@@ -92,23 +92,66 @@ def build_position_score_from_resource_id(
 def build_allele_score_from_resource(
     resource: GenomicResource,
 ) -> AlleleScore:
-    """Build an allele score from an `allele_score` resource.
+    """Build an allele score from an ``allele_score`` resource.
 
-    Defaults to alleles mode unless the resource configures
-    `allele_score_mode` explicitly.
+    Every call builds a new score. The score is closed: call ``open()``
+    before the first read.
 
-    The deprecated `np_score` type was accepted here until 2026.8.5, and
-    defaulted to substitutions mode instead (gain#920).  A resource still
-    declaring it is refused with a message naming both the replacement type
-    and the mode key needed to keep the old reading.
+    Parameters
+    ----------
+    resource : GenomicResource
+        A resource of type ``allele_score``.
+
+    Returns
+    -------
+    AlleleScore
+        A new, closed score. The mode is ``alleles`` unless the resource
+        sets ``allele_score_mode``.
+
+    Raises
+    ------
+    ValueError
+        If the resource is not of type ``allele_score``. A resource that
+        still declares the removed type ``np_score`` is also refused. The
+        message names the replacement type and the mode key that keeps the
+        old reading.
     """
+    # The deprecated `np_score` type was accepted here until 2026.8.5, and
+    # it defaulted to substitutions mode instead (gain#920).  AlleleScore
+    # refuses it with a message that names the replacement.
     return AlleleScore(resource)
 
 
 def build_allele_score_from_resource_id(
     resource_id: str, grr: GenomicResourceRepo | None = None,
 ) -> AlleleScore:
-    """Build an allele score from an `allele_score` resource id."""
+    """Build an allele score from the id of an ``allele_score`` resource.
+
+    Every call builds a new score. The score is closed: call ``open()``
+    before the first read.
+
+    Parameters
+    ----------
+    resource_id : str
+        The id of a resource of type ``allele_score`` in the repository.
+    grr : GenomicResourceRepo or None, optional
+        The repository that resolves ``resource_id``. ``None``, the
+        default, builds the default repository with
+        ``build_genomic_resource_repository()``.
+
+    Returns
+    -------
+    AlleleScore
+        A new, closed score, as ``build_allele_score_from_resource``
+        builds it.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the repository has no resource with this id.
+    ValueError
+        If the resource is not of type ``allele_score``.
+    """
     if grr is None:
         grr = build_genomic_resource_repository()
     return build_allele_score_from_resource(grr.get_resource(resource_id))
