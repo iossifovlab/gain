@@ -281,13 +281,14 @@ def _page_without(name: str) -> str:
 def page_problems(page: str) -> list[str]:
     """Return all outline problems of a page with an autoclass or function."""
     classes = page_classes(page)
-    functions = page_functions(page)
     if not autosummary_blocks(page):
         return ["the page has an autoclass but no autosummary outline"]
-    return (
-        outline_problems(page, classes)
-        + function_outline_problems(page, functions)
-        + exported_name_problems(page, [*classes, *functions]))
+    if classes:
+        return outline_problems(page, classes) + exported_name_problems(
+            page, classes)
+    functions = page_functions(page)
+    return function_outline_problems(
+        page, functions) + exported_name_problems(page, functions)
 
 
 def _rolled_out_pages() -> list[Path]:
