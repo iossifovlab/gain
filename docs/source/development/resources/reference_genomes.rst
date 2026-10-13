@@ -93,9 +93,32 @@ reads — is on :doc:`/grr`.
 API
 ---
 
+The class below is defined in the module
+``gain.genomic_resources.reference_genome``. ``ReferenceGenome`` is also
+exported by ``gain.grr``, as ``grr.ReferenceGenome``.
+
+The builders ``build_reference_genome_from_resource_id`` and
+``build_reference_genome_from_resource`` are documented in the
+:ref:`factories` chapter.
+
 .. currentmodule:: gain.genomic_resources.reference_genome
 
-.. autofunction:: build_reference_genome_from_resource_id
+.. autosummary::
+
+   ReferenceGenome
+   ReferenceGenome.chrom_prefix
+   ReferenceGenome.chromosomes
+   ReferenceGenome.close
+   ReferenceGenome.fetch
+   ReferenceGenome.get_all_chrom_lengths
+   ReferenceGenome.get_chrom_length
+   ReferenceGenome.get_schema
+   ReferenceGenome.get_sequence
+   ReferenceGenome.is_open
+   ReferenceGenome.is_pseudoautosomal
+   ReferenceGenome.open
+   ReferenceGenome.resource_id
+   ReferenceGenome.split_into_regions
 
 .. autoclass:: ReferenceGenome
    :members:
