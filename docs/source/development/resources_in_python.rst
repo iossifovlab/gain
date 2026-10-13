@@ -1,5 +1,5 @@
-Working with resources in Python
-================================
+Genomic resources
+=================
 
 This chapter is the in-depth description of the *resource* half of GAIn's
 declared API: the objects you get back when you open a repository and ask it
@@ -57,165 +57,10 @@ of these is re-exported:
 Every builder comes in two forms, ``*_from_resource_id(resource_id, grr)``
 and ``*_from_resource(resource)`` for a
 :class:`~gain.genomic_resources.repository.GenomicResource` already in hand.
-The :ref:`factories` section below lists them all, with the resource kind
-each one builds. Each name is the same object as in the module that defines
+The :doc:`factories <resources/factories>` chapter lists them all, grouped by
+the resource kind each one builds. Each name is the same object as in the module that defines
 it, and the chapters below refer to those defining modules; importing from
 either place gives the same thing.
-
-.. _factories:
-
-Factories
----------
-
-Every function in this section lives in the package ``gain.grr``. The
-package also exports the types ``GenomicResourceRepo`` and
-``GenomicResource``. The outline lists each factory under the kind of
-resource it builds, and each row links to the entry below it. The data-frame
-and AnnData loaders return a pandas DataFrame and an AnnData object. The
-other builders return the typed object that the name of the resource kind
-suggests. For example, ``build_score_from_resource_id`` returns a
-``GenomicScore``.
-
-.. currentmodule:: gain.grr
-
-.. rubric:: Repositories (see :doc:`repositories <resources/repositories>`)
-
-.. autosummary::
-
-   build_genomic_resource_repository
-   build_genomic_resource_group_repository
-   get_default_grr_definition
-   get_default_grr_definition_path
-
-.. rubric:: Genomic context
-
-.. autosummary::
-
-   get_genomic_context
-   get_grr_from_context
-
-.. rubric:: Reference genomes
-
-.. autosummary::
-
-   build_reference_genome_from_resource_id
-   build_reference_genome_from_resource
-
-.. rubric:: Gene models
-
-.. autosummary::
-
-   build_gene_models_from_resource_id
-   build_gene_models_from_resource
-
-.. rubric:: Liftover chains (see :doc:`liftover chains <resources/liftover_chains>`)
-
-.. autosummary::
-
-   build_liftover_chain_from_resource_id
-   build_liftover_chain_from_resource
-
-.. rubric:: Genomic scores
-
-.. autosummary::
-
-   build_score_from_resource_id
-   build_score_from_resource
-   build_position_score_from_resource_id
-   build_position_score_from_resource
-   build_allele_score_from_resource_id
-   build_allele_score_from_resource
-   build_fragment_score_from_resource_id
-   build_fragment_score_from_resource
-
-.. rubric:: Gene scores (see :doc:`gene scores <resources/gene_scores>`)
-
-.. autosummary::
-
-   build_gene_score_from_resource_id
-   build_gene_score_from_resource
-
-.. rubric:: Gene set collections (see :doc:`gene sets <resources/gene_sets>`)
-
-.. autosummary::
-
-   build_gene_set_collection_from_resource_id
-   build_gene_set_collection_from_resource
-
-.. rubric:: Data frames and AnnData (see :doc:`data frames and AnnData <resources/data_frames_and_anndata>`)
-
-.. autosummary::
-
-   load_data_frame_from_resource_id
-   load_data_frame_from_resource
-   load_ann_data_from_resource_id
-   load_ann_data_from_resource
-
-.. rubric:: Entries
-
-.. autofunction:: build_genomic_resource_repository
-
-.. autofunction:: build_genomic_resource_group_repository
-
-.. autofunction:: get_default_grr_definition
-
-.. autofunction:: get_default_grr_definition_path
-
-.. autofunction:: get_genomic_context
-
-.. autofunction:: get_grr_from_context
-
-.. autofunction:: build_reference_genome_from_resource_id
-
-.. autofunction:: build_reference_genome_from_resource
-
-.. autofunction:: build_gene_models_from_resource_id
-
-   .. code-block:: python
-
-       from gain.grr import build_gene_models_from_resource_id
-
-.. autofunction:: build_gene_models_from_resource
-
-   .. code-block:: python
-
-       from gain.grr import build_gene_models_from_resource
-
-.. autofunction:: build_liftover_chain_from_resource_id
-
-.. autofunction:: build_liftover_chain_from_resource
-
-.. autofunction:: build_score_from_resource_id
-
-.. autofunction:: build_score_from_resource
-
-.. autofunction:: build_position_score_from_resource_id
-
-.. autofunction:: build_position_score_from_resource
-
-.. autofunction:: build_allele_score_from_resource_id
-
-.. autofunction:: build_allele_score_from_resource
-
-.. autofunction:: build_fragment_score_from_resource_id
-
-.. autofunction:: build_fragment_score_from_resource
-
-.. autofunction:: build_gene_score_from_resource_id
-
-.. autofunction:: build_gene_score_from_resource
-
-.. autofunction:: build_gene_set_collection_from_resource_id
-
-.. autofunction:: build_gene_set_collection_from_resource
-
-.. autofunction:: load_data_frame_from_resource_id
-
-.. autofunction:: load_data_frame_from_resource
-
-.. autofunction:: load_ann_data_from_resource_id
-
-.. autofunction:: load_ann_data_from_resource
 
 Two conventions run through all of them.
 
@@ -252,10 +97,14 @@ the extent they are, by the generated
 .. toctree::
    :maxdepth: 2
 
+   resources/factories
    resources/repositories
    resources/reference_genomes
    resources/gene_models
    resources/scores
+   resources/position_scores
+   resources/allele_scores
+   resources/fragment_scores
    resources/gene_scores
    resources/histograms
    resources/liftover_chains
