@@ -163,17 +163,24 @@ _OPERATIONS: dict[str, Callable[[Any, Any], bool]] = {
 }
 
 
+# Opaque on purpose: a caller compiles one through
+# GenomicScore.compile_filter and passes it back to a fetch, and the tree it
+# was compiled from is nobody else's business.  The filter carries its score
+# because its variables are bound to that score's definitions -- a column
+# index, a value type, an NA set -- and none of those travel with a record.
+# See require_owner.
 class ScoreFilter:
-    """A compiled record predicate, bound to the score that compiled it.
+    """A compiled record filter, bound to the score that compiled it.
 
-    Opaque on purpose: a caller compiles one through
-    :meth:`GenomicScore.compile_filter` and passes it back to a fetch, and
-    the tree it was compiled from is nobody else's business.  The source
-    expression is kept for error messages and ``repr``.
+    Get a filter from :meth:`GenomicScore.compile_filter` and pass it to a
+    read as ``score_filter``. The filter works only on the records of the
+    score that compiled it.
 
-    It carries the score because its variables are bound to that score's
-    definitions -- a column index, a value type, an NA set -- and none of
-    those travel with a record.  See :meth:`require_owner`.
+    Attributes:
+        score (GenomicScore): The score that compiled the filter.
+
+        expression (str): The source expression. Error messages and
+            ``repr`` show it.
     """
 
     def __init__(
@@ -184,13 +191,22 @@ class ScoreFilter:
         self.expression = expression
         self._predicate = predicate
 
+    # Checked once per fetch, not per record.  The failure it prevents is
+    # silent: two resources both defining ``freq`` put it at different column
+    # indexes, so a foreign filter reads a real value from the wrong column
+    # and selects records nobody can tell are wrong.
     def require_owner(self, score: GenomicScore) -> None:
-        """Refuse to read the records of a score that did not compile this.
+        """Refuse the records of a score that did not compile this filter.
 
-        Checked once per fetch, not per record.  The failure it prevents is
-        silent: two resources both defining ``freq`` put it at different
-        column indexes, so a foreign filter reads a real value from the
-        wrong column and selects records nobody can tell are wrong.
+        Parameters
+        ----------
+        score : GenomicScore
+            The score whose records the caller is about to read.
+
+        Raises
+        ------
+        ScoreFilterError
+            If ``score`` is not the score that compiled the filter.
         """
         if self.score is score:
             return
@@ -200,27 +216,44 @@ class ScoreFilter:
             f"<{score.resource_id}>; compile it through the score you are "
             f"reading")
 
+    # The only way to apply a filter, and it takes the score being read rather
+    # than the records alone, so require_owner cannot be forgotten: there is no
+    # reachable way to test a record against a filter without first saying
+    # which score the record came from.  The predicate itself stays private
+    # for that reason.
+    #
+    # Applying the predicate used to be the caller's own business, and the
+    # allele annotator's region path was the one caller that did it -- the
+    # single filter application the ownership check could not cover (ADR
+    # 0017).  It reads through this now, as every other path does.
+    #
+    # Lazy, and the ownership check is not: a foreign filter is refused from
+    # the call, because it is a programming error rather than a property of
+    # the data.  A caller that defers this call into a generator body defers
+    # the refusal with it -- GenomicScore.fetch_records does, and says so.
     def select(
         self, score: GenomicScore, records: Iterable[Record],
     ) -> Iterator[Record]:
-        """Yield the records of ``score`` this filter accepts.
+        """Yield the records of ``score`` that this filter accepts.
 
-        The only way to apply a filter, and it takes the score being read
-        rather than the records alone, so :meth:`require_owner` cannot be
-        forgotten: there is no reachable way to test a record against a
-        filter without first saying which score the record came from.  The
-        predicate itself stays private for that reason.
+        Parameters
+        ----------
+        score : GenomicScore
+            The score that the records come from.
+        records : Iterable[Record]
+            The records to test.
 
-        Applying the predicate used to be the caller's own business, and the
-        allele annotator's region path was the one caller that did it -- the
-        single filter application the ownership check could not cover
-        (ADR 0017).  It reads through this now, as every other path does.
+        Returns
+        -------
+        Iterator[Record]
+            The accepted records, in the order of ``records``. The
+            iterator is lazy. It is empty if the filter accepts none.
 
-        Lazy, and the ownership check is not: a foreign filter is refused
-        from the call, before any record is read, because it is a
-        programming error rather than a property of the data.  A caller
-        that defers this call into a generator body defers the refusal with
-        it -- :meth:`GenomicScore.fetch_records` does, and says so.
+        Raises
+        ------
+        ScoreFilterError
+            If ``score`` did not compile the filter. The call raises the
+            error before any record is read.
         """
         self.require_owner(score)
         return (record for record in records if self._predicate(record))

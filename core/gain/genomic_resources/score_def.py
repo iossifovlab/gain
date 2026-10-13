@@ -245,12 +245,37 @@ def _parse_column_address(
 
 @dataclass
 class GenomicScoreDef(ScoreDef):
-    """A genomic score definition. Includes backend loading internals.
+    """The definition of one score of a genomic score resource.
 
-    Extends the shared :class:`ScoreDef` (score id, value type, description
-    and histogram config) with the concerns that are genomic-only: the
-    per-position and per-allele default aggregators, and the internal column
-    addressing / parsing state used when reading a value off a table backend.
+    Each entry of the ``scores:`` block of a resource becomes one
+    definition. The definition knows the id, the value type and the
+    description of a score, how to turn a raw cell into a value, and which
+    histogram configuration belongs to it. Read the definitions from
+    ``GenomicScore.score_definitions``.
+
+    Attributes:
+        score_id (str): The id of the score.
+
+        value_type (str): The type of the values: ``float``, ``int``,
+            ``str`` or ``bool``.
+
+        desc (str): The description of the score.
+
+        small_values_desc (str | None): The description of the small values.
+
+        large_values_desc (str | None): The description of the large values.
+
+        hist_conf (HistogramConfig | None): The histogram configuration.
+
+        aggregator (str | None): The aggregator that reduces several values
+            for one annotatable to one. It is ``None`` until the resource
+            type fills its default.
+
+        number_mismatch_warned (bool): Internal. ``True`` after a VCF INFO
+            field with a wrong value count was reported once.
+
+        empty_element_warned (bool): Internal. ``True`` after an empty
+            element of a multi-valued VCF INFO field was reported once.
     """
 
     # pylint: disable=too-many-instance-attributes
@@ -346,17 +371,25 @@ class GenomicScoreDef(ScoreDef):
         self.na_values = normalize_na_values(
             self.na_values, self.value_type)
 
+    # The scalar half of the parsing contract of a definition; the column
+    # half is parse_array.  Both live here, on the object that owns the two
+    # inputs they need (``value_parser`` and ``na_values``), so neither can
+    # be changed against a config the other did not see.
     def parse_value(self, value: str | int | float | None) -> ScoreValue:
-        """Turn one raw cell into this score's value.
+        """Turn one raw cell into the value of this score.
 
-        ``None`` for a null raw value (an absent VCF INFO key), for a
-        configured NA sentinel, and for a cell that fails to parse -- a bad
-        cell is logged and skipped rather than aborting a whole scan.
+        Parameters
+        ----------
+        value : str | int | float | None
+            The raw cell.
 
-        The scalar half of this definition's parsing contract; the column half
-        is :meth:`parse_array`.  Both live here, on the object that owns the
-        two inputs they need (``value_parser`` and ``na_values``), so neither
-        can be changed against a config the other did not see.
+        Returns
+        -------
+        ScoreValue
+            The parsed value. ``None`` if the cell is ``None`` (for
+            example an absent VCF INFO key), if it is an NA sentinel of
+            the score, or if it does not parse. A cell that does not parse
+            is logged and skipped, so one bad cell does not abort a scan.
         """
         if value is None or value in self.na_values:
             return None
@@ -407,35 +440,45 @@ class GenomicScoreDef(ScoreDef):
             dtype=object)
         return np.isin(cells, text)
 
+    # The column half of the parsing contract of a definition, and the reason
+    # the bulk statistics scan is worth having.  The equivalence with
+    # parse_value is not an aspiration:
+    # test_parse_array_agrees_with_parse_value_fuzz asserts it token by
+    # token, per value type, over several ``na_values`` configs and several
+    # array widths.  ``bool`` has no column consumer, and an unset
+    # ``value_type`` is not a parse this can define, so both are refused.
+    #
+    # Parsed with numpy, deliberately NOT with ``pd.to_numeric``, which is not
+    # correctly rounded -- it returns 9.999999999999999e-26 for ``1e-25`` and
+    # truncates ``0.00000071009127180852`` to ten significant digits.
+    # ``ndarray.astype`` agrees with ``float()`` on every token tested,
+    # including the PEP-515 underscores and Unicode digits pandas rejects
+    # outright.
     def parse_array(self, cells: np.ndarray) -> np.ndarray:
         """Turn a whole column of raw cells into values, vectorized.
 
-        The column half of this definition's parsing contract, and the reason
-        the bulk statistics scan is worth having.  Equivalent to
-        ``[parse_value(c) for c in cells]``, with the "no value" that the
-        scalar contract spells ``None`` rendered in whatever form the returned
-        array can carry.  That equivalence is not an aspiration:
-        test_parse_array_agrees_with_parse_value_fuzz asserts it token by
-        token, per value type, over several ``na_values`` configs and several
-        array widths.
+        The result equals ``[parse_value(c) for c in cells]``, with the
+        non-value shown in a form that the array can hold. The result has
+        one of two shapes, chosen by ``value_type``. A ``float`` or ``int``
+        score gives a ``float64`` array with ``nan`` for no value. A
+        ``str`` score gives an ``object`` array with ``None`` for no value.
 
-        The returned array is one of two shapes, chosen by ``value_type``:
+        Parameters
+        ----------
+        cells : np.ndarray
+            The raw cells of one column.
 
-        * ``float`` and ``int`` -- a ``float64`` array whose ``nan`` is the
-          non-value.  A float64 array has no ``None``, and for every consumer
-          of a numeric column a non-value and a nan are the same skip.
-        * ``str`` -- an ``object`` array of ``str``, whose ``None`` is the
-          non-value, exactly as :meth:`parse_value` returns it.
+        Returns
+        -------
+        np.ndarray
+            The parsed values, one for each cell. The array of an empty
+            column is empty.
 
-        Any other value type is refused: ``bool`` has no column consumer, and
-        an unset ``value_type`` is not a parse this can define.
-
-        **Parsed with numpy, deliberately NOT with ``pd.to_numeric``**, which
-        is not correctly rounded -- it returns 9.999999999999999e-26 for
-        ``1e-25`` and truncates ``0.00000071009127180852`` to ten significant
-        digits.  ``ndarray.astype`` agrees with ``float()`` on every token
-        tested, including the PEP-515 underscores and Unicode digits pandas
-        rejects outright.
+        Raises
+        ------
+        TypeError
+            If ``value_type`` is not ``float``, ``int`` or ``str``. Ask
+            ``GenomicScore.supports_region_value_arrays`` first.
         """
         if self.value_type == "float":
             return self._parse_float_array(cells)

@@ -38,7 +38,6 @@ NOT_ROLLED_OUT = frozenset({
     "position_scores.rst",
     "reference_genomes.rst",
     "repositories.rst",
-    "scores.rst",
     "adding_a_resource_type.rst",
 })
 

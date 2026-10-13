@@ -30,6 +30,11 @@ before there is a ``score_definitions`` to write onto, and so returns the
 mapping.
 """
 
+# The numpy docstrings of the public members and the design comments they
+# displaced (gain#1913) keep this module over pylint's 1500-line cap until
+# gain#1027 finishes decomposing the class.
+# pylint: disable=too-many-lines
+
 from __future__ import annotations
 
 from abc import abstractmethod
@@ -133,150 +138,75 @@ logger = logging.getLogger(__name__)
 DEFAULT_VALUE_ARRAYS_BATCH_SIZE = 100_000
 
 
+# Notes for the authors of a score kind, moved here from the class docstring
+# (gain#1913) so that the rendered page describes the user API only.
+#
+# A kind whose records read as something other than the span they cover
+# states that ONCE, by overriding:
+#
+# - _score_segments(): what a region's raw records mean for this kind.
+#   ``values_from_records`` is the request resolution followed by it,
+#   ``fetch_region_segments_scores`` is THAT applied to ``fetch_records``,
+#   and the statistics scan is it applied to
+#   ``validate_records(score, fetch_records(...))`` -- so a kind states its
+#   reading once and every consumer gets it (ADR 0008).  Override this and
+#   not ``values_from_records``: the resolving entry is shared by every
+#   kind, and a read holding an already-resolved request composes this body
+#   without going through it (gain#1282).
+# - record_weight(): how many times one record's value counts when a region
+#   is aggregated.  Every reader goes through it -- the annotators'
+#   ``aggregate_region``, the per-record scan, and the bulk scan via
+#   ``record_weights`` (gain#1095).
+# - _aggregation_segments(): whether those records are cut down to the
+#   queried window before they are weighed.  Unlike the others this HAS a
+#   default -- not clipping -- because it is a consequence of the weight
+#   rule rather than a rule of its own: a kind that counts a record once
+#   counts it wherever it falls.
+#
+# All but the last have no default.  A kind that inherited one would be
+# weighed by a rule nobody chose for it, which is the failure ADR 0008
+# exists to undo.
+#
+# A kind's two validation rules are not on this list, and not on this class:
+# they are registered per kind in
+# :mod:`gain.genomic_resources.statistics.record_validation`, whose default
+# refuses a kind nobody wrote one for (ADR 0027).
+#
+# Threading: a score is not safe for concurrent use.  Each factory call
+# returns a fresh instance its caller owns; a holder that shares one across
+# threads serialises every read, open() and close() itself (see close()).
 class GenomicScore(ScoreResource[GenomicScoreDef]):
-    """Base class for genomic score resources.
+    """Base class of the position, allele and fragment scores.
 
-    GenomicScore provides a unified interface for accessing and managing
-    genomic annotation scores stored in various formats. It serves as the
-    foundation for specialized score types including PositionScore (position-
-    based scores) and AlleleScore (variant-specific scores).
+    A genomic score gives access to the values of a genomic resource that
+    attaches scores to places in the genome. The class owns what the three
+    kinds share: the score definitions, the open and close lifecycle, the
+    filter compiler, and the record and column-array reads. A score is built
+    closed, so call :meth:`open` before the first read.
 
-    This abstract base class handles:
-    - Resource configuration validation and normalization
-    - Score definition management and parsing
-    - File format abstraction through GenomicPositionTable
-    - Histogram and statistics management
-    - Default annotation attribute configuration
-    - Context manager protocol for resource lifecycle
-
-    Score resources can be stored in multiple formats:
-    - Tabix-indexed files (TSV, BED)
-    - VCF files (particularly for allele scores)
-    - BigWig files (for position scores)
-    - In-memory tables (for testing)
-
-    Configuration Structure:
-        A genomic score resource requires a YAML configuration file
-        (genomic_resource.yaml) specifying:
-
-        - **type**: Resource type (position_score, allele_score)
-        - **table**: Table configuration with filename, format, and column
-          mappings for chrom, pos_begin, pos_end (and ref/alt for allele scores)
-        - **scores**: List of score definitions with id, type, name/index,
-          description, and optional aggregators
-        - **default_annotation**: Optional list specifying which scores to
-          include in default annotations with optional name mappings
-        - **histograms**: Optional histogram configurations for statistics
-
-    Score Definition:
-        Each score in the resource is defined with:
-
-        - **id**: Unique identifier for the score
-        - **type**: Data type (int, float, str, bool)
-        - **name/index**: Column name or index in the data file
-        - **desc**: Human-readable description
-        - **na_values**: Values to treat as missing/NA (optional)
-        - **hist_conf**: Histogram configuration for statistics (optional)
-        - **aggregator**: Default aggregator (optional). How several
-          values for one annotatable are reduced to one; the default
-          depends on the resource type and the score's value type.
-
-    Usage Pattern:
-        Genomic scores follow a resource lifecycle pattern:
-
-        1. Build/retrieve the resource from a repository
-        2. Create a score object from the resource
-        3. Open the score to initialize data access
-        4. Query scores using fetch methods
-        5. Close the score to release resources
-
-        Example using context manager:
-            >>> from gain.genomic_resources.genomic_scores import (
-            ...     build_score_from_resource_id
-            ... )
-            >>> score = build_score_from_resource_id("phastCons100way")
-            >>> with score.open():
-            ...     # Score is open and ready to use
-            ...     chromosomes = score.get_all_chromosomes()
-            ...     scores = score.get_all_scores()
-            ...     # Query data...
-            >>> # Score is automatically closed
-
-    Statistics and Histograms:
-        GenomicScore supports automatic statistics generation including:
-
-        - Value distribution histograms
-        - Min/max ranges for numeric scores
-        - Category frequencies for categorical scores
-        - Custom histogram configurations per score
+    The data of the resource is a tabix file, a VCF, a bigWig or an
+    in-memory table. A score is not safe for concurrent use.
 
     Attributes:
-        resource (GenomicResource): The underlying genomic resource object
+        resource (GenomicResource): The genomic resource of the score.
 
-        resource_id (str): Unique identifier for the resource
+        resource_id (str): The id of the resource.
 
-        config (dict): Validated and normalized configuration dictionary
+        config (dict): The validated and normalized configuration.
 
-        table (GenomicPositionTable): Data access abstraction layer
+        table (GenomicPositionTable): The table that holds the data.
 
-        score_definitions (dict[str, GenomicScoreDef]): Mapping of score IDs to
-            their internal definitions including parsers and metadata
+        score_definitions (dict[str, GenomicScoreDef]): The definitions of
+            the scores, keyed by score id.
 
-        table_loaded (bool): Flag indicating if the table is currently open
+        table_loaded (bool): ``True`` while the table is open.
 
-    Threading:
-        Not safe for concurrent use.  Each factory call returns a fresh
-        instance its caller owns; a holder that shares one across threads
-        serialises every read, open() and close() itself (see close()).
-
-    Key Methods:
-        open(): Initialize the score resource for data access
-        close(): Release resources and close the data table
-        get_all_scores(): Get list of all available score IDs
-        get_all_chromosomes(): Get list of all available chromosomes
-        has_chromosome(): Whether one chromosome is available
-        get_score_definition(): Get metadata for a specific score
-        get_default_annotation_attributes(): Get default annotation config
-        get_histogram(): Load histogram for a score (if available)
-        get_score_range(): Get value range for a numeric scores
-
-    Per-kind Methods:
-        A kind whose records read as something other than the span they
-        cover states that ONCE, by overriding:
-
-        - _score_segments(): what a region's raw records mean for this kind.
-          ``values_from_records`` is the request resolution followed
-          by it, ``fetch_region_segments_scores`` is THAT applied to
-          ``fetch_records``, and the statistics scan is it applied to
-          ``validate_records(score, fetch_records(...))`` -- so a kind states
-          its reading once and every consumer gets it (ADR 0008).  Override
-          this and not ``values_from_records``: the resolving entry is
-          shared by every kind, and a read holding an already-resolved
-          request composes this body without going through it (gain#1282).
-        - record_weight(): how many times one record's value counts when a
-          region is aggregated.  Every reader goes through it -- the
-          annotators' ``aggregate_region``, the per-record scan, and the
-          bulk scan via ``record_weights`` (gain#1095).
-        - _aggregation_segments(): whether those records are cut down to
-          the queried window before they are weighed.  Unlike the others
-          this HAS a default -- not clipping -- because it is a
-          consequence of the weight rule rather than a rule of its own: a
-          kind that counts a record once counts it wherever it falls.
-
-        All but the last have no default.  A kind that inherited one would
-        be weighed by a rule nobody chose for it, which is the failure ADR
-        0008 exists to undo.
-
-        A kind's two validation rules are not on this list, and not on this
-        class: they are registered per kind in
-        :mod:`gain.genomic_resources.statistics.record_validation`, whose
-        default refuses a kind nobody wrote one for (ADR 0027).
+        DEFAULT_AGGREGATORS (dict[str, str | None]): The aggregator that
+            each kind of score value gets when its config states none. The
+            value types of a score are the keys. Each kind of score sets it.
 
     See Also:
-        - PositionScore: For position-based genomic scores
-        - AlleleScore: For variant-specific genomic scores
-        - GenomicResource: Base resource abstraction
-        - GenomicPositionTable: Table format abstraction
+        PositionScore, AlleleScore, FragmentScore
     """
 
     # How a value is read off a record.  Installed by :meth:`open`, from the
@@ -316,7 +246,17 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
 
     @staticmethod
     def get_schema() -> dict[str, Any]:
-        """The config this kind accepts; each kind extends it."""
+        """Return the Cerberus schema of the resource config.
+
+        Each kind of score extends this schema.
+
+        Returns
+        -------
+        dict[str, Any]
+            The schema of the config that this kind of score accepts.
+
+        :meta private:
+        """
         return build_genomic_score_schema()
 
     def _build_scoredefs(self) -> dict[str, GenomicScoreDef]:
@@ -366,11 +306,33 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         return refuse_unbuildable_aggregators(scoredefs, self.resource_id)
 
     def get_config(self) -> dict[str, Any]:
-        """The configuration, validated and normalized at construction."""
+        """Return the configuration of the score.
+
+        Returns
+        -------
+        dict[str, Any]
+            The configuration of the resource, as validated and normalized
+            when the score was built. It is the object the score holds, not a
+            copy.
+        """
         return self.config
 
     def get_default_annotation_attributes(self) -> list[Any]:
-        """Collect default annotation attributes."""
+        """Return the default annotation attributes of the resource.
+
+        Returns
+        -------
+        list[Any]
+            The ``default_annotation`` entries of the config. When the config
+            has none, one entry ``{"source": id, "name": id}`` for each score.
+
+        Raises
+        ------
+        TypeError
+            If ``default_annotation`` of the config is not a list.
+
+        :meta private:
+        """
         default_annotation = self.get_config().get("default_annotation")
         if default_annotation is None:
             return [
@@ -385,10 +347,21 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         return default_annotation
 
     def get_default_annotation_attribute(self, score_id: str) -> str | None:
-        """Return default annotation attribute for a score.
+        """Return the default annotation attribute name of a score.
 
-        Returns None if the score is not included in the default annotation.
-        Returns the name of the attribute if present or the score if not.
+        Parameters
+        ----------
+        score_id : str
+            The id of a score of the resource.
+
+        Returns
+        -------
+        str | None
+            The attribute name that the default annotation gives to the
+            score. Several attributes of one score are joined by a comma.
+            ``None`` if the default annotation does not include the score.
+
+        :meta private:
         """
         attributes = self.get_default_annotation_attributes()
         result = []
@@ -403,64 +376,76 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             return ",".join(result)
         return None
 
+    # A score has one owner: every factory in ``genomic_scores.builders``
+    # returns a fresh instance, so closing it affects nobody else, and no method
+    # of this class synchronises anything.  gain-web-api's
+    # ``ThreadSafePipeline`` is a holder that serialises reads, open() and
+    # close() behind one lock per pipeline.  The in-memory scan and the bigWig
+    # fetch refuse rather than return partial results when the table is released
+    # under a reader, which makes the failure loud; it does not prevent it.
     def close(self) -> None:
         """Close the underlying table and mark the score not open.
 
-        :meth:`open` may be called again afterwards.
-
-        **Not safe to call while another thread reads the score.**  A
-        score has one owner: every factory in ``genomic_scores.builders``
-        returns a fresh instance, so closing it affects nobody else, and
-        no method of this class synchronises anything.  A holder that
-        shares one instance across threads must serialise reads,
-        :meth:`open` and :meth:`close` itself -- as gain-web-api's
-        ``ThreadSafePipeline`` does, behind one lock per pipeline.  An
-        unserialised reader that passed :meth:`is_open` can still find the
-        table released under it.  The in-memory scan and the bigWig fetch
-        refuse rather than return partial results when that happens,
-        which makes the failure loud; it does not prevent it.
+        :meth:`open` can run again afterwards. Do not call ``close`` while
+        another thread reads the score: a reader that passed :meth:`is_open`
+        can find the table released. A holder that shares one score across
+        threads must serialise the reads, ``open`` and ``close`` itself.
         """
         self.table.close()
         self.table_loaded = False
         self._stored_chrom_lengths = None
 
     def is_open(self) -> bool:
-        """Whether :meth:`open` has run and :meth:`close` has not since.
+        """Report whether the score is open.
 
-        A snapshot for the score's owner, not a guard against another
-        thread's :meth:`close` -- see there.
+        Returns
+        -------
+        bool
+            ``True`` if :meth:`open` has run and :meth:`close` has not run
+            since. The answer is a snapshot for the owner of the score. It
+            does not protect against a :meth:`close` in another thread.
         """
         return self.table_loaded
 
+    # Validate and route BEFORE opening, and so before publishing.  Every input
+    # to both steps is known at construction -- the table's ``payload_kind``
+    # ClassVar, and the score definitions -- so neither needs the open handle,
+    # and two things fall out of that order:
+    #
+    # * a refusal costs no handle.  Routing after ``table.open()`` would leave a
+    #   caller that is not using the ``with`` form holding an opened pysam
+    #   handle it cannot reach: ``table_loaded`` would still be False, so
+    #   ``close()`` would not have been reached.  Raising first means there is
+    #   nothing to leak.  The bigWig config validation sits here for exactly
+    #   that reason.
+    # * ``table_loaded = True`` is what makes this score report itself open:
+    #   from that write on, a second open() takes the is_open() early return and
+    #   its caller reads ``_extract_value`` straight away.  Routing first means
+    #   a score that says it is open always has its extractor -- the routing has
+    #   no default at all, so the other order would leave an AttributeError for
+    #   anything that trusted is_open() in between.  Pinned by
+    #   test_the_score_is_routed_before_it_reports_itself_open.
+    #
+    # None of this makes open() safe to race: ``resolve_score_indices`` still
+    # runs after the score has published itself open.  A score is not
+    # synchronised and does not claim to be -- a holder sharing one across
+    # threads serialises open(), reads and close() itself (see close()).
     def open(self) -> Self:
-        """Open genomic score resource and returns it.
+        """Open the score for reading and return it.
 
-        **Validate and route BEFORE opening, and so before publishing.**  Every
-        input to both steps is known at construction -- the table's
-        ``payload_kind`` ClassVar, and the score definitions -- so neither
-        needs the open handle, and two things fall out of that order:
+        Call ``open`` before the first read. Entering a ``with`` block does
+        not open the score. Opening an open score does nothing.
 
-        * a refusal costs no handle.  Routing after ``table.open()`` would
-          leave a caller that is not using the ``with`` form holding an opened
-          pysam handle it cannot reach: ``table_loaded`` would still be
-          False, so ``close()`` would not have been reached.  Raising first
-          means there is nothing to leak.  The bigWig config validation sits
-          here for exactly that reason.
-        * ``table_loaded = True`` is what makes this score report itself
-          open: from that write on, a second open() takes the is_open()
-          early return above and its caller reads ``_extract_value``
-          straight away.
-          Routing first means a score that says it is open always has its
-          extractor -- the routing has no default at all, so the other
-          order would leave an AttributeError for anything that trusted
-          is_open() in between.  Pinned by
-          test_the_score_is_routed_before_it_reports_itself_open.
+        Returns
+        -------
+        GenomicScore
+            This score, so the call can chain: ``score.open()``.
 
-        None of this makes open() safe to race: ``resolve_score_indices``
-        still runs after the score has published itself open.  A score is
-        not synchronised and does not claim to be -- a holder sharing one
-        across threads serialises open(), reads and close() itself (see
-        :meth:`close`).
+        Raises
+        ------
+        ValueError
+            If the score definitions do not fit the table, for example when
+            a configured column does not exist.
         """
         if self.is_open():
             logger.info(
@@ -521,26 +506,49 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         assert self.table is not None
         return self.table.header
 
+    # See :func:`~gain.genomic_resources.score_filter.compile_score_filter` for
+    # what compiling settles,
+    # ``docs/adr/0017-score-filtering-is-a-score-capability.md`` for why the
+    # capability sits on the score, and
+    # ``docs/adr/0018-score-filter-grammar-extension.md`` for the language's
+    # precedence and what a name may contain.
     def compile_filter(self, expression: str) -> ScoreFilter:
         """Compile a boolean expression into a filter over this score.
 
-        The expression names this resource's own scores and relates them
-        with ``>``, ``>=``, ``<``, ``<=``, ``==``, ``!=`` and ``in``,
-        combined with ``not``, ``and`` and ``or``; the result is
-        passed back to any of the record reads as ``score_filter``.
+        The expression names scores of this resource and relates them with
+        ``>``, ``>=``, ``<``, ``<=``, ``==``, ``!=`` and ``in``. The
+        relations combine with ``not``, ``and`` and ``or``. Pass the result
+        to a read as ``score_filter``.
 
-        Raises :class:`~gain.genomic_resources.score_filter.ScoreFilterError`
-        on an expression that does not parse or that names a score this
-        resource does not define.  See
-        :func:`~gain.genomic_resources.score_filter.compile_score_filter` for
-        what compiling settles,
-        ``docs/adr/0017-score-filtering-is-a-score-capability.md`` for why
-        the capability sits on the score, and
-        ``docs/adr/0018-score-filter-grammar-extension.md`` for the
-        language's precedence and what a name may contain.
+        Parameters
+        ----------
+        expression : str
+            The filter expression, for example ``"phastCons100way > 0.9"``.
+
+        Returns
+        -------
+        ScoreFilter
+            A filter bound to this score. The reads of another score refuse
+            it.
+
+        Raises
+        ------
+        ScoreFilterError
+            If the expression does not parse, or if it names a score that
+            the resource does not define.
         """
         return compile_score_filter(self, expression)
 
+    # Nothing here is checked before the first ``next()``, the filter's
+    # ownership included: every backend's ``get_records_in_region`` is itself a
+    # generator function, so an unknown contig has always been reported from the
+    # first record read rather than from the call, and there is no eagerness
+    # left to preserve by structuring this any other way.  That is a property of
+    # *this* read rather than a rule for the family: the allele reads check
+    # their request when called, and
+    # ``AlleleScore.get_allele_scores_in_region_agg`` refuses an unknown contig
+    # from the call. ``score_filter=None`` yields what the table yields, which
+    # is all that this method did before filtering became a score capability.
     def fetch_records(
         self,
         chrom: str,
@@ -551,31 +559,39 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     ) -> Generator[Record, None, None]:
         """Yield the records of a region, optionally filtered.
 
-        A caller reads a record's positional fields from its slots
-        (``record[CHROM]``, ``record[POS_BEGIN]``, ...) and a score value
-        through :meth:`get_score_value_from_record` or
-        :meth:`get_score_values_from_record` on this score.
+        Read the positional fields of a record from its slots
+        (``record[CHROM]``, ``record[POS_BEGIN]``, ...). Read a score value
+        with :meth:`get_score_value_from_record`. The generator checks
+        nothing before the first ``next()``: a closed score, an unknown
+        contig and a filter of another score are all reported there, not
+        from the call.
 
-        ``score_filter`` is a predicate from :meth:`compile_filter`, applied
-        to each record; only records it accepts are yielded.  ``None`` --
-        the default -- yields what the table yields, and is the whole of
-        what this method did before filtering became a score capability.
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name. It is required. To read every record of the
+            table, use ``score.table.get_all_records()``.
+        pos_begin : int | None
+            The start of the region. ``None`` means no lower bound.
+        pos_end : int | None
+            The end of the region. ``None`` means no upper bound.
+        score_filter : ScoreFilter | None, default None
+            A filter from :meth:`compile_filter`. When it is not ``None``,
+            the generator yields only the records that the filter accepts.
 
-        ``chrom`` is required, here and throughout the region-read family.
-        A caller that wants every record of a table asks the table:
-        ``score.table.get_all_records()``.
+        Yields
+        ------
+        Record
+            The records that overlap the region, in table order. A region
+            without records yields nothing.
 
-        Nothing here is checked before the first ``next()``, the filter's
-        ownership included: every backend's
-        ``get_records_in_region`` is itself a generator function, so an
-        unknown contig has always been reported from the first record read
-        rather than from the call, and there is no eagerness left to
-        preserve by structuring this any other way.  That is a property of
-        *this* read rather than a rule for the family: the allele reads
-        check their request when called, and
-        :meth:`AlleleScore.get_allele_scores_in_region_agg()
-        <.allele.AlleleScore.get_allele_scores_in_region_agg>` refuses an
-        unknown contig from the call.
+        Raises
+        ------
+        ValueError
+            If the score is not open, or if the table does not hold
+            ``chrom``.
+        ScoreFilterError
+            If ``score_filter`` was compiled by another score.
         """
         records = self.table.get_records_in_region(chrom, pos_begin, pos_end)
         yield from select_records(self, records, score_filter)
@@ -583,7 +599,26 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
     def get_score_value_from_record(
         self, record: Record, score_id: str,
     ) -> ScoreValue:
-        """Read one configured score off a record of this score's table."""
+        """Read one score off a record of this score's table.
+
+        Parameters
+        ----------
+        record : Record
+            A record from :meth:`fetch_records` of this score.
+        score_id : str
+            The id of a score of the resource.
+
+        Returns
+        -------
+        ScoreValue
+            The parsed value. ``None`` if the cell holds no value: a missing
+            cell, an NA sentinel of the score, or a cell that does not parse.
+
+        Raises
+        ------
+        KeyError
+            If the resource does not define ``score_id``.
+        """
         return self._extract_value(record, self.score_definitions[score_id])
 
     def _resolve_score_defs(
@@ -624,54 +659,80 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 f"score=None only when there is exactly one")
         return all_scores[0]
 
+    # A caller resolves score names to definitions once per fetch and passes
+    # them per record, so the name->definition lookup stays out of the
+    # per-record loop.
     def get_score_values_from_record(
         self, record: Record, score_defs: list[GenomicScoreDef],
     ) -> list[ScoreValue]:
-        """Read several scores off one record, for ALREADY-resolved defs.
+        """Read several scores off one record, for resolved definitions.
 
-        The bulk counterpart of :meth:`get_score_value_from_record`: a caller
-        resolves score names to definitions once per fetch and passes them per
-        record, so the name->definition lookup stays out of the per-record
-        loop.
+        The bulk form of :meth:`get_score_value_from_record`.
+
+        Parameters
+        ----------
+        record : Record
+            A record from :meth:`fetch_records` of this score.
+        score_defs : list[GenomicScoreDef]
+            The definitions of the scores to read, taken from
+            ``score_definitions``.
+
+        Returns
+        -------
+        list[ScoreValue]
+            One value for each definition, in the order of ``score_defs``. A
+            value is ``None`` if the cell holds no value.
+
+        :meta private:
         """
         extract = self._extract_value
         return [extract(record, score_def) for score_def in score_defs]
 
+    # Answers the two things a caller can be wrong about: the backend serves the
+    # bulk column-array read, AND every named score is one this facade can
+    # parse. A predicate that answered only the first would say True for a call
+    # that then refuses -- not a capability query but a trap.
+    #
+    # It is not a promise the call cannot fail for some OTHER reason.  A score
+    # whose configured column index does not exist in its backend's payload
+    # still raises (deliberately -- see ``BigWigTable``), and so does a closed
+    # score or an unknown contig.  This answers "is this score the kind this
+    # method serves", not "is every argument valid".
+    #
+    # The value-type half is not a consumer's condition leaking in: the facade
+    # parses, so it serves the value types ``GenomicScoreDef.parse_array``
+    # defines a column parse for (``BULK_PARSEABLE_VALUE_TYPES``) and no others.
+    # What a *consumer* additionally needs stays with the consumer: the
+    # statistics scan also requires a bounded region, and each of its two entry
+    # points asks for its own histogram or min/max pairing (see
+    # ``genomic_scores_impl.scan.can_bulk_histogram`` and ``can_bulk_min_max``).
+    # The scan does not re-test the resource KIND; ADR 0001 records why.  What
+    # it does NOT require is a particular record shape: the accumulator reads
+    # the kind's own ``record_weight`` and the scan's door reads the rule
+    # registered for the kind in ``statistics.record_validation``, so a
+    # position, allele and fragment score are all served.
+    #
+    # Answerable on an UNOPENED score: the table and the score definitions are
+    # both built in ``__init__``, so nothing here touches the file.
     def supports_region_value_arrays(self, scores: list[str]) -> bool:
-        """Whether :meth:`fetch_region_value_arrays` will serve these scores.
+        """Report whether :meth:`fetch_region_value_arrays` serves these scores.
 
-        Answers the two things a caller can be wrong about: the backend
-        serves the bulk column-array read, AND every named score is one this
-        facade can parse.  A predicate that answered only the first would say
-        True for a call that then refuses -- not a capability query but a trap.
+        The answer is ``True`` only if the backend serves the column-array
+        read and every named score has a value type that the array parse
+        supports. The method works on a score that is not open.
 
-        It is not a promise the call cannot fail for some OTHER reason.  A
-        score whose configured column index does not exist in its backend's
-        payload still raises (deliberately -- see ``BigWigTable``), and so
-        does a closed score or an unknown contig.  This answers "is this score
-        the kind this method serves", not "is every argument valid".
+        Parameters
+        ----------
+        scores : list[str]
+            The ids of the scores to read.
 
-        The value-type half is not a consumer's condition leaking in: the
-        facade parses, so it serves the value types
-        :meth:`GenomicScoreDef.parse_array()
-        <gain.genomic_resources.score_def.GenomicScoreDef.parse_array>`
-        defines a column parse for
-        (:data:`~gain.genomic_resources.score_def.BULK_PARSEABLE_VALUE_TYPES`)
-        and no others.  What a *consumer* additionally needs stays with the
-        consumer: the statistics scan also requires a bounded region, and
-        each of its two entry points asks for its own histogram or min/max
-        pairing (see
-        ``genomic_scores_impl.scan.can_bulk_histogram`` and
-        ``can_bulk_min_max``).  The scan does not re-test the resource
-        KIND; ADR 0001 records why.  What it does
-        NOT require is a particular record shape: the accumulator reads the
-        kind's own ``record_weight`` and the scan's door reads the rule
-        registered for the kind in
-        :mod:`gain.genomic_resources.statistics.record_validation`, so a
-        position, allele and fragment score are all served.
-
-        Answerable on an UNOPENED score: the table and the score definitions
-        are both built in ``__init__``, so nothing here touches the file.
+        Returns
+        -------
+        bool
+            ``True`` if :meth:`fetch_region_value_arrays` accepts these
+            scores. ``False`` if the backend has no array read, if a score id
+            is unknown, or if a score has a value type that the parse does
+            not support. An empty list gives the answer of the backend alone.
         """
         if not self.table.supports_value_arrays:
             return False
@@ -763,6 +824,25 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             "not every requested score has a value type the column "
             f"parse serves {sorted(BULK_PARSEABLE_VALUE_TYPES)}")
 
+    # Parsing is the reason a value type the definition cannot parse as a column
+    # is refused, and the reason supports_region_value_arrays asks about the
+    # scores and not only about the backend.  The agreement of ``parse_array``
+    # with the per-value ``parse_value`` is pinned by
+    # test_parse_array_agrees_with_parse_value_fuzz.
+    #
+    # Not clipping is deliberate: what a partial overlap means depends on what
+    # the caller is computing.
+    #
+    # ``batch_size`` is a HINT: a batch also fetches at most
+    # ``VALUE_ARRAYS_CELL_BUDGET`` raw cells.  The budget counts the distinct
+    # columns FETCHED; score ids sharing one payload column still get a parsed
+    # array each, so it does not bound those (see
+    # ``batch_budget.value_arrays_batch_rows()``).  A parse builds one array per
+    # id, so two ids sharing a payload column do not alias.
+    #
+    # The guards below run when this method is CALLED, not on the first
+    # ``next()`` -- which is why the streaming half lives in
+    # ``_value_array_batches`` rather than a ``yield`` here.
     def fetch_region_value_arrays(
         self,
         chrom: str,
@@ -773,51 +853,52 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         batch_size: int = DEFAULT_VALUE_ARRAYS_BATCH_SIZE,
     ) -> Generator[
             RecordArrays, None, None]:
-        """Fetch a region as column arrays, without building a record per row.
+        """Fetch a region as column arrays, without a record for each row.
 
-        The bulk counterpart of :meth:`fetch_records`, for a caller that scans a
-        whole region and wants columns rather than rows -- statistics, above
-        all.  Each batch is ``(pos_begin, pos_end, {score_id: values})``: the
-        one-based position arrays, plus one array of **parsed** values per
-        requested score.
+        The bulk form of :meth:`fetch_records`, for a caller that scans a
+        whole region and wants columns. Call
+        :meth:`supports_region_value_arrays` first. The method checks its
+        arguments when it is called, not at the first ``next()``.
 
-        **Values are parsed, by the same contract the per-record read uses.**
-        Each column goes through :meth:`GenomicScoreDef.parse_array()
-        <gain.genomic_resources.score_def.GenomicScoreDef.parse_array>`, whose
-        agreement with the per-value :meth:`GenomicScoreDef.parse_value()
-        <gain.genomic_resources.score_def.GenomicScoreDef.parse_value>` is
-        pinned by test_parse_array_agrees_with_parse_value_fuzz.  So NA
-        sentinels and unparseable cells arrive as that score's non-value,
-        whatever the backend stores underneath: a ``float`` or ``int`` score
-        yields ``float64`` with ``nan`` for no value, a ``str`` score an
-        ``object`` array with ``None``.  **The array's dtype follows the
-        score's declared type, not the backend's** -- a caller reading several
-        scores in one batch can be handed both shapes.
+        The values are parsed by
+        :meth:`~gain.genomic_resources.score_def.GenomicScoreDef.parse_array`.
+        The dtype of an array follows the value type of the score, not the
+        backend: a ``float`` or ``int`` score gives ``float64`` with ``nan``
+        for no value, and a ``str`` score gives an ``object`` array with
+        ``None``. The method does not clip: a record that overlaps the start
+        of the region arrives whole.
 
-        That parse is why a value type the definition cannot parse as a column
-        is refused, and why :meth:`supports_region_value_arrays` asks about
-        the scores and not only about the backend.
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name.
+        pos_begin : int | None
+            The start of the region. ``None`` means no lower bound.
+        pos_end : int | None
+            The end of the region. ``None`` means no upper bound.
+        scores : list[str]
+            The ids of the scores to read. Each id gets an array of its own.
+        batch_size : int, default 100000
+            A hint for the rows of a batch. It is a ceiling: a batch also
+            stays within a budget of raw cells, so a read of many scores gets
+            fewer rows. A bigWig backend sizes its batches itself and
+            ignores the hint.
 
-        **It does NOT clip.**  A record overlapping the region's start is
-        yielded whole, exactly as :meth:`fetch_records` yields it; trimming to
-        ``[pos_begin, pos_end]`` is the caller's, because what a partial
-        overlap means depends on what the caller is computing.
+        Returns
+        -------
+        Generator[RecordArrays, None, None]
+            Batches of ``(pos_begin, pos_end, {score_id: values})``. The
+            first two items are one-based position arrays. The generator
+            yields nothing for a region without records.
 
-        ``batch_size`` is a HINT, and a ceiling rather than a promise: a batch
-        also fetches at most ``VALUE_ARRAYS_CELL_BUDGET`` raw cells, so a
-        read of many scores gets fewer rows per batch.  The budget counts
-        the distinct columns FETCHED; score ids sharing one payload column
-        still get a parsed array each, so it does not bound those (see
-        ``batch_budget.value_arrays_batch_rows()``).  A backend whose read
-        granularity is fixed by its own windowing -- ``BigWigTable``, whose
-        batches are sized by its adaptive fetch window -- ignores it.
-
-        Each score id gets an array of its own -- the parse builds one per
-        id, so two ids sharing a payload column do not alias.
-
-        The guards below run when this method is CALLED, not on the first
-        ``next()`` -- which is why the streaming half lives in
-        ``_value_array_batches`` rather than a ``yield`` here.
+        Raises
+        ------
+        TypeError
+            If :meth:`supports_region_value_arrays` is ``False`` for
+            ``scores``.
+        ValueError
+            If the score is not open, or if the table does not hold
+            ``chrom``.
         """
         if not self.supports_region_value_arrays(scores):
             # Refuse here rather than let the call reach the table.  A VCF
@@ -907,89 +988,129 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         }
 
     def get_all_chromosomes(self) -> list[str]:
-        """The chromosome names the score's table holds, in table order.
+        """Return the chromosome names that the score's table holds.
 
-        Raises ``ValueError`` on a score that is not open.
+        Returns
+        -------
+        list[str]
+            The names, in table order.
+
+        Raises
+        ------
+        ValueError
+            If the score is not open.
         """
         self._require_open()
         return self.table.get_chromosomes()
 
+    # The yes/no half of ``get_all_chromosomes``, and what every contig screen
+    # in the read path asks -- the annotators' pre-read screens, the shared
+    # region-read refusal, the position kind's absent-contig branch and both
+    # allele reads' refusals.  All of them spelled ``chrom not in
+    # self.get_all_chromosomes()``, a walk of the ordered list whose cost grew
+    # with the resource's contig count and with the contig's index in it, and
+    # grew WORST for a contig the resource does not carry (gain#1304).
+    #
+    # It raises on a score that is not open, exactly as ``get_all_chromosomes``
+    # does and for the same reason: those screens got that refusal for free from
+    # the accessor they used, and a predicate that answered ``False`` instead
+    # would turn "this score was never opened" into "this score does not carry
+    # that contig" at every one of them.
+    #
+    # The ordered list keeps its meaning, its order and its aliasing for the
+    # callers that genuinely need the collection -- a statistics scan splitting
+    # a genome into region tasks, the resource implementation's contig report.
+    # This is for the ones that only ever asked a question.
     def has_chromosome(self, chrom: str) -> bool:
-        """Answer whether this score's table carries ``chrom``.
+        """Report whether the score's table carries a chromosome.
 
-        The yes/no half of :meth:`get_all_chromosomes`, and what every
-        contig screen in the read path asks -- the annotators' pre-read
-        screens, the shared region-read refusal, the position kind's
-        absent-contig branch and both allele reads' refusals.  All of them
-        spelled ``chrom not in self.get_all_chromosomes()``, a walk of the
-        ordered list whose cost grew with the resource's contig count and
-        with the contig's index in it, and grew WORST for a contig the
-        resource does not carry, since that walks the whole list before it
-        can say no (gain#1304).
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name.
 
-        Raises ``ValueError`` on a score that is not open, exactly as
-        :meth:`get_all_chromosomes` does and for the same reason: those
-        screens got that refusal for free from the accessor they used, and a
-        predicate that answered ``False`` instead would turn "this score was
-        never opened" into "this score does not carry that contig" at every
-        one of them.
+        Returns
+        -------
+        bool
+            ``True`` if the table holds ``chrom``, ``False`` otherwise.
 
-        The ordered list keeps its meaning, its order and its aliasing for
-        the callers that genuinely need the collection -- a statistics scan
-        splitting a genome into region tasks, the resource implementation's
-        contig report.  This is for the ones that only ever asked a question.
+        Raises
+        ------
+        ValueError
+            If the score is not open.
         """
         self._require_open()
         return self.table.has_chromosome(chrom)
 
+    # Declared on the backend class, so answered on a closed score -- which is
+    # what a caller weighing whether to open the table for its lengths at all
+    # (coverage's second rung, gain#1448) needs.  The lengths themselves come
+    # from ``chrom_lengths.derive_chrom_lengths``.
     @property
     def chrom_length_source(self) -> ChromLengthSource:
-        """What the score's own file can say a contig's length is.
+        """Return the source of chromosome lengths in the score's own table.
 
-        Declared on the backend class, so answered on a closed score --
-        which is what a caller weighing whether to open the table for its
-        lengths at all (coverage's second rung, gain#1448) needs.  The
-        lengths themselves come from
-        :func:`~.chrom_lengths.derive_chrom_lengths`.
+        The answer is known without opening the table, so it works on a
+        score that is not open.
         """
         return self.table.chrom_length_source
 
+    # Answered on an open score only: which file is current is decided at
+    # open(), so a closed score could only guess.
     @property
     def chrom_length_sources(self) -> list[ChromLengthSource]:
-        """The sources this score can answer a length from, best first.
+        """The sources that the score can answer a length from, best first.
 
-        The stored file's, or the table's own source alone -- stored or
-        live as :meth:`get_chrom_length` says.  Answered on an open score
-        only: which file is current is decided at :meth:`open`, so a
-        closed score could only guess.  Raises ``ValueError`` otherwise.
+        The sources of the stored lengths file, or the source of the table
+        alone. Reading the property on a score that is not open raises
+        ``ValueError``.
         """
         self._require_open()
         stored = self._stored_chrom_lengths
         return [self.chrom_length_source] if stored is None else stored.sources
 
+    # Mirrors ``ReferenceGenome.get_chrom_length``: an ``int`` or a
+    # ``ValueError``.
+    #
+    # The lengths come from the ``chrom_lengths.json`` the last repair stored,
+    # when open() found it current: the whole ladder, genome rung included, at
+    # the cost of a dict lookup.  Without it the table alone answers, live on
+    # every call -- on a tabix score the index probe each time -- and
+    # ``REFERENCE_GENOME`` is refused until a repair stores it; the score holds
+    # no genome of its own.  The refusal for a contig no source answers is
+    # worded by the table, which says whether it is empty or unmeasured.
     def get_chrom_length(
         self, chrom: str,
         source: ChromLengthSource | str | None = None,
     ) -> int:
-        """The length of ``chrom``: the best-ranked source's, or ``source``'s.
+        """Return the length of a chromosome.
 
-        Mirrors :meth:`ReferenceGenome.get_chrom_length`: an ``int`` or a
-        ``ValueError``.  How far to trust the number is the source's
-        business -- only a genome's and a bigWig header's are exact --
-        and :meth:`get_chrom_length_source` says which one answered.
+        The best-ranked source answers by default. The source tells how far
+        to trust the number: only the reference genome and a bigWig header
+        are exact. :meth:`get_chrom_length_source` says which source
+        answered.
 
-        From the ``chrom_lengths.json`` the last repair stored, when
-        :meth:`open` found it current: the whole ladder, genome rung
-        included, at the cost of a dict lookup.  Without it the table
-        alone answers, live on every call -- on a tabix score the index
-        probe each time -- and ``REFERENCE_GENOME`` is refused until a
-        repair stores it; the score holds no genome of its own.
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name.
+        source : ChromLengthSource | str | None, default None
+            The source to answer from, or its string value. ``None`` means
+            the best-ranked source.
 
-        ``source`` is a :class:`ChromLengthSource` or its string value.
-        Raises ``ValueError`` on a score that is not open, a contig the
-        score does not carry, a source that is none of the four, a source
-        with no answer for ``chrom``, and a contig no source answers --
-        in the table's words, which say whether it is empty or unmeasured.
+        Returns
+        -------
+        int
+            The length of ``chrom``.
+
+        Raises
+        ------
+        ValueError
+            If the score is not open, if the table does not hold ``chrom``,
+            if ``source`` is none of the four sources, if the source has no
+            answer for ``chrom``, or if no source can measure ``chrom``.
+            A ``source`` of ``reference_genome`` raises on a score whose
+            repair did not store the lengths.
         """
         self._require_open_and_known_chrom(chrom)
         wanted = as_chrom_length_source(source)
@@ -1006,22 +1127,38 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 contigs=self.get_all_chromosomes())
         return resolved.answers[wanted]
 
+    # Mirrors ``ReferenceGenome.get_all_chrom_lengths``.  A contig with no
+    # answer from the chosen view is left out, never an error -- a caller that
+    # needs to know WHY reads ``chrom_lengths.derive_chrom_lengths``.  The cost
+    # is that of get_chrom_length, times the contig count.
+    #
+    # ``REFERENCE_GENOME`` raises on a score with no stored lengths because it
+    # is the one source the table can never supply, so an empty answer would
+    # hide the repair that fills it.
     def get_all_chrom_lengths(
         self, source: ChromLengthSource | str | None = None,
     ) -> dict[str, int]:
-        """Every contig's length, keyed by contig in the table's order.
+        """Return the length of every chromosome.
 
-        Mirrors :meth:`ReferenceGenome.get_all_chrom_lengths`.  The
-        best-ranked answer per contig, or ``source``'s; a contig with no
-        answer from the chosen view is left out, never an error -- a
-        caller that needs to know WHY reads
-        :func:`~.chrom_lengths.derive_chrom_lengths`.  Stored or live as
-        :meth:`get_chrom_length` says, times the contig count.
+        Parameters
+        ----------
+        source : ChromLengthSource | str | None, default None
+            The source to answer from, or its string value. ``None`` means
+            the best-ranked source for each chromosome.
 
-        Raises ``ValueError`` on a score that is not open, a source that
-        is none of the four, and ``REFERENCE_GENOME`` on a score with no
-        stored lengths -- the one source the table can never supply, so
-        an empty answer would hide the repair that fills it.
+        Returns
+        -------
+        dict[str, int]
+            The lengths, keyed by chromosome in table order. A chromosome
+            that the chosen view cannot answer is left out. The dict is empty
+            if no chromosome has an answer.
+
+        Raises
+        ------
+        ValueError
+            If the score is not open, if ``source`` is none of the four
+            sources, or if ``source`` is ``reference_genome`` on a score
+            with no stored lengths.
         """
         self._require_open()
         wanted = as_chrom_length_source(source)
@@ -1041,10 +1178,23 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         }
 
     def get_chrom_length_source(self, chrom: str) -> ChromLengthSource:
-        """Where :meth:`get_chrom_length` reads ``chrom``'s length from.
+        """Return the source that answers :meth:`get_chrom_length`.
 
-        The same refusals as the default read, including a contig no
-        source answers: a source of nothing is not an answer.
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name.
+
+        Returns
+        -------
+        ChromLengthSource
+            The best-ranked source that has an answer for ``chrom``.
+
+        Raises
+        ------
+        ValueError
+            For the same reasons as :meth:`get_chrom_length`, including a
+            chromosome that no source answers.
         """
         self._require_open_and_known_chrom(chrom)
         return self._best_chrom_length(chrom).source
@@ -1083,15 +1233,54 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
                 "chromosome lengths for its reference genome; repair the "
                 "resource to store them")
 
+    # Answered by the table, which knows how it opens: the file set has to be
+    # known before any of the files is.
     def resource_files(self) -> set[str]:
-        """The resource's files the score reads: the data file, plus the
-        index on a backend that reads one.
+        """Return the files of the resource that the score reads.
 
-        Answered by the table, which knows how it opens, on a closed score
-        -- the file set has to be known before any of the files is.
+        Returns
+        -------
+        set[str]
+            The data file, and the index file on a backend that reads one.
+            The method works on a score that is not open.
+
+        :meta private:
         """
         return self.table.resource_files()
 
+    # The region read expressed as a function OF a record stream, which is what
+    # lets the two consumers of a region differ by what they COMPOSE rather than
+    # by a flag: ``fetch_region_segments_scores`` is this applied to
+    # ``fetch_records``, and the statistics scan is this applied to
+    # ``validate_records(score, fetch_records(...))``.  Neither can quietly
+    # acquire the other's behaviour, and no argument travels down to say which
+    # of the two is reading (ADR 0008).
+    #
+    # Not to be confused with ``get_score_values_from_record``, which reads ONE
+    # record to its ``list[ScoreValue]``; this yields a segment per record, at
+    # the record's own extent, and takes no window: nothing is fetched here, and
+    # nothing is reshaped either.  What a partial overlap means belongs to the
+    # caller (ADR 0008); a consumer answering a question about the window clips
+    # with ``records.clip_span``.
+    #
+    # The guards run when this is CALLED rather than on the first ``next()`` --
+    # the pattern ``fetch_records`` documents -- which is why the streaming half
+    # lives in ``_score_segments``.  They stay here rather than moving down into
+    # ``fetch_records`` because that is not where the request is: half of what
+    # they resolve is the score ids, which ``fetch_records`` is not even given,
+    # and the contig half would be a THIRD screen of the same contig in one read
+    # -- after this one and before the backend's own, which refuses an unknown
+    # contig from ``get_records_in_region`` regardless.  This used to be argued
+    # on cost, from a time when each screen walked the ordered contig list;
+    # since gain#1304 the screen is a set lookup and the argument is only about
+    # where a request is resolved, which is here.
+    #
+    # What a kind yields is ``_score_segments``, and not this method: the
+    # resolution is the same for every kind, the reading is not, and since
+    # gain#1282 they are split so that a kind states only the half that is its
+    # own.  Override THAT to say what a record means here; overriding this one
+    # would take the resolution with it, and would be skipped by a read that
+    # enters below it holding definitions it has already resolved.
     def values_from_records(
         self,
         records: Iterator[Record],
@@ -1099,47 +1288,36 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         scores: Sequence[str] | None = None,
     ) -> Generator[
             tuple[int, int, list[ScoreValue]], None, None]:
-        """Extract this kind's ``(begin, end, values)`` from raw records.
+        """Extract ``(begin, end, values)`` segments from raw records.
 
-        The region read expressed as a function OF a record stream, which is
-        what lets the two consumers of a region differ by what they COMPOSE
-        rather than by a flag: :meth:`fetch_region_segments_scores` is this
-        applied to :meth:`fetch_records`, and the statistics scan is this
-        applied to
-        ``validate_records(score, fetch_records(...))``.  Neither can quietly
-        acquire the other's behaviour, and no argument travels down to say
-        which of the two is reading (ADR 0008).
+        Unlike :meth:`get_score_values_from_record`, which reads one
+        record, this method yields one segment for each record. It takes no
+        window: it fetches and reshapes nothing.
 
-        Not to be confused with :meth:`get_score_values_from_record`, which
-        reads ONE record to its ``list[ScoreValue]``; this yields a segment
-        per record, at the record's own extent, and takes no window: nothing
-        is fetched here, and nothing is reshaped either.
-        What a partial overlap means belongs to the caller (ADR 0008); a
-        consumer answering a question about the window clips with
-        :func:`~.records.clip_span`.  ``chrom`` names the contig the records
-        were asked for, and with ``scores`` it is what the guards below
-        resolve.
+        Parameters
+        ----------
+        records : Iterator[Record]
+            Records fetched for ``chrom``.
+        chrom : str
+            The chromosome the records were fetched for.
+        scores : Sequence[str] | None, default None
+            The ids of the scores to extract. ``None`` means every score of
+            the resource.
 
-        The guards run when this is CALLED rather than on the first
-        ``next()`` -- the pattern :meth:`fetch_records` documents -- which is
-        why the streaming half lives in ``_score_segments``.  They
-        stay here rather than moving down into ``fetch_records`` because
-        that is not where the request is: half of what they resolve is the
-        score ids, which ``fetch_records`` is not even given, and the contig
-        half would be a THIRD screen of the same contig in one read -- after
-        this one and before the backend's own, which refuses an unknown
-        contig from ``get_records_in_region`` regardless.  This used to be
-        argued on cost, from a time when each screen walked the ordered
-        contig list; since gain#1304 the screen is a set lookup and the
-        argument is only about where a request is resolved, which is here.
+        Returns
+        -------
+        Generator[tuple[int, int, list[ScoreValue]], None, None]
+            One segment for each record, at the extent of the record. The
+            values follow the order of ``scores``.
 
-        What a kind yields is :meth:`_score_segments`, and not this method:
-        the resolution above is the same for every kind, the reading below
-        is not, and since gain#1282 they are split so that a kind states
-        only the half that is its own.  Override THAT to say what a record
-        means here; overriding this one would take the resolution with it,
-        and would be skipped by a read that enters below it holding
-        definitions it has already resolved.
+        Raises
+        ------
+        ValueError
+            If the score is not open, if the table does not hold ``chrom``,
+            or if a score id is unknown. The checks run when the method is
+            called.
+
+        :meta private:
         """
         score_defs = self._region_read_defs(chrom, scores)
         return self._score_segments(records, score_defs)
@@ -1249,6 +1427,28 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             yield (rec_begin, rec_end, [
                 extract(record, score_def) for score_def in score_defs])
 
+    # The records of the region, read as this kind means them.  A plain read: it
+    # checks nothing.  The statistics scan reads the same records through the
+    # same transform with ``record_validation.validate_records`` composed in
+    # front, and that extra link -- visible at the consumer, in
+    # ``genomic_scores_impl/scan.py`` -- is the whole of the difference between
+    # the two (ADR 0008).
+    #
+    # ``score_filter`` travels to ``fetch_records`` and nowhere else: the
+    # records it rejects never reach the transform, so a rejected record costs
+    # no value extraction.  It reads the RECORD, so it may name any score the
+    # resource defines, including one outside ``scores``.  It is not a second
+    # kind of read and it selects nothing the record read would not.
+    #
+    # Its ownership check is the one refusal here that does NOT land on the
+    # call.  It rides ``fetch_records``, whose generator body defers it, where
+    # the request checks ``values_from_records`` runs are eager.
+    #
+    # One body per kind, in ``_score_segments``, rather than one per kind per
+    # consumer: two that had to agree is how the paths drift.  The fragment
+    # plane reads through this method for that reason (gain#1272), and the
+    # position plane reaches the same body with an already-resolved request
+    # (gain#1282) -- different entries, one reading.
     def fetch_region_segments_scores(
         self,
         chrom: str,
@@ -1259,122 +1459,143 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         score_filter: ScoreFilter | None = None,
     ) -> Generator[
             tuple[int, int, list[ScoreValue]], None, None]:
-        """Yield ``(begin, end, values)`` per record touching the region.
+        """Yield ``(begin, end, values)`` for each record that touches a region.
 
-        One tuple per underlying RECORD -- a segment, at that record's own
-        extent -- not one value per position.  The region's records, read as
-        this kind means them.  A record straddling the region's edge is
-        reported whole: what a partial overlap means depends on what the
-        caller is computing, so a caller answering a question about the
-        window composes :func:`~.records.clip_to_region` over this stream, or
-        calls :func:`~.records.clip_span` per segment (ADR 0008).
+        A segment is one record at its own extent, not one value for each
+        position. A record on the edge of the region arrives whole. To
+        answer a question about the window, clip the segments with
+        ``gain.genomic_resources.genomic_scores.records.clip_span``.
 
-        ``score_filter`` -- from :meth:`compile_filter` -- travels to
-        :meth:`fetch_records` and nowhere else: the records it rejects
-        never reach the transform, so a rejected record costs no value
-        extraction.  It reads the RECORD, so it may name any score the
-        resource defines, including one outside ``scores``.  It is not a
-        second kind of read and it selects nothing the record read would
-        not: the composition below is the same one either way, with a
-        filtered stream in place of an unfiltered one.
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name.
+        pos_begin : int | None, default None
+            The start of the region. ``None`` means no lower bound.
+        pos_end : int | None, default None
+            The end of the region. ``None`` means no upper bound.
+        scores : Sequence[str] | None, default None
+            The ids of the scores to read. ``None`` means every score of
+            the resource.
+        score_filter : ScoreFilter | None, default None
+            A filter from :meth:`compile_filter`. The filter reads the
+            whole record, so it can name a score outside ``scores``.
 
-        Its ownership check is the one refusal here that does NOT land on
-        the call.  It rides :meth:`fetch_records`, whose generator body
-        defers it and which says so, where the request checks
-        :meth:`values_from_records` runs are eager -- so a filter
-        compiled against a different score is refused on the first
-        ``next()``, not from the call that a closed score, an unknown
-        contig and an unknown score id are refused from.
+        Returns
+        -------
+        Generator[tuple[int, int, list[ScoreValue]], None, None]
+            The segments, in table order. The values follow the order of
+            ``scores``. A region without records yields nothing.
 
-        A plain read: it checks nothing.  The statistics scan reads the same
-        records through the same transform with
-        :func:`~gain.genomic_resources.statistics.record_validation.validate_records`
-        composed in front, and that extra link -- visible at the consumer,
-        in ``genomic_scores_impl/scan.py`` -- is the whole of the
-        difference
-        between the two (ADR 0008).
-
-        One body per kind, in :meth:`_score_segments`, rather than one per
-        kind per consumer: two that had to agree is how the paths drift.
-        The fragment plane reads through this method for that reason
-        (gain#1272), and the position plane reaches the same body with an
-        already-resolved request (gain#1282) -- different entries, one
-        reading.
+        Raises
+        ------
+        ValueError
+            If the score is not open, if the table does not hold ``chrom``,
+            or if a score id is unknown. The call raises these errors.
+        ScoreFilterError
+            If ``score_filter`` was compiled by another score. The first
+            ``next()`` raises this error, not the call.
         """
         return self.values_from_records(
             self.fetch_records(
                 chrom, pos_begin, pos_end, score_filter=score_filter),
             chrom, scores)
 
+    # The kind's single statement of the weight rule, and every reader that
+    # weighs a RECORD goes through it: ``aggregate_region`` folds with it, the
+    # per-record statistics scan calls it, and the bulk scan broadcasts it over
+    # a whole batch through ``record_weights``.  One statement, so a kind cannot
+    # weigh its records one way in one of those and another way in the next.
+    # Pinned by test_the_weight_rule_is_stated_once_per_kind.
+    #
+    # A position score's logical plane is deliberately NOT among them.  It tiles
+    # POSITIONS rather than folding records -- ``get_scores_in_region_agg``
+    # weighs each run by its length -- and since gain#1131 that is the path
+    # annotation takes.  The two agree for this kind, a clipped record's width
+    # being exactly the length of the run it covers, but they agree by
+    # arithmetic rather than by reading one statement, so a change here is not
+    # automatically a change there.
+    #
+    # An implementation must be numpy-elementwise -- an arithmetic expression
+    # over ``left`` and ``right``, or a constant.  It is declared over scalars
+    # because that is what its per-record callers hand it, but
+    # ``record_weights`` answers a whole batch by handing it the position
+    # COLUMNS instead, and only an elementwise body gives the same answers that
+    # way.
+    #
+    # Most ways of breaking that break loudly -- a body branching on ``left``
+    # raises ``ValueError`` on an array's ambiguous truth, one calling ``int()``
+    # a ``TypeError``.  The contract is written down for the ones that do not: a
+    # body REDUCING its arguments (``int(np.mean(right - left + 1))``) hands
+    # back a plain number, which is then broadcast as though it were every
+    # record's weight, and the two scan paths disagree with nothing raised.
+    # That is what test_the_weight_rule_is_stated_once_per_kind's
+    # broadcast-agreement assertion is there to catch.
+    #
+    # Deriving a weight from the span unconditionally is what this hook exists
+    # to prevent: it would give a fragment its length as a weight and disagree
+    # with the fragment score annotator for every fragment longer than one base
+    # pair.
     @classmethod
     @abstractmethod
     def record_weight(cls, left: int, right: int) -> int:
-        """How many times one record's value counts when aggregating.
+        """Return how many times one record counts when a region is aggregated.
 
-        The rule is a property of the resource TYPE: a position-score
-        record counts once per base pair of the queried region it covers,
-        an allele line counts once, a fragment counts once however long it
-        is.  One record, one count, is the answer for everything except a
-        position score.
+        A position-score record counts once for each base pair of the
+        queried region that it covers. An allele record counts once. A
+        fragment counts once, however long it is.
 
-        **The kind's single statement of that rule**, and every reader that
-        weighs a RECORD goes through it: :meth:`aggregate_region` folds
-        with it, the per-record statistics scan calls it, and the bulk scan
-        broadcasts it over a whole batch through :meth:`record_weights`.
-        One statement, so a kind cannot weigh its records one way in one
-        of those and another way in the next.  Pinned by
-        test_the_weight_rule_is_stated_once_per_kind.
+        Implement it with an expression that works on numpy arrays as well
+        as on numbers: :meth:`record_weights` calls it with the position
+        columns of a batch.
 
-        A position score's logical plane is deliberately NOT among them.
-        It tiles POSITIONS rather than folding records --
-        ``get_scores_in_region_agg`` weighs each run by its length -- and
-        since gain#1131 that is the path annotation takes.  The two agree
-        for this kind, a clipped record's width being exactly the length of
-        the run it covers, but they agree by arithmetic rather than by
-        reading one statement, so a change here is not automatically a
-        change there.
+        Parameters
+        ----------
+        left : int
+            The first position of the record, clipped to the region.
+        right : int
+            The last position of the record, clipped to the region.
 
-        **An implementation must be numpy-elementwise** -- an arithmetic
-        expression over ``left`` and ``right``, or a constant.  It is
-        declared over scalars because that is what its per-record callers
-        hand it, but :meth:`record_weights` answers a whole batch by
-        handing it the position COLUMNS instead, and only an elementwise
-        body gives the same answers that way.
+        Returns
+        -------
+        int
+            The weight of the record.
 
-        Most ways of breaking that break loudly -- a body branching on
-        ``left`` raises ``ValueError`` on an array's ambiguous truth, one
-        calling ``int()`` a ``TypeError``.  The contract is written down
-        for the ones that do not: a body REDUCING its arguments
-        (``int(np.mean(right - left + 1))``) hands back a plain number,
-        which is then broadcast as though it were every record's weight,
-        and the two scan paths disagree with nothing raised.  That is what
-        test_the_weight_rule_is_stated_once_per_kind's broadcast-agreement
-        assertion is there to catch.
-
-        Deriving a weight from the span unconditionally is what this hook
-        exists to prevent: it would give a fragment its length as a weight
-        and disagree with the fragment score annotator for every fragment
-        longer than one base pair.
+        :meta private:
         """
         raise NotImplementedError
 
+    # The bulk statistics scan has no record to hand the scalar hook, so it
+    # weighs a batch here instead.  This does not restate the rule -- it
+    # broadcasts the ONE statement of it, which is why the scan may not read the
+    # weight anywhere else.
+    #
+    # The widening is the elementwise contract being spent: the hook is declared
+    # over scalars and its bodies are arithmetic, so the same expression answers
+    # a column.  A kind whose weight is a CONSTANT answers with that constant
+    # however it was called, so a 0-d result is filled out to the batch's shape
+    # rather than treated as an error.
     @classmethod
     def record_weights(
         cls, begins: np.ndarray, ends: np.ndarray,
     ) -> np.ndarray:
-        """:meth:`record_weight` over a whole batch's position columns.
+        """Return :meth:`record_weight` for the position columns of a batch.
 
-        The bulk statistics scan has no record to hand the scalar hook, so
-        it weighs a batch here instead.  This does not restate the rule --
-        it broadcasts the ONE statement of it, which is why the scan may
-        not read the weight anywhere else.
+        Parameters
+        ----------
+        begins : np.ndarray
+            The first positions of the records.
+        ends : np.ndarray
+            The last positions of the records.
 
-        The widening is the elementwise contract being spent: the hook is
-        declared over scalars and its bodies are arithmetic, so the same
-        expression answers a column.  A kind whose weight is a CONSTANT
-        answers with that constant however it was called, so a 0-d result
-        is filled out to the batch's shape rather than treated as an
-        error.
+        Returns
+        -------
+        np.ndarray
+            An ``int64`` array with the weight of each record. A kind with a
+            constant weight gets the constant repeated to the shape of
+            ``begins``.
+
+        :meta private:
         """
         # One marker for one fact -- the scalar-declared hook is being
         # called on whole columns, which is the contract its docstring
@@ -1385,6 +1606,29 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             weights = np.full(begins.shape, weights)
         return weights.astype(np.int64, copy=False)
 
+    # The aggregating counterpart of ``fetch_region_segments_scores``, which it
+    # is built on: that method yields one entry per record, this one folds those
+    # entries into a single value per request.
+    #
+    # The default aggregator of a score is the one
+    # ``score_def.finish_scoredefs`` resolved from this class's
+    # ``DEFAULT_AGGREGATORS``.
+    #
+    # ``["s", ("s", "max")]`` is what an annotation config does when it exposes
+    # one source as both a min and a max attribute, and a dict keyed by score id
+    # would silently drop one of them.
+    #
+    # ``count`` chooses to report nothing rather than 0 for an empty region (see
+    # ``CountAggregator.get_final``); this method does not second-guess any
+    # aggregator.  That is deliberately unlike the per-position reads
+    # (``get_scores_at_position``, ``get_allele_scores_for_allele``), which
+    # answer ``None`` where there is no data -- aggregating nothing is a
+    # well-defined question, reading a value where there is none is not.
+    #
+    # Values reach the aggregator exactly as the record carried them, ``None``
+    # included, because that is what the annotators do (each aggregator decides
+    # what a null means for it) and the point of this method is to give the
+    # answer they would.
     def aggregate_region(
         self,
         chrom: str,
@@ -1392,39 +1636,37 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         pos_end: int | None = None,
         scores: list[str | tuple[str, str]] | None = None,
     ) -> list[ScoreValue]:
-        """Reduce a region to one value per requested score.
+        """Reduce a region to one value for each requested score.
 
-        The aggregating counterpart of :meth:`fetch_region_segments_scores`,
-        which it is built on: that method yields one entry per record, this
-        one folds
-        those entries into a single value per request.
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name.
+        pos_begin : int | None, default None
+            The start of the region. ``None`` means no lower bound.
+        pos_end : int | None, default None
+            The end of the region. ``None`` means no upper bound.
+        scores : list[str | tuple[str, str]] | None, default None
+            The requests. A request is a score id, reduced by the default
+            aggregator of the score, or a pair ``(score_id, aggregator)``
+            that names the aggregator. An aggregator string can carry
+            parameters, for example ``join(,)``. ``None`` requests every
+            score with its default aggregator.
 
-        Each request is either a score id -- aggregated with the resource's
-        own default, which ``score_def.finish_scoredefs`` resolved from
-        this class's ``DEFAULT_AGGREGATORS`` -- or a ``(score_id, aggregator)``
-        pair naming one explicitly.  The aggregator string is whatever the
-        config accepts, parametrized forms (``join(,)``) included.
+        Returns
+        -------
+        list[ScoreValue]
+            One value for each request, in the order of ``scores``. A score
+            can be requested twice with two aggregators, so the result is a
+            list and not a dict. An empty region is not an error: each
+            aggregator answers for itself, and ``max`` and ``count`` give
+            ``None``, while ``list`` gives ``[]``.
 
-        **Returns a list parallel to ``scores``, not a dict.**  One score
-        may legitimately be requested twice with different aggregators --
-        ``["s", ("s", "max")]``, which is what an annotation config does
-        when it exposes one source as both a min and a max attribute -- and
-        a dict keyed by score id would silently drop one of them.
-
-        An empty region is not an error: each aggregator answers for
-        itself.  ``list`` returns ``[]``; ``max`` returns ``None``; and so
-        does ``count``, which chooses to report nothing rather than 0 for an
-        empty region (see ``CountAggregator.get_final``).  This method does
-        not second-guess any of them.  That is deliberately unlike the
-        per-position reads (``get_scores_at_position``,
-        ``get_allele_scores_for_allele``), which answer ``None`` where there
-        is no data -- aggregating nothing is a well-defined question,
-        reading a value where there is none is not.
-
-        Values reach the aggregator exactly as the record carried them,
-        ``None`` included, because that is what the annotators do (each
-        aggregator decides what a null means for it) and the point of this
-        method is to give the answer they would.
+        Raises
+        ------
+        ValueError
+            If the score is not open, if the table does not hold ``chrom``,
+            if a score id is unknown, or if an aggregator name is not valid.
         """
         requests = resolve_aggregator_requests(
             scores,

@@ -92,14 +92,32 @@ def build_fragment_score_from_resource_id(
 def build_score_from_resource(
     resource: GenomicResource,
 ) -> GenomicScore:
-    """Build a genomic score resource and return the coresponding score.
+    """Build the score of a score resource, whatever its kind.
 
-    Dispatches on the resource type to the corresponding typed factory. Use
-    the typed factories directly when the resource type is known statically;
-    this one exists for callers handed a resource of unknown type.
+    The function reads the ``type`` of the resource and calls the factory
+    of that kind. Use the factory of the kind when the type is known. Use
+    this function when the type is not.
 
-    Every kind yields a fresh instance per call, so the caller owns the
-    score it gets back and closing it affects nothing else.
+    Parameters
+    ----------
+    resource : GenomicResource
+        A resource of type ``position_score``, ``allele_score`` or
+        ``fragment_score``. The legacy type ``cnv_collection`` also
+        names a fragment score.
+
+    Returns
+    -------
+    GenomicScore
+        A new :class:`PositionScore`, :class:`AlleleScore` or
+        :class:`FragmentScore`. Each call returns a new score that the
+        caller owns, so closing it affects nothing else. The score is
+        closed: call ``open()`` before the first read.
+
+    Raises
+    ------
+    ValueError
+        If the resource is not of a score type, or if it declares a
+        retired type such as ``np_score``.
     """
     resource_type = resource.get_type()
     reject_retired_resource(resource)
@@ -118,6 +136,35 @@ def build_score_from_resource(
 def build_score_from_resource_id(
     resource_id: str, grr: GenomicResourceRepo | None = None,
 ) -> GenomicScore:
+    """Build the score of the score resource with a given id.
+
+    The function finds the resource in the repository and calls
+    :func:`build_score_from_resource`.
+
+    Parameters
+    ----------
+    resource_id : str
+        The id of a score resource in the repository.
+    grr : GenomicResourceRepo | None, default None
+        The repository that resolves ``resource_id``. When it is
+        ``None``, the function builds the default repository with
+        ``build_genomic_resource_repository()``.
+
+    Returns
+    -------
+    GenomicScore
+        A new :class:`PositionScore`, :class:`AlleleScore` or
+        :class:`FragmentScore`. The score is closed: call ``open()``
+        before the first read.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the repository has no resource with this id.
+    ValueError
+        If the resource is not of a score type, or if it declares a
+        retired type such as ``np_score``.
+    """
     if grr is None:
         grr = build_genomic_resource_repository()
     return build_score_from_resource(grr.get_resource(resource_id))

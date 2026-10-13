@@ -194,9 +194,56 @@ source can measure — is a ``ValueError``.
 API
 ---
 
+``GenomicScore`` is defined in the module
+``gain.genomic_resources.genomic_scores.base`` and is imported from the
+package ``gain.genomic_resources.genomic_scores``. ``GenomicScoreDef`` is
+defined in the module ``gain.genomic_resources.score_def``. ``ScoreFilter`` is
+defined in the module ``gain.genomic_resources.score_filter``. ``GenomicScore``
+is also exported by ``gain.grr``, as ``grr.GenomicScore``. The generic
+factories ``grr.build_score_from_resource_id`` and
+``grr.build_score_from_resource`` are described on :doc:`factories`.
+
 .. currentmodule:: gain.genomic_resources.genomic_scores
 
-.. autofunction:: build_score_from_resource_id
+.. autosummary::
+
+   GenomicScore
+   GenomicScore.aggregate_region
+   GenomicScore.chrom_length_source
+   GenomicScore.chrom_length_sources
+   GenomicScore.close
+   GenomicScore.compile_filter
+   GenomicScore.fetch_records
+   GenomicScore.fetch_region_segments_scores
+   GenomicScore.fetch_region_value_arrays
+   GenomicScore.get_all_chrom_lengths
+   GenomicScore.get_all_chromosomes
+   GenomicScore.get_chrom_length
+   GenomicScore.get_chrom_length_source
+   GenomicScore.get_config
+   GenomicScore.get_score_value_from_record
+   GenomicScore.has_chromosome
+   GenomicScore.is_open
+   GenomicScore.open
+   GenomicScore.supports_region_value_arrays
+
+.. currentmodule:: gain.genomic_resources.score_def
+
+.. autosummary::
+
+   GenomicScoreDef
+   GenomicScoreDef.parse_array
+   GenomicScoreDef.parse_value
+
+.. currentmodule:: gain.genomic_resources.score_filter
+
+.. autosummary::
+
+   ScoreFilter
+   ScoreFilter.require_owner
+   ScoreFilter.select
+
+.. currentmodule:: gain.genomic_resources.genomic_scores
 
 .. autoclass:: GenomicScore
    :members:
