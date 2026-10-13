@@ -21,14 +21,11 @@ object:
 
 .. code-block:: python
 
-    from gain.grr import (
-        build_fragment_score_from_resource_id,
-        build_genomic_resource_repository,
-    )
+    import gain.grr as grr
 
-    grr = build_genomic_resource_repository()
-    with build_fragment_score_from_resource_id(
-            "hg38/scores/my_CNVcollection", grr).open() as score:
+    repo = grr.build_genomic_resource_repository()
+    with grr.build_fragment_score_from_resource_id(
+            "hg38/scores/my_CNVcollection", repo).open() as score:
         for begin, end, values in score.get_fragment_scores_overlapping_region(
                 "chr1", 1_000_000, 2_000_000):
             print(begin, end, values)

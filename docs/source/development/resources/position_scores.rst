@@ -22,22 +22,19 @@ object when the resource is a position score:
 
 .. code-block:: python
 
-    from gain.grr import (
-        build_genomic_resource_repository,
-        build_position_score_from_resource_id,
-    )
+    import gain.grr as grr
 
-    grr = build_genomic_resource_repository()
-    score = build_position_score_from_resource_id(
-        "hg38/scores/phastCons100way", grr)
+    repo = grr.build_genomic_resource_repository()
+    score = grr.build_position_score_from_resource_id(
+        "hg38/scores/phastCons100way", repo)
 
 The score is built closed. Call ``open()`` before the first read and let a
 ``with`` block close it; the rule is described on :doc:`scores`:
 
 .. code-block:: python
 
-    with build_position_score_from_resource_id(
-            "hg38/scores/phastCons100way", grr).open() as score:
+    with grr.build_position_score_from_resource_id(
+            "hg38/scores/phastCons100way", repo).open() as score:
         print(score.get_scores_at_position("chr21", 5_030_000))
 
 Groups of methods

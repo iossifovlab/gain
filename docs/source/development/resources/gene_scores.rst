@@ -17,14 +17,11 @@ Build a gene score with the builder from ``gain.grr``:
 
 .. code-block:: python
 
-    from gain.grr import (
-        build_gene_score_from_resource_id,
-        build_genomic_resource_repository,
-    )
+    import gain.grr as grr
 
-    grr = build_genomic_resource_repository()
-    gene_score = build_gene_score_from_resource_id(
-        "gene_properties/gene_scores/LGD_rank", grr)
+    repo = grr.build_genomic_resource_repository()
+    gene_score = grr.build_gene_score_from_resource_id(
+        "gene_properties/gene_scores/LGD_rank", repo)
 
     print(list(gene_score.score_definitions))
     print(gene_score.get_gene_value("LGD_rank", "CHD8"))

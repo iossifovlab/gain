@@ -12,14 +12,11 @@ the first conversion:
 
 .. code-block:: python
 
-    from gain.grr import (
-        build_genomic_resource_repository,
-        build_liftover_chain_from_resource_id,
-    )
+    import gain.grr as grr
 
-    grr = build_genomic_resource_repository()
-    chain = build_liftover_chain_from_resource_id(
-        "liftover/hg19_to_hg38", grr).open()
+    repo = grr.build_genomic_resource_repository()
+    chain = grr.build_liftover_chain_from_resource_id(
+        "liftover/hg19_to_hg38", repo).open()
 
     print(chain.convert_coordinate("chr1", 5))
     print(chain.convert_coordinate("chr1", 500))

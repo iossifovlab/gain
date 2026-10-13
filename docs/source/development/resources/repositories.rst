@@ -26,13 +26,13 @@ a definition dictionary instead builds exactly the repository it describes:
 
 .. code-block:: python
 
-    from gain.grr import build_genomic_resource_repository
+    import gain.grr as grr
 
     # the environment's default repository
-    grr = build_genomic_resource_repository()
+    repo = grr.build_genomic_resource_repository()
 
     # one specific directory, as a repository of its own
-    local = build_genomic_resource_repository({
+    local = grr.build_genomic_resource_repository({
         "id": "local_grr",
         "type": "directory",
         "directory": "/data/my-grr",
@@ -59,7 +59,7 @@ configuration uses, so a script can pin the resource it was written against:
 
 .. code-block:: python
 
-    res = grr.get_resource("hg38/scores/phastCons100way", version_constraint=">=0")
+    res = repo.get_resource("hg38/scores/phastCons100way", version_constraint=">=0")
     print(res.get_full_id(), res.get_type())
 
 A constraint nothing satisfies is a lookup failure, not a silently older
@@ -75,7 +75,7 @@ resource ids and labels, and yields matches lazily:
 
 .. code-block:: python
 
-    for res in grr.search_resources(resource_type="position_score"):
+    for res in repo.search_resources(resource_type="position_score"):
         print(res.get_id())
 
 :meth:`~gain.genomic_resources.repository.GenomicResourceRepo.get_all_resources`

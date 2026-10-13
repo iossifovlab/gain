@@ -6,14 +6,11 @@ from a resource or a resource id, and the GAIn types those functions accept
 and return, except ``GenomicContext``, which stays in
 ``gain.genomic_resources.genomic_context``::
 
-    from gain.grr import (
-        build_genomic_resource_repository,
-        build_reference_genome_from_resource_id,
-    )
+    import gain.grr as grr
 
-    grr = build_genomic_resource_repository()
-    genome = build_reference_genome_from_resource_id(
-        "hg38/genomes/GRCh38-hg38", grr)
+    repo = grr.build_genomic_resource_repository()
+    genome = grr.build_reference_genome_from_resource_id(
+        "hg38/genomes/GRCh38-hg38", repo)
 
 Every name here is the same object as in the module that defines it, and
 the names in ``__all__`` are the supported surface: removing one takes a

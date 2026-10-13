@@ -33,16 +33,16 @@ group — and configured:
 
 .. code-block:: python
 
-    from gain.grr import build_genomic_resource_repository
+    import gain.grr as grr
     from gain.annotation.annotation_factory import load_pipeline_from_yaml
     from gain.annotation.annotatable import VCFAllele
 
-    grr = build_genomic_resource_repository()
+    repo = grr.build_genomic_resource_repository()
 
     pipeline = load_pipeline_from_yaml("""
     - effect_annotator:
         gene_models: hg38/gene_models/MANE/1.5
-    """, grr)
+    """, repo)
 
     with pipeline.open() as pipeline:
         result = pipeline.annotate(VCFAllele("chr1", 11796321, "G", "A"))

@@ -12,14 +12,11 @@ before the first read:
 
 .. code-block:: python
 
-    from gain.grr import (
-        build_gene_set_collection_from_resource_id,
-        build_genomic_resource_repository,
-    )
+    import gain.grr as grr
 
-    grr = build_genomic_resource_repository()
-    collection = build_gene_set_collection_from_resource_id(
-        "gene_properties/gene_sets/main", grr).load()
+    repo = grr.build_genomic_resource_repository()
+    collection = grr.build_gene_set_collection_from_resource_id(
+        "gene_properties/gene_sets/main", repo).load()
 
     for gene_set in collection.get_all_gene_sets():
         print(gene_set.name, gene_set.count, gene_set.desc)

@@ -13,10 +13,12 @@ repository can be accessed without providing any arguments:
 
 .. code-block:: python
 
-    from gain.grr import build_genomic_resource_repository
-    grr = build_genomic_resource_repository()
+    import gain.grr as grr
+    repo = grr.build_genomic_resource_repository()
 
-``gain.grr`` is the import path for working with a GRR from Python. It
+``gain.grr`` is the import path for working with a GRR from Python. The
+examples import it as ``import gain.grr as grr`` and name a repository
+``repo``. It
 gathers, in one place, the functions that connect to a repository, the
 functions that build a typed object from a resource id (a reference genome,
 gene models, a score, a gene score, a gene set collection, a liftover chain,
@@ -37,8 +39,8 @@ working directory as a local GRR:
 .. code-block:: python
 
     import os
-    from gain.grr import build_genomic_resource_repository
-    grr = build_genomic_resource_repository({
+    import gain.grr as grr
+    repo = grr.build_genomic_resource_repository({
         "id": "local_grr",
         "type": "directory",
         "directory": os.getcwd(),
@@ -68,13 +70,10 @@ and printed.
 
 .. code-block:: python
 
-    from gain.grr import (
-        build_genomic_resource_repository,
-        build_reference_genome_from_resource_id,
-    )
+    import gain.grr as grr
 
-    grr = build_genomic_resource_repository()
-    genome = build_reference_genome_from_resource_id("hg38/genomes/GRCh38-hg38", grr).open()
+    repo = grr.build_genomic_resource_repository()
+    genome = grr.build_reference_genome_from_resource_id("hg38/genomes/GRCh38-hg38", repo).open()
 
     # Define canonical chromosomes
     canonical_chroms = {f"chr{i}" for i in range(1, 23)}
@@ -140,20 +139,16 @@ combined to extract and visualize signal over a biologically meaningful region.
 
     GENE_NAME = "TP53"
 
-    from gain.grr import (
-        build_gene_models_from_resource_id,
-        build_genomic_resource_repository,
-        build_score_from_resource_id,
-    )
+    import gain.grr as grr
 
-    grr = build_genomic_resource_repository()
+    repo = grr.build_genomic_resource_repository()
 
-    gene_models = build_gene_models_from_resource_id("hg38/gene_models/MANE/1.5", grr).load()
+    gene_models = grr.build_gene_models_from_resource_id("hg38/gene_models/MANE/1.5", repo).load()
     tx = gene_models.gene_models_by_gene_name(GENE_NAME)[0]
     chrom, start, end = tx.chrom, tx.tx[0], tx.tx[1]
     print(f"{GENE_NAME} is on {chrom}, from position {start} to {end}.")
 
-    score = build_score_from_resource_id("hg38/scores/phastCons100way", grr).open()
+    score = grr.build_score_from_resource_id("hg38/scores/phastCons100way", repo).open()
 
     xs = []
     ys = []
@@ -205,9 +200,9 @@ how many resources of each type are present for each genome. The result is organ
 
     import pandas as pd
     from collections import defaultdict
-    from gain.grr import build_genomic_resource_repository
+    import gain.grr as grr
 
-    grr = build_genomic_resource_repository()
+    repo = grr.build_genomic_resource_repository()
 
     genomes = ["hg19", "hg38", "hs1"]
     types = ["genome", "gene_models", "position_score", "allele_score", "fragment_score"]
@@ -215,7 +210,7 @@ how many resources of each type are present for each genome. The result is organ
     # initialize counts
     counts = {g: defaultdict(int) for g in genomes}
 
-    for resource in grr.get_all_resources():
+    for resource in repo.get_all_resources():
         rid = resource.get_id()
         rtype = resource.get_type()
 
