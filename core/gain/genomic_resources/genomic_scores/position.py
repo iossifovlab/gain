@@ -49,58 +49,56 @@ from .records import (
 class PositionScore(GenomicScore):
     """Position-based genomic score resource.
 
-    A PositionScore provides scores associated with genomic positions,
-    where each score value applies to a specific genomic coordinate or range.
-    Unlike AlleleScore, PositionScore does not consider reference or
-    alternative alleles - scores are purely position-based.
+    A position score gives one or more scores for a genomic position or a
+    run of positions. Unlike an allele score, it ignores the reference and
+    alternative alleles. The data lives in a tabix-indexed file, a bigWig
+    file or an in-memory table.
 
-    Typical use cases include:
-    - Conservation scores (e.g., phastCons, phyloP)
-    - Mappability scores
+    Typical resources are:
+
+    - conservation scores, such as ``phastCons`` and ``phyloP``
+    - mappability scores
     - GC content
-    - Recombination rates
-    - Any metric that depends only on genomic position
+    - recombination rates
+    - any metric that depends only on the genomic position
 
-    The score data can be stored in various formats including tabix-indexed
-    files, BigWig files, or in-memory tables.
+    A score is built closed. Call ``open()`` before the first read.
 
-    Example:
-        >>> from gain.genomic_resources.repository_factory import (
-        ...     build_genomic_resource_repository
-        ... )
-        >>> repo = build_genomic_resource_repository()
-        >>> resource = repo.get_resource("phastCons100way")
-        >>> score = build_score_from_resource(resource)
-        >>> with score.open() as score:
-        ...     # Fetch scores at a specific position
-        ...     values = score.get_scores_at_position("chr1", 12345)
-        ...     # Fetch scores across a region
-        ...     region = score.fetch_region_segments_scores(
-        ...         "chr1", 10000, 20000)
-        ...     for pos_begin, pos_end, scores in region:
-        ...         print(f"{pos_begin}-{pos_end}: {scores}")
+    Examples
+    --------
+    .. code-block:: python
 
-    Aggregating those values over the region is the *resource's* job since
-    gain#1131: ``get_scores_in_region_agg`` reduces a region to one value
-    per query, and ``gain.annotation.position_score_annotator`` asks for
-    that rather than folding records of its own.  What the kind
-    contributes to the reduction is ``record_weight`` -- how many queried
-    bases a record covers, and so how many times its value counts.
+        import gain.grr as grr
+
+        repo = grr.build_genomic_resource_repository()
+        score = grr.build_position_score_from_resource_id(
+            "hg38/scores/phastCons100way", repo)
+        with score.open() as score:
+            values = score.get_scores_at_position("chr1", 12345)
+            for begin, end, row in score.fetch_region_segments_scores(
+                    "chr1", 10000, 20000):
+                print(f"{begin}-{end}: {row}")
 
     Attributes:
-        resource: The underlying GenomicResource object
-        resource_id: Unique identifier for the resource
-        config: Configuration dictionary for the score
-        table: GenomicPositionTable for data access
-        score_definitions: Dictionary mapping score IDs to their definitions
-
-    Key Methods:
-        get_scores_at_position: Get score values at a specific position
-        fetch_region_segments_scores: Iterate over score segments in a
-        genomic region, each at its record's own extent
-        get_scores_in_region_agg: Reduce a genomic region to one value per
-        aggregation query, weighing each record by the bases it covers
+        resource (GenomicResource): The underlying genomic resource.
+        resource_id (str): The identifier of the resource.
+        config (dict): The validated configuration of the score.
+        score_definitions (dict[str, GenomicScoreDef]): The definition of
+            each score, by score id.
+        HISTOGRAM_COUNT_UNIT (str): The unit of the histogram counts. For a
+            position score it is ``"base pairs"``.
+        DEFAULT_AGGREGATORS (dict[str, str | None]): The aggregator name
+            that a region read uses for each value type, when the
+            configuration of the score names none. A value of ``None``
+            means that the type takes no default.
     """
+
+    # Aggregating the values of a region is the resource's job since
+    # gain#1131: ``get_scores_in_region_agg`` reduces a region to one value
+    # per query, and ``gain.annotation.position_score_annotator`` asks for
+    # that rather than folding records of its own.  What the kind
+    # contributes to the reduction is ``record_weight``: how many queried
+    # bases a record covers, and so how many times its value counts.
 
     HISTOGRAM_COUNT_UNIT: ClassVar[str] = "base pairs"
 
@@ -120,18 +118,33 @@ class PositionScore(GenomicScore):
                 f"'position_score' type, not a '{resource.get_type()}'")
         super().__init__(resource)
 
+    # The only kind whose weight is not 1.  That there is exactly one value
+    # per position -- what a position score PROMISES -- is not stated here
+    # but in the rules this kind is registered under in
+    # :mod:`gain.genomic_resources.statistics.record_validation`, the only
+    # places that enforce it.  This is a MEASURE.
+    #
+    # Elementwise, as the base requires: handed the position columns of a
+    # whole batch, the same expression answers that batch's weights.
     @classmethod
     def record_weight(cls, left: int, right: int) -> int:
-        """A record counts once per base pair it covers.
+        """Return how many times a record counts: once per base pair.
 
-        The only kind whose answer is not 1.  That there is exactly one
-        value per position -- what a position score PROMISES -- is not
-        stated here but in the rules this kind is registered under in
-        :mod:`gain.genomic_resources.statistics.record_validation`, the only
-        places that enforce it.  This is a MEASURE.
+        This is a hook for the aggregation engine, not a user call.
 
-        Elementwise, as the base requires: handed the position columns of a
-        whole batch, the same expression answers that batch's weights.
+        Parameters
+        ----------
+        left : int
+            The first position of the record.
+        right : int
+            The last position of the record.
+
+        Returns
+        -------
+        int
+            The number of base pairs the record covers.
+
+        :meta private:
         """
         return right - left + 1
 
@@ -166,7 +179,16 @@ class PositionScore(GenomicScore):
 
     @staticmethod
     def get_schema() -> dict[str, Any]:
-        """The :class:`GenomicScore` schema plus a per-score ``aggregator``."""
+        """Return the configuration schema of a position score.
+
+        The schema is the one of :class:`GenomicScore`, with an
+        ``aggregator`` key added to the definition of each score.
+
+        Returns
+        -------
+        dict[str, Any]
+            A new Cerberus schema dictionary, which the caller may modify.
+        """
         schema = copy.deepcopy(GenomicScore.get_schema())
         scores_schema = schema["scores"]["schema"]["schema"]
         scores_schema["aggregator"] = AGGREGATOR_SCHEMA
@@ -335,10 +357,32 @@ class PositionScore(GenomicScore):
         self, chrom: str, pos: int,
         score: str | None = None,
     ) -> ScoreValue | None:
-        """Return one score's value at one position, ``None`` if uncovered.
+        """Return the value of one score at one position.
 
-        The singular form of :meth:`get_scores_at_position`; ``score`` of
-        ``None`` is honoured only when the resource declares exactly one.
+        This is the singular form of :meth:`get_scores_at_position`.
+
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name.
+        pos : int
+            The 1-based position.
+        score : str | None
+            The id of the score. ``None`` is accepted only when the
+            resource defines exactly one score.
+
+        Returns
+        -------
+        ScoreValue | None
+            The value of the score. ``None`` means that no record covers
+            the position, or that the record has no value for the score.
+
+        Raises
+        ------
+        ValueError
+            If the score is closed, the chromosome is unknown, the score id
+            is unknown, or ``score`` is ``None`` and the resource defines
+            more than one score.
         """
         return self.get_scores_at_position(
             chrom, pos, [self._resolve_single_score(score)])[0]
@@ -347,24 +391,47 @@ class PositionScore(GenomicScore):
         self, chrom: str, pos: int,
         scores: Sequence[str] | None = None,
     ) -> tuple[ScoreValue | None, ...]:
-        """Return the score values at one position, ``None`` where uncovered.
+        """Return the values of the scores at one position.
 
-        Read straight off :meth:`_position_runs` rather than through the
-        region read's per-position expansion: a one-position region is
-        exactly ONE run -- no run is ever yielded empty, and the run
-        lengths sum to the region width -- so there is nothing to expand
-        and nothing to index a position out of.
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name.
+        pos : int
+            The 1-based position.
+        scores : Sequence[str] | None
+            The ids of the scores. ``None`` asks for every score that the
+            resource defines, in definition order.
 
-        The run is DRAINED rather than abandoned; that is simpler to
-        write, not load-bearing, since gain#1120 moved the tabix buffer
-        prune into a ``finally`` (``fragment.py`` cross-references this
-        paragraph, and ``test_a_walk_of_point_reads_leaves_the_tabix_
-        buffer_pruned`` pins the drained half).
+        Returns
+        -------
+        tuple[ScoreValue | None, ...]
+            One value for each requested score, in the order of ``scores``.
+            A ``None`` value means that no record covers the position, or
+            that the record has no value for that score. The tuple is
+            empty when ``scores`` is an empty sequence.
 
-        Going straight to the runs rather than delegating to
-        :meth:`get_scores_in_region` is worth ~4% on this read, which the
-        position annotator pays once per substitution.
+        Raises
+        ------
+        ValueError
+            If the score is closed, the chromosome is unknown, or a score
+            id is unknown.
         """
+        # Read straight off _position_runs rather than through the region
+        # read's per-position expansion: a one-position region is exactly
+        # ONE run -- no run is ever yielded empty, and the run lengths sum
+        # to the region width -- so there is nothing to expand and nothing
+        # to index a position out of.
+        #
+        # The run is DRAINED rather than abandoned; that is simpler to
+        # write, not load-bearing, since gain#1120 moved the tabix buffer
+        # prune into a ``finally`` (``fragment.py`` cross-references this
+        # paragraph, and ``test_a_walk_of_point_reads_leaves_the_tabix_
+        # buffer_pruned`` pins the drained half).
+        #
+        # Going straight to the runs rather than delegating to
+        # get_scores_in_region is worth ~4% on this read, which the
+        # position annotator pays once per substitution.
         score_defs = self._plane_read_defs(chrom, pos, pos, scores)
         # The single-element unpack both DRAINS the generator and asserts
         # the one-run invariant the docstring claims; a second run would
@@ -378,10 +445,35 @@ class PositionScore(GenomicScore):
         self, chrom: str, start: int, end: int,
         score: str | None = None,
     ) -> Generator[ScoreValue | None, None, None]:
-        """Yield one value per position of ``[start, end]`` for one score.
+        """Yield the value of one score at each position of a region.
 
-        The singular form of :meth:`get_scores_in_region`; ``score`` of
-        ``None`` is honoured only when the resource declares exactly one.
+        This is the singular form of :meth:`get_scores_in_region`.
+
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name.
+        start : int
+            The first 1-based position of the region.
+        end : int
+            The last 1-based position of the region.
+        score : str | None
+            The id of the score. ``None`` is accepted only when the
+            resource defines exactly one score.
+
+        Yields
+        ------
+        ScoreValue | None
+            One value for each position, in position order. A ``None``
+            value means that no record covers the position, or that the
+            record has no value for the score.
+
+        Raises
+        ------
+        ValueError
+            If the score is closed, the region is not valid, the chromosome
+            is unknown, or the score id is unknown. The function raises
+            before the first value, not during the iteration.
         """
         rows = self.get_scores_in_region(
             chrom, start, end, [self._resolve_single_score(score)])
@@ -390,50 +482,69 @@ class PositionScore(GenomicScore):
     def resolve_aggregation_queries(
         self, queries: Sequence[PositionScoreAggregationQuery],
     ) -> list[tuple[str, str, ScoreValue]]:
-        """Resolve each query to its (score_id, aggregator NAME, replacement).
+        """Resolve each query to a score id, an aggregator name and a value.
 
-        The third element is the query's ``none_value_replacement``.
+        Use it to find out whether a query is answerable without reading.
+        The position score annotator calls it once when the pipeline loads.
 
-        A query asks the same two questions a request list does -- which
-        score, and what reduces it -- so they are asked where they are
-        answered for every surface, in :mod:`.aggregation`
-        (:func:`~.aggregation.score_def_for`,
-        :func:`~.aggregation.resolve_aggregator_name`).  Only the remedy of
-        the missing-default refusal is this surface's own, because a caller
-        here names an aggregator on the query rather than in a pair.
+        Parameters
+        ----------
+        queries : Sequence[PositionScoreAggregationQuery]
+            The queries. Each names a score, an aggregator, and a
+            replacement value for the uncovered positions.
 
-        What a query asks BESIDES is the third: a ``none_value_replacement``
-        must be of a type the score can mean, following
-        ``validate_aggregator``'s precedent.  It is judged BETWEEN the other
-        two -- after the score is known, since its value type is what
-        judges the replacement, and before an aggregator is looked for, so
-        that a query wrong in both ways is answered about the value it named
-        rather than the one it left out.  That order is a decision and not
-        an accident of composition; it is pinned by
-        ``test_a_query_invalid_several_ways_reports_the_first_ground``.
+        Returns
+        -------
+        list[tuple[str, str, ScoreValue]]
+            One tuple for each query, in the order of ``queries``: the id
+            of the score, the name of the aggregator, and the
+            ``none_value_replacement`` of the query. The list is empty
+            when ``queries`` is empty.
 
-        Public, and stopping at the NAME, because asking whether a query is
-        answerable is a question a caller may have without wanting to read
-        (gain#1131).  ``PositionScoreAnnotator`` asks it once when the
-        pipeline loads, so an attribute naming no aggregator for a ``bool``
-        score is refused there rather than on the first region that reaches
-        it.  Building the accumulators is the READ's business --
-        :meth:`_resolve_aggregation_queries` adds them, per call, which is
-        what keeps each read's accumulators its own and an annotator
-        stateless.
-
-        It lives on this kind rather than on
-        :class:`~.base.GenomicScore` because of its middle step:
-        ``none_value_replacement`` is a field only a
-        ``PositionScoreAggregationQuery`` carries, a position score being
-        the only kind with an uncovered position to speak for.  Should a
-        fragment or an allele score come to want a resolver of its own
-        (gain#1124, gain#1132), the ``score_def_for`` /
-        ``resolve_aggregator_name`` pair is the part that generalises --
-        both already live in :mod:`.aggregation`, kind-neutral, for that
-        reason -- and the replacement validation is the part that does
-        not.
+        Raises
+        ------
+        ValueError
+            If a score id is unknown, a ``none_value_replacement`` has a
+            type that the score cannot take, or a query names no aggregator
+            and the value type of the score has no default one.
         """
+        # A query asks the same two questions a request list does -- which
+        # score, and what reduces it -- so they are asked where they are
+        # answered for every surface, in :mod:`.aggregation`
+        # (score_def_for, resolve_aggregator_name).  Only the remedy of the
+        # missing-default refusal is this surface's own, because a caller
+        # here names an aggregator on the query rather than in a pair.
+        #
+        # What a query asks BESIDES is the third: a none_value_replacement
+        # must be of a type the score can mean, following
+        # ``validate_aggregator``'s precedent.  It is judged BETWEEN the
+        # other two -- after the score is known, since its value type is
+        # what judges the replacement, and before an aggregator is looked
+        # for, so that a query wrong in both ways is answered about the
+        # value it named rather than the one it left out.  That order is a
+        # decision and not an accident of composition; it is pinned by
+        # ``test_a_query_invalid_several_ways_reports_the_first_ground``.
+        #
+        # Public, and stopping at the NAME, because asking whether a query
+        # is answerable is a question a caller may have without wanting to
+        # read (gain#1131).  ``PositionScoreAnnotator`` asks it once when
+        # the pipeline loads, so an attribute naming no aggregator for a
+        # ``bool`` score is refused there rather than on the first region
+        # that reaches it.  Building the accumulators is the READ's
+        # business -- ``_resolve_aggregation_queries`` adds them, per call,
+        # which is what keeps each read's accumulators its own and an
+        # annotator stateless.
+        #
+        # It lives on this kind rather than on GenomicScore because of its
+        # middle step: ``none_value_replacement`` is a field only a
+        # ``PositionScoreAggregationQuery`` carries, a position score being
+        # the only kind with an uncovered position to speak for.  Should a
+        # fragment or an allele score come to want a resolver of its own
+        # (gain#1124, gain#1132), the score_def_for /
+        # resolve_aggregator_name pair is the part that generalises -- both
+        # already live in :mod:`.aggregation`, kind-neutral, for that
+        # reason -- and the replacement validation is the part that does
+        # not.
         resolved = []
         for query in queries:
             score_def = score_def_for(
@@ -505,10 +616,42 @@ class PositionScore(GenomicScore):
         none_value_replacement: ScoreValue | None = None,
     ) -> ScoreValue:
         # pylint: disable=too-many-positional-arguments
-        """Reduce ``[start, end]`` to one value for one score.
+        """Reduce a region to one value for one score.
 
-        The singular form of :meth:`get_scores_in_region_agg`; ``score`` of
-        ``None`` is honoured only when the resource declares exactly one.
+        This is the singular form of :meth:`get_scores_in_region_agg`.
+
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name.
+        start : int
+            The first 1-based position of the region.
+        end : int
+            The last 1-based position of the region.
+        score : str | None
+            The id of the score. ``None`` is accepted only when the
+            resource defines exactly one score.
+        aggregator : str | None
+            The name of the aggregator. ``None`` selects the aggregator
+            that the configuration of the score names, or the default one
+            for its value type.
+        none_value_replacement : ScoreValue | None
+            The value that stands for an uncovered position. ``None``
+            means that an uncovered position is skipped by the aggregator.
+
+        Returns
+        -------
+        ScoreValue
+            The aggregated value. It is ``None`` when the aggregator has
+            no value to report, for example when no position of the region
+            has a value.
+
+        Raises
+        ------
+        ValueError
+            If the score is closed, the region is not valid, the score id
+            is unknown, no aggregator can be chosen, or
+            ``none_value_replacement`` does not match the value type.
         """
         return self.get_scores_in_region_agg(
             chrom, start, end, [
@@ -521,19 +664,52 @@ class PositionScore(GenomicScore):
         self, chrom: str, start: int, end: int,
         queries: Sequence[PositionScoreAggregationQuery],
     ) -> tuple[ScoreValue, ...]:
-        """Reduce ``[start, end]`` to one value per query, over positions.
+        """Reduce a region to one value for each query.
 
-        Defined on the per-position expansion -- an uncovered position is a
-        ``None``, and with a ``none_value_replacement`` set it counts --
-        but computed by walking segments, so cost stays proportional to
-        record count.  Where two records cover one position the first
-        answers, so accumulated weight never exceeds the region width.
+        Each position of the region counts once. A record counts once for
+        each position of the region that it covers.
 
-        A contig this score never mentions is uncovered rather than refused
-        (gain#1211): it answers as a window on a contig the score has but
-        does not cover.  That is this read and the binned one only; a read
-        that materialises positions still refuses an unknown contig.
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name.
+        start : int
+            The first 1-based position of the region.
+        end : int
+            The last 1-based position of the region.
+        queries : Sequence[PositionScoreAggregationQuery]
+            The queries. Each names a score, an aggregator and a
+            replacement value for the uncovered positions.
+
+        Returns
+        -------
+        tuple[ScoreValue, ...]
+            One value for each query, in the order of ``queries``. A value
+            is ``None`` when the aggregator has no value to report. The
+            tuple is empty when ``queries`` is empty.
+
+        Raises
+        ------
+        ValueError
+            If the score is closed, the region is not valid, or a query is
+            not valid (see :meth:`resolve_aggregation_queries`).
+
+        Notes
+        -----
+        A chromosome that the resource never mentions is not an error. It
+        answers as a region that no record covers.
         """
+        # Defined on the per-position expansion -- an uncovered position is
+        # a ``None``, and with a ``none_value_replacement`` set it counts --
+        # but computed by walking segments, so cost stays proportional to
+        # record count.  Where two records cover one position the first
+        # answers, so accumulated weight never exceeds the region width.
+        #
+        # A contig this score never mentions is uncovered rather than
+        # refused (gain#1211): it answers as a window on a contig the score
+        # has but does not cover.  That is this read and the binned one
+        # only; a read that materialises positions still refuses an unknown
+        # contig.
         self._guard_region_span(start, end)
         targets, score_defs = self._resolve_aggregation_query_targets(queries)
         for values, length in self._aggregating_runs(
@@ -595,10 +771,45 @@ class PositionScore(GenomicScore):
         none_value_replacement: ScoreValue | None = None,
     ) -> Generator[tuple[int, int, ScoreValue], None, None]:
         # pylint: disable=too-many-positional-arguments
-        """Yield ``(bin_start, bin_end, value)`` per bin of ``[start, end]``.
+        """Yield the aggregated value of one score for each bin of a region.
 
-        The singular form of :meth:`get_scores_in_bins`; ``score`` of
-        ``None`` is honoured only when the resource declares exactly one.
+        This is the singular form of :meth:`get_scores_in_bins`.
+
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name.
+        start : int
+            The first 1-based position of the region.
+        end : int
+            The last 1-based position of the region.
+        bin_size : int
+            The width of a bin in positions. It must be at least 1.
+        score : str | None
+            The id of the score. ``None`` is accepted only when the
+            resource defines exactly one score.
+        aggregator : str | None
+            The name of the aggregator. ``None`` selects the aggregator
+            that the configuration of the score names, or the default one
+            for its value type.
+        none_value_replacement : ScoreValue | None
+            The value that stands for an uncovered position. ``None``
+            means that an uncovered position is skipped by the aggregator.
+
+        Yields
+        ------
+        tuple[int, int, ScoreValue]
+            The first position, the last position and the aggregated value
+            of a bin, in position order. The value is ``None`` when the
+            aggregator has no value to report for the bin.
+
+        Raises
+        ------
+        ValueError
+            If the score is closed, the region is not valid, ``bin_size`` is
+            less than 1, the score id is unknown, no aggregator can be
+            chosen, or ``none_value_replacement`` does not match the value
+            type.
         """
         bins = self.get_scores_in_bins(
             chrom, start, end, bin_size, [
@@ -614,23 +825,58 @@ class PositionScore(GenomicScore):
         self, chrom: str, start: int, end: int, bin_size: int,
         queries: Sequence[PositionScoreAggregationQuery],
     ) -> Generator[tuple[int, int, tuple[ScoreValue, ...]], None, None]:
-        """Yield one aggregated tuple per grid bin of ``[start, end]``.
+        """Yield the aggregated values of each bin of a region.
 
-        Bins follow the GLOBAL grid anchored at position 1
-        (``calc_bin_index`` / ``calc_bin_begin`` / ``calc_bin_end``), so
-        adjacent queries tile and results are comparable across calls.
-        Edge bins are clipped to the query, so the yielded bounds name
-        exactly what was aggregated.  Every bin in range is emitted,
-        including bins no record touches; a segment straddling a bin
-        boundary contributes its weight to each bin it touches, split at
-        the boundary.
+        The bins follow the global grid that starts at position 1, so the
+        results of adjacent regions tile and are comparable across calls.
+        The first and the last bin are clipped to the region. The function
+        emits every bin of the region, also a bin that no record touches.
 
-        A contig this score never mentions is uncovered rather than refused
-        (gain#1211): every bin of it is emitted, with the bounds a covered
-        contig would yield.  That is this read and
-        :meth:`get_scores_in_region_agg` only; a read that materialises
-        positions still refuses an unknown contig.
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name.
+        start : int
+            The first 1-based position of the region.
+        end : int
+            The last 1-based position of the region.
+        bin_size : int
+            The width of a bin in positions. It must be at least 1.
+        queries : Sequence[PositionScoreAggregationQuery]
+            The queries. Each names a score, an aggregator and a
+            replacement value for the uncovered positions.
+
+        Yields
+        ------
+        tuple[int, int, tuple[ScoreValue, ...]]
+            The first position, the last position and one aggregated value
+            for each query of a bin, in position order. A value is
+            ``None`` when the aggregator has no value to report.
+
+        Raises
+        ------
+        ValueError
+            If the score is closed, the region is not valid, ``bin_size`` is
+            less than 1, or a query is not valid (see
+            :meth:`resolve_aggregation_queries`).
+
+        Notes
+        -----
+        A chromosome that the resource never mentions is not an error.
+        The function emits every bin of it, as for a region that no record
+        covers.
         """
+        # Edge bins are clipped to the query, so the yielded bounds name
+        # exactly what was aggregated.  A segment straddling a bin boundary
+        # contributes its weight to each bin it touches, split at the
+        # boundary.  The bin grid is the global one (``calc_bin_index`` /
+        # ``calc_bin_begin`` / ``calc_bin_end``).
+        #
+        # A contig this score never mentions is uncovered rather than
+        # refused (gain#1211): every bin of it is emitted, with the bounds
+        # a covered contig would yield.  That is this read and
+        # get_scores_in_region_agg only; a read that materialises positions
+        # still refuses an unknown contig.
         self._guard_region_span(start, end)
         if bin_size < 1:
             raise ValueError(
@@ -733,11 +979,34 @@ class PositionScore(GenomicScore):
         self, chrom: str, start: int, end: int,
         scores: Sequence[str] | None = None,
     ) -> Generator[tuple[ScoreValue | None, ...], None, None]:
-        """Yield one tuple of score values per position of ``[start, end]``.
+        """Yield the values of the scores at each position of a region.
 
-        Exactly ``end - start + 1`` tuples, in position order, ``None`` at
-        every position no record covers.  ``scores`` of ``None`` asks for
-        every score this resource defines, in definition order.
+        Parameters
+        ----------
+        chrom : str
+            The chromosome name.
+        start : int
+            The first 1-based position of the region.
+        end : int
+            The last 1-based position of the region.
+        scores : Sequence[str] | None
+            The ids of the scores. ``None`` asks for every score that the
+            resource defines, in definition order.
+
+        Yields
+        ------
+        tuple[ScoreValue | None, ...]
+            Exactly ``end - start + 1`` tuples, in position order. A tuple
+            has one value for each requested score. A ``None`` value means
+            that no record covers the position, or that the record has no
+            value for that score.
+
+        Raises
+        ------
+        ValueError
+            If the score is closed, the region is not valid, the chromosome
+            is unknown, or a score id is unknown. The function raises
+            before the first tuple, not during the iteration.
         """
         score_defs = self._plane_read_defs(chrom, start, end, scores)
         return self._expand_position_runs(

@@ -114,7 +114,59 @@ genome-browser-style plot wants.
 API
 ---
 
+The class below is defined in the module
+``gain.genomic_resources.genomic_scores.position`` and is imported from
+``gain.genomic_resources.genomic_scores``. ``PositionScore`` is also exported
+by ``gain.grr``, as ``grr.PositionScore``.
+
+The factories ``build_position_score_from_resource_id`` and
+``build_position_score_from_resource`` build a closed score. They are
+documented in the :ref:`factories` chapter.
+
 .. currentmodule:: gain.genomic_resources.genomic_scores
+
+.. autosummary::
+
+   PositionScore
+   PositionScore.get_schema
+   PositionScore.get_score_at_position
+   PositionScore.get_score_in_bins
+   PositionScore.get_score_in_region
+   PositionScore.get_score_in_region_agg
+   PositionScore.get_scores_at_position
+   PositionScore.get_scores_in_bins
+   PositionScore.get_scores_in_region
+   PositionScore.get_scores_in_region_agg
+   PositionScore.resolve_aggregation_queries
+
+Inherited from ``GenomicScore``, which :doc:`scores` describes:
+
+.. autosummary::
+
+   GenomicScore.aggregate_region
+   GenomicScore.chrom_length_source
+   GenomicScore.chrom_length_sources
+   GenomicScore.close
+   GenomicScore.compile_filter
+   GenomicScore.fetch_records
+   GenomicScore.fetch_region_segments_scores
+   GenomicScore.fetch_region_value_arrays
+   GenomicScore.get_all_chrom_lengths
+   GenomicScore.get_all_chromosomes
+   GenomicScore.get_chrom_length
+   GenomicScore.get_chrom_length_source
+   GenomicScore.get_config
+   GenomicScore.get_default_annotation_attribute
+   GenomicScore.get_default_annotation_attributes
+   GenomicScore.get_score_value_from_record
+   GenomicScore.get_score_values_from_record
+   GenomicScore.has_chromosome
+   GenomicScore.is_open
+   GenomicScore.open
+   GenomicScore.record_weights
+   GenomicScore.resource_files
+   GenomicScore.supports_region_value_arrays
+   GenomicScore.values_from_records
 
 .. autoclass:: PositionScore
    :members:

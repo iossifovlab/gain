@@ -30,14 +30,60 @@ from .position import PositionScore
 def build_position_score_from_resource(
     resource: GenomicResource,
 ) -> PositionScore:
-    """Build a position score from a `position_score` resource."""
+    """Build a position score from a resource.
+
+    The score is closed. Call ``open()`` before the first read. Each call
+    returns a new score, so the caller owns it and closing it affects no
+    other score.
+
+    Parameters
+    ----------
+    resource : GenomicResource
+        A resource of type ``position_score``.
+
+    Returns
+    -------
+    PositionScore
+        A closed position score for the resource.
+
+    Raises
+    ------
+    ValueError
+        If the resource is not of type ``position_score``.
+    """
     return PositionScore(resource)
 
 
 def build_position_score_from_resource_id(
     resource_id: str, grr: GenomicResourceRepo | None = None,
 ) -> PositionScore:
-    """Build a position score from a `position_score` resource id."""
+    """Build a position score from the id of a resource.
+
+    The score is closed. Call ``open()`` before the first read. Each call
+    returns a new score, so the caller owns it and closing it affects no
+    other score.
+
+    Parameters
+    ----------
+    resource_id : str
+        The id of a resource of type ``position_score`` in the repository.
+    grr : GenomicResourceRepo | None
+        The repository that resolves ``resource_id``. When it is ``None``,
+        the function builds the default repository with
+        ``build_genomic_resource_repository()``.
+
+    Returns
+    -------
+    PositionScore
+        A closed position score for the resource.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the repository has no resource with this id.
+    ValueError
+        If the resource is not of type ``position_score``.
+    """
     if grr is None:
         grr = build_genomic_resource_repository()
     return build_position_score_from_resource(grr.get_resource(resource_id))
