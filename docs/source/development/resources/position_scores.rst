@@ -156,17 +156,11 @@ Inherited from ``GenomicScore``, which :doc:`scores` describes:
    GenomicScore.get_chrom_length
    GenomicScore.get_chrom_length_source
    GenomicScore.get_config
-   GenomicScore.get_default_annotation_attribute
-   GenomicScore.get_default_annotation_attributes
    GenomicScore.get_score_value_from_record
-   GenomicScore.get_score_values_from_record
    GenomicScore.has_chromosome
    GenomicScore.is_open
    GenomicScore.open
-   GenomicScore.record_weights
-   GenomicScore.resource_files
    GenomicScore.supports_region_value_arrays
-   GenomicScore.values_from_records
 
 .. autoclass:: PositionScore
    :members:
