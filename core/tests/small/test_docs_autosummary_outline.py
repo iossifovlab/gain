@@ -159,10 +159,9 @@ def outline_problems(page: str, classes: Sequence[type]) -> list[str]:
 def _inherited_problems(page: str, cls: type) -> list[str]:
     """Compare the inherited outline of a subclass with its base class."""
     problems: list[str] = []
+    labels = {label for label, _ in autosummary_blocks(page)}
     for base in cls.__mro__[1:]:
-        if not any(
-                label == base.__name__
-                for label, _ in autosummary_blocks(page)):
+        if base.__name__ not in labels:
             continue
         prefix = f"{base.__name__}."
         listed = {
@@ -259,8 +258,7 @@ def test_gene_models_page_outline_matches_classes() -> None:
     page = read_docs_page(GENE_MODELS_PAGE)
 
     assert not page_problems(page)
-    assert GENE_MODELS_PAGE not in {
-        RESOURCES_DIR / name for name in NOT_ROLLED_OUT}
+    assert GENE_MODELS_PAGE.name not in NOT_ROLLED_OUT
 
 
 def test_every_page_with_an_autoclass_is_rolled_out_or_skipped() -> None:
