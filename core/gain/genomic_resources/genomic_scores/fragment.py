@@ -58,27 +58,36 @@ from .records import (
 logger = logging.getLogger(__name__)
 
 
+# Both halves come off ONE walk of the region, which is the reason they are
+# answered together rather than by two reads a caller would have to trust to
+# agree: nothing a caller can do makes ``count`` disagree with the fragments
+# ``values`` was folded from.
+#
+# ``values`` is parallel to the QUERIES asked, not keyed by score id. One
+# score requested twice with two aggregators -- a source exposed as both a
+# min and a max -- is two queries and therefore two values, which a mapping
+# keyed by score id would silently collapse to one.
+#
+# An empty region and a filter that rejected every fragment are both ``0``
+# -- the distinction gain#820 built for alleles is deliberately not drawn
+# here, keeping ADR 0017's reasoning that a region is spanned by fragments
+# as a matter of course, so "none cover it" is a count of zero rather than
+# an absence.
 @dataclass(frozen=True)
 class FragmentAggregate:
-    """What one folding read saw, and what it reduced to.
+    """One reduction of the fragments in a region, and the fragment count.
 
-    Both halves come off ONE walk of the region, which is the reason they
-    are answered together rather than by two reads a caller would have to
-    trust to agree: nothing a caller can do makes ``count`` disagree with
-    the fragments ``values`` was folded from.
-
-    ``values`` is parallel to the QUERIES asked, not keyed by score id.
-    One score requested twice with two aggregators -- a source exposed as
-    both a min and a max -- is two queries and therefore two values, which
-    a mapping keyed by score id would silently collapse to one.
-
-    ``count`` is the number of fragments the walk SAW: those overlapping
-    the region, that the overlap fractions admitted, and that
-    ``score_filter`` kept.  An empty region and a filter that rejected
-    every fragment are both ``0`` -- the distinction gain#820 built for
-    alleles is deliberately not drawn here, keeping ADR 0017's reasoning
-    that a region is spanned by fragments as a matter of course, so "none
-    cover it" is a count of zero rather than an absence.
+    Attributes
+    ----------
+    count : int
+        The number of fragments that the read saw: the fragments that overlap
+        the region, that pass the overlap fractions and that ``score_filter``
+        keeps. A region with no fragments gives ``0``. A filter that rejects
+        every fragment gives ``0`` too.
+    values : tuple[ScoreValue, ...]
+        One reduced value for each query, in the order of the queries. The
+        same score asked twice with two aggregators gives two values. A value is
+        ``None`` when its aggregator has nothing to reduce.
     """
 
     count: int
@@ -166,20 +175,46 @@ class _CountingStream:
             yield segment
 
 
+# Nothing here is copy-number specific; a CNV collection is one application
+# of it. Accepts either resource type in
+# :data:`~gain.genomic_resources.resource_types.FRAGMENT_SCORE_TYPES`,
+# warning once per resource on the deprecated one.
 class FragmentScore(GenomicScore):
-    """A genomic score over fragments -- intervals carrying attributes.
+    """A genomic score over fragments: intervals that carry attributes.
 
-    Nothing here is copy-number specific; a CNV collection is one
-    application of it.  Accepts either resource type in
-    :data:`~gain.genomic_resources.resource_types.FRAGMENT_SCORE_TYPES`,
-    warning once per resource on the deprecated one.
+    A fragment keeps its own begin and end, and fragments may overlap. A
+    copy-number variant collection is one use of this kind. The resource type
+    is ``fragment_score``. The older type name ``cnv_collection`` is still
+    accepted, with a deprecation warning.
+
+    Build a fragment score with
+    :func:`~gain.genomic_resources.genomic_scores.build_fragment_score_from_resource_id`.
+    The score is built closed. Call ``open()`` before the first read.
+
+    The reads come in pairs. The plural form takes a ``scores`` list and
+    returns values parallel to it. The singular form takes one ``score``.
+
+    Parameters
+    ----------
+    resource : GenomicResource
+        The resource of type ``fragment_score`` or ``cnv_collection``.
+
+    Raises
+    ------
+    ValueError
+        If the type of the resource is not a fragment score type.
     """
 
+    #: The unit that the histograms of this kind count: ``"fragments"``.
     HISTOGRAM_COUNT_UNIT: ClassVar[str] = "fragments"
 
     # As AlleleScore, except that strings join rather than list -- a fragment
     # score's string attributes are rendered into one cell.  Owned by the
     # score class, so no score-definition subclass is needed to carry them.
+    #
+    #: The default aggregator for each value type, for a score whose
+    #: configuration states no ``aggregator``: ``max`` for ``float`` and
+    #: ``int``, ``join(,)`` for ``str`` and none for ``bool``.
     DEFAULT_AGGREGATORS: ClassVar[dict[str, str | None]] = {
         "float": "max",
         "int": "max",
@@ -232,32 +267,90 @@ class FragmentScore(GenomicScore):
             for score_id in self.get_all_scores()
         )
 
+    # The kind's whole reason for weighing by record rather than by span: a
+    # fragment is a measured thing, not a run of per-base values, so its length
+    # says nothing about how many times its value counts.
+    #
+    # A constant, which is elementwise: the base's
+    # :meth:`~.base.GenomicScore.record_weights` fills it out to a batch's
+    # shape.
     @classmethod
     def record_weight(
         cls,
         left: int,  # ruff: ignore[unused-class-method-argument]
         right: int,  # ruff: ignore[unused-class-method-argument]
     ) -> int:
-        """A fragment counts once however long it is.
+        """Return the weight of one fragment in an aggregate: always ``1``.
 
-        The kind's whole reason for weighing by record rather than by span:
-        a fragment is a measured thing, not a run of per-base values, so
-        its length says nothing about how many times its value counts.
-
-        A constant, which is elementwise: the base's
-        :meth:`~.base.GenomicScore.record_weights` fills it out to a
-        batch's shape.
+        :meta private:
         """
         return 1
 
+    # The GenomicScore schema plus a per-score ``aggregator``.
     @staticmethod
     def get_schema() -> dict[str, Any]:
-        """The :class:`GenomicScore` schema plus a per-score ``aggregator``."""
+        """Return the configuration schema of a fragment score resource.
+
+        Returns
+        -------
+        dict[str, Any]
+            The schema of a genomic score, with an ``aggregator`` entry added to
+            each score definition.
+        """
         schema = copy.deepcopy(GenomicScore.get_schema())
         scores_schema = schema["scores"]["schema"]["schema"]
         scores_schema["aggregator"] = AGGREGATOR_SCHEMA
         return schema
 
+    # **Private to the fragment plane.**
+    # :meth:`~.base.GenomicScore.fetch_region_segments_scores` through
+    # :func:`_tupled`, and not a read to reach for directly; it keeps its name
+    # because it had one, not because the name is an invitation. It diverges
+    # from the internals beside it (``_score_segments``, ``_region_read_defs``)
+    # in spelling only.
+    #
+    # What it adds to the base read is the tuple, a locus that is required
+    # rather than defaulted, and a ``list`` of score ids. What the fragment
+    # plane once had a private TWIN of that method for was ``score_filter``,
+    # which the base method takes now (gain#1272).
+    #
+    # One entry per overlapping fragment, in table order, each reporting the
+    # fragment's OWN extent -- unclipped, even where it runs past the region
+    # asked for. What a partial overlap means depends on what the caller is
+    # computing, so ADR 0008 leaves it to them; a caller that wants the window
+    # intersected composes :func:`~.records.clip_span`.
+    #
+    # ``values`` is positional, parallel to ``scores`` as requested (to
+    # :meth:`~.base.GenomicScore.get_all_scores` when that is ``None``), rather
+    # than a mapping: the caller already knows what it asked for and in what
+    # order. A value may be ``None`` where the record carries no value for that
+    # score -- unlike the per-position reads, that is the only ``None`` here,
+    # because a fragment score has no notion of an uncovered position.
+    #
+    # ``score_filter`` reads the RECORD, so it may name any score the resource
+    # defines, including one outside ``scores``, and a rejected fragment costs
+    # no extraction.
+    #
+    # The REQUEST is checked when this is called; the READING is lazy. A closed
+    # score, a contig this resource does not have and an unknown score id are
+    # refused before the first ``next()`` rather than on it, for the reason
+    # :meth:`~.base.GenomicScore._region_read_defs` gives. A malformed RECORD is
+    # a different matter and is refused when the record is reached: a fragment
+    # whose end precedes its begin ends the iteration then, mid-stream.
+    #
+    # **One live read at a time.** A score serves a single region read at once
+    # -- the table's line iterator and line buffer are the table's, not the
+    # generator's -- so starting a second read invalidates one that is still
+    # being consumed, and on a tabix-backed table the two then answer each
+    # other's records with no error raised. Materialising is what makes a held
+    # answer safe to keep: ``kept = list(score.fetch_fragment_scores(chrom,
+    # beg, end))``.
+    #
+    # Abandoning a read mid-stream is safe and costs only a
+    # ``TabixGenomicPositionTable`` buffer prune, which gain#1120 moved
+    # into a ``finally`` -- though that runs
+    # when the generator is released, so a caller holding a reference to a
+    # ``close()``-ed generator still holds the read open.
     def fetch_fragment_scores(
         self, chrom: str,
         start: int, stop: int,
@@ -265,65 +358,11 @@ class FragmentScore(GenomicScore):
         *,
         score_filter: ScoreFilter | None = None,
     ) -> Generator[tuple[int, int, tuple[ScoreValue, ...]], None, None]:
-        """Stream ``(begin, end, values)`` for the fragments over a region.
+        """Stream the fragments over a region at the record plane.
 
-        **Private to the fragment plane.**
-        :meth:`~.base.GenomicScore.fetch_region_segments_scores` through
-        :func:`_tupled`, and not a read to reach for directly; it keeps its
-        name because it had one, not because the name is an invitation.  It
-        diverges from the internals beside it (``_score_segments``,
-        ``_region_read_defs``) in spelling only.
+        Use :meth:`get_fragment_scores_overlapping_region` instead.
 
-        What it adds to the base read is the tuple, a locus that is required
-        rather than defaulted, and a ``list`` of score ids.  What the
-        fragment plane once had a private TWIN of that method for was
-        ``score_filter``, which the base method takes now (gain#1272).
-
-        One entry per overlapping fragment, in table order, each reporting
-        the fragment's OWN extent -- unclipped, even where it runs past the
-        region asked for.  What a partial overlap means depends on what the
-        caller is computing, so ADR 0008 leaves it to them; a caller that
-        wants the window intersected composes
-        :func:`~.records.clip_span`.
-
-        ``values`` is positional, parallel to ``scores`` as requested (to
-        :meth:`~.base.GenomicScore.get_all_scores` when that is ``None``),
-        rather than a mapping: the caller already knows what it asked for and
-        in what order.  A value may be ``None`` where the record carries no
-        value for that score -- unlike the per-position reads, that is the
-        only ``None`` here, because a fragment score has no notion of an
-        uncovered position.
-
-        ``score_filter`` -- from :meth:`GenomicScore.compile_filter()
-        <.base.GenomicScore.compile_filter>` -- drops the fragments it
-        rejects, which are then simply not yielded.  It reads the RECORD, so
-        it may name any score the resource defines, including one outside
-        ``scores``, and a rejected fragment costs no extraction.
-
-        The REQUEST is checked when this is called; the READING is lazy.  A
-        closed score, a contig this resource does not have and an unknown
-        score id are refused before the first ``next()`` rather than on it,
-        for the reason :meth:`~.base.GenomicScore._region_read_defs` gives.
-        A malformed RECORD is a different matter and is refused when the
-        record is reached: a fragment whose end precedes its begin ends the
-        iteration then, mid-stream.
-
-        **One live read at a time.**  A score serves a single region read at
-        once -- the table's line iterator and line buffer are the table's, not
-        the generator's -- so starting a second read invalidates one that is
-        still being consumed, and on a tabix-backed table the two then answer
-        each other's records with no error raised.  Materialising is what
-        makes a held answer safe to keep:
-
-        .. code-block:: python
-
-            kept = list(score.fetch_fragment_scores(chrom, beg, end))
-
-        Abandoning a read mid-stream is safe and costs only a
-        :class:`~gain.genomic_resources.genomic_position_table.table_tabix.TabixGenomicPositionTable`
-        buffer prune, which gain#1120 moved into a ``finally`` -- though that
-        runs when the generator is released, so a caller holding a reference
-        to a ``close()``-ed generator still holds the read open.
+        :meta private:
         """
         return _tupled(self.fetch_region_segments_scores(
             chrom, start, stop, scores, score_filter=score_filter))
@@ -363,6 +402,36 @@ class FragmentScore(GenomicScore):
                 f"genomic score <{self.resource_id}> was asked for "
                 f"{name}={fraction}; an overlap fraction is between 0 and 1")
 
+    # The plane's workhorse. Entries are shaped as :meth:`fetch_fragment_scores`
+    # shapes them -- one per overlapping fragment, in table order, at the
+    # fragment's OWN unclipped extent, with ``values`` positional and parallel
+    # to ``scores`` -- and ``score_filter`` behaves as it documents there. What
+    # this adds is the two thresholds.
+    #
+    # The two overlap fractions are :func:`~.records.overlap_fractions_admit`,
+    # applied with this region as ``[start, end]`` and each fragment as the
+    # record; that function defines them. Both unset filters nothing -- which is
+    # what this read did before the thresholds existed -- and hands the stream
+    # through without consulting the predicate.
+    #
+    # They SELECT, they do not RESHAPE: a fragment that passes is still reported
+    # at its own unclipped span. That is this plane's rule and it has no
+    # decision record of its own -- ADR 0008 is about who validates, not about
+    # what a read may do to a span, so it is not the authority for it.
+    #
+    # Everything after the locus is keyword-only, and that is not cosmetic:
+    # :meth:`fetch_fragment_scores` takes its score list positionally, so a
+    # caller migrating from ``fetch_fragment_scores(chrom, start, stop,
+    # scores)`` would otherwise bind that list to whatever this signature
+    # happens to put fourth -- no error, just a plausible-looking filtered
+    # result.
+    #
+    # The REQUEST is checked when this is called; the READING is lazy.
+    #
+    # The table's line iterator and line buffer belong to the table, not to the
+    # generator, so starting a second read invalidates one that is still being
+    # consumed. A held generator may be *closed* across another query, never
+    # *resumed* across one.
     def get_fragment_scores_overlapping_region(
         self, chrom: str, start: int, end: int,
         *,
@@ -371,51 +440,57 @@ class FragmentScore(GenomicScore):
         min_region_overlap_fraction: float | None = None,
         min_fragment_overlap_fraction: float | None = None,
     ) -> Generator[tuple[int, int, tuple[ScoreValue, ...]], None, None]:
-        """Yield ``(begin, end, values)`` per fragment overlapping a region.
+        """Yield the fragments that overlap a region.
 
-        The plane's workhorse.  Entries are shaped as
-        :meth:`fetch_fragment_scores` shapes them -- one per overlapping
-        fragment, in table order, at the fragment's OWN unclipped extent,
-        with ``values`` positional and parallel to ``scores`` -- and
-        ``score_filter`` behaves as it documents there.  What this adds is
-        the two thresholds below.
+        Each fragment is reported at its own extent. The extent is not clipped
+        to the region, also where the fragment runs past it. The fragments come
+        in table order.
 
-        **The two overlap fractions** are
-        :func:`~.records.overlap_fractions_admit`, applied with this
-        region as ``[start, end]`` and each fragment as the record; that
-        function defines them.  In this plane's vocabulary
-        ``min_region_overlap_fraction`` is "the fragment must cover at
-        least this much of MY region" and
-        ``min_fragment_overlap_fraction`` is "at least this much of the
-        FRAGMENT must fall in my region".  Both unset filters nothing --
-        which is what this read did before the thresholds existed -- and
-        hands the stream through without consulting the predicate.
-
-        They SELECT, they do not RESHAPE: a fragment that passes is still
-        reported at its own unclipped span.  That is this plane's rule and
-        it has no decision record of its own -- ADR 0008 is about who
-        validates, not about what a read may do to a span, so it is not
-        the authority for it.
-
-        **Everything after the locus is keyword-only**, and that is not
-        cosmetic: :meth:`fetch_fragment_scores` takes its score list
-        positionally, so a caller migrating from
-        ``fetch_fragment_scores(chrom, start, stop, scores)`` would
-        otherwise bind that list to whatever this signature happens to put
-        fourth -- no error, just a plausible-looking filtered result.
-
-        The REQUEST is checked when this is called; the READING is lazy.  A
-        closed score, an unknown contig, an unknown score id, a region no
-        genomic span can mean and an out-of-range fraction are all refused
+        The reads check the request when you call them, and read the data later.
+        A closed score, an unknown contig, an unknown score id, an invalid
+        region and an overlap fraction outside the range from 0 to 1 raise
         before the first ``next()``.
 
-        **One live region read per score at a time.**  The table's line
-        iterator and line buffer belong to the table, not to the generator,
-        so starting a second read invalidates one that is still being
-        consumed -- on a tabix-backed table the two then answer each other's
-        records with no error raised.  A held generator may be *closed*
-        across another query, never *resumed* across one.  Materialise
-        (``list(...)``) whatever has to outlive the next read.
+        A score serves one region read at a time. Starting a second read
+        invalidates a read that you still consume, and a tabix-backed table then
+        answers with the records of the other read and no error. Close a held
+        generator, or call ``list(...)`` on it, before the next read.
+
+        Parameters
+        ----------
+        chrom : str
+            The contig name.
+        start : int
+            The first position of the region (1-based, inclusive).
+        end : int
+            The last position of the region (1-based, inclusive).
+        scores : list[str] | None, default None
+            The score ids to read. ``None`` reads every score of the resource.
+        score_filter : ScoreFilter | None, default None
+            A filter from :meth:`~GenomicScore.compile_filter`. The read drops
+            the fragments that the filter rejects. The filter may name a score
+            that is not in ``scores``. ``None`` keeps every fragment.
+        min_region_overlap_fraction : float | None, default None
+            The fragment must cover at least this fraction of the region.
+            ``None`` sets no threshold.
+        min_fragment_overlap_fraction : float | None, default None
+            At least this fraction of the fragment must fall in the region.
+            ``None`` sets no threshold.
+
+        Returns
+        -------
+        Generator[tuple[int, int, tuple[ScoreValue, ...]], None, None]
+            One ``(begin, end, values)`` tuple for each fragment. ``values`` is
+            parallel to ``scores``. A value is ``None`` when the fragment has no
+            value for that score. The generator is empty when no fragment
+            overlaps the region.
+
+        Raises
+        ------
+        ValueError
+            If the score is closed, the contig or a score id is unknown,
+            ``start`` is below 1, ``end`` is before ``start``, or an overlap
+            fraction is outside the range from 0 to 1.
         """
         return _tupled(self._segments_overlapping_region(
             chrom, start, end,
@@ -469,12 +544,46 @@ class FragmentScore(GenomicScore):
         min_region_overlap_fraction: float | None = None,
         min_fragment_overlap_fraction: float | None = None,
     ) -> Generator[tuple[int, int, ScoreValue], None, None]:
-        """Yield ``(begin, end, value)`` per fragment overlapping a region.
+        """Yield the fragments that overlap a region, with the value of one
+        score.
 
-        The singular form of :meth:`get_fragment_scores_overlapping_region`,
-        which documents the overlap fractions and the one-live-read limit
-        this inherits; ``score`` of ``None`` is honoured only when the
-        resource declares exactly one.
+        This is the singular form of
+        :meth:`get_fragment_scores_overlapping_region`. The same limits apply.
+
+        Parameters
+        ----------
+        chrom : str
+            The contig name.
+        start : int
+            The first position of the region (1-based, inclusive).
+        end : int
+            The last position of the region (1-based, inclusive).
+        score : str | None, default None
+            The score id. ``None`` is valid only when the resource defines
+            exactly one score.
+        score_filter : ScoreFilter | None, default None
+            A filter from :meth:`~GenomicScore.compile_filter`. ``None`` keeps
+            every fragment.
+        min_region_overlap_fraction : float | None, default None
+            The fragment must cover at least this fraction of the region.
+            ``None`` sets no threshold.
+        min_fragment_overlap_fraction : float | None, default None
+            At least this fraction of the fragment must fall in the region.
+            ``None`` sets no threshold.
+
+        Returns
+        -------
+        Generator[tuple[int, int, ScoreValue], None, None]
+            One ``(begin, end, value)`` tuple for each fragment. The value is
+            ``None`` when the fragment has no value for the score. The generator
+            is empty when no fragment overlaps the region.
+
+        Raises
+        ------
+        ValueError
+            If ``score`` is ``None`` and the resource defines more than one
+            score, or for any reason that
+            :meth:`get_fragment_scores_overlapping_region` lists.
         """
         rows = self.get_fragment_scores_overlapping_region(
             chrom, start, end,
@@ -484,36 +593,62 @@ class FragmentScore(GenomicScore):
             min_fragment_overlap_fraction=min_fragment_overlap_fraction)
         return ((beg, end_, values[0]) for beg, end_, values in rows)
 
+    # A one-position region read of
+    # :meth:`get_fragment_scores_overlapping_region`, which documents what an
+    # entry is; spans are unclipped here too.
+    #
+    # Materialised, for the caller's convenience: a point query returns a
+    # handful of fragments, callers want all of them, and a materialised answer
+    # can be measured with ``len()``, iterated twice and kept across a later
+    # read. It is NOT the drain hazard
+    # :meth:`~.position.PositionScore.get_scores_at_position` documents: that
+    # was gain#1120's to fix, and abandoning a region generator has been safe
+    # since.
+    #
+    # The overlap fractions are deliberately absent. Over a one-base region
+    # ``overlap / region_length`` is always 1, so the region fraction could only
+    # ever be vacuous, and the fragment fraction of a single base is a ratio no
+    # caller has been found to want.
+    #
+    # ``pos`` is refused below 1, through the same
+    # :meth:`~.base.GenomicScore._guard_region_span` the region reads use: a
+    # backend that reads ``0`` as "unbounded" would otherwise answer a caller
+    # error with the whole contig.
     def get_fragment_scores_at_position(
         self, chrom: str, pos: int,
         *,
         scores: list[str] | None = None,
         score_filter: ScoreFilter | None = None,
     ) -> Sequence[tuple[int, int, tuple[ScoreValue, ...]]]:
-        """Return ``(begin, end, values)`` per fragment covering a position.
+        """Return the fragments that cover a position.
 
-        A one-position region read of
-        :meth:`get_fragment_scores_overlapping_region`, which documents
-        what an entry is; spans are unclipped here too, so a fragment
-        answering a position is reported at its full extent.
+        Each fragment is reported at its full extent, not clipped to the
+        position.
 
-        **Materialised, for the caller's convenience.**  A point query
-        returns a handful of fragments, callers want all of them, and a
-        materialised answer can be measured with ``len()``, iterated twice
-        and kept across a later read.  It is NOT the drain hazard
-        :meth:`~.position.PositionScore.get_scores_at_position` documents:
-        that was gain#1120's to fix, and abandoning a region generator has
-        been safe since.
+        Parameters
+        ----------
+        chrom : str
+            The contig name.
+        pos : int
+            The position (1-based).
+        scores : list[str] | None, default None
+            The score ids to read. ``None`` reads every score of the resource.
+        score_filter : ScoreFilter | None, default None
+            A filter from :meth:`~GenomicScore.compile_filter`. ``None`` keeps
+            every fragment.
 
-        The overlap fractions are deliberately absent.  Over a one-base
-        region ``overlap / region_length`` is always 1, so the region
-        fraction could only ever be vacuous, and the fragment fraction of a
-        single base is a ratio no caller has been found to want.
+        Returns
+        -------
+        Sequence[tuple[int, int, tuple[ScoreValue, ...]]]
+            One ``(begin, end, values)`` tuple for each fragment. The list is
+            empty when no fragment covers the position. You can keep the list
+            across a later read.
 
-        ``pos`` is refused below 1, through the same
-        :meth:`~.base.GenomicScore._guard_region_span` the region reads use:
-        a backend that reads ``0`` as "unbounded" would otherwise answer a
-        caller error with the whole contig.
+        Raises
+        ------
+        ValueError
+            If ``pos`` is below 1, or for any other reason that
+            :meth:`get_fragment_scores_overlapping_region` lists.
         """
         return list(self.get_fragment_scores_overlapping_region(
             chrom, pos, pos, scores=scores, score_filter=score_filter))
@@ -524,11 +659,36 @@ class FragmentScore(GenomicScore):
         score: str | None = None,
         score_filter: ScoreFilter | None = None,
     ) -> Sequence[tuple[int, int, ScoreValue]]:
-        """Return ``(begin, end, value)`` per fragment covering a position.
+        """Return the fragments that cover a position, with the value of one
+        score.
 
-        The singular form of :meth:`get_fragment_scores_at_position`, which
-        says why it materialises; ``score`` of ``None`` is honoured only
-        when the resource declares exactly one.
+        This is the singular form of :meth:`get_fragment_scores_at_position`.
+
+        Parameters
+        ----------
+        chrom : str
+            The contig name.
+        pos : int
+            The position (1-based).
+        score : str | None, default None
+            The score id. ``None`` is valid only when the resource defines
+            exactly one score.
+        score_filter : ScoreFilter | None, default None
+            A filter from :meth:`~GenomicScore.compile_filter`. ``None`` keeps
+            every fragment.
+
+        Returns
+        -------
+        Sequence[tuple[int, int, ScoreValue]]
+            One ``(begin, end, value)`` tuple for each fragment. The list is
+            empty when no fragment covers the position.
+
+        Raises
+        ------
+        ValueError
+            If ``score`` is ``None`` and the resource defines more than one
+            score, or for any reason that
+            :meth:`get_fragment_scores_at_position` lists.
         """
         return [
             (beg, end, values[0])
@@ -538,41 +698,67 @@ class FragmentScore(GenomicScore):
                 score_filter=score_filter)
         ]
 
+    # The partition rule is :func:`~.records.owns_record`.
+    #
+    # The allele statistics scan makes the same ownership claim inline, as
+    # ``_owns``, but spells it ``clip_span(pos, pos, start, end)``: an allele
+    # row sits AT one position, so for it the record partition and the position
+    # one coincide. For a fragment they emphatically do not, which is why this
+    # read names the record partition rather than reusing that spelling. That
+    # scan is left as it is.
+    #
+    # :meth:`get_scores_in_bins` reads through it: each fragment lands in the
+    # one bin holding its begin, which is this partition at bin granularity.
+    #
+    # The overlap fractions are deliberately absent: this read partitions, and a
+    # fraction filter would let a fragment fall out of every window, which is
+    # the property being partitioned FOR.
     def get_fragment_scores_starting_in_region(
         self, chrom: str, start: int, end: int,
         *,
         scores: list[str] | None = None,
         score_filter: ScoreFilter | None = None,
     ) -> Generator[tuple[int, int, tuple[ScoreValue, ...]], None, None]:
-        """Yield ``(begin, end, values)`` per fragment BEGINNING in a region.
+        """Yield the fragments that begin in a region.
 
-        Exactly the fragments whose begin lies in ``[start, end]``, so a set
-        of adjacent windows answers each fragment from exactly ONE of them:
-        no duplicates and no gaps.  That is the property chunked and
-        parallel work depends on, and it is the only predicate on this plane
-        that guarantees it -- :meth:`get_fragment_scores_overlapping_region`
-        answers a fragment from every window it reaches into.  The rule is
-        :func:`~.records.owns_record`.
+        The read yields the fragments whose begin lies in ``[start, end]``. A
+        set of adjacent windows answers each fragment from exactly one window,
+        with no duplicate and no gap. Use this read for chunked and parallel
+        work. :meth:`get_fragment_scores_overlapping_region` answers a fragment
+        from every window that it reaches into.
 
-        The allele statistics scan makes the same ownership claim inline, as
-        ``_owns``, but spells it ``clip_span(pos, pos, start, end)``: an
-        allele row sits AT one position, so for it the record partition and
-        the position one coincide.  For a fragment they emphatically do not,
-        which is why this read names the record partition rather than
-        reusing that spelling.  That scan is left as it is.
+        Each fragment is reported at its own extent. The limit of one live read
+        per score applies, as for
+        :meth:`get_fragment_scores_overlapping_region`. The read has no overlap
+        fractions, because a fraction filter could let a fragment fall out of
+        every window.
 
-        :meth:`get_scores_in_bins` reads through it: each fragment lands
-        in the one bin holding its begin, which is this partition at bin
-        granularity.
+        Parameters
+        ----------
+        chrom : str
+            The contig name.
+        start : int
+            The first position of the region (1-based, inclusive).
+        end : int
+            The last position of the region (1-based, inclusive).
+        scores : list[str] | None, default None
+            The score ids to read. ``None`` reads every score of the resource.
+        score_filter : ScoreFilter | None, default None
+            A filter from :meth:`~GenomicScore.compile_filter`. ``None`` keeps
+            every fragment.
 
-        Entries are shaped as
-        :meth:`get_fragment_scores_overlapping_region` shapes them, spans
-        unclipped, and the one-live-read limit it documents applies here
-        too.
+        Returns
+        -------
+        Generator[tuple[int, int, tuple[ScoreValue, ...]], None, None]
+            One ``(begin, end, values)`` tuple for each fragment. ``values`` is
+            parallel to ``scores``. The generator is empty when no fragment
+            begins in the region.
 
-        The overlap fractions are deliberately absent: this read partitions,
-        and a fraction filter would let a fragment fall out of every window,
-        which is the property being partitioned FOR.
+        Raises
+        ------
+        ValueError
+            If ``start`` is below 1, ``end`` is before ``start``, the score is
+            closed, or the contig or a score id is unknown.
         """
         self._guard_region_span(start, end)
         rows = self.fetch_fragment_scores(
@@ -589,13 +775,40 @@ class FragmentScore(GenomicScore):
         score: str | None = None,
         score_filter: ScoreFilter | None = None,
     ) -> Generator[tuple[int, int, ScoreValue], None, None]:
-        """Yield ``(begin, end, value)`` per fragment BEGINNING in a region.
+        """Yield the fragments that begin in a region, with the value of one
+        score.
 
-        The singular form of
-        :meth:`get_fragment_scores_starting_in_region`, which documents the
-        partition it answers and the one-live-read limit this inherits;
-        ``score`` of ``None`` is honoured only when the resource declares
-        exactly one.
+        This is the singular form of
+        :meth:`get_fragment_scores_starting_in_region`. The same partition and
+        the same limits apply.
+
+        Parameters
+        ----------
+        chrom : str
+            The contig name.
+        start : int
+            The first position of the region (1-based, inclusive).
+        end : int
+            The last position of the region (1-based, inclusive).
+        score : str | None, default None
+            The score id. ``None`` is valid only when the resource defines
+            exactly one score.
+        score_filter : ScoreFilter | None, default None
+            A filter from :meth:`~GenomicScore.compile_filter`. ``None`` keeps
+            every fragment.
+
+        Returns
+        -------
+        Generator[tuple[int, int, ScoreValue], None, None]
+            One ``(begin, end, value)`` tuple for each fragment. The generator
+            is empty when no fragment begins in the region.
+
+        Raises
+        ------
+        ValueError
+            If ``score`` is ``None`` and the resource defines more than one
+            score, or for any reason that
+            :meth:`get_fragment_scores_starting_in_region` lists.
         """
         rows = self.get_fragment_scores_starting_in_region(
             chrom, start, end,
@@ -652,6 +865,34 @@ class FragmentScore(GenomicScore):
         return self._resolve_query_tuple(
             self._default_queries if queries is None else tuple(queries))
 
+    # The plane's folding read: what
+    # :meth:`get_fragment_scores_overlapping_region` yields, already reduced, in
+    # ONE pass that also counts what it saw. The selection is that read's
+    # exactly, because it is the same code: both
+    # consume :meth:`_segments_overlapping_region`, and only the public read
+    # tuples what comes out. A fragment is weighed by :meth:`record_weight`.
+    #
+    # Deliberately NOT built on :meth:`~.base.GenomicScore.aggregate_region`,
+    # despite reducing the same way: that surface takes no ``score_filter``,
+    # and its ``CountAggregator`` has the wrong count semantics here -- it skips
+    # ``None`` values, so it counts non-null VALUES rather than fragments, and
+    # answers ``None`` rather than ``0`` for a region no fragment overlaps.
+    #
+    # THIS READ holds nothing per fragment: the stream is folded as it arrives
+    # and never materialised. Whether the CALL is constant in the number of
+    # fragments is then the AGGREGATORS' business, and they divide three ways:
+    #
+    # - constant -- ``max``, ``min``, ``mean``, ``count``, ``bool``;
+    # - one entry per DISTINCT value -- ``mode``, ``value_count``, so bounded
+    #   by how many values a resource has rather than by how many fragments a
+    #   region holds;
+    # - one entry per FRAGMENT -- ``list``, ``median``, ``concatenate`` and
+    #   ``join``. ``join(,)`` is the DEFAULT for a ``str`` score, which makes
+    #   this the ordinary case for a CNV collection rather than an exotic one.
+    #
+    # Under the last group the fold still allocates per fragment. What this read
+    # removes is the SECOND copy the annotator used to build beside it, which is
+    # a halving there and a flattening everywhere else.
     def get_fragment_scores_overlapping_region_agg(
         self, chrom: str, start: int, end: int,
         *,
@@ -660,47 +901,57 @@ class FragmentScore(GenomicScore):
         min_fragment_overlap_fraction: float | None = None,
         score_filter: ScoreFilter | None = None,
     ) -> FragmentAggregate:
-        """Reduce the fragments overlapping a region to one value per query.
+        """Reduce the fragments that overlap a region to one value for each
+        query.
 
-        The plane's folding read: what
-        :meth:`get_fragment_scores_overlapping_region` yields, already
-        reduced, in ONE pass that also counts what it saw.  The selection
-        is that read's exactly -- the two overlap fractions and
-        ``score_filter`` mean what they mean there, and a fragment is
-        weighed by :meth:`record_weight`, which counts it once however
-        long it is.  Exactly, because it is the same code: both consume
-        :meth:`_segments_overlapping_region`, and only the public read
-        tuples what comes out.
+        The read selects the fragments as
+        :meth:`get_fragment_scores_overlapping_region` does. The overlap
+        fractions and ``score_filter`` have the same meaning. Each fragment
+        counts once, however long it is. The read folds the fragments as they
+        arrive and does not keep them. A few aggregators keep one entry for each
+        fragment while they run: ``list``, ``median``, ``concatenate`` and
+        ``join``. The default aggregator of a ``str`` score is ``join(,)``,
+        which is one of them.
 
-        Answers a :class:`FragmentAggregate`, which documents why the
-        count and the values travel together and what ``count`` counts.
+        The ``count`` of the result counts fragments. Use it instead of the
+        ``count`` aggregator of :meth:`~GenomicScore.aggregate_region`, which
+        counts the non-null values and gives ``None`` for an empty region.
 
-        Deliberately NOT built on
-        :meth:`~.base.GenomicScore.aggregate_region`, despite reducing the
-        same way: that surface takes no ``score_filter``, and its
-        ``CountAggregator`` has the wrong count semantics here -- it skips
-        ``None`` values, so it counts non-null VALUES rather than
-        fragments, and answers ``None`` rather than ``0`` for a region no
-        fragment overlaps.
+        Parameters
+        ----------
+        chrom : str
+            The contig name.
+        start : int
+            The first position of the region (1-based, inclusive).
+        end : int
+            The last position of the region (1-based, inclusive).
+        queries : Sequence[ScoreAggregationQuery] | None, default None
+            The scores to reduce, each with an aggregator. A query with no
+            aggregator uses the default of the score. ``None`` reduces every
+            score of the resource with its default aggregator.
+        min_region_overlap_fraction : float | None, default None
+            The fragment must cover at least this fraction of the region.
+            ``None`` sets no threshold.
+        min_fragment_overlap_fraction : float | None, default None
+            At least this fraction of the fragment must fall in the region.
+            ``None`` sets no threshold.
+        score_filter : ScoreFilter | None, default None
+            A filter from :meth:`~GenomicScore.compile_filter`. ``None`` keeps
+            every fragment.
 
-        THIS READ holds nothing per fragment: the stream is folded as it
-        arrives and never materialised.  Whether the CALL is constant in
-        the number of fragments is then the AGGREGATORS' business, and
-        they divide three ways:
+        Returns
+        -------
+        FragmentAggregate
+            The number of fragments that the read saw, and one reduced value for
+            each query. When no fragment overlaps the region, ``count`` is
+            ``0``.
 
-        - constant -- ``max``, ``min``, ``mean``, ``count``, ``bool``;
-        - one entry per DISTINCT value -- ``mode``, ``value_count``, so
-          bounded by how many values a resource has rather than by how
-          many fragments a region holds;
-        - one entry per FRAGMENT -- ``list``, ``median``, ``concatenate``
-          and ``join``.  ``join(,)`` is the DEFAULT for a ``str`` score,
-          which makes this the ordinary case for a CNV collection rather
-          than an exotic one.
-
-        Under the last group the fold still allocates per fragment.  What
-        this read removes is the SECOND copy the annotator used to build
-        beside it, which is a halving there and a flattening everywhere
-        else.
+        Raises
+        ------
+        ValueError
+            If a query names an unknown score or an aggregator that the score
+            does not accept, or for any reason that
+            :meth:`get_fragment_scores_overlapping_region` lists.
         """
         requests, score_ids = self._resolve_fragment_aggregation_queries(
             queries)
@@ -718,6 +969,11 @@ class FragmentScore(GenomicScore):
             score_ids=score_ids, weigh=self.record_weight)
         return FragmentAggregate(segments.count, tuple(values))
 
+    # Alone among this plane's singular reads it does NOT unwrap: it answers the
+    # same :class:`FragmentAggregate`, whose ``values`` is a one-element tuple.
+    # The others have a bare value to answer with; this one's answer is a count
+    # and a reduction together, and the count is a property of the QUERY rather
+    # than of the score named -- so there is nothing for a bare value to be.
     def get_fragment_score_overlapping_region_agg(
         self, chrom: str, start: int, end: int,
         *,
@@ -727,19 +983,48 @@ class FragmentScore(GenomicScore):
         min_fragment_overlap_fraction: float | None = None,
         score_filter: ScoreFilter | None = None,
     ) -> FragmentAggregate:
-        """Reduce the fragments overlapping a region for ONE score.
+        """Reduce the fragments that overlap a region to one value for one
+        score.
 
-        The singular form of
-        :meth:`get_fragment_scores_overlapping_region_agg`, which documents
-        the selection and the reduction; ``score`` of ``None`` is honoured
-        only when the resource declares exactly one.
+        This is the singular form of
+        :meth:`get_fragment_scores_overlapping_region_agg`. It returns the same
+        :class:`FragmentAggregate`, and ``values`` has one element.
 
-        Alone among this plane's singular reads it does NOT unwrap: it
-        answers the same :class:`FragmentAggregate`, whose ``values`` is a
-        one-element tuple.  The others have a bare value to answer with;
-        this one's answer is a count and a reduction together, and the
-        count is a property of the QUERY rather than of the score named --
-        so there is nothing for a bare value to be.
+        Parameters
+        ----------
+        chrom : str
+            The contig name.
+        start : int
+            The first position of the region (1-based, inclusive).
+        end : int
+            The last position of the region (1-based, inclusive).
+        score : str | None, default None
+            The score id. ``None`` is valid only when the resource defines
+            exactly one score.
+        aggregator : str | None, default None
+            The aggregator. ``None`` uses the default aggregator of the score.
+        min_region_overlap_fraction : float | None, default None
+            The fragment must cover at least this fraction of the region.
+            ``None`` sets no threshold.
+        min_fragment_overlap_fraction : float | None, default None
+            At least this fraction of the fragment must fall in the region.
+            ``None`` sets no threshold.
+        score_filter : ScoreFilter | None, default None
+            A filter from :meth:`~GenomicScore.compile_filter`. ``None`` keeps
+            every fragment.
+
+        Returns
+        -------
+        FragmentAggregate
+            The number of fragments that the read saw, and a tuple with the one
+            reduced value.
+
+        Raises
+        ------
+        ValueError
+            If ``score`` is ``None`` and the resource defines more than one
+            score, or for any reason that
+            :meth:`get_fragment_scores_overlapping_region_agg` lists.
         """
         return self.get_fragment_scores_overlapping_region_agg(
             chrom, start, end,
@@ -751,52 +1036,75 @@ class FragmentScore(GenomicScore):
 
     # -- The binned read ----------------------------------------------------
 
+    # Answers :func:`~.aggregation.fold_into_bins`'s block. Which aggregators
+    # are accepted at all, and what an empty cell holds, are the fold's rules,
+    # not this read's.
+    #
+    # ``aggregator`` of ``None`` on a query is the score's configured default,
+    # as everywhere a :class:`~..aggregators.ScoreAggregationQuery` is read; a
+    # default the fold does not accept (``join`` for a ``str`` score) is refused
+    # like a named one. A numeric-only aggregator on a non-numeric score is
+    # refused by :func:`~..aggregators.validate_aggregator`.
+    #
+    # A contig the resource lacks answers the all-empty block rather than being
+    # refused: a genome-wide pass over fragment files that each skip some
+    # contigs is the ordinary case.
     def get_scores_in_bins(
         self, chrom: str, start: int, end: int, bin_size: int,
         queries: Sequence[ScoreAggregationQuery],
     ) -> np.ndarray:
-        """Reduce the fragments STARTING in each grid bin, one column a query.
+        """Reduce the fragments that start in each bin, one column for each
+        query.
 
-        Answers :func:`~.aggregation.fold_into_bins`'s block: a ``float64``
-        array of shape ``(n_bins, len(queries))``, column ``j`` reducing
-        ``queries[j]``.  Rows follow the GLOBAL grid anchored at position 1
-        -- row ``i`` is bin ``calc_bin_index(bin_size, start) + i`` -- and
-        are whole grid bins, not clipped to the region and returned
-        without bounds.  What an empty cell holds (``0`` for ``count`` and
-        ``sum``, ``NaN`` for ``mean``, ``max``, ``min``, ``median`` and
-        ``product``) and which aggregators are accepted at all are the
-        fold's rules, not this read's.
+        The grid is global and starts at position 1. Row ``i`` is the bin with
+        index ``calc_bin_index(bin_size, start) + i``. The rows are whole bins.
+        The read does not clip them to the region.
 
-        **Start-only.**  A fragment belongs to the bin holding its BEGIN
-        and to no other, however far it runs: the fragments are those
-        :meth:`get_fragment_scores_starting_in_region` answers for
-        ``[start, end]``.  So the blocks of two adjacent calls split on a
-        bin edge stack into exactly the block of their union -- no
-        fragment is missed or counted twice.
+        A fragment belongs to the bin that holds its begin, however far it runs.
+        The blocks of two adjacent calls that split on a bin edge stack into the
+        block of their union. The fragments are those that
+        :meth:`get_fragment_scores_starting_in_region` yields for ``[start,
+        end]``.
 
-        **Fragment count** is ``ScoreAggregationQuery(<score>, "count")``:
-        the number of fragments starting in the bin that carry a non-null
-        value for that score.  Asked of a score every fragment carries --
-        a barcode -- it is the number of fragments starting in the bin.
+        The fragment count of a bin is the query
+        ``ScoreAggregationQuery(<score>, "count")``. It counts the fragments
+        that start in the bin and have a value for the score. For a score that
+        every fragment carries, it is the number of fragments that start in the
+        bin.
 
-        ``aggregator`` of ``None`` on a query is the score's configured
-        default, as everywhere a :class:`~..aggregators.ScoreAggregationQuery`
-        is read; a default the fold does not accept (``join`` for a
-        ``str`` score) is refused like a named one.  A numeric-only
-        aggregator on a non-numeric score is refused by
-        :func:`~..aggregators.validate_aggregator`.
+        The read answers all queries from one read of the region. It
+        materialises the block, so the limit of one live read applies for the
+        duration of the call only.
 
-        A contig the resource lacks answers the all-empty block rather
-        than being refused: a genome-wide pass over fragment files that
-        each skip some contigs is the ordinary case.
+        Parameters
+        ----------
+        chrom : str
+            The contig name. A contig that the resource lacks gives the block of
+            empty cells, not an error.
+        start : int
+            The first position of the region (1-based, inclusive).
+        end : int
+            The last position of the region (1-based, inclusive).
+        bin_size : int
+            The width of a bin in positions. It must be at least 1.
+        queries : Sequence[ScoreAggregationQuery]
+            The scores to reduce, each with an aggregator. A query with no
+            aggregator uses the default of the score.
 
-        Every refusal -- a region starting below 1 or ending before it
-        starts, a ``bin_size`` below 1, an unknown score, an unaccepted
-        aggregator -- happens before the first fragment is read.  All
-        queries are answered from ONE read of the region, so the
-        one-live-read limit
-        :meth:`get_fragment_scores_overlapping_region` documents applies
-        for the duration of the call only: the block is materialised.
+        Returns
+        -------
+        numpy.ndarray
+            A ``float64`` array of shape ``(n_bins, len(queries))``. Column
+            ``j`` reduces ``queries[j]``. An empty cell is ``0`` for ``count``
+            and ``sum``. It is ``NaN`` for ``mean``, ``max``, ``min``,
+            ``median`` and ``product``.
+
+        Raises
+        ------
+        ValueError
+            If ``start`` is below 1, ``end`` is before ``start``, ``bin_size``
+            is below 1, a score is unknown, or an aggregator is not accepted for
+            the score. The read raises before it reads the first fragment.
         """
         self._guard_region_span(start, end)
         if bin_size < 1:
