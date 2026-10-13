@@ -90,7 +90,7 @@ class PositionScore(GenomicScore):
         DEFAULT_AGGREGATORS (dict[str, str | None]): The aggregator name
             that a region read uses for each value type, when the
             configuration of the score names none. A value of ``None``
-            means that the type has no default aggregator.
+            means that the type takes no default.
     """
 
     # Aggregating the values of a region is the resource's job since
