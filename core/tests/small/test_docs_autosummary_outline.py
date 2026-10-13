@@ -35,7 +35,6 @@ NOT_ROLLED_OUT = frozenset({
     "gene_sets.rst",
     "histograms.rst",
     "liftover_chains.rst",
-    "position_scores.rst",
     "reference_genomes.rst",
     "repositories.rst",
     "scores.rst",
