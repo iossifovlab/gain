@@ -17,7 +17,35 @@ logger = logging.getLogger(__name__)
 def load_data_frame_from_resource(
     resource: GenomicResource | None,
 ) -> pd.DataFrame:
-    """Load a pandas DataFrame from a ``data_frame`` genomic resource."""
+    """Load a pandas DataFrame from a ``data_frame`` genomic resource.
+
+    The ``format:`` key of the resource selects the reader: ``csv`` (the
+    default), ``tsv`` or ``excel``. The ``parameters:`` block passes keyword
+    arguments to the pandas reader. The data are read at once, and the
+    result holds no open file.
+
+    Parameters
+    ----------
+    resource : GenomicResource or None
+        The resource to load. Its type must be ``data_frame``. ``None``
+        is an error, not an empty result.
+
+    Returns
+    -------
+    pandas.DataFrame
+        The table of the resource. A file with a header and no rows
+        gives a ``DataFrame`` with columns and no rows. A file with no
+        content at all raises the error of the pandas reader.
+
+    Raises
+    ------
+    ValueError
+        If ``resource`` is ``None``, is not of type ``data_frame``, has no
+        ``file:`` key, names an unknown ``format:``, or has a
+        ``parameters:`` block that makes pandas return something other than
+        a ``DataFrame``, such as ``chunksize`` or ``sheet_name: null``. Each
+        message except the ``None`` one names the resource.
+    """
     if resource is None:
         raise ValueError(f"missing resource {resource}")
 
@@ -102,7 +130,27 @@ def load_data_frame_from_resource(
 def load_data_frame_from_resource_id(
     resource_id: str, grr: GenomicResourceRepo | None = None,
 ) -> pd.DataFrame:
-    """Load a data_frame from a genomic resource id."""
+    """Load a pandas DataFrame from a ``data_frame`` resource id.
+
+    Parameters
+    ----------
+    resource_id : str
+        The id of the resource in the repository.
+    grr : GenomicResourceRepo or None, default None
+        The repository to read from. ``None`` builds the default
+        repository with ``build_genomic_resource_repository()``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        The table of the resource, as
+        :func:`load_data_frame_from_resource` returns it.
+
+    Raises
+    ------
+    ValueError
+        As :func:`load_data_frame_from_resource` raises it.
+    """
     # pylint: disable=import-outside-toplevel
     from gain.genomic_resources.repository_factory import (
         build_genomic_resource_repository,

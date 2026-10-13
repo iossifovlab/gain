@@ -239,30 +239,58 @@ def load_ann_data_from_resource(
 ) -> ad.AnnData:
     """Load an AnnData from an ``ann_data`` genomic resource.
 
-    **The caller owns the file handle.**  An ``h5ad`` is read
-    ``backed="r"`` -- the default, and what keeps a multi-gigabyte ``X``
-    out of a dask worker -- which leaves an open h5py file behind for as
-    long as the AnnData lives.  A repo sweep that loads one per resource
-    and relies on a garbage collection that may never come is gain#480's
-    shape, so a caller that loads in a loop closes with
-    ``ann_data.file.close()`` when ``ann_data.isbacked``.  A 10x read is
-    in memory and has no handle.
+    The ``format:`` key of the resource selects the reader: ``h5ad``,
+    ``10x_mtx`` or ``10x_h5``. When the key is missing, the suffix of the
+    ``file:`` key decides, and ``h5ad`` is the default. The data files must
+    be reachable as local files.
 
-    ``matrix_free`` asks for a read that does not materialise the data
-    matrix.  **The resulting ``X`` IS NOT THE RESOURCE'S DATA** -- it is an
-    all-zero matrix of the right shape.  Everything else is built by the
-    same code as an ordinary read, so both axis tables, the shape and the
-    feature-type filter are identical, which is what lets the statistics
-    build use it: ``AnnData._gen_repr`` skips ``X`` and ``describe`` reads
-    ``obs`` and ``var``.  Reading the real matrix costs about 10 GB on the
-    largest 10x resource to write 221 bytes of statistics.
+    The caller owns the file handle. An ``h5ad`` file is opened read-only
+    and backed by the file, so the AnnData keeps the file open. Call
+    ``ann_data.file.close()`` when ``ann_data.isbacked`` is true. The two
+    10x formats are read into memory and hold no handle.
 
-    It is honoured only where it means something.  Both 10x formats
-    honour it; ``h5ad`` ignores it -- ``backed="r"`` already keeps ``X``
-    off the heap, and reproducing anndata's repr for an arbitrary h5ad
-    would mean reimplementing its reader for no memory benefit (ADR
-    0014).
+    Parameters
+    ----------
+    resource : GenomicResource or None
+        The resource to load. Its type must be ``ann_data``. ``None`` is an
+        error, not an empty result.
+    matrix_free : bool, default False
+        Skip the data matrix. It applies to the ``10x_mtx`` and ``10x_h5``
+        formats only, and ``h5ad`` ignores it. The ``X`` of the result is a
+        matrix of zeros of the right shape, not the data of the resource.
+        ``obs`` and ``var`` are the same as in an ordinary read. Do not use
+        this option to read values.
+
+    Returns
+    -------
+    anndata.AnnData
+        The annotated matrix. The rows of ``obs`` are the cells and the
+        rows of ``var`` are the genes.
+
+    Raises
+    ------
+    ValueError
+        If ``resource`` is ``None``, is not of type ``ann_data``, has no
+        ``file:`` key, names an unknown ``format:``, cannot reach a data
+        file as a local ``file://`` url, or has a ``parameters:`` block
+        that makes the reader return something other than an ``AnnData``.
+        Each message except the ``None`` one names the resource.
     """
+    # The caller owns the handle because an h5ad is read ``backed="r"``,
+    # which is what keeps a multi-gigabyte ``X`` out of a dask worker. It
+    # leaves an open h5py file behind for as long as the AnnData lives. A
+    # repo sweep that loads one per resource and relies on a garbage
+    # collection that may never come is gain#480's shape.
+    #
+    # ``matrix_free`` exists for the statistics build:
+    # ``AnnData._gen_repr`` skips ``X`` and ``describe`` reads ``obs`` and
+    # ``var``. Everything but ``X`` is built by the same code as an ordinary
+    # read, so both axis tables, the shape and the feature-type filter are
+    # identical. Reading the real matrix costs about 10 GB on the largest
+    # 10x resource to write 221 bytes of statistics. The ``h5ad`` format
+    # ignores the option: ``backed="r"`` already keeps ``X`` off the heap,
+    # and reproducing the repr of anndata for an arbitrary h5ad would mean
+    # reimplementing its reader for no memory benefit (ADR 0014).
     if resource is None:
         raise ValueError("missing resource: None")
 
@@ -343,7 +371,30 @@ def load_ann_data_from_resource(
 def load_ann_data_from_resource_id(
     resource_id: str, grr: GenomicResourceRepo | None = None,
 ) -> ad.AnnData:
-    """Load an ann_data from a genomic resource id."""
+    """Load an AnnData from an ``ann_data`` resource id.
+
+    The caller owns the file handle, as for
+    :func:`load_ann_data_from_resource`.
+
+    Parameters
+    ----------
+    resource_id : str
+        The id of the resource in the repository.
+    grr : GenomicResourceRepo or None, default None
+        The repository to read from. ``None`` builds the default
+        repository with ``build_genomic_resource_repository()``.
+
+    Returns
+    -------
+    anndata.AnnData
+        The annotated matrix, as :func:`load_ann_data_from_resource`
+        returns it.
+
+    Raises
+    ------
+    ValueError
+        As :func:`load_ann_data_from_resource` raises it.
+    """
     # pylint: disable=import-outside-toplevel
     from gain.genomic_resources.repository_factory import (
         build_genomic_resource_repository,
