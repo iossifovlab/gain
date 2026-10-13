@@ -132,9 +132,10 @@ def build_gene_models_from_resource_id(
     Raises
     ------
     FileNotFoundError
-        If the repository has no resource with this id.
+        If a protocol-backed repository has no resource with this id.
     ValueError
-        If the resource is not of type ``gene_models``.
+        If a group repository has no resource with this id, or if the
+        resource is not of type ``gene_models``.
     """
     # pylint: disable=import-outside-toplevel
     from gain.genomic_resources.repository_factory import (
