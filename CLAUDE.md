@@ -152,6 +152,20 @@ bash docs/build_docs.sh && open docs/build/html/index.html
 ```
 </important>
 
+<important if="you are writing or changing the API section of a page under docs/source/development/resources/">
+
+The Gene Models page is the pattern (epic #1893). Each page of the "Genomic resources" chapter gets the same API section, one page per PR. Order: scores (Position, Allele, Fragment, then Genomic scores), reference genomes, repositories, liftover chains, gene scores, gene set collections, data frames and AnnData, histograms, adding a resource type.
+
+1. **Package block.** The section starts with a sentence that names the defining module. When `gain.grr` also exports a class of the page, add one `code-block` with one `from gain.grr import ...` line for those classes. The base slice (see #1899) adds a test that compares that block with `gain.grr.__all__`.
+2. **Outline.** A hand-written `autosummary` lists each class and its members, then the `autoclass` entries with `:members:`. No stub files are generated. `core/tests/small/test_docs_autosummary_outline.py` fails when the outline and the class disagree. The base slice makes it find each `autoclass` on a page; a page that is not rolled out yet sits on its skip list, and the page's slice removes it.
+3. **Inherited members.** An outline lists the members that a class defines itself. A subclass page adds an "Inherited from `<Base>`" outline of links to the one entry on the base class page. The test checks that list too.
+4. **Docstrings.** Numpy style (`Parameters`, `Returns`, `Raises`) for each public member. Say what `None` and an empty result mean. A property keeps a one-line summary. A dataclass, a named tuple or an exception describes its fields in the class docstring (`Attributes`), so the outline does not list them.
+5. **Not user API.** A member that is public by name but is a hook for the engine or for subclass authors gets `:meta private:` in its docstring. Sphinx skips it and so does the test. The PR body lists these members.
+6. **Narrative.** A docstring converted to numpy style loses its history and design rationale, as the docstring rule below requires. The text moves to a code comment above the definition. The PR body lists each sentence about behaviour that moved.
+7. **Factories.** The `gain.grr` factory pair of a resource gets full `Parameters` and `Returns` in the slice of that resource. The generic score pair goes with Genomic scores. The repository and genomic-context functions go with Repositories.
+8. **Check.** `bash docs/build_docs.sh` passes with `-W`, and the outline test passes.
+</important>
+
 <important if="you are on a feature or bugfix branch and tempted to touch docs/source/changes.rst">
 
 Do not. Release notes are composed once, when the version is cut; a branch leaves `changes.rst` untouched and adds no `unreleased` section (past commits that did are not the precedent, and every such edit is a guaranteed rebase conflict). Describe the user-visible change in the PR body; the notes are composed from there.
