@@ -36,21 +36,53 @@ from gain.templates import get_template
 logger = logging.getLogger(__name__)
 
 
+# The shared ScoreDef holds the catalogue fields. Column addressing is a
+# loading detail, so it lives here: the source column is read into the
+# ``df`` column and later renamed to ``score_id``.
 @dataclass
 class GeneScoreDef(ScoreDef):
-    """A gene score definition.
+    """The definition of one score of a gene score resource.
 
-    Extends the shared :class:`ScoreDef` with the one loading detail a gene
-    score needs: the name of the source column the score is read from (the
-    ``df`` column, later renamed to ``score_id``).
+    The loader builds one definition for each entry of the ``scores:``
+    block of the resource.
+
+    Attributes:
+        score_id (str): The id of the score.
+
+        value_type (str): The type of the values, such as ``float``.
+
+        desc (str): The description of the score. It is empty when the
+            resource gives none.
+
+        small_values_desc (str | None): What a small value means, or
+            ``None`` when the resource gives none.
+
+        large_values_desc (str | None): What a large value means, or
+            ``None`` when the resource gives none.
+
+        hist_conf (HistogramConfig | None): The histogram configuration of
+            the score.
+
+        column_name (str): The name of the column of the data file that
+            holds the score.
     """
 
     column_name: str
 
 
 class GeneScore(ScoreResource[GeneScoreDef]):
-    """Class used to represent gene scores."""
+    """The scores of a gene score resource, one value for each gene.
 
+    The constructor reads the whole data file into memory. A gene score has
+    no ``open`` and no ``close``. Build one with
+    ``build_gene_score_from_resource_id`` or
+    ``build_gene_score_from_resource``.
+
+    A read with an unknown score id raises ``ValueError``, except
+    ``get_gene_value``.
+    """
+
+    #: The noun that the ``n`` of a histogram counts: genes.
     HISTOGRAM_COUNT_UNIT: ClassVar[str] = "genes"
 
     def __init__(self, resource: GenomicResource) -> None:
@@ -151,21 +183,72 @@ class GeneScore(ScoreResource[GeneScoreDef]):
             }
 
     def get_min(self, score_id: str) -> float:
-        """Return minimal score value."""
+        """Return the smallest value of a score.
+
+        Parameters
+        ----------
+        score_id : str
+            The id of a score of this resource.
+
+        Returns
+        -------
+        float
+            The smallest value. Genes without a value do not count. It is
+            ``nan`` when no gene has a value.
+
+        Raises
+        ------
+        ValueError
+            If the resource does not define ``score_id``.
+        """
         self._guard_score_id(score_id)
         return float(self.df[score_id].min())
 
     def get_max(self, score_id: str) -> float:
-        """Return maximal score value."""
+        """Return the largest value of a score.
+
+        Parameters
+        ----------
+        score_id : str
+            The id of a score of this resource.
+
+        Returns
+        -------
+        float
+            The largest value. Genes without a value do not count. It is
+            ``nan`` when no gene has a value.
+
+        Raises
+        ------
+        ValueError
+            If the resource does not define ``score_id``.
+        """
         self._guard_score_id(score_id)
         return float(self.df[score_id].max())
 
     def get_values(self, score_id: str) -> list[Any]:
-        """Return a list of score values.
+        """Return the values of a score.
 
-        A numeric score yields floats; a categorical string score yields the
-        raw string categories, so the element type is not narrowed to float.
+        Parameters
+        ----------
+        score_id : str
+            The id of a score of this resource.
+
+        Returns
+        -------
+        list
+            One value for each gene of the data file, in file order. A
+            numeric score gives floats and a categorical score gives
+            strings. A gene without a value gives ``nan``. The list is
+            empty when the file has no genes.
+
+        Raises
+        ------
+        ValueError
+            If the resource does not define ``score_id``.
         """
+        # The element type is not narrowed to float: a categorical string
+        # score yields the raw string categories.
         self._guard_score_id(score_id)
         return list(self.df[score_id].values)
 
@@ -183,7 +266,24 @@ class GeneScore(ScoreResource[GeneScoreDef]):
         return hist_conf
 
     def get_x_scale(self, score_id: str) -> str | None:
-        """Return the scale type of the X axis."""
+        """Return the scale of the X axis of the histogram of a score.
+
+        Parameters
+        ----------
+        score_id : str
+            The id of a score of this resource.
+
+        Returns
+        -------
+        str | None
+            ``"log"`` or ``"linear"``. ``None`` when the histogram of the
+            score is not a number histogram.
+
+        Raises
+        ------
+        ValueError
+            If the resource does not define ``score_id``.
+        """
         hist_conf = self._get_number_hist_conf(score_id)
         if hist_conf is None:
             return None
@@ -192,7 +292,24 @@ class GeneScore(ScoreResource[GeneScoreDef]):
         return "linear"
 
     def get_y_scale(self, score_id: str) -> str | None:
-        """Return the scale type of the Y axis."""
+        """Return the scale of the Y axis of the histogram of a score.
+
+        Parameters
+        ----------
+        score_id : str
+            The id of a score of this resource.
+
+        Returns
+        -------
+        str | None
+            ``"log"`` or ``"linear"``. ``None`` when the histogram of the
+            score is not a number histogram.
+
+        Raises
+        ------
+        ValueError
+            If the resource does not define ``score_id``.
+        """
         hist_conf = self._get_number_hist_conf(score_id)
         if hist_conf is None:
             return None
@@ -206,9 +323,36 @@ class GeneScore(ScoreResource[GeneScoreDef]):
         score_max: float | None = None,
         values: list[str] | None = None,
     ) -> set[str]:
-        """Return set of genes for
-        a score between a min and max value or
-        genes with certain gene score values."""
+        """Return the genes whose value of a score matches a condition.
+
+        With ``values`` the condition is membership in that list. Without
+        it, the condition is a range with both limits included.
+
+        Parameters
+        ----------
+        score_id : str
+            The id of a score of this resource.
+        score_min : float | None
+            The lower limit. ``None`` leaves the range open below.
+        score_max : float | None
+            The upper limit. ``None`` leaves the range open above.
+        values : list[str] | None
+            The values to select. Each item must convert to a float.
+            When it is given, the function ignores ``score_min`` and
+            ``score_max``.
+
+        Returns
+        -------
+        set[str]
+            The gene symbols that match. Genes without a value never
+            match. The set is empty when no gene matches.
+
+        Raises
+        ------
+        ValueError
+            If the resource does not define ``score_id``, or if an item of
+            ``values`` is not a number.
+        """
         score_value_df = self.get_score_df(score_id)
         df = score_value_df[score_id]
         if values is None:
@@ -229,7 +373,24 @@ class GeneScore(ScoreResource[GeneScoreDef]):
         return set(genes.values)
 
     def to_dict(self, score_id: str) -> dict[str, float]:
-        """Return {gene_symbol: value} for a score, with NaN rows dropped."""
+        """Return the values of a score keyed by gene symbol.
+
+        Parameters
+        ----------
+        score_id : str
+            The id of a score of this resource.
+
+        Returns
+        -------
+        dict[str, float]
+            The map from gene symbol to value. Genes without a value are
+            left out. The map is empty when no gene has a value.
+
+        Raises
+        ------
+        ValueError
+            If the resource does not define ``score_id``.
+        """
         df = self.get_score_df(score_id)
         return cast(
             dict[str, float],
@@ -256,7 +417,23 @@ class GeneScore(ScoreResource[GeneScoreDef]):
     def get_gene_value(
         self, score_id: str, gene_symbol: str,
     ) -> float | None:
-        """Return the value for a given gene symbol."""
+        """Return the value of a score for one gene.
+
+        Parameters
+        ----------
+        score_id : str
+            The id of a score of this resource.
+        gene_symbol : str
+            The symbol of the gene.
+
+        Returns
+        -------
+        float | None
+            The value. ``None`` when the gene is not in the data file,
+            when its value is missing, or when ``score_id`` is not a score
+            of this resource. The function does not raise ``ValueError``
+            for an unknown ``score_id``.
+        """
         if gene_symbol not in self.gene_values:
             return None
         if score_id not in self.gene_values[gene_symbol]:
@@ -270,7 +447,28 @@ class GeneScore(ScoreResource[GeneScoreDef]):
         return value
 
     def to_tsv(self, score_id: str | None = None) -> list[str]:
-        """Return a TSV version of the gene score data."""
+        """Return the data of one score as lines of tab-separated text.
+
+        Parameters
+        ----------
+        score_id : str | None
+            The id of a score of this resource. The function needs it in
+            practice: ``None`` fails an assertion.
+
+        Returns
+        -------
+        list[str]
+            The lines, each with its line ending. The first line is the
+            header ``gene`` and ``score_id``. Genes without a value are
+            left out.
+
+        Raises
+        ------
+        AssertionError
+            If ``score_id`` is ``None``.
+        ValueError
+            If the resource does not define ``score_id``.
+        """
         df = None
         if score_id is not None:
             df = self.get_score_df(score_id)
@@ -281,14 +479,26 @@ class GeneScore(ScoreResource[GeneScoreDef]):
         return outbuf.getvalue().splitlines(keepends=True)
 
     def build_score_help(self, score_id: str) -> str:
-        """Return the Markdown help for one score of this gene score.
+        """Return the Markdown help text for one score.
 
-        The help carries the score's id and description, the resource's
-        summary and a link to its info page, and -- when the score has a
-        histogram image -- that image, embedded by its public address.
+        The text has the id and the description of the score, the summary
+        of the resource and a link to its info page. When the score has a
+        histogram image, the text embeds the image by its public address.
 
-        Raises ``ValueError`` naming ``score_id`` when this resource does
-        not define it.
+        Parameters
+        ----------
+        score_id : str
+            The id of a score of this resource.
+
+        Returns
+        -------
+        str
+            The Markdown text.
+
+        Raises
+        ------
+        ValueError
+            If the resource does not define ``score_id``.
         """
         self._guard_score_id(score_id)
         score_def = self.score_definitions[score_id]
@@ -309,15 +519,42 @@ class GeneScore(ScoreResource[GeneScoreDef]):
         return get_template("gene_score_help.jinja").render(data=data)
 
     def get_score_df(self, score_id: str) -> pd.DataFrame:
+        """Return the values of a score as a table.
+
+        Parameters
+        ----------
+        score_id : str
+            The id of a score of this resource.
+
+        Returns
+        -------
+        pandas.DataFrame
+            The columns ``gene`` and ``score_id``. The rows without a
+            value are dropped. The table is empty when no gene has a
+            value.
+
+        Raises
+        ------
+        ValueError
+            If the resource does not define ``score_id``.
+        """
         self._guard_score_id(score_id)
         return self.df[["gene", score_id]].dropna()
 
     @property
     def files(self) -> set[str]:
+        """The names of the data files of the resource."""
         return {self.config["filename"]}
 
     @staticmethod
     def get_schema() -> dict[str, Any]:
+        """Return the schema that validates the resource configuration.
+
+        Returns
+        -------
+        dict
+            The schema, in the Cerberus format.
+        """
         return {
             **get_base_resource_schema(),
             **get_required_filename_schema(),
@@ -346,7 +583,26 @@ _INMEMORY_CACHE: Memo[tuple[str, str, str], GeneScore] = Memo()
 
 
 def build_gene_score_from_resource(resource: GenomicResource) -> GeneScore:
-    """Load gene score from a genomic resource."""
+    """Build the gene score of a genomic resource.
+
+    The function reads the data file on the first call for a resource.
+    Later calls with the same resource return the same object.
+
+    Parameters
+    ----------
+    resource : GenomicResource
+        A resource of type ``gene_score``.
+
+    Returns
+    -------
+    GeneScore
+        The gene score of the resource. It is ready to use.
+
+    Raises
+    ------
+    ValueError
+        If ``resource`` is ``None`` or is not of type ``gene_score``.
+    """
     if resource is None:
         raise ValueError(f"missing resource {resource}")
 
@@ -363,6 +619,32 @@ def build_gene_score_from_resource(resource: GenomicResource) -> GeneScore:
 def build_gene_score_from_resource_id(
     resource_id: str, grr: GenomicResourceRepo | None = None,
 ) -> GeneScore:
+    """Build the gene score of the resource with a given id.
+
+    The function reads the data file on the first call for a resource.
+    Later calls that find the same resource return the same object.
+
+    Parameters
+    ----------
+    resource_id : str
+        The id of a resource of type ``gene_score`` in the repository.
+    grr : GenomicResourceRepo | None
+        The repository that resolves ``resource_id``. When it is
+        ``None``, the function builds the default repository with
+        ``build_genomic_resource_repository()``.
+
+    Returns
+    -------
+    GeneScore
+        The gene score of the resource. It is ready to use.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the repository has no resource with this id.
+    ValueError
+        If the resource is not of type ``gene_score``.
+    """
     if grr is None:
         grr = build_genomic_resource_repository()
     return build_gene_score_from_resource(grr.get_resource(resource_id))
