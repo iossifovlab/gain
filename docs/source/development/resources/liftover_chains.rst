@@ -70,7 +70,26 @@ with its own contig names.
 API
 ---
 
+The class and the factories below are defined in the module
+``gain.genomic_resources.liftover_chain``. ``LiftoverChain`` is also
+exported by ``gain.grr``, as ``grr.LiftoverChain``.
+
 .. currentmodule:: gain.genomic_resources.liftover_chain
+
+.. autosummary::
+
+   build_liftover_chain_from_resource
+   build_liftover_chain_from_resource_id
+   LiftoverChain
+   LiftoverChain.close
+   LiftoverChain.convert_coordinate
+   LiftoverChain.files
+   LiftoverChain.get_schema
+   LiftoverChain.is_open
+   LiftoverChain.map_chromosome
+   LiftoverChain.open
+
+.. autofunction:: build_liftover_chain_from_resource
 
 .. autofunction:: build_liftover_chain_from_resource_id
 

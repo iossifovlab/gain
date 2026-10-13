@@ -25,7 +25,35 @@ logger = logging.getLogger(__name__)
 
 
 class LiftoverChain(ResourceConfigValidationMixin):
-    """Defines Lift Over chain wrapper around pyliftover objects."""
+    """Convert coordinates between assemblies with a UCSC chain file.
+
+    The class wraps a ``pyliftover`` object. Build it with
+    `build_liftover_chain_from_resource_id` and call `open` before the
+    first conversion.
+
+    Parameters
+    ----------
+    resource : GenomicResource
+        A resource of type ``liftover_chain``.
+
+    Attributes
+    ----------
+    resource : GenomicResource
+        The resource that holds the chain file.
+    config : dict
+        The validated and normalized resource configuration.
+    source_genome_id : str or None
+        The id from the ``source_genome`` label, or ``None`` when the
+        label is absent or unusable.
+    target_genome_id : str or None
+        The id from the ``target_genome`` label, or ``None`` when the
+        label is absent or unusable.
+
+    Raises
+    ------
+    ValueError
+        If the type of the resource is not ``liftover_chain``.
+    """
 
     def __init__(self, resource: GenomicResource):
 
@@ -69,11 +97,20 @@ class LiftoverChain(ResourceConfigValidationMixin):
         self.target_genome_id: str | None = read_resource_id_label(
             resource, "target_genome")
 
+    # A chain is not a context manager and holds nothing to release. The
+    # method exists for symmetry with the other resource objects.
     def close(self) -> None:
-        pass
+        """Do nothing: a chain holds no resource to release."""
 
     def open(self) -> LiftoverChain:
-        """Open the liftover chain resource."""
+        """Read the chain file.
+
+        Returns
+        -------
+        LiftoverChain
+            This chain, so the call chains. A call on an open chain does
+            nothing.
+        """
         with self.lock:
             if self.is_open():
                 return self
@@ -85,16 +122,33 @@ class LiftoverChain(ResourceConfigValidationMixin):
             return self
 
     def is_open(self) -> bool:
+        """Return True when the chain file is read."""
         with self.lock:
             return self.liftover is not None
 
     @property
     def files(self) -> set[str]:
+        """Return the names of the files of the resource that the chain uses."""
         return {self.config["filename"]}
 
     @staticmethod
     def map_chromosome(chrom: str, mapping: dict[str, str] | None) -> str:
-        """Map a chromosome (contig) name according to configuration."""
+        """Rename a chromosome (contig) name.
+
+        Parameters
+        ----------
+        chrom : str
+            The contig name.
+        mapping : dict, optional
+            A ``chrom_prefix`` entry. Its ``del_prefix`` is removed first,
+            then its ``add_prefix`` is prepended.
+
+        Returns
+        -------
+        str
+            The renamed contig. The name is unchanged when ``mapping`` is
+            ``None`` or empty.
+        """
         if not mapping:
             return chrom
         if "del_prefix" in mapping:
@@ -109,7 +163,26 @@ class LiftoverChain(ResourceConfigValidationMixin):
         self, chrom: str,
         pos: int,
     ) -> tuple[str, int, str, int] | None:
-        """Lift over a genomic coordinate."""
+        """Lift over a genomic coordinate.
+
+        The ``variant_coordinates`` rename applies before the lift and the
+        ``target_coordinates`` rename applies after it.
+
+        Parameters
+        ----------
+        chrom : str
+            The contig name in the naming of the caller.
+        pos : int
+            The 1-based position.
+
+        Returns
+        -------
+        tuple of (str, int, str, int) or None
+            The target contig, the target 1-based position, the strand of
+            the target and the chain score. ``None`` when the position is
+            in no aligned block of the chain. When the chain maps the
+            position to more than one target, the first one is returned.
+        """
         chrom = self.map_chromosome(chrom, self.chrom_variant_coordinates)
         assert self.liftover is not None
         lo_coordinates = self.liftover.convert_coordinate(chrom, pos - 1)
@@ -130,6 +203,15 @@ class LiftoverChain(ResourceConfigValidationMixin):
 
     @staticmethod
     def get_schema() -> dict[str, Any]:
+        """Return the cerberus schema of the resource configuration.
+
+        Returns
+        -------
+        dict
+            The schema. It has the ``filename`` key and the optional
+            ``chrom_prefix`` block with ``variant_coordinates`` and
+            ``target_coordinates``.
+        """
         return {
             **get_base_resource_schema(),
             **get_required_filename_schema(),
@@ -154,7 +236,26 @@ _INMEMORY_CACHE: Memo[tuple[str, str, str], LiftoverChain] = Memo()
 def build_liftover_chain_from_resource(
     resource: GenomicResource,
 ) -> LiftoverChain:
-    """Load a Lift Over chain from GRR resource."""
+    """Build the liftover chain of a resource.
+
+    The chain is memoized for each resource. A second call for the same
+    resource returns the same chain, which may already be open.
+
+    Parameters
+    ----------
+    resource : GenomicResource
+        A resource of type ``liftover_chain``.
+
+    Returns
+    -------
+    LiftoverChain
+        The chain. It is not open until the caller calls ``open``.
+
+    Raises
+    ------
+    ValueError
+        If ``resource`` is ``None`` or its type is not ``liftover_chain``.
+    """
     if resource is None:
         raise ValueError(f"missing resource {resource}")
 
@@ -172,6 +273,26 @@ def build_liftover_chain_from_resource(
 def build_liftover_chain_from_resource_id(
     resource_id: str, grr: GenomicResourceRepo | None = None,
 ) -> LiftoverChain:
+    """Build the liftover chain of a resource, found by its id.
+
+    Parameters
+    ----------
+    resource_id : str
+        The id of a resource of type ``liftover_chain``.
+    grr : GenomicResourceRepo, optional
+        The repository to search. The default repository is built when
+        this is ``None``.
+
+    Returns
+    -------
+    LiftoverChain
+        The memoized chain. It is not open until the caller calls ``open``.
+
+    Raises
+    ------
+    ValueError
+        If the type of the resource is not ``liftover_chain``.
+    """
     if grr is None:
         grr = build_genomic_resource_repository()
     return build_liftover_chain_from_resource(
