@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines
 """Handling of genomic scores statistics.
 
 Currently we support only genomic scores histograms.
@@ -66,7 +67,27 @@ NUMBER_HISTOGRAM_VALUE_TYPES = ("float", "int", "bool")
 
 @dataclass
 class NumberHistogramConfig:
-    """Configuration class for number histograms."""
+    """Configuration of a number histogram.
+
+    Attributes:
+        view_range (tuple[float | None, float | None]): The low and the
+            high edge of the binned range. ``None`` at either end means
+            the edge is not pinned yet. The histogram needs both edges.
+
+        number_of_bins (int): The number of bars. The default is 100.
+
+        x_log_scale (bool): Whether the bins are spaced on a log scale.
+            A log scale requires ``x_min_log``.
+
+        y_log_scale (bool): Whether the plot draws the bar heights on a
+            log scale. The bin counts are the same.
+
+        x_min_log (float | None): The high edge of the first bin on a log
+            scale. ``None`` when the scale is linear.
+
+        plot_function (str | None): The ``file:function`` name of a custom
+            plot function. ``None`` means the built-in plot.
+    """
 
     view_range: tuple[float | None, float | None]
     number_of_bins: int = 100
@@ -78,15 +99,28 @@ class NumberHistogramConfig:
     def has_view_range(self) -> bool:
         """Whether both ends of the view range are pinned.
 
-        A histogram can only be built once its bin edges are known, so a
-        config whose range is half-open still needs the score's min/max
-        before it can be used.
+        Returns
+        -------
+        bool
+            True when neither edge of ``view_range`` is ``None``. False
+            means the config still needs the minimum and the maximum of
+            the score before a histogram can be built from it.
         """
+        # A histogram can only be built once its bin edges are known, so a
+        # config whose range is half-open still needs the score's min/max
+        # before it can be used.
         return self.view_range[0] is not None and \
             self.view_range[1] is not None
 
     def to_dict(self) -> dict[str, Any]:
-        """Transform number histogram config to dict."""
+        """Transform number histogram config to dict.
+
+        Returns
+        -------
+        dict[str, Any]
+            The mapping that ``from_dict`` reads back. The key
+            ``plot_function`` is present only when the config sets one.
+        """
         result = {
             "type": "number",
             "view_range": {
@@ -105,7 +139,24 @@ class NumberHistogramConfig:
 
     @staticmethod
     def from_dict(parsed: dict[str, Any]) -> NumberHistogramConfig:
-        """Build a number histogram config from a parsed yaml file."""
+        """Build a number histogram config from a parsed yaml file.
+
+        Parameters
+        ----------
+        parsed : dict[str, Any]
+            The ``histogram:`` mapping of a score. Its ``type`` must be
+            ``number``. A missing key takes the default of the field.
+
+        Returns
+        -------
+        NumberHistogramConfig
+            The config. A missing ``view_range`` gives ``(None, None)``.
+
+        Raises
+        ------
+        TypeError
+            If ``type`` is not ``number``.
+        """
         hist_type = parsed.get("type")
         if hist_type != "number":
             logger.error(
@@ -138,7 +189,22 @@ class NumberHistogramConfig:
     def default_config(
         min_max: MinMaxValue | None,
     ) -> NumberHistogramConfig:
-        """Build a number histogram config from a parsed yaml file."""
+        """Build the config of a score that declares no ``histogram``.
+
+        Parameters
+        ----------
+        min_max : MinMaxValue | None
+            The observed minimum and maximum of the score. ``None`` means
+            they are not known yet.
+
+        Returns
+        -------
+        NumberHistogramConfig
+            A config with 100 linear bins. The view range is the observed
+            range. It is ``(None, None)`` when ``min_max`` is ``None``.
+            When the minimum equals the maximum, the range is the minimum
+            to the minimum plus one.
+        """
         if min_max is None:
             view_range: tuple[float | None, float | None] = (None, None)
         elif min_max.min == min_max.max:
@@ -161,7 +227,39 @@ GZIPPED_JSON_SUFFIX = ".json.gz"
 
 @dataclass
 class CategoricalHistogramConfig:
-    """Configuration class for categorical histograms."""
+    """Configuration of a categorical histogram.
+
+    Attributes:
+        displayed_values_count (int | None): The number of values that the
+            summary page shows. The default is 20. ``None`` means no
+            limit, when ``displayed_values_percent`` is set.
+
+        displayed_values_percent (float | None): Show the most common
+            values until they cover this percent of the counts. ``None``
+            means the count rule applies.
+
+        value_order (list[str | int] | None): The values to show, in this
+            order. ``None`` or an empty list means the order is by count.
+
+        y_log_scale (bool): Whether the plot draws the counts on a log
+            scale.
+
+        label_rotation (int): The rotation of the x labels, in degrees.
+
+        plot_function (str | None): The ``file:function`` name of a custom
+            plot function. ``None`` means the built-in plot.
+
+        enforce_type (bool): False means the histogram refuses more than
+            ``CategoricalHistogram.UNIQUE_VALUES_LIMIT`` distinct values.
+            True means there is no limit. The flag name is the reverse
+            of its effect.
+
+        natural_order (bool): Order the displayed values by value, numbers
+            before text, and not by count.
+
+        allow_only_whole_values_y (bool): Whether the plot uses whole
+            numbers for the y ticks.
+    """
     displayed_values_count: int | None = 20
     displayed_values_percent: float | None = None
     value_order: list[str | int] | None = None
@@ -173,7 +271,16 @@ class CategoricalHistogramConfig:
     allow_only_whole_values_y: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        """Transform categorical histogram config to dict."""
+        """Transform categorical histogram config to dict.
+
+        Returns
+        -------
+        dict[str, Any]
+            The mapping that ``from_dict`` reads back. The keys
+            ``displayed_values_count``, ``displayed_values_percent`` and
+            ``plot_function`` are present only when they differ from the
+            default.
+        """
         result: dict[str, Any] = {
             "type": "categorical",
             "value_order": self.value_order,
@@ -191,23 +298,49 @@ class CategoricalHistogramConfig:
 
     @staticmethod
     def default_config() -> CategoricalHistogramConfig:
-        """The config for a score that declares no categorical ``histogram``.
+        """Build the config of a score that declares no ``histogram``.
 
-        ``enforce_type=False`` here does NOT relax value-type checking --
-        :meth:`CategoricalHistogram.add_value` refuses a non-``str``/``int``
-        value either way.  What the flag gates is
-        :attr:`CategoricalHistogram.UNIQUE_VALUES_LIMIT`, and it reads
-        backwards: it is the *default* config that enforces the limit, so a
-        score nobody declared categorical cannot silently histogram
-        thousands of distinct values.  A curator who writes an explicit
-        ``categorical`` block has asserted the score really is categorical,
-        and that config carries no limit.
+        Returns
+        -------
+        CategoricalHistogramConfig
+            A config that enforces ``CategoricalHistogram.UNIQUE_VALUES_LIMIT``.
         """
+        # ``enforce_type=False`` here does NOT relax value-type checking --
+        # CategoricalHistogram.add_value refuses a non-``str``/``int``
+        # value either way.  What the flag gates is
+        # CategoricalHistogram.UNIQUE_VALUES_LIMIT, and it reads
+        # backwards: it is the *default* config that enforces the limit, so a
+        # score nobody declared categorical cannot silently histogram
+        # thousands of distinct values.  A curator who writes an explicit
+        # ``categorical`` block has asserted the score really is categorical,
+        # and that config carries no limit.
         return CategoricalHistogramConfig(enforce_type=False)
 
     @staticmethod
     def from_dict(parsed: dict[str, Any]) -> CategoricalHistogramConfig:
-        """Create categorical histogram config from configuratin dict."""
+        """Create categorical histogram config from a configuration dict.
+
+        Parameters
+        ----------
+        parsed : dict[str, Any]
+            The ``histogram:`` mapping of a score. Its ``type`` must be
+            ``categorical``. When it sets neither
+            ``displayed_values_count`` nor ``displayed_values_percent``,
+            the count is 20.
+
+        Returns
+        -------
+        CategoricalHistogramConfig
+            The config. It does not enforce the unique values limit.
+
+        Raises
+        ------
+        TypeError
+            If ``type`` is not ``categorical``.
+        ValueError
+            If both ``displayed_values_count`` and
+            ``displayed_values_percent`` are set.
+        """
         hist_type = parsed.get("type")
         if hist_type != "categorical":
             raise TypeError(
@@ -248,12 +381,24 @@ class CategoricalHistogramConfig:
 
 @dataclass
 class NullHistogramConfig:
-    """Configuration class for null histograms."""
+    """Configuration of a null histogram.
+
+    Attributes:
+        reason (str): Why the score has no histogram. The reason is
+            required, so a summary page can always explain a null
+            histogram.
+    """
 
     reason: str
 
     def to_dict(self) -> dict[str, Any]:
-        """Render this config as the mapping ``from_dict`` reads back."""
+        """Render this config as the mapping ``from_dict`` reads back.
+
+        Returns
+        -------
+        dict[str, Any]
+            The mapping with the keys ``type`` and ``reason``.
+        """
         return {
             "type": "null",
             "reason": self.reason,
@@ -261,18 +406,39 @@ class NullHistogramConfig:
 
     @staticmethod
     def default_config() -> NullHistogramConfig:
-        """A null config for a caller with no reason of its own to give.
+        """Build a null config for a caller with no reason to give.
 
-        ``reason`` is required rather than optional, so that every null
-        histogram on a summary page can say why it is null; this is the
-        placeholder for the few call sites that genuinely have nothing to
-        add.
+        Returns
+        -------
+        NullHistogramConfig
+            A config with the reason ``Unspecified reason``.
         """
+        # ``reason`` is required rather than optional, so that every null
+        # histogram on a summary page can say why it is null; this is the
+        # placeholder for the few call sites that genuinely have nothing to
+        # add.
         return NullHistogramConfig("Unspecified reason")
 
     @staticmethod
     def from_dict(parsed: dict[str, Any]) -> NullHistogramConfig:
-        """Create Null histogram from configuration dict."""
+        """Create a null histogram config from a configuration dict.
+
+        Parameters
+        ----------
+        parsed : dict[str, Any]
+            The ``histogram:`` mapping of a score. Its ``type`` must be
+            ``null``.
+
+        Returns
+        -------
+        NullHistogramConfig
+            The config. A missing ``reason`` gives ``Unspecified reason``.
+
+        Raises
+        ------
+        TypeError
+            If ``type`` is not ``null``.
+        """
         hist_type = parsed.get("type")
         if hist_type != "null":
             raise TypeError(
@@ -287,7 +453,48 @@ class NullHistogramConfig:
 
 
 class NumberHistogram(Statistic):
-    """Class to represent a histogram."""
+    """A histogram of numeric values in bins.
+
+    Parameters
+    ----------
+    config : NumberHistogramConfig
+        The configuration. Its view range must have both edges set.
+    bins : np.ndarray | None
+        The bin edges, one more than the bars. Pass both ``bins`` and
+        ``bars`` or neither.
+    bars : np.ndarray | None
+        The count of each bin.
+
+    Raises
+    ------
+    ValueError
+        If the view range has an unset or NaN edge, if a log scale has no
+        ``x_min_log``, or if only one of ``bins`` and ``bars`` is given.
+
+    Attributes:
+        type (str): The type name that a stored file carries,
+            ``number_histogram``.
+
+        config (NumberHistogramConfig): The configuration.
+
+        bins (np.ndarray): The bin edges. There is one more edge than
+            there are bars.
+
+        bars (np.ndarray): The count of each bin. Bar ``i`` counts the
+            values from ``bins[i]`` up to ``bins[i + 1]``.
+
+        out_of_range_bins (list[int]): The counts of the values below and
+            of the values above the view range.
+
+        min_value (float): The smallest value that was added. NaN when
+            there is none.
+
+        max_value (float): The largest value that was added. NaN when
+            there is none.
+
+        view_range (tuple[float, float]): The low and the high edge of the
+            binned range.
+    """
 
     type = "number_histogram"
 
@@ -368,22 +575,40 @@ class NumberHistogram(Statistic):
     def view_min(self) -> float:
         """The low edge of the first bin.
 
-        This is the histogram's *view* range, not the score's observed
-        minimum: values below it are counted in ``out_of_range_bins``
-        rather than binned.
+        Returns
+        -------
+        float
+            The low edge of the view range. Values below it are counted
+            in ``out_of_range_bins`` and not binned. It is not the
+            smallest value that was added.
         """
         return self.view_range[0]
 
     def view_max(self) -> float:
         """The high edge of the last bin.
 
-        The counterpart of :meth:`view_min`; values above it are counted
-        as out of range.
+        Returns
+        -------
+        float
+            The high edge of the view range. Values above it are counted
+            in ``out_of_range_bins`` and not binned.
         """
         return self.view_range[1]
 
     def merge(self, other: NumberHistogram) -> None:
-        """Merge two histograms."""
+        """Add the counts of another histogram into this one.
+
+        Parameters
+        ----------
+        other : NumberHistogram
+            A histogram with the same bin edges. This method changes only
+            ``self``.
+
+        Raises
+        ------
+        AssertionError
+            If the bin edges of the two histograms differ.
+        """
         assert isinstance(other, NumberHistogram)
         assert self.bins is not None
         assert self.bars is not None
@@ -415,61 +640,72 @@ class NumberHistogram(Statistic):
 
     @property
     def moments(self) -> Moments | None:
-        """The count, sum and sum of squares folded beside the bars.
-
-        ``None`` for a histogram loaded from a file that predates them:
-        unknown, never empty.
-        """
+        """The count, sum and sum of squares, or ``None`` when unknown."""
+        # ``None`` for a histogram loaded from a file that predates the
+        # accumulators: unknown, never empty.
         return self._moments
 
     @property
     def count(self) -> int | None:
-        """How many weighted values were folded; ``None`` when unknown.
-
-        The same weighting as the bars, in the unit the score names as
-        its ``HISTOGRAM_COUNT_UNIT`` -- so this is ``bars.sum()`` plus
-        both out-of-range counts.
-        """
+        """The weighted count of the added values, or ``None`` when unknown."""
+        # The same weighting as the bars, in the unit the score names as
+        # its ``HISTOGRAM_COUNT_UNIT`` -- so this is ``bars.sum()`` plus
+        # both out-of-range counts.
         return None if self._moments is None else self._moments.count
 
     @property
     def mean(self) -> float | None:
-        """The weighted mean; ``None`` when unknown or nothing was folded."""
+        """The weighted mean, or ``None`` when unknown or nothing was added."""
         return None if self._moments is None else self._moments.mean
 
     @property
     def std(self) -> float | None:
-        """The POPULATION standard deviation; ``None`` exactly when
-        :attr:`mean` is.  See :attr:`Moments.std`."""
+        """The population standard deviation, or ``None`` when ``mean`` is."""
         return None if self._moments is None else self._moments.std
 
     def moments_summary(self) -> MomentsSummary | None:
-        """``n``, ``mean`` and ``sd`` as ``(label, value)`` pairs, rendered
-        for the summary page.
+        """The count, mean and standard deviation, as text for the page.
 
-        The counterpart of :meth:`values_domain` for the accumulators:
-        ``None`` when they are unknown or nothing was folded, so the page
-        can leave the cell empty rather than guess.
+        Returns
+        -------
+        MomentsSummary | None
+            Three ``(label, text)`` pairs: ``n``, ``mean`` and ``sd``.
+            ``None`` when the numbers are unknown or nothing was added.
         """
+        # ``None`` rather than a guess, so the page leaves the cell empty.
         return None if self._moments is None else self._moments.summary()
 
     def values_domain(self) -> str:
-        """The observed value range, rendered for the summary page.
+        """The observed value range, as text for the summary page.
 
-        Unlike :meth:`view_min` / :meth:`view_max` this reports the values
-        actually seen, so a score whose configured view range is wider than
-        its data still shows the narrower true extent.
+        Returns
+        -------
+        str
+            The smallest and the largest added value, as ``[min, max]``.
+            It is not the view range.
         """
         return f"[{self.min_value:0.3g}, {self.max_value:0.3g}]"
 
     def add_value(
         self, value: float | np.generic | None, count: int = 1,
     ) -> None:
-        """Add value to the histogram.
+        """Add a value to the histogram.
 
-        ``np.generic`` is in the signature because a numpy scalar is a real
-        caller's value, not a curiosity (gain#1338).
+        Parameters
+        ----------
+        value : float | np.generic | None
+            The value. ``None`` and NaN are skipped and nothing is counted.
+        count : int
+            The weight of the value.
+
+        Raises
+        ------
+        TypeError
+            If the value is not a real number, for example text.
         """
+        # ``np.generic`` is in the signature because a numpy scalar is a real
+        # caller's value, not a curiosity (gain#1338).
+        #
         # ``np.isnan`` is what refuses a value it cannot read as a number,
         # and it raises BEFORE the allow-list below can be reached -- which
         # is why that refusal, written for exactly the ``str`` case, could
@@ -523,36 +759,46 @@ class NumberHistogram(Statistic):
     ) -> None:
         """Add a batch of ``(value, weight)`` pairs, vectorized.
 
-        Bit-for-bit equivalent to calling :meth:`add_value` over each pair in
-        order: the same bin selection for both x-scales (the truncation of
-        ``choose_bin_lin`` / ``choose_bin_log`` and the clamp to
-        ``number_of_bins - 1``), the same below/above ``out_of_range_bins``
-        split, the same ``min_value``/``max_value`` tracking, and the same
-        nan-skip.  This is the hot path for the statistics scan, where a
-        per-value Python call dominates the cost.
+        The result is the same as calling ``add_value`` for each pair in
+        order. The sums behind ``mean`` and ``std`` agree only to rounding.
 
-        The one thing NOT bit-for-bit is the accumulators behind
-        :attr:`count` / :attr:`mean` / :attr:`std`: ``count`` is, and the
-        two sums agree to rounding -- see :meth:`Moments.add_batch`.
-
-        The equivalence covers dtype as well as arithmetic: the ``float64``
-        coercion below is what ``add_value`` reproduces by normalizing a
-        numpy scalar, so a narrow column -- ``float32``, ``float16``,
-        ``bool`` -- folds the same through either arm (gain#1338).
-
-        Where it does not hold: this arm also folds values ``add_value``
-        refuses outright, because ``asarray`` converts them silently -- a
-        ``complex`` loses its imaginary part, and an object array of
-        ``Decimal`` converts.  Nothing in a scan produces either; they are
-        reachable only by calling this directly.
-
-        Both x-scales are vectorized.  The log one is bit-exact for the same
-        reason the linear one is and one more: ``np.log10`` returns the same
-        float for a scalar as for that scalar inside an array, at every array
-        width numpy dispatches differently on -- checked over many decades by
-        test_add_batch_matches_add_value_loop_log_fuzz, which varies batch size
-        precisely to cover numpy's scalar-loop and SIMD kernels.
+        Parameters
+        ----------
+        values : np.ndarray
+            The values. NaN values are skipped. The array is converted to
+            ``float64``.
+        weights : np.ndarray
+            The weight of each value, of the same length as ``values``.
         """
+        # Bit-for-bit equivalent to calling ``add_value`` over each pair in
+        # order: the same bin selection for both x-scales (the truncation of
+        # ``choose_bin_lin`` / ``choose_bin_log`` and the clamp to
+        # ``number_of_bins - 1``), the same below/above ``out_of_range_bins``
+        # split, the same ``min_value``/``max_value`` tracking, and the same
+        # nan-skip.  This is the hot path for the statistics scan, where a
+        # per-value Python call dominates the cost.
+        #
+        # The one thing NOT bit-for-bit is the accumulators behind
+        # ``count`` / ``mean`` / ``std``: ``count`` is, and the
+        # two sums agree to rounding -- see ``Moments.add_batch``.
+        #
+        # The equivalence covers dtype as well as arithmetic: the ``float64``
+        # coercion below is what ``add_value`` reproduces by normalizing a
+        # numpy scalar, so a narrow column -- ``float32``, ``float16``,
+        # ``bool`` -- folds the same through either arm (gain#1338).
+        #
+        # Where it does not hold: this arm also folds values ``add_value``
+        # refuses outright, because ``asarray`` converts them silently -- a
+        # ``complex`` loses its imaginary part, and an object array of
+        # ``Decimal`` converts.  Nothing in a scan produces either; they are
+        # reachable only by calling this directly.
+        #
+        # Both x-scales are vectorized.  The log one is bit-exact for the same
+        # reason the linear one is and one more: ``np.log10`` returns the same
+        # float for a scalar as for that scalar inside an array, at every array
+        # width numpy dispatches differently on -- checked over many decades by
+        # test_add_batch_matches_add_value_loop_log_fuzz, which varies batch
+        # size precisely to cover numpy's scalar-loop and SIMD kernels.
         values = np.asarray(values, dtype=np.float64)
         weights = np.asarray(weights, dtype=np.int64)
 
@@ -615,7 +861,10 @@ class NumberHistogram(Statistic):
         return indices
 
     def choose_bin_lin(self, value: float) -> int:
-        """Compute bin index for a passed value for linear x-scale."""
+        """Compute bin index for a passed value for linear x-scale.
+
+        :meta private:
+        """
         if value < self.view_min():
             return -2
         if value > self.view_max():
@@ -624,7 +873,10 @@ class NumberHistogram(Statistic):
         return min(index, self.config.number_of_bins - 1)
 
     def choose_bin_log(self, value: float) -> int:
-        """Compute bin index for a passed value for log x-scale."""
+        """Compute bin index for a passed value for log x-scale.
+
+        :meta private:
+        """
         assert self.config.x_log_scale
         assert self.config.x_min_log is not None
 
@@ -642,11 +894,16 @@ class NumberHistogram(Statistic):
         return min(index, self.config.number_of_bins - 1)
 
     def to_dict(self) -> dict[str, Any]:
-        """Render this histogram as the mapping :meth:`from_dict` reads back.
+        """Render this histogram as the mapping ``from_dict`` reads back.
 
-        Bin edges and bar counts are carried as plain lists rather than
-        arrays, so the result is JSON-serialisable as it stands.
+        Returns
+        -------
+        dict[str, Any]
+            A mapping that JSON can store as it is. The bin edges and the
+            counts are lists.
         """
+        # Bin edges and bar counts are carried as plain lists rather than
+        # arrays, so the result is JSON-serialisable as it stands.
         return {
             "config": self.config.to_dict(),
             "bins": self.bins.tolist(),
@@ -659,7 +916,13 @@ class NumberHistogram(Statistic):
         }
 
     def serialize(self) -> str:
-        """Render this histogram as the JSON stored in the resource."""
+        """Render this histogram as the JSON stored in the resource.
+
+        Returns
+        -------
+        str
+            The JSON text.
+        """
         return json.dumps(self.to_dict(), indent=2)
 
     def plot(
@@ -670,7 +933,22 @@ class NumberHistogram(Statistic):
         small_values_description: str | None = None,
         large_values_description: str | None = None,
     ) -> None:
-        """Plot histogram and save it into outfile."""
+        """Plot the histogram and write the image into ``outfile``.
+
+        Parameters
+        ----------
+        outfile : IO
+            A binary file object that receives the image.
+        score_id : str
+            The score name. It is the x axis label.
+        y_axis_label : str | None
+            The y axis label. ``None`` means ``count``.
+        small_values_description : str | None
+            The text under the low end of the x axis. The plot shows both
+            descriptions or neither.
+        large_values_description : str | None
+            The text under the high end of the x axis.
+        """
         # pylint: disable=import-outside-toplevel
         import matplotlib
         matplotlib.use("agg")
@@ -727,7 +1005,27 @@ class NumberHistogram(Statistic):
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> NumberHistogram:
-        """Build a number histogram from a dict."""
+        """Build a number histogram from a dict.
+
+        Parameters
+        ----------
+        data : dict[str, Any]
+            A mapping like the result of ``to_dict``. A missing key
+            ``min_value`` or ``max_value`` gives NaN. A missing
+            ``out_of_range_bins`` gives two zeros. A mapping without the
+            stored count, sum and sum of squares gives a histogram with
+            unknown ``count``, ``mean`` and ``std``.
+
+        Returns
+        -------
+        NumberHistogram
+            The histogram.
+
+        Raises
+        ------
+        KeyError
+            If the key ``config`` is missing.
+        """
         config = NumberHistogramConfig.from_dict(data["config"])
 
         hist = NumberHistogram(
@@ -744,7 +1042,18 @@ class NumberHistogram(Statistic):
 
     @staticmethod
     def deserialize(content: str) -> NumberHistogram:
-        """Rebuild a number histogram from :meth:`serialize` output."""
+        """Rebuild a number histogram from ``serialize`` output.
+
+        Parameters
+        ----------
+        content : str
+            The JSON text.
+
+        Returns
+        -------
+        NumberHistogram
+            The histogram.
+        """
         data = json.loads(content)
         return NumberHistogram.from_dict(data)
 
@@ -762,7 +1071,20 @@ class HistogramStatisticMixin:
 
 
 class NullHistogram(Statistic):
-    """Class for annulled histograms."""
+    """A histogram that has no counts and records why.
+
+    Parameters
+    ----------
+    config : NullHistogramConfig | None
+        The configuration. ``None`` gives the reason ``Unspecified
+        reason``.
+
+    Attributes:
+        type (str): The type name that a stored file carries,
+            ``null_histogram``.
+
+        reason (str): Why there is no histogram.
+    """
 
     type = "null_histogram"
 
@@ -779,32 +1101,45 @@ class NullHistogram(Statistic):
     ) -> None:
         """Discard the value.
 
-        A null histogram counts nothing by design, so that a statistics
-        build can feed every score the same way without first asking
-        whether this one has a histogram.  The region scan relies on it:
-        a score whose histogram refuses a value is nullified in place,
-        and the region's remaining records are still handed to it.
+        Parameters
+        ----------
+        value : Any
+            Ignored.
+        count : int
+            Ignored.
         """
+        # A null histogram counts nothing by design, so that a statistics
+        # build can feed every score the same way without first asking
+        # whether this one has a histogram.  The region scan relies on it:
+        # a score whose histogram refuses a value is nullified in place,
+        # and the region's remaining records are still handed to it.
         # pylint: disable=unused-argument
         return
 
     def merge(
         self, other: Histogram,  # ruff: ignore[unused-method-argument]
     ) -> None:
-        """Do nothing: there are no counts to fold together.
+        """Do nothing, because there are no counts to add.
 
-        Present so that ``merge`` can be called on any
-        :data:`Histogram`.  The region merge sets a null histogram
-        aside before merging, so this does not run there.
+        Parameters
+        ----------
+        other : Histogram
+            Ignored.
         """
+        # Present so that ``merge`` can be called on any ``Histogram``.  The
+        # region merge sets a null histogram aside before merging, so this
+        # does not run there.
         # pylint: disable=unused-argument
         return
 
     def to_dict(self) -> dict[str, Any]:
-        """Render this histogram as the mapping :meth:`from_dict` reads back.
+        """Render this histogram as the mapping ``from_dict`` reads back.
 
-        Only the config survives a round trip, because the reason is the
-        whole of a null histogram's content.
+        Returns
+        -------
+        dict[str, Any]
+            A mapping with the key ``config``. It holds the reason, which
+            is all the content of a null histogram.
         """
         return {
             "config": {
@@ -814,29 +1149,70 @@ class NullHistogram(Statistic):
         }
 
     def values_domain(self) -> str:
-        """Report that there is no domain, in the other kinds' place."""
+        """Report that there is no domain.
+
+        Returns
+        -------
+        str
+            The text ``NO DOMAIN``.
+        """
         return "NO DOMAIN"
 
     def moments_summary(self) -> None:
-        """No moments, in the number histogram's place."""
+        """Return ``None``, because a null histogram has no moments.
+
+        Returns
+        -------
+        None
+            Always.
+        """
         return
 
     # pylint: disable=unused-argument
     def plot(self, _outfile: IO, _score_id: str) -> None:
-        """Draw nothing, leaving ``outfile`` untouched.
+        """Draw nothing and leave ``outfile`` untouched.
 
-        The caller is expected to render ``reason`` in place of the image,
-        rather than to link an image file this never wrote.
+        Parameters
+        ----------
+        _outfile : IO
+            Ignored.
+        _score_id : str
+            Ignored.
         """
+        # The caller is expected to render ``reason`` in place of the image,
+        # rather than to link an image file this never wrote.
         return
 
     def serialize(self) -> str:
-        """Render this histogram as the JSON stored in the resource."""
+        """Render this histogram as the JSON stored in the resource.
+
+        Returns
+        -------
+        str
+            The JSON text.
+        """
         return json.dumps(self.to_dict(), indent=2)
 
     @staticmethod
     def from_dict(data: dict[str, Any]) -> NullHistogram:
-        """Build a null histogram from a dict."""
+        """Build a null histogram from a dict.
+
+        Parameters
+        ----------
+        data : dict[str, Any]
+            A mapping like the result of ``to_dict``. A missing ``reason``
+            gives an empty text.
+
+        Returns
+        -------
+        NullHistogram
+            The histogram.
+
+        Raises
+        ------
+        TypeError
+            If the type in ``config`` is not ``null``.
+        """
         config = data["config"]
         hist_type = config.get("type")
         if hist_type != "null":
@@ -848,13 +1224,57 @@ class NullHistogram(Statistic):
 
     @staticmethod
     def deserialize(content: str) -> NullHistogram:
-        """Rebuild a null histogram from :meth:`serialize` output."""
+        """Rebuild a null histogram from ``serialize`` output.
+
+        Parameters
+        ----------
+        content : str
+            The JSON text.
+
+        Returns
+        -------
+        NullHistogram
+            The histogram.
+        """
         data = json.loads(content)
         return NullHistogram.from_dict(data)
 
 
 class CategoricalHistogram(Statistic):
-    """Class for categorical data histograms."""
+    """A histogram that counts each distinct value of a score.
+
+    Parameters
+    ----------
+    config : CategoricalHistogramConfig
+        The configuration.
+    counter : dict[str | int, int] | None
+        The counts of the values. ``None`` means an empty histogram.
+    truncated : bool
+        True when ``counter`` holds only the values of a truncated file.
+    unique_values : int | None
+        The distinct values of the full histogram. ``None`` means the
+        length of ``counter``.
+    total_count : int | None
+        The sum of the counts of the full histogram. ``None`` means the
+        sum of ``counter``.
+
+    Attributes:
+        type (str): The type name that a stored file carries,
+            ``categorical_histogram``.
+
+        UNIQUE_VALUES_LIMIT (int): The most distinct values that a
+            histogram accepts when its config does not set
+            ``enforce_type``. The value is 100.
+
+        config (CategoricalHistogramConfig): The configuration.
+
+        enforce_type (bool): The ``enforce_type`` flag of the config.
+
+        truncated (bool): True when this histogram was loaded from a
+            truncated file. Its counts are then only the kept values.
+
+        y_log_scale (bool): The ``y_log_scale`` flag of the config.
+    """
 
     type = "categorical_histogram"
 
@@ -894,8 +1314,20 @@ class CategoricalHistogram(Statistic):
     ) -> None:
         """Add a value to the categorical histogram.
 
-        Returns true if successfully added and false if failed.
-        Will fail if too many values are accumulated.
+        Parameters
+        ----------
+        value : str | int | None
+            The value. ``None`` is skipped and nothing is counted.
+        count : int
+            The weight of the value.
+
+        Raises
+        ------
+        TypeError
+            If the value is neither text nor an integer.
+        HistogramError
+            If the config does not set ``enforce_type`` and the histogram
+            now holds more than ``UNIQUE_VALUES_LIMIT`` distinct values.
         """
         if value is None:
             return
@@ -917,28 +1349,41 @@ class CategoricalHistogram(Statistic):
     ) -> None:
         """Add a batch of ``(value, weight)`` pairs, vectorized.
 
-        Equivalent to calling :meth:`add_value` over each pair in order: the
-        same ``None`` skip, the same per-value counts, the same ``TypeError``
-        naming the first value that is neither ``str`` nor ``int``, and the
-        same ``HistogramError`` when the batch takes the histogram past
-        ``UNIQUE_VALUES_LIMIT``.  This is the hot path for the statistics
-        scan, where a per-value Python call dominates the cost.
+        The result is the same as calling ``add_value`` for each pair in
+        order.
 
-        The limit's message reports ``UNIQUE_VALUES_LIMIT + 1`` because that
-        is the count :meth:`add_value` always raises at: it tests after every
-        single add, so the first add that exceeds the limit is the one that
-        raises, and the histogram holds exactly one value too many.  Which
-        values the counter holds when it raises is not otherwise observable --
-        a histogram that raises is replaced by a ``NullHistogram`` carrying
-        the message.
+        Parameters
+        ----------
+        values : np.ndarray
+            The values. ``None`` cells are skipped.
+        weights : np.ndarray
+            The weight of each value, of the same length as ``values``.
 
-        A batch containing BOTH a value of an unusable type and enough new
-        values to trip the limit reports the type failure, wherever the two
-        sit relative to each other; the per-record path reports whichever
-        comes first.  The distinction is unreachable through the scan, which
-        batches a ``str`` score's column -- every cell of which is a ``str``
-        or the ``None`` this skips.
+        Raises
+        ------
+        TypeError
+            If a value is neither text nor an integer.
+        HistogramError
+            If the config does not set ``enforce_type`` and the batch
+            takes the histogram past ``UNIQUE_VALUES_LIMIT``.
         """
+        # This is the hot path for the statistics scan, where a per-value
+        # Python call dominates the cost.
+        #
+        # The limit's message reports ``UNIQUE_VALUES_LIMIT + 1`` because that
+        # is the count ``add_value`` always raises at: it tests after every
+        # single add, so the first add that exceeds the limit is the one that
+        # raises, and the histogram holds exactly one value too many.  Which
+        # values the counter holds when it raises is not otherwise observable
+        # -- a histogram that raises is replaced by a ``NullHistogram``
+        # carrying the message.
+        #
+        # A batch containing BOTH a value of an unusable type and enough new
+        # values to trip the limit reports the type failure, wherever the two
+        # sit relative to each other; the per-record path reports whichever
+        # comes first.  The distinction is unreachable through the scan, which
+        # batches a ``str`` score's column -- every cell of which is a ``str``
+        # or the ``None`` this skips.
         cells = np.asarray(values, dtype=object).tolist()
         if weights.size and bool(np.all(weights == 1)):
             # The C-level count, for the kinds that weigh every record 1.
@@ -968,7 +1413,21 @@ class CategoricalHistogram(Statistic):
             )
 
     def merge(self, other: CategoricalHistogram) -> None:
-        """Merge with other histogram."""
+        """Add the counts of another histogram into this one.
+
+        Parameters
+        ----------
+        other : CategoricalHistogram
+            A full histogram with the same config.
+
+        Raises
+        ------
+        HistogramError
+            If either histogram is truncated, or if the config does not
+            set ``enforce_type`` and the sum has too many distinct values.
+        AssertionError
+            If the two configs differ.
+        """
         assert isinstance(other, CategoricalHistogram)
         assert self.config == other.config
         if self.truncated or other.truncated:
@@ -987,26 +1446,21 @@ class CategoricalHistogram(Statistic):
     def raw_values(self) -> dict[str | int, int]:
         """Every counted value with its count, unordered.
 
-        This is the histogram's own content, as distinct from
-        :attr:`display_values`, which is the ordered subset the summary
-        page draws.  A custom ``plot_function`` receives the histogram
-        itself and so can read either.
-
-        Note that on a histogram loaded back from a truncated sidecar
-        (:meth:`serialize_truncated`) the counter holds only the values
-        that sidecar carried, so this returns the truncated set --
-        :attr:`unique_values` and :attr:`total_count` are the ones that
-        still describe the full data.
+        A truncated histogram returns only the values that its file kept.
         """
+        # A custom ``plot_function`` receives the histogram itself and so
+        # can read either this or ``display_values``.  On a histogram
+        # loaded back from a truncated sidecar the counter holds only the
+        # values that sidecar carried; ``unique_values`` and
+        # ``total_count`` are the ones that still describe the full data.
         return dict(self._counter)
 
     @property
     def unique_values(self) -> int:
-        """Number of distinct values, across truncation.
+        """The number of distinct values of the full histogram.
 
-        On a truncated instance this is the distinct-value count of the full
-        histogram the sidecar was derived from, not the length of the top-N
-        counter it carries.
+        A truncated histogram returns the count of the full data, not the
+        count of the values it kept.
         """
         if self._unique_values is not None:
             return self._unique_values
@@ -1014,10 +1468,10 @@ class CategoricalHistogram(Statistic):
 
     @property
     def total_count(self) -> int:
-        """Sum of all value counts, across truncation.
+        """The sum of all counts of the full histogram.
 
-        On a truncated instance this is the total of the full histogram the
-        sidecar was derived from, not the sum of the top-N counter it carries.
+        A truncated histogram returns the sum of the full data, not the
+        sum of the values it kept.
         """
         if self._total_count is not None:
             return self._total_count
@@ -1025,13 +1479,21 @@ class CategoricalHistogram(Statistic):
 
     @property
     def display_values(self) -> dict[str | int, int]:
-        """Return categorical histogram display values in order.
+        """The counts that the summary page shows, in display order.
 
-        A truncated instance carries exactly the values its config selected
-        for display at serialization time, so they are returned verbatim --
-        re-running the selection against the truncated counter would compute
-        percentages and orderings against the wrong totals.
+        The config selects and orders the values. The values that the
+        selection leaves out are summed under the key ``Other``.
+
+        Raises
+        ------
+        ValueError
+            If the config sets ``value_order`` and the order leaves out a
+            counted value.
         """
+        # A truncated instance carries exactly the values its config selected
+        # for display at serialization time, so they are returned verbatim --
+        # re-running the selection against the truncated counter would compute
+        # percentages and orderings against the wrong totals.
         if self.truncated:
             return dict(self._counter)
         values = {}
@@ -1080,11 +1542,24 @@ class CategoricalHistogram(Statistic):
         return values
 
     def moments_summary(self) -> None:
-        """No moments: a categorical value has no mean."""
+        """Return ``None``, because a categorical value has no mean.
+
+        Returns
+        -------
+        None
+            Always.
+        """
         return
 
     def values_domain(self) -> str:
-        """Render the displayed values, noting truncation when present."""
+        """The displayed values, as text for the summary page.
+
+        Returns
+        -------
+        str
+            The displayed values, separated by commas. A truncated
+            histogram adds the text ``(top N of M values)``.
+        """
         domain = ", ".join(str(k) for k in self.display_values)
         if self.truncated and len(self._counter) < self.unique_values:
             return (
@@ -1094,10 +1569,13 @@ class CategoricalHistogram(Statistic):
         return domain
 
     def to_dict(self) -> dict[str, Any]:
-        """Render this histogram as the mapping :meth:`from_dict` reads back.
+        """Render this histogram as the mapping ``from_dict`` reads back.
 
-        Carries *every* counted value, not the displayed subset; the
-        truncated companion form is :meth:`serialize_truncated`.
+        Returns
+        -------
+        dict[str, Any]
+            A mapping with the keys ``config`` and ``values``. It holds
+            every counted value, not only the displayed ones.
         """
         return {
             "config": self.config.to_dict(),
@@ -1105,15 +1583,25 @@ class CategoricalHistogram(Statistic):
         }
 
     def serialize(self) -> str:
-        """Render the full histogram as the JSON stored in the resource."""
+        """Render the full histogram as the JSON stored in the resource.
+
+        Returns
+        -------
+        str
+            The JSON text.
+        """
         return json.dumps(self.to_dict(), indent=2)
 
     def serialize_gzipped(self) -> bytes:
-        """Render :meth:`serialize`'s JSON as deterministic gzip bytes.
+        """Render the ``serialize`` JSON as gzip bytes.
 
-        No timestamp (``mtime=0``), no file name and a fixed level, so the
-        same histogram gives the same bytes and md5 on every rebuild.
+        Returns
+        -------
+        bytes
+            The same histogram gives the same bytes on every call.
         """
+        # No timestamp (``mtime=0``), no file name and a fixed level, so the
+        # same histogram gives the same bytes and md5 on every rebuild.
         buffer = io.BytesIO()
         with gzip.GzipFile(
             filename="", mode="wb", fileobj=buffer,
@@ -1123,20 +1611,26 @@ class CategoricalHistogram(Statistic):
         return buffer.getvalue()
 
     def serialize_truncated(self) -> str:
-        """Serialize the truncated sidecar form of this histogram.
+        """Render the small truncated form of this histogram as JSON.
 
-        The sidecar carries the config, the values this histogram's config
-        selects for display, and the ``unique_values``/``total_count``
-        totals of the full histogram, marked with ``"truncated": true``.  It
-        is the small, always-readable companion of a full histogram whose
-        values file may be absent from a checkout (DVC-tracked, not pulled).
-
-        The carried values follow the display selection so the sidecar
-        renders what the full histogram would: every ``value_order`` key
-        with its real count for an ordered config, the values covering
-        ``displayed_values_percent`` for a percent config, and the
-        ``displayed_values_count`` most common values otherwise.
+        Returns
+        -------
+        str
+            The JSON text. It holds the config, the values that the
+            config selects for display, ``unique_values`` and
+            ``total_count`` of the full histogram, and the flag
+            ``truncated``. A value in ``value_order`` that has no count
+            gets the count 0.
         """
+        # The sidecar is the small, always-readable companion of a full
+        # histogram whose values file may be absent from a checkout
+        # (DVC-tracked, not pulled).
+        #
+        # The carried values follow the display selection so the sidecar
+        # renders what the full histogram would: every ``value_order`` key
+        # with its real count for an ordered config, the values covering
+        # ``displayed_values_percent`` for a percent config, and the
+        # ``displayed_values_count`` most common values otherwise.
         values: dict[str | int, int]
         if self.config.value_order:
             # A JSON round-trip stringifies the counter's keys while the
@@ -1165,9 +1659,23 @@ class CategoricalHistogram(Statistic):
     def from_dict(data: dict[str, Any]) -> CategoricalHistogram:
         """Build a categorical histogram from a dict.
 
-        Reads both forms :meth:`to_dict` and :meth:`serialize_truncated`
-        produce: the truncation flag and the two totals are absent from a
-        full histogram and default accordingly.
+        Parameters
+        ----------
+        data : dict[str, Any]
+            A mapping like the result of ``to_dict``, or the truncated
+            form. A full histogram has no ``truncated``,
+            ``unique_values`` or ``total_count`` key. They default to
+            False and to the values computed from the counts.
+
+        Returns
+        -------
+        CategoricalHistogram
+            The histogram.
+
+        Raises
+        ------
+        KeyError
+            If the key ``config`` is missing.
         """
         config = CategoricalHistogramConfig.from_dict(data["config"])
         return CategoricalHistogram(
@@ -1180,7 +1688,18 @@ class CategoricalHistogram(Statistic):
 
     @staticmethod
     def deserialize(content: str) -> CategoricalHistogram:
-        """Rebuild a categorical histogram from :meth:`serialize` output."""
+        """Rebuild a categorical histogram from ``serialize`` output.
+
+        Parameters
+        ----------
+        content : str
+            The JSON text.
+
+        Returns
+        -------
+        CategoricalHistogram
+            The histogram.
+        """
         data = json.loads(content)
         return CategoricalHistogram.from_dict(data)
 
@@ -1193,7 +1712,22 @@ class CategoricalHistogram(Statistic):
         small_values_description: str | None = None,
         large_values_description: str | None = None,
     ) -> None:
-        """Plot histogram and save it into outfile."""
+        """Plot the displayed values and write the image into ``outfile``.
+
+        Parameters
+        ----------
+        outfile : IO
+            A binary file object that receives the image.
+        score_id : str
+            The score name. It is the x axis label.
+        y_axis_label : str | None
+            The y axis label. ``None`` means ``count``.
+        small_values_description : str | None
+            The text under the first value. The plot shows both
+            descriptions or neither.
+        large_values_description : str | None
+            The text under the last value.
+        """
         # pylint: disable=import-outside-toplevel
         import matplotlib
         matplotlib.use("agg")
@@ -1324,10 +1858,31 @@ def build_empty_histogram(
 def load_histogram(
     resource: GenomicResource, filename: str,
 ) -> Histogram:
-    """Load and return a histogram in a resource.
+    """Load a stored histogram from a resource.
 
-    A ``.json.gz`` file is gzipped JSON.  On an error or missing
-    histogram, an appropriate NullHistogram is returned.
+    Parameters
+    ----------
+    resource : GenomicResource
+        The resource that holds the file.
+    filename : str
+        The file name in the resource. The suffix selects the format:
+        ``.yaml``, ``.json`` or ``.json.gz`` (gzipped JSON).
+
+    Returns
+    -------
+    Histogram
+        The histogram. A missing file, an unknown suffix, an unknown
+        histogram type and a body that fails to deserialize each give a
+        ``NullHistogram`` with the reason.
+
+    Raises
+    ------
+    KeyError
+        If the parsed file has no ``config`` key or no ``type`` in it.
+    yaml.YAMLError
+        If a ``.yaml`` file is not valid YAML.
+    json.JSONDecodeError
+        If a ``.json`` or ``.json.gz`` file is not valid JSON.
     """
     gzipped = filename.endswith(GZIPPED_JSON_SUFFIX)
     try:

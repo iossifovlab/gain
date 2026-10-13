@@ -330,7 +330,72 @@ though its own counts are the truncated set.
 API
 ---
 
+The functions and classes below are defined in the module
+``gain.genomic_resources.histogram``. ``gain.grr`` does not export any of
+them.
+
 .. currentmodule:: gain.genomic_resources.histogram
+
+.. autosummary::
+
+   load_histogram
+   NumberHistogram
+   NumberHistogram.add_batch
+   NumberHistogram.add_value
+   NumberHistogram.count
+   NumberHistogram.deserialize
+   NumberHistogram.from_dict
+   NumberHistogram.mean
+   NumberHistogram.merge
+   NumberHistogram.moments
+   NumberHistogram.moments_summary
+   NumberHistogram.plot
+   NumberHistogram.serialize
+   NumberHistogram.std
+   NumberHistogram.to_dict
+   NumberHistogram.values_domain
+   NumberHistogram.view_max
+   NumberHistogram.view_min
+   CategoricalHistogram
+   CategoricalHistogram.add_batch
+   CategoricalHistogram.add_value
+   CategoricalHistogram.deserialize
+   CategoricalHistogram.display_values
+   CategoricalHistogram.from_dict
+   CategoricalHistogram.merge
+   CategoricalHistogram.moments_summary
+   CategoricalHistogram.plot
+   CategoricalHistogram.raw_values
+   CategoricalHistogram.serialize
+   CategoricalHistogram.serialize_gzipped
+   CategoricalHistogram.serialize_truncated
+   CategoricalHistogram.to_dict
+   CategoricalHistogram.total_count
+   CategoricalHistogram.unique_values
+   CategoricalHistogram.values_domain
+   NullHistogram
+   NullHistogram.add_value
+   NullHistogram.deserialize
+   NullHistogram.from_dict
+   NullHistogram.merge
+   NullHistogram.moments_summary
+   NullHistogram.plot
+   NullHistogram.serialize
+   NullHistogram.to_dict
+   NullHistogram.values_domain
+   NumberHistogramConfig
+   NumberHistogramConfig.default_config
+   NumberHistogramConfig.from_dict
+   NumberHistogramConfig.has_view_range
+   NumberHistogramConfig.to_dict
+   CategoricalHistogramConfig
+   CategoricalHistogramConfig.default_config
+   CategoricalHistogramConfig.from_dict
+   CategoricalHistogramConfig.to_dict
+   NullHistogramConfig
+   NullHistogramConfig.default_config
+   NullHistogramConfig.from_dict
+   NullHistogramConfig.to_dict
 
 .. autofunction:: load_histogram
 
