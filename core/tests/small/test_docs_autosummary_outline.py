@@ -4,15 +4,18 @@ A docs page lists the members of a class by hand in an ``autosummary``
 block. These tests compare that list with the class, so a new public member
 cannot stay out of the outline without a failure. The test finds each
 ``autoclass`` directive on the pages under
-``docs/source/development/resources``. A page that is not rolled out yet
-sits on ``NOT_ROLLED_OUT``. The page source is read as text.
-No Sphinx build runs.
+``docs/source/development/resources``. A page of functions, such as the
+Data frames and AnnData page, has no class. The test then finds each
+``autofunction`` directive, and the outline must list each function. A page
+that is not rolled out yet sits on ``NOT_ROLLED_OUT``. The page source is
+read as text. No Sphinx build runs.
 """
 import importlib
 import inspect
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Any
 
 import pytest
 from gain import grr
@@ -29,6 +32,7 @@ GENE_MODELS_PAGE = RESOURCES_DIR / "gene_models.rst"
 # Pages whose API section is not rolled out yet. The slice of a page
 # removes the page from this set.
 NOT_ROLLED_OUT = frozenset({
+    "factories.rst",
     "gene_sets.rst",
     "histograms.rst",
     "adding_a_resource_type.rst",
@@ -36,9 +40,10 @@ NOT_ROLLED_OUT = frozenset({
 
 _DIRECTIVE = re.compile(r"^(\s*)\.\. autosummary::")
 _AUTOCLASS = re.compile(r"^\.\. autoclass:: (\S+)", re.MULTILINE)
+_AUTOFUNCTION = re.compile(r"^\.\. autofunction:: (\S+)", re.MULTILINE)
 _CURRENT_MODULE = re.compile(r"^\.\. currentmodule:: (\S+)", re.MULTILINE)
 _INHERITED = re.compile(r"^\s*Inherited from ``(\w+)``", re.IGNORECASE)
-_GRR_NAME = re.compile(r"``grr\.([A-Z]\w*)``")
+_GRR_NAME = re.compile(r"``grr\.(\w+)``")
 
 
 def autosummary_blocks(page: str) -> list[tuple[str | None, list[str]]]:
@@ -190,8 +195,52 @@ def page_classes(page: str) -> list[type]:
     return classes
 
 
-def exported_name_problems(page: str, classes: Sequence[type]) -> list[str]:
-    """Compare the ``grr.<Name>`` names of a page with ``gain.grr``."""
+def page_functions(page: str) -> list[Callable[..., Any]]:
+    """Return the functions named by the autofunction directives of a page."""
+    functions: list[Callable[..., Any]] = []
+    module = ""
+    for line in page.splitlines():
+        current = _CURRENT_MODULE.match(line)
+        if current:
+            module = current.group(1)
+        directive = _AUTOFUNCTION.match(line)
+        if directive:
+            name = directive.group(1)
+            if "." not in name:
+                name = f"{module}.{name}"
+            module_name, _, function_name = name.rpartition(".")
+            functions.append(
+                getattr(importlib.import_module(module_name), function_name))
+    return functions
+
+
+def function_outline_problems(
+    page: str, functions: Sequence[Callable[..., Any]],
+) -> list[str]:
+    """Return the differences between a page outline and its functions.
+
+    An outline entry without a dot names a function. An entry with a dot
+    names a member of a class, and ``outline_problems`` checks it.
+    """
+    listed = {e for e in autosummary_entries(page) if "." not in e}
+    class_names = {cls.__name__ for cls in page_classes(page)}
+    actual = {function.__name__ for function in functions}
+    problems = [
+        f"{name} is documented but missing from the outline"
+        for name in sorted(actual - listed)]
+    problems.extend(
+        f"{name} is listed in the outline but the page does not document it"
+        for name in sorted(listed - actual - class_names))
+    return problems
+
+
+def exported_name_problems(
+    page: str, classes: Sequence[Callable[..., Any]],
+) -> list[str]:
+    """Compare the ``grr.<Name>`` names of a page with ``gain.grr``.
+
+    ``classes`` holds the classes and functions that the page documents.
+    """
     named = set(_GRR_NAME.findall(page))
     exported = set(grr.__all__)
     problems = [
@@ -230,19 +279,23 @@ def _page_without(name: str) -> str:
 
 
 def page_problems(page: str) -> list[str]:
-    """Return all outline problems of a page that has an autoclass."""
+    """Return all outline problems of a page with an autoclass or function."""
     classes = page_classes(page)
+    functions = page_functions(page)
     if not autosummary_blocks(page):
         return ["the page has an autoclass but no autosummary outline"]
-    return outline_problems(page, classes) + exported_name_problems(
-        page, classes)
+    return (
+        outline_problems(page, classes)
+        + function_outline_problems(page, functions)
+        + exported_name_problems(page, [*classes, *functions]))
 
 
 def _rolled_out_pages() -> list[Path]:
     return sorted(
         path for path in RESOURCES_DIR.glob("*.rst")
         if path.name not in NOT_ROLLED_OUT
-        and _AUTOCLASS.search(path.read_text(encoding="utf-8")))
+        and (_AUTOCLASS.search(path.read_text(encoding="utf-8"))
+             or _AUTOFUNCTION.search(path.read_text(encoding="utf-8"))))
 
 
 def test_gene_models_page_outline_matches_classes() -> None:
@@ -254,7 +307,7 @@ def test_gene_models_page_outline_matches_classes() -> None:
 
 
 def test_every_page_with_an_autoclass_is_rolled_out_or_skipped() -> None:
-    """Each page with an autoclass passes, unless it is on the skip list."""
+    """Each page with an autoclass or autofunction passes, or is skipped."""
     read_docs_page(GENE_MODELS_PAGE)
     failures = {
         path.name: problems for path in _rolled_out_pages()
@@ -263,12 +316,50 @@ def test_every_page_with_an_autoclass_is_rolled_out_or_skipped() -> None:
     assert not failures
 
 
-def test_skip_list_names_only_existing_pages_with_an_autoclass() -> None:
+def test_skip_list_names_only_existing_pages_with_an_api() -> None:
     """A stale skip list entry fails, so a finished page leaves the list."""
     read_docs_page(GENE_MODELS_PAGE)
     for name in NOT_ROLLED_OUT:
         page = read_docs_page(RESOURCES_DIR / name)
-        assert _AUTOCLASS.search(page), f"{name} has no autoclass: drop it"
+        assert _AUTOCLASS.search(page) or _AUTOFUNCTION.search(page), (
+            f"{name} has no autoclass or autofunction: drop it")
+
+
+def test_data_frames_page_documents_its_loaders() -> None:
+    """The page of functions lists and exports the four loaders."""
+    path = RESOURCES_DIR / "data_frames_and_anndata.rst"
+    page = read_docs_page(path)
+
+    assert len(page_functions(page)) == 4
+    assert not page_problems(page)
+    assert path.name not in NOT_ROLLED_OUT
+
+
+def test_function_missing_from_outline_is_reported() -> None:
+    """A documented function that the outline lacks fails."""
+    page = (
+        ".. currentmodule:: gain.genomic_resources.data_frame_resource\n\n"
+        ".. autosummary::\n\n   load_data_frame_from_resource\n\n"
+        ".. autofunction:: load_data_frame_from_resource\n"
+        ".. autofunction:: load_data_frame_from_resource_id\n")
+
+    problems = function_outline_problems(page, page_functions(page))
+
+    assert problems == [(
+        "load_data_frame_from_resource_id is documented "
+        "but missing from the outline"
+    )]
+
+
+def test_exported_function_must_be_named() -> None:
+    """A function that gain.grr exports must be named as grr.<name>."""
+    problems = exported_name_problems(
+        "no names here", [grr.load_data_frame_from_resource])
+
+    assert problems == [(
+        "load_data_frame_from_resource is exported by gain.grr "
+        "but the page does not name ``grr.load_data_frame_from_resource``"
+    )]
 
 
 def test_page_without_outline_is_reported() -> None:

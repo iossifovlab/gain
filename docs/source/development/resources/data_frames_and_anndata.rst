@@ -136,14 +136,39 @@ to read values.
 API
 ---
 
+The functions below are defined in the modules
+``gain.genomic_resources.data_frame_resource`` and
+``gain.genomic_resources.ann_data_resource``. ``gain.grr`` exports all four,
+as ``grr.load_data_frame_from_resource``,
+``grr.load_data_frame_from_resource_id``,
+``grr.load_ann_data_from_resource`` and
+``grr.load_ann_data_from_resource_id``. The page has no class: the loaders
+return the objects of pandas and anndata.
+
+Data frame loaders
+~~~~~~~~~~~~~~~~~~
+
 .. currentmodule:: gain.genomic_resources.data_frame_resource
 
-.. autofunction:: load_data_frame_from_resource_id
+.. autosummary::
+
+   load_data_frame_from_resource
+   load_data_frame_from_resource_id
 
 .. autofunction:: load_data_frame_from_resource
 
+.. autofunction:: load_data_frame_from_resource_id
+
+AnnData loaders
+~~~~~~~~~~~~~~~
+
 .. currentmodule:: gain.genomic_resources.ann_data_resource
 
-.. autofunction:: load_ann_data_from_resource_id
+.. autosummary::
+
+   load_ann_data_from_resource
+   load_ann_data_from_resource_id
 
 .. autofunction:: load_ann_data_from_resource
+
+.. autofunction:: load_ann_data_from_resource_id
