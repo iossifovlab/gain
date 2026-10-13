@@ -43,8 +43,8 @@ def load_data_frame_from_resource(
         If ``resource`` is ``None``, is not of type ``data_frame``, has no
         ``file:`` key, names an unknown ``format:``, or has a
         ``parameters:`` block that makes pandas return something other than
-        a ``DataFrame``, such as ``chunksize`` or ``sheet_name: null``. The
-        message names the resource.
+        a ``DataFrame``, such as ``chunksize`` or ``sheet_name: null``. Each
+        message except the ``None`` one names the resource.
     """
     if resource is None:
         raise ValueError(f"missing resource {resource}")

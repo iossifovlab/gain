@@ -274,7 +274,7 @@ def load_ann_data_from_resource(
         ``file:`` key, names an unknown ``format:``, cannot reach a data
         file as a local ``file://`` url, or has a ``parameters:`` block
         that makes the reader return something other than an ``AnnData``.
-        The message names the resource.
+        Each message except the ``None`` one names the resource.
     """
     # The caller owns the handle because an h5ad is read ``backed="r"``,
     # which is what keeps a multi-gigabyte ``X`` out of a dask worker. It
