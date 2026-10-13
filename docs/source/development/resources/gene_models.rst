@@ -96,7 +96,8 @@ API
 ---
 
 The classes below are defined in the module
-``gain.genomic_resources.gene_models``.
+``gain.genomic_resources.gene_models``. ``GeneModels`` is also exported by
+``gain.grr``, as ``grr.GeneModels``.
 
 .. currentmodule:: gain.genomic_resources.gene_models
 
