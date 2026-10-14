@@ -31,7 +31,7 @@ and a list of ``binners`` entries.
 
 .. code-block:: yaml
 
-    input_reference_genome: hg38/genomes/GRCh38-hg38
+    reference_genome: hg38/genomes/GRCh38-hg38
 
     bins:
       bin_size: 10240
@@ -55,7 +55,7 @@ applied default.
 Reference genome
 ^^^^^^^^^^^^^^^^
 
-``input_reference_genome`` (required) names the reference genome resource
+``reference_genome`` (required) names the reference genome resource
 whose chromosomes define the grid. It is the run definition's business alone:
 there is no command-line flag for it, and a genome offered by the genomic
 context is not consulted. The chromosome lengths decide how many bins there
@@ -324,7 +324,7 @@ modes, so each entry gets a ``name`` to keep its tracks apart:
 
 .. code-block:: yaml
 
-    input_reference_genome: genome
+    reference_genome: genome
 
     bins:
       bin_size: 10
@@ -942,8 +942,10 @@ joined:
 
    * - Attribute
      - Content
-   * - ``input_reference_genome``
+   * - ``input_`` followed by ``reference_genome``
      - The resource id of the reference genome the grid was built on.
+       The attribute keeps this older name, one word longer than the
+       run-definition key ``reference_genome``.
    * - ``bin_size``
      - The bin width in base pairs.
    * - ``regions``

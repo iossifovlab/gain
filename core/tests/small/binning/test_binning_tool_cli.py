@@ -53,7 +53,7 @@ TRACK = Track(
 JOB = BinningJob(binner="stub_binner", tracks=(TRACK,))
 
 RUN_DEFINITION = textwrap.dedent("""
-    input_reference_genome: genome
+    reference_genome: genome
     bins:
       bin_size: 10
       regions: ["chr1:1-40", chr2]
@@ -192,7 +192,7 @@ def test_tracks_describes_each_column_with_its_provenance(
 
 
 TWO_KIND_RUN_DEFINITION = textwrap.dedent("""
-    input_reference_genome: genome
+    reference_genome: genome
     bins:
       bin_size: 10
       regions: ["chr1:1-40", chr2]
@@ -291,7 +291,7 @@ def test_dry_run_reports_the_task_count_under_the_budget(
 # scores/one twice, under its own ``max`` and under ``min``; scores/two
 # once.  Only the repeated resource carries its aggregator in its name.
 REPEATED_RUN_DEFINITION = textwrap.dedent("""
-    input_reference_genome: genome
+    reference_genome: genome
     bins:
       bin_size: 10
       regions: ["chr1:1-40"]
@@ -334,7 +334,7 @@ def test_dry_run_lists_the_suffixed_track_names(
 
 
 NAMED_RUN_DEFINITION = textwrap.dedent("""
-    input_reference_genome: genome
+    reference_genome: genome
     bins:
       bin_size: 10
       regions: ["chr1:1-40"]
@@ -374,7 +374,7 @@ def test_dry_run_reports_a_run_definition_error_and_writes_nothing(
     # the parser tests' business.  search_term needs the index the toy
     # GRR does not publish.
     run_definition = write_run_definition(output, textwrap.dedent("""
-        input_reference_genome: genome
+        reference_genome: genome
         bins:
           bin_size: 10
         binners:
@@ -447,7 +447,7 @@ def test_the_genome_named_in_the_run_definition_defines_the_grid(
     # genomes/short is chr1 only and shorter, so which genome the run
     # resolved is visible in the shape as well as in the recorded id.
     run_definition = write_run_definition(output, textwrap.dedent(f"""
-        input_reference_genome: {CONTEXT_GENOME}
+        reference_genome: {CONTEXT_GENOME}
         bins:
           bin_size: 10
         binners:
@@ -479,7 +479,8 @@ def test_a_run_definition_without_a_genome_is_a_parse_error(
     assert excinfo.value.code == 1
     err = capsys.readouterr().err
     assert str(run_definition) in err
-    assert "input_reference_genome is required" in err
+    assert "reference_genome is required" in err
+    assert "input_reference_genome" not in err
     assert not output.exists()
 
 
@@ -566,7 +567,9 @@ def test_the_context_genome_is_not_a_fallback(
         binning_tool(run_definition, grr_dir, output)
 
     assert excinfo.value.code == 1
-    assert "input_reference_genome is required" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "reference_genome is required" in err
+    assert "input_reference_genome" not in err
     assert not output.exists()
 
 
@@ -903,7 +906,7 @@ def test_a_task_declares_a_chunk_per_track_of_its_job_and_region(
     lone = replace(TRACK, name="scores/one:mean", aggregator="mean")
     regions = [BedRegion("chr1", 1, 10), BedRegion("chr1", 11, 20)]
     run = RunDefinition(
-        input_reference_genome="genome", bin_size=10, regions=regions,
+        reference_genome="genome", bin_size=10, regions=regions,
         jobs=[
             BinningJob(binner="stub_binner", tracks=(TRACK, other)),
             BinningJob(binner="stub_binner", tracks=(lone,)),
@@ -971,7 +974,7 @@ def test_a_set_replacement_is_named_by_its_value(
     # branch of the name from the unset one above: a change to how an
     # unset replacement is spelled must leave a set one alone.
     run_definition = write_run_definition(output, textwrap.dedent("""
-        input_reference_genome: genome
+        reference_genome: genome
         bins:
           bin_size: 10
           regions: ["chr1:1-40"]
@@ -1000,7 +1003,7 @@ def test_a_bundle_of_many_regions_is_one_task_with_a_short_id(
     # stays a file name however many regions there are.
     windows = ", ".join(f'"chr1:{s}-{s + 4}"' for s in range(1, 100, 5))
     run_definition = write_run_definition(output, textwrap.dedent(f"""
-        input_reference_genome: genome
+        reference_genome: genome
         bins:
           bin_size: 10
           regions: [{windows}, chr2]
@@ -1050,7 +1053,7 @@ def test_a_budget_of_zero_or_less_runs_one_task_per_track(
     windows = ", ".join(f'"chr1:{start}-{start + 4}"'
                         for start in range(1, 100, 5))
     run_definition = write_run_definition(output, textwrap.dedent(f"""
-        input_reference_genome: genome
+        reference_genome: genome
         bins:
           bin_size: 10
           regions: [{windows}, chr2]
@@ -1137,7 +1140,7 @@ def test_force_recomputes_every_chunk(
 # A pooled grouped fragment entry over frags/s1 and frags/s2, an unpooled
 # plain one over frags/s1, and a position score: one matrix.
 MIXED_RUN_DEFINITION = textwrap.dedent("""
-    input_reference_genome: genome
+    reference_genome: genome
     bins:
       bin_size: 10
       regions: ["chr1:1-40", chr2]
@@ -1310,7 +1313,7 @@ def test_the_groups_of_a_job_are_chunks_of_their_own(
 def fragment_entries(*entries: str) -> str:
     """A run definition of the given fragment entries over chr1 and chr2."""
     return textwrap.dedent("""
-        input_reference_genome: genome
+        reference_genome: genome
         bins:
           bin_size: 10
           regions: ["chr1:1-40", chr2]
@@ -1377,3 +1380,36 @@ def test_dry_run_counts_a_task_shared_by_two_entries_once(
         grr_dir, output, "--dry-run")
 
     assert "tasks: 1" in capsys.readouterr().out
+
+
+RENAMED_KEY_MESSAGE = (
+    "input_reference_genome was renamed reference_genome; rename the key")
+
+
+@pytest.mark.parametrize("genome_keys", [
+    "input_reference_genome: genome",
+    "input_reference_genome: genome\nreference_genome: genome",
+])
+def test_the_old_genome_key_is_refused_with_the_rename(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path, output: pathlib.Path,
+    capsys: pytest.CaptureFixture[str], genome_keys: str,
+) -> None:
+    run_definition = write_run_definition(
+        output,
+        genome_keys + "\n" + textwrap.dedent("""
+            bins:
+              bin_size: 10
+            binners:
+            - position_score_binner:
+                resource_query: "scores/*"
+        """))
+
+    with pytest.raises(SystemExit) as excinfo:
+        binning_tool(run_definition, grr_dir, output)
+
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert RENAMED_KEY_MESSAGE in err
+    assert "unknown key" not in err
+    assert "is required" not in err
+    assert not output.exists()

@@ -6,7 +6,7 @@ bins x tracks matrix.
 
 ## Sub-features
 
-- Positional `run_definition`: a YAML file with `input_reference_genome`,
+- Positional `run_definition`: a YAML file with `reference_genome`,
   `bins` (here `bin_size: 5`) and a list of `binners` (here one
   `position_score_binner` over `mini_positionscore_bw`).
 - `-o OUTPUT`: the HDF5 file. Default: the run definition with an `.h5`
@@ -25,7 +25,7 @@ bins x tracks matrix.
 A user writes `bin.yaml`:
 
 ```yaml
-input_reference_genome: mini_genome
+reference_genome: mini_genome
 bins:
   bin_size: 5
 binners:

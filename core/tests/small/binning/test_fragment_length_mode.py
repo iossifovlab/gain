@@ -228,7 +228,7 @@ def split_run(*aggregates: str) -> str:
     cross, and chr2 a third.
     """
     return textwrap.dedent("""
-        input_reference_genome: genome
+        reference_genome: genome
         bins:
           bin_size: 10
           regions: ["chr1:1-20", "chr1:21-40", chr2]

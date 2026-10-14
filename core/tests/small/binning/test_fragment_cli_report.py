@@ -61,7 +61,7 @@ def run_definition(directory: pathlib.Path, *entries: str) -> pathlib.Path:
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / "run.yaml"
     path.write_text(textwrap.dedent("""
-        input_reference_genome: genome
+        reference_genome: genome
         bins:
           bin_size: 10
           regions: ["chr1:1-40", chr2]

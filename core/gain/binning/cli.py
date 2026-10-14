@@ -37,6 +37,7 @@ from gain.binning.run_definition import (
     RunDefinition,
     RunDefinitionError,
     parse_run_definition,
+    refuse_renamed_genome_key,
 )
 from gain.genomic_resources.genomic_context import (
     build_cli_genomic_context,
@@ -176,10 +177,11 @@ def _resolve_genome(
     invocation, rather than the file, decide what was binned -- and the
     output records only the resource id, not where it came from.
     """
-    named = config.get("input_reference_genome")
+    refuse_renamed_genome_key(config)
+    named = config.get("reference_genome")
     if not named:
         raise RunDefinitionError(
-            "input_reference_genome is required: name the reference "
+            "reference_genome is required: name the reference "
             "genome resource whose chromosomes define the grid")
     return build_reference_genome_from_resource_id(named, grr)
 
@@ -460,7 +462,7 @@ def _write_hdf5(
             row += count
         h5.create_dataset("bins", data=_bins_table(run, counts))
         h5.create_dataset("tracks", data=_tracks_table(run.tracks))
-        h5.attrs["input_reference_genome"] = run.input_reference_genome
+        h5.attrs["input_reference_genome"] = run.reference_genome
         h5.attrs["bin_size"] = run.bin_size
         h5.attrs["regions"] = [
             f"{region.chrom}:{region.start}-{region.stop}"

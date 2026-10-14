@@ -1,4 +1,4 @@
-input_reference_genome: hg38/genomes/GRCh38-hg38
+reference_genome: hg38/genomes/GRCh38-hg38
 
 bins:
   bin_size: 10240

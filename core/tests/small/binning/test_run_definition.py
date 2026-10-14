@@ -4,6 +4,7 @@ from typing import Any
 import pytest
 from gain.binning.binners import BinningJob, Track
 from gain.binning.run_definition import (
+    RENAMED_GENOME_KEY_MESSAGE,
     RunDefinition,
     RunDefinitionError,
     parse_run_definition,
@@ -562,3 +563,26 @@ def test_an_unknown_top_level_key_is_a_parse_error(
         parse_run_definition(config, repo, genome)
 
     assert "binner" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("extra", [
+    {"input_reference_genome": "genome"},
+    {"input_reference_genome": "genome", "reference_genome": "genome"},
+])
+def test_the_parser_refuses_the_renamed_genome_key_by_itself(
+    extra: dict[str, Any],
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+) -> None:
+    """A direct caller, not the CLI, gets the rename message."""
+    config = {
+        "bins": {"bin_size": 10},
+        "binners": [
+            {"position_score_binner": {"resource_query": "scores/one"}},
+        ],
+        **extra,
+    }
+
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_run_definition(config, repo, genome)
+
+    assert str(excinfo.value) == RENAMED_GENOME_KEY_MESSAGE
