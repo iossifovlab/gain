@@ -314,6 +314,37 @@ class DuplicateBarcodeError(ValueError):
 
 
 @dataclass(frozen=True)
+class _TextColumn:
+    """A table column as the text its cells are matched by, factorized.
+
+    ``codes`` holds, per cell, the index of its text in ``texts``, or -1
+    for a cell with no text form.  Matching a resource's operand is then
+    an integer comparison, not a pass of ``_as_text`` over the column.
+    """
+
+    codes: np.ndarray
+    texts: dict[str, int]
+
+    @staticmethod
+    def of(column: pd.Series) -> _TextColumn:
+        """Convert each cell of ``column`` to text once and factorize."""
+        codes, uniques = pd.factorize(
+            pd.Series([_as_text(cell) for cell in column.tolist()],
+                      dtype=object))
+        return _TextColumn(
+            codes, {str(text): i for i, text in enumerate(uniques)})
+
+    def matches(self, operand: str | None) -> np.ndarray:
+        """The boolean mask of the cells whose text is ``operand``."""
+        if operand is None:
+            return np.asarray(self.codes == -1)
+        code = self.texts.get(operand)
+        if code is None:
+            return np.zeros(len(self.codes), dtype=bool)
+        return np.asarray(self.codes == code)
+
+
+@dataclass(frozen=True)
 class CellGrouping:
     """How a fragment's barcode becomes a group: a filtered table lookup.
 
@@ -329,22 +360,31 @@ class CellGrouping:
     table: MetaTable
     filters: tuple[MetaFilter, ...]
 
+    def prepare_filters(self, table: pd.DataFrame) -> dict[str, _TextColumn]:
+        """Each filter column of ``table`` as text, converted once."""
+        return {
+            column: _TextColumn.of(table[column])
+            for column in dict.fromkeys(f.column for f in self.filters)
+        }
+
     def groups_of(
         self, table: pd.DataFrame, resource: GenomicResource,
+        prepared: dict[str, _TextColumn] | None = None,
     ) -> dict[str, str]:
         """Map each barcode of ``resource``'s rows to its group.
 
         The rows are those every filter conjunct selects, as a boolean
         mask; a row whose group is empty names no group and is left out,
         so its barcode maps nowhere.  A barcode on more than one row is
-        a :class:`DuplicateBarcodeError`.
+        a :class:`DuplicateBarcodeError`.  ``prepared`` is
+        :meth:`prepare_filters` of ``table``, when the caller holds it.
         """
+        if prepared is None:
+            prepared = self.prepare_filters(table)
         mask = np.ones(len(table), dtype=bool)
         for conjunct in self.filters:
-            operand = conjunct.operand(resource)
-            mask &= np.array([
-                _as_text(cell) == operand
-                for cell in table[conjunct.column].tolist()], dtype=bool)
+            mask &= prepared[conjunct.column].matches(
+                conjunct.operand(resource))
         rows = table[mask]
         mapping: dict[str, str] = {}
         seen: Counter[str] = Counter()
@@ -382,10 +422,12 @@ class CellGrouping:
     ) -> list[dict[str, int]]:
         """Per resource, each barcode's track index; the table read once."""
         table = self.table.load(grr)
+        prepared = self.prepare_filters(table)
         return [
             {
                 barcode: index_of[group]
-                for barcode, group in self.groups_of(table, resource).items()
+                for barcode, group in self.groups_of(
+                    table, resource, prepared).items()
                 if group in index_of
             }
             for resource in resources
@@ -895,6 +937,7 @@ def _resolve_grouping(
                 f"resource(s) {_quoted(resource_ids)} has no column "
                 f"{column!r}; its columns are "
                 f"{[str(c) for c in frame.columns]}")
+    prepared = grouping.prepare_filters(frame)
     groups_of: dict[str, set[str]] = {}
     for resource in resources:
         _score_type(label, resource, grouping.cell_score_id)
@@ -914,7 +957,7 @@ def _resolve_grouping(
                     f"{resource.resource_id!r} has no label "
                     f"{conjunct.label!r} to filter {conjunct.column!r} by")
         try:
-            mapping = grouping.groups_of(frame, resource)
+            mapping = grouping.groups_of(frame, resource, prepared)
         except DuplicateBarcodeError as err:
             raise RunDefinitionError(
                 f"{meta_label}: in the cell metadata table {table.name!r}, "
