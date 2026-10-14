@@ -300,11 +300,26 @@ class ResourceStatistics:
 
 
 class GenomicResourceImplementation(ABC):
-    """
-    Base class used by resource implementations.
+    """Base class of the implementation of a resource type.
 
-    Resources are just a folder on a repository. Resource implementations
-    are classes that know how to use the contents of the resource.
+    A resource is a folder in a repository. An implementation knows how
+    to describe the resource, how to compute its statistics and how to
+    render its HTML pages. A subclass overrides the five abstract
+    methods and, when it reads files, the ``files`` property.
+
+    Parameters
+    ----------
+    genomic_resource : GenomicResource
+        The resource that the implementation wraps.
+
+    Attributes
+    ----------
+    resource : GenomicResource
+        The wrapped resource.
+    config : dict
+        The configuration read from the resource when the implementation
+        is constructed. A subclass that validates its configuration may
+        replace it with the validated form.
     """
 
     def __init__(self, genomic_resource: GenomicResource):
@@ -314,42 +329,50 @@ class GenomicResourceImplementation(ABC):
 
     @property
     def resource_id(self) -> str:
-        """The id of the resource this implementation wraps."""
+        """The id of the resource that the implementation wraps."""
         return self.resource.resource_id
 
     def get_config(self) -> dict:
-        """The resource's configuration.
+        """Return the configuration of the resource.
 
-        As read from the resource at construction; an implementation
-        that validates its configuration replaces it with the validated
-        form, and answers that here.
+        Returns
+        -------
+        dict
+            The configuration read when the implementation was
+            constructed. A subclass that validates its configuration
+            returns the validated form.
         """
         return self.config
 
     @property
     def files(self) -> set[str]:
-        """Return a list of resource files the implementation utilises."""
+        """The names of the resource files that the implementation reads."""
         return set()
 
     @abstractmethod
     def calc_statistics_hash(self) -> bytes:
-        """
-        Compute the statistics hash.
+        """Compute the digest of the inputs of the statistics build.
 
-        This hash is used to decide whether the resource statistics should be
-        recomputed.
+        ``grr_manage`` compares the digest with the stored one to decide
+        whether it must compute the statistics again.
+
+        Returns
+        -------
+        bytes
+            The digest of everything that the statistics tasks read.
         """
         raise NotImplementedError
 
     def stored_statistics(self) -> list[StoredStatistic]:
-        """The versioned statistics files a build writes for this resource.
+        """List the versioned statistics files that a build writes.
 
-        Each names a file and the ``format_version`` its writer stamps.
-        The repair flow compares a hash-current resource's stored files
-        against them and reports -- never rebuilds -- one that is
-        missing or older.  Not part of the statistics hash.  Empty by
-        default: a kind that declares nothing is never reported.
+        :meta private:
         """
+        # The repair flow compares the stored files of a resource whose
+        # statistics hash is current against this list. It reports a
+        # missing or older file and never rebuilds it. The list is not
+        # part of the statistics hash. A kind that declares nothing is
+        # never reported.
         return []
 
     @abstractmethod
@@ -358,82 +381,129 @@ class GenomicResourceImplementation(ABC):
         region_size: int = DEFAULT_STATISTICS_REGION_SIZE,
         grr: GenomicResourceRepo | None = None,
     ) -> list[TaskDesc]:
-        """Create tasks for calculating resource statistics for task graph.
+        """Create the task graph tasks that compute the statistics.
 
-        A kind that splits its build by genomic region reads
-        ``region_size``: a positive value is the longest region one task
-        covers, ``0`` means do not split (a single pass for a genomic
-        score, one region per chromosome for a reference genome), and a
-        negative value is refused with ``ValueError``.  Kinds that do not
-        split ignore it.
+        ``grr_manage`` calls every kind with the same two keyword-only
+        arguments. An implementation declares both, even when it ignores
+        them, and declares no other argument.
+
+        Parameters
+        ----------
+        region_size : int
+            The longest region that one task covers. A kind that splits
+            its build by genomic region reads it. ``0`` means do not
+            split: a genomic score then scans the resource in one pass
+            and a reference genome uses one region for each chromosome.
+            A kind that does not split ignores it.
+        grr : GenomicResourceRepo | None
+            The repository that holds the resource. ``None`` means that
+            the caller names no repository.
+
+        Returns
+        -------
+        list[TaskDesc]
+            The tasks of the build. An empty list means that the kind
+            has no statistics to compute.
+
+        Raises
+        ------
+        ValueError
+            If ``region_size`` is negative.
         """
         raise NotImplementedError
 
     @abstractmethod
     def calc_info_hash(self) -> bytes:
-        """Compute and return the info hash."""
+        """Compute the digest of the inputs of the info page.
+
+        The page is rendered again only when the digest changes.
+
+        Returns
+        -------
+        bytes
+            The digest of everything that ``get_info`` depends on.
+        """
         raise NotImplementedError
 
     def derived_files_state(
         self, grr: GenomicResourceRepo | None,  # ruff: ignore[unused-method-argument]
     ) -> DerivedFilesState:
-        """Whether the files this kind derives at repair, under a
-        freshness gate of its own rather than the statistics hash's,
-        describe the resource as it is now.
+        """Report whether the derived files describe the resource now.
 
-        Cheap by contract: the gate compares what a file was derived
-        from with what is there now, and never derives anything -- nor
-        opens the resource's payload, so a pointer-only DVC checkout
-        can be asked.  Most kinds have no such file and answer
-        ``CURRENT``; a genomic score keeps its chromosome lengths this
-        way (gain#1576).
+        :meta private:
         """
+        # The files are the ones that a kind derives at repair under a
+        # freshness gate of its own, not under the statistics hash. The
+        # check is cheap by contract. It compares what a file was derived
+        # from with what is there now, derives nothing and does not open
+        # the payload of the resource, so a pointer-only DVC checkout can
+        # be asked. Most kinds have no such file and answer CURRENT. A
+        # genomic score keeps its chromosome lengths this way (gain#1576).
         return DerivedFilesState.CURRENT
 
     def rebuild_derived_files(
         self, grr: GenomicResourceRepo | None,  # ruff: ignore[unused-method-argument]
     ) -> None:
-        """Rewrite the files :meth:`derived_files_state` gates.
+        """Rewrite the files that ``derived_files_state`` gates.
 
-        Called by a repair that found them ``STALE`` while the statistics
-        themselves are current; a full statistics rebuild writes them on
-        its own.  A no-op for a kind that derives nothing.
+        :meta private:
         """
+        # A repair calls it when the files are STALE while the statistics
+        # are current. A full statistics build writes them on its own.
+        # It does nothing for a kind that derives no file.
         return
 
     @abstractmethod
     def get_info(self, **kwargs: Any) -> str:
-        """Construct the contents of the implementation's HTML info page."""
+        """Render the HTML of the info page of the resource.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Options of the renderer. The caller defines them.
+
+        Returns
+        -------
+        str
+            The HTML of the page.
+        """
         raise NotImplementedError
 
     @abstractmethod
     def get_statistics_info(self, **kwargs: Any) -> str:
-        """Construct the contents of the implementation's HTML
-        statistics info page.
+        """Render the HTML of the statistics page of the resource.
+
+        Parameters
+        ----------
+        **kwargs : Any
+            Options of the renderer. The caller defines them.
+
+        Returns
+        -------
+        str
+            The HTML of the page.
         """
         raise NotImplementedError
 
     def collect_index_info(
         self,
     ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-        """Collect resource info for FTS index building.
+        """Collect the resource fields for the full text search index.
 
-        Returns a (header, row) pair where header contains field names and
-        row contains the corresponding values for this resource.
-        Label keys/values are appended after the fixed fields.
-
-        Raises ``ValueError`` if a label key cannot name an index field --
-        every implementation reaches the index through here, and the index
-        build reports a raise from here against this one resource (gain#464).
-
-        An override that contributes further fields must call ``super()``
-        and append to what it returns.  This is the only place a label key
-        is checked against the names the index reserves: the build's own
-        re-check sees the finished header, in which an implementation's
-        fields legitimately appear, so it cannot tell a field from a label
-        (gain#542).  A field added by an override belongs in
-        ``GR_INDEX_NON_LABEL_COLUMNS``.
+        :meta private:
         """
+        # An override that adds fields calls super() and appends to the
+        # result. This is the only place that checks a label key against
+        # the names that the index reserves. The re-check of the index
+        # build sees the finished header, where the fields of an
+        # implementation legitimately appear, so it cannot tell a field
+        # from a label (gain#542). A field added by an override belongs in
+        # GR_INDEX_NON_LABEL_COLUMNS.
+        #
+        # Every implementation reaches the index through here, and the
+        # index build reports a raise from here against this one resource
+        # (gain#464). A label key that cannot name an index field raises
+        # ValueError.
         res = self.resource
         # Through the resource's own narrowing accessor, not the raw
         # config: `or {}` guards a None and an empty mapping but not a
@@ -487,15 +557,26 @@ class GenomicResourceImplementation(ABC):
         return header, row
 
     def get_statistics(self) -> ResourceStatistics | None:
-        """Try and load resource statistics."""
+        """Load the statistics of the resource.
+
+        Returns
+        -------
+        ResourceStatistics | None
+            The statistics. ``None`` means that the implementation has
+            none: this base class always returns ``None``.
+        """
         return None
 
     def reload_statistics(self) -> ResourceStatistics | None:
-        """Drop the cached statistics and reload via :meth:`get_statistics`.
+        """Drop the cached statistics and load them again.
 
-        For after the statistics were rebuilt on disk.  Answers what
-        :meth:`get_statistics` answers: ``None`` unless the
-        implementation overrides it.
+        Call it after the statistics were rebuilt on disk.
+
+        Returns
+        -------
+        ResourceStatistics | None
+            What :meth:`get_statistics` returns. ``None`` means that
+            the implementation has no statistics.
         """
         self._statistics = None
         return self.get_statistics()
