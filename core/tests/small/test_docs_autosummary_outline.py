@@ -33,7 +33,6 @@ GENE_MODELS_PAGE = RESOURCES_DIR / "gene_models.rst"
 # removes the page from this set.
 NOT_ROLLED_OUT = frozenset({
     "factories.rst",
-    "gene_sets.rst",
     "adding_a_resource_type.rst",
 })
 

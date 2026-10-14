@@ -79,9 +79,27 @@ histogram. :doc:`histograms` describes the result.
 API
 ---
 
+The classes below are defined in the module ``gain.gene_sets.gene_set``.
+``GeneSetCollection`` is also exported by ``gain.grr``, as
+``grr.GeneSetCollection``. The factory pair
+``build_gene_set_collection_from_resource_id`` and
+``build_gene_set_collection_from_resource`` is on :doc:`factories`.
+
 .. currentmodule:: gain.gene_sets.gene_set
 
-.. autofunction:: build_gene_set_collection_from_resource_id
+.. autosummary::
+
+   GeneSetCollection
+   GeneSetCollection.files
+   GeneSetCollection.get_all_gene_sets
+   GeneSetCollection.get_gene_collection_count_statistics
+   GeneSetCollection.get_gene_set
+   GeneSetCollection.get_gene_sets_list_statistics
+   GeneSetCollection.get_gene_sets_per_gene_hist
+   GeneSetCollection.get_genes_per_gene_set_hist
+   GeneSetCollection.is_loaded
+   GeneSetCollection.load
+   GeneSet
 
 .. autoclass:: GeneSetCollection
    :members:

@@ -99,7 +99,17 @@ class GeneSetResourceSchema(BaseModel):
 
 
 class GeneSet:
-    """Class representing a set of genes."""
+    """A named set of genes.
+
+    Attributes:
+        name (str): The name of the gene set, unique in its collection.
+
+        desc (str): The description of the gene set. It can be empty.
+
+        count (int): The number of gene symbols in ``syms``.
+
+        syms (list[str]): The gene symbols of the set.
+    """
 
     # pylint: disable=too-few-public-methods
     name: str
@@ -108,6 +118,17 @@ class GeneSet:
     syms: list[str]
 
     def __init__(self, name: str, desc: str, syms: list[str]) -> None:
+        """Create a gene set.
+
+        Parameters
+        ----------
+        name : str
+            The name of the gene set.
+        desc : str
+            The description of the gene set.
+        syms : list[str]
+            The gene symbols. ``count`` is set to the length of this list.
+        """
         self.name = name
         self.desc = desc
         self.count = len(syms)
@@ -152,7 +173,30 @@ class BaseGeneSetCollection(abc.ABC):
 class GeneSetCollection(
     BaseGeneSetCollection,
 ):
-    """Class representing a collection of gene sets in a resource."""
+    """The gene sets of a ``gene_set_collection`` resource.
+
+    Build a collection with ``build_gene_set_collection_from_resource_id``
+    or ``build_gene_set_collection_from_resource``. The built collection
+    may not be loaded: call ``load()`` before the first read.
+
+    Attributes:
+        resource (GenomicResource): The resource that holds the gene sets.
+
+        config (GeneSetResourceSchema): The validated config of the
+            resource.
+
+        collection_id (str): The ``id:`` key of the resource config.
+
+        web_label (str): The label that a web interface shows for the
+            collection. Empty when the config sets no ``web_label``.
+
+        web_format_str (str): The format string that a web interface uses
+            to show a gene set. Empty when the config sets no
+            ``web_format_str``.
+
+        gene_sets (dict[str, GeneSet]): The loaded gene sets by name. The
+            dictionary is empty until ``load()`` runs.
+    """
 
     def __init__(self, resource: GenomicResource) -> None:
         config = resource.get_config()
@@ -178,7 +222,7 @@ class GeneSetCollection(
 
     @property
     def files(self) -> set[str]:
-        """Return a list of resource files the implementation utilises."""
+        """Return the names of the resource files that hold the gene sets."""
         res = set()
         collection_format = self.config.resource_format
 
@@ -211,11 +255,32 @@ class GeneSetCollection(
         return res
 
     def is_loaded(self) -> bool:
-        """Check if the gene sets have been loaded."""
+        """Return whether the collection holds any loaded gene set.
+
+        Returns
+        -------
+        bool
+            ``True`` after ``load()`` read at least one gene set. A
+            resource with no gene sets always reports ``False``.
+        """
         return bool(self.gene_sets)
 
     def load(self) -> GeneSetCollection:
-        """Load the gene sets from the resource."""
+        """Read the gene sets from the resource.
+
+        A call on a loaded collection does nothing.
+
+        Returns
+        -------
+        GeneSetCollection
+            This collection, so the call chains.
+
+        Raises
+        ------
+        ValueError
+            If the ``format:`` key of the resource is not ``directory``,
+            ``gmt`` or ``map``.
+        """
         if self.is_loaded():
             logger.debug(
                 "gene sets already loaded from %s", self.collection_id)
@@ -228,7 +293,10 @@ class GeneSetCollection(
         return self
 
     def load_gene_sets(self) -> dict[str, GeneSet]:
-        """Build a gene set collection from a given GenomicResource."""
+        """Read the gene sets from the resource files.
+
+        :meta private:
+        """
         assert self.resource is not None
         gene_sets = {}
         collection_format = self.config.resource_format
@@ -276,7 +344,20 @@ class GeneSetCollection(
         return gene_sets
 
     def get_gene_set(self, gene_set_id: str) -> GeneSet | None:
-        """Return the gene set if found; returns None if not found."""
+        """Return one gene set by its name.
+
+        Parameters
+        ----------
+        gene_set_id : str
+            The name of the gene set.
+
+        Returns
+        -------
+        GeneSet | None
+            The gene set, or ``None`` when the collection has no set with
+            this name. The collection logs a warning in that case. An
+            unloaded collection has no sets, so it always returns ``None``.
+        """
         gene_set = self.gene_sets.get(gene_set_id)
         if gene_set is None:
             logger.warning(
@@ -285,30 +366,79 @@ class GeneSetCollection(
         return gene_set
 
     def get_all_gene_sets(self) -> list[GeneSet]:
+        """Return all the gene sets of the collection.
+
+        Returns
+        -------
+        list[GeneSet]
+            The gene sets in the order of the resource. The list is empty
+            when the collection is not loaded.
+        """
         return list(self.gene_sets.values())
 
     def get_genes_per_gene_set_hist_image_filename(self) -> str:
+        """Return the resource path of the genes per gene set plot.
+
+        :meta private:
+        """
         return "statistics/genes_per_gene_set_histogram.png"
 
     def get_genes_per_gene_set_hist_filename(self) -> str:
+        """Return the resource path of the genes per gene set histogram.
+
+        :meta private:
+        """
         return "statistics/genes_per_gene_set_histogram.json"
 
     def get_genes_per_gene_set_hist(self) -> Histogram | None:
+        """Read the stored histogram of the number of genes in a gene set.
+
+        Returns
+        -------
+        Histogram | None
+            The histogram, or ``None`` when the resource has no stored
+            histogram because no statistics build ran.
+        """
         hist_filename = self.get_genes_per_gene_set_hist_filename()
         return load_histogram(self.resource, hist_filename)
 
     def get_gene_sets_per_gene_hist_image_filename(self) -> str:
+        """Return the resource path of the gene sets per gene plot.
+
+        :meta private:
+        """
         return "statistics/gene_sets_per_gene_histogram.png"
 
     def get_gene_sets_per_gene_hist_filename(self) -> str:
+        """Return the resource path of the gene sets per gene histogram.
+
+        :meta private:
+        """
         return "statistics/gene_sets_per_gene_histogram.json"
 
     def get_gene_sets_per_gene_hist(self) -> Histogram | None:
+        """Read the stored histogram of the gene sets that contain a gene.
+
+        Returns
+        -------
+        Histogram | None
+            The histogram, or ``None`` when the resource has no stored
+            histogram because no statistics build ran.
+        """
         hist_filename = self.get_gene_sets_per_gene_hist_filename()
         return load_histogram(self.resource, hist_filename)
 
     def get_gene_sets_list_statistics(self) -> list[dict] | None:
-        """Get gene sets list statistics from the resource."""
+        """Read the stored list of gene sets with their sizes.
+
+        Returns
+        -------
+        list[dict] | None
+            One dictionary for each gene set, with the keys ``name``,
+            ``count`` and ``desc``, ordered by falling ``count``. ``None``
+            when the resource has no stored list because no statistics
+            build ran.
+        """
         try:
             with self.resource.proto.open_raw_file(
                 self.resource,
@@ -320,7 +450,15 @@ class GeneSetCollection(
             return None
 
     def get_gene_collection_count_statistics(self) -> dict | None:
-        """Get gene collection count statistics from the resource."""
+        """Read the stored counts of the collection.
+
+        Returns
+        -------
+        dict | None
+            A dictionary with the keys ``number_of_gene_sets`` and
+            ``number_of_unique_genes``. ``None`` when the resource has no
+            stored counts because no statistics build ran.
+        """
         try:
             with self.resource.proto.open_raw_file(
                 self.resource,
@@ -404,7 +542,28 @@ def build_gene_set_collection_from_file(
 def build_gene_set_collection_from_resource(
     resource: GenomicResource,
 ) -> GeneSetCollection:
-    """Return a Gene Set Collection built from a resource."""
+    """Build the gene set collection of a genomic resource.
+
+    The returned collection may not be loaded. Calls with the same
+    resource return the same object, so an earlier caller may have loaded
+    it.
+
+    Parameters
+    ----------
+    resource : GenomicResource
+        A resource of type ``gene_set_collection``.
+
+    Returns
+    -------
+    GeneSetCollection
+        The collection of the resource. Check ``is_loaded()`` or call
+        ``load()`` before any read.
+
+    Raises
+    ------
+    ValueError
+        If the resource is not of type ``gene_set_collection``.
+    """
     return _RESOURCE_CACHE.get_or_build(
         resource.get_memo_key(), lambda: GeneSetCollection(resource))
 
@@ -412,6 +571,36 @@ def build_gene_set_collection_from_resource(
 def build_gene_set_collection_from_resource_id(
     resource_id: str, grr: GenomicResourceRepo | None = None,
 ) -> GeneSetCollection:
+    """Build the gene set collection of the resource with a given id.
+
+    The returned collection may not be loaded. Calls that find the same
+    resource return the same object, so an earlier caller may have loaded
+    it.
+
+    Parameters
+    ----------
+    resource_id : str
+        The id of a resource of type ``gene_set_collection`` in the
+        repository.
+    grr : GenomicResourceRepo | None
+        The repository that resolves ``resource_id``. When it is
+        ``None``, the function builds the default repository with
+        ``build_genomic_resource_repository()``.
+
+    Returns
+    -------
+    GeneSetCollection
+        The collection of the resource. Check ``is_loaded()`` or call
+        ``load()`` before any read.
+
+    Raises
+    ------
+    FileNotFoundError
+        If a protocol-backed repository has no resource with this id.
+    ValueError
+        If a group repository has no resource with this id, or if the
+        resource is not of type ``gene_set_collection``.
+    """
     if grr is None:
         grr = build_genomic_resource_repository()
     return build_gene_set_collection_from_resource(
