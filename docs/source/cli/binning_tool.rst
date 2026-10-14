@@ -915,21 +915,43 @@ understands without a library beyond ``h5py``. It holds three datasets:
     the run), ``start`` and ``end`` (``int64``, 1-based inclusive).
 
 ``/tracks``
-    A compound dataset of shape ``(n_tracks,)`` with fields ``name``,
-    ``resource_ids``, ``group``, ``score_id`` and ``aggregator``
-    (variable-length UTF-8 strings) and ``none_value_replacement``
-    (``float64``, ``NaN`` when the entry set none). ``resource_ids`` lists
-    the resources a track was computed from, comma-separated in
-    resource-id order: one id for a position-score track and for an
-    unpooled fragment track, every matched id for a pooled one. ``group``
-    is the track's group, empty for a position-score track. ``score_id``
-    is empty for a fragment track that counts fragments. ``mode``
-    (variable-length UTF-8) is the mode of a fragment track:
-    ``fragment_start``, ``fragment_length`` or ``coverage_profile``. It is
-    empty for a position-score track. ``uncovered_value`` (``float64``)
-    is the uncovered value of a fragment track, ``NaN`` for ``null``. It
-    is ``NaN`` for a ``fragment_start`` track and for a position-score
-    track.
+    A compound dataset of shape ``(n_tracks,)``, one row per track, with
+    the same fields for every binner kind. ``binner_type``,
+    ``resource_ids``, ``selector`` and ``binner_def`` are
+    variable-length UTF-8 strings. ``binner_index`` and ``track_index``
+    are ``int64``.
+
+    ``binner_type``
+        The kind of the entry that produced the track, without the
+        ``_binner`` suffix: ``position_score`` or ``fragment_score``.
+    ``binner_index``
+        The position of the entry in the ``binners`` list of the run
+        definition, counted from 0.
+    ``track_index``
+        The position of the track among all the tracks of that entry,
+        in output order, counted from 0. The pair ``(binner_index,
+        track_index)`` is unique in a file.
+    ``resource_ids``
+        The resources the track was computed from, comma-separated in
+        resource-id order: one id for a position-score track and for an
+        unpooled fragment track, every matched id for a pooled one.
+    ``selector``
+        What picks the track within its resources: the score id of a
+        position-score track, the group of a fragment track.
+    ``binner_def``
+        The definition of the track that the other fields do not carry,
+        as canonical JSON (sorted keys, no extra whitespace). A missing
+        value is JSON ``null``. A position-score definition holds
+        ``aggregator``, ``none_value_replacement`` and ``name``. A
+        fragment definition holds ``aggregator``, ``mode``
+        (``fragment_start``, ``fragment_length`` or
+        ``coverage_profile``), ``uncovered_value``, ``score_id``
+        (``null`` for a track that counts fragments), ``resource_query``,
+        ``pool`` and ``name``. ``name`` is the optional ``name`` of the
+        entry.
+
+    The file has no track name. The name is in memory while the tool
+    runs, where it keeps the tracks apart and names the chunk files.
 
 Row *i* of ``/bins`` describes row *i* of ``/values``, and row *j* of
 ``/tracks`` describes column *j*. The root attributes record what the run
@@ -942,10 +964,13 @@ joined:
 
    * - Attribute
      - Content
-   * - ``input_`` followed by ``reference_genome``
+   * - ``tracks_layout``
+     - ``2``, the layout of ``/tracks`` described above. A file without
+       this attribute has an older layout.
+   * - ``reference_genome``
      - The resource id of the reference genome the grid was built on.
-       The attribute keeps this older name, one word longer than the
-       run-definition key ``reference_genome``.
+       A file without ``tracks_layout`` keeps the older name
+       ``input_reference_genome`` for this attribute.
    * - ``bin_size``
      - The bin width in base pairs.
    * - ``regions``
@@ -969,15 +994,18 @@ joined:
 .. note::
 
     **The** ``/tracks`` **layout changed after the 2026.9 releases.** A
-    file written by a 2026.9 release of GAIn has a ``resource_id`` column
-    holding one id and no ``group`` column; a later file has
-    ``resource_ids`` and ``group`` instead, for every track, position
-    scores included. Code reading ``resource_id`` must switch to
-    ``resource_ids``. Tell the two layouts apart by the field itself —
-    ``'resource_ids' in h5['tracks'].dtype.names`` — not by the
-    ``gain_version`` root attribute: a development build made after the
-    2026.9.7 release reports a 2026.9 version but already writes the new
-    layout.
+    file written by an earlier release has the fields ``name``,
+    ``resource_ids``, ``group``, ``score_id``, ``aggregator`` and more, or
+    in the oldest files a ``resource_id`` field. A file written now has
+    the root attribute ``tracks_layout`` with the value ``2`` and the
+    fields described above. Tell the layouts apart with
+    ``h5.attrs.get("tracks_layout")``: absent means an older layout. Do
+    not sniff a field, and do not use the ``gain_version`` root attribute:
+    a development build can report an old version and already write the
+    new layout. In the same change the root attribute
+    ``input_reference_genome`` became ``reference_genome``; read the name
+    that matches ``tracks_layout``. The tool does not convert files
+    written by earlier releases.
 
 Every value in ``/values`` is a ``float64``, including the result of an
 integer-valued aggregator such as ``count`` or the ``max`` of an integer
@@ -1006,42 +1034,57 @@ With ``h5py`` alone:
 
 .. code-block:: python
 
+    import json
+
     import h5py
 
     with h5py.File("binning_run.h5", "r") as h5:
         values = h5["values"][()]       # numpy float64 array, bins x tracks
         bins = h5["bins"][()]           # structured array: chrom, start, end
-        tracks = h5["tracks"][()]       # structured array: name, resource_ids, group, ...
+        tracks = h5["tracks"][()]       # structured array: binner_type, ...
         attrs = dict(h5.attrs)
 
+    assert attrs["tracks_layout"] == 2  # absent: a file of an older layout
     print(values.shape, attrs["bin_size"], attrs["coordinates"])
-    print(tracks["name"][:3])
-    print(tracks["resource_ids"][-1], tracks["group"][-1])
+    print(tracks["binner_type"][:3], tracks["selector"][:3])
+    print(tracks["resource_ids"][-1], tracks["binner_def"][-1])
+    print(json.loads(tracks["binner_def"][-1]))
     print(bins[:3])
 
-With ``pandas``, decoding the fixed-length chromosome names once:
+With ``pandas``, decoding the text fields and the fixed-length chromosome
+names once. The file has no track name, so the example builds a label for
+each column from the selector and the definition:
 
 .. code-block:: python
+
+    import json
 
     import h5py
     import pandas as pd
 
     with h5py.File("binning_run.h5", "r") as h5:
         tracks = pd.DataFrame(h5["tracks"][()])
-        for column in ("name", "resource_ids", "group", "score_id",
-                       "aggregator", "mode"):
+        for column in ("binner_type", "resource_ids", "selector",
+                       "binner_def"):
             tracks[column] = tracks[column].str.decode("utf-8")
+        definitions = tracks["binner_def"].map(json.loads)
+        labels = [
+            f"{track.resource_ids}:{track.selector}:{definition['aggregator']}"
+            for track, definition in zip(
+                tracks.itertuples(), definitions, strict=True)]
         bins = pd.DataFrame(h5["bins"][()])
         bins["chrom"] = bins["chrom"].str.decode("utf-8")
         values = pd.DataFrame(
-            h5["values"][()], columns=tracks["name"],
+            h5["values"][()], columns=labels,
             index=pd.MultiIndex.from_frame(bins))
 
-    print(values[["hg38/scores/phyloP100way:mean",
-                  "hg38/scores/phyloP100way:max"]].head())
+    print(values.head())
 
 ``values`` is then a DataFrame indexed by ``(chrom, start, end)`` with one
-column per track, and ``tracks`` explains each column.
+column per track, and ``tracks`` explains each column. A label made from
+``resource_ids``, ``selector`` and the ``aggregator`` of the definition is
+unique only when no two tracks share them; add ``binner_index`` and
+``track_index`` to the label when they do.
 
 
 A worked example
@@ -1136,17 +1179,18 @@ window first, then widen it.
     bigWig in full before opening it — about 60 GB for the eight scores of
     this example — whatever the size of the window.
 
-Reading the result back with the ``pandas`` snippet above gives:
+Reading the result back with the ``pandas`` snippet above, where each
+column is labelled ``resource_ids:selector:aggregator``, gives:
 
 .. code-block:: text
 
-    name                     hg38/scores/phyloP100way:mean  hg38/scores/phyloP100way:max
+                             hg38/scores/phyloP100way:phyloP100way:mean  hg38/scores/phyloP100way:phyloP100way:max
     chrom start    end
-    chr21 20000000 20008960                      -0.014157                         3.356
-          20008961 20019200                      -0.006858                         3.539
-          20019201 20029440                       0.001797                         3.694
-          20029441 20039680                      -0.017875                         2.491
-          20039681 20049920                       0.006743                         2.455
+    chr21 20000000 20008960                                                  -0.014157                                      3.356
+          20008961 20019200                                                  -0.006858                                      3.539
+          20019201 20029440                                                   0.001797                                      3.694
+          20029441 20039680                                                  -0.017875                                      2.491
+          20039681 20049920                                                   0.006743                                      2.455
 
 and the two fragment tracks, selected the same way, count the deletions
 and duplications that start in each bin — 826 and 179 over the whole
@@ -1154,13 +1198,13 @@ window:
 
 .. code-block:: text
 
-    name                     hg38/cnv_collections/gnomAD.v4.1_Genome_SV:deletion  hg38/cnv_collections/gnomAD.v4.1_Genome_SV:duplication
+                             hg38/cnv_collections/gnomAD.v4.1_Genome_SV:deletion:sum  hg38/cnv_collections/gnomAD.v4.1_Genome_SV:duplication:sum
     chrom start    end
-    chr21 20000000 20008960                                                2.0                                                  0.0
-          20008961 20019200                                                2.0                                                  3.0
-          20019201 20029440                                                4.0                                                  0.0
-          20029441 20039680                                                1.0                                                  0.0
-          20039681 20049920                                                4.0                                                  0.0
+    chr21 20000000 20008960                                                                     2.0                                                         0.0
+          20008961 20019200                                                                     2.0                                                         3.0
+          20019201 20029440                                                                     4.0                                                         0.0
+          20029441 20039680                                                                     1.0                                                         0.0
+          20039681 20049920                                                                     4.0                                                         0.0
 
 
 .. _binning-tool-option-reference:

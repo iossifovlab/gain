@@ -30,9 +30,11 @@ from gain.binning.binners import (
     Binner,
     BinningJob,
     Track,
+    aggregator_of,
     discover_binner_kinds,
 )
 from gain.binning.fragment_binner import CellGrouping, FragmentBinningJob
+from gain.binning.fragment_def import FragmentScoreDef
 from gain.binning.run_definition import (
     RunDefinition,
     RunDefinitionError,
@@ -191,7 +193,7 @@ def _print_plan(run: RunDefinition, task_budget: int) -> None:
     for track in run.tracks:
         print(
             f"  {track.name}\t{','.join(track.resource_ids)}\t"
-            f"{track.score_id}\t{track.aggregator}")
+            f"{_score_id_of(track)}\t{aggregator_of(track)}")
     print(f"regions: {len(run.regions)}")
     print(f"bins: {sum(_bin_count(r, run.bin_size) for r in run.regions)}")
     bundles = bundle_regions(run.regions, task_budget)
@@ -225,9 +227,10 @@ def _print_fragment_entries(run: RunDefinition) -> None:
         for warning in dict.fromkeys(
                 w for job in jobs for w in job.warnings):
             print(f"    warning: {warning}")
-        track = jobs[0].tracks[0]
-        uncovered = track.uncovered_value
-        print(f"    mode: {track.mode}")
+        definition = jobs[0].tracks[0].definition
+        assert isinstance(definition, FragmentScoreDef)
+        uncovered = definition.uncovered_value
+        print(f"    mode: {definition.mode}")
         print(
             f"    uncovered_value: "
             f"{'null' if uncovered is None else uncovered}")
@@ -238,6 +241,9 @@ def _local_files(run: RunDefinition) -> list[str]:
     return list(dict.fromkeys(
         path for job in run.jobs if isinstance(job, FragmentBinningJob)
         for path in job.local_files))
+
+
+TRACKS_LAYOUT = 2
 
 
 def _bin_count(region: BedRegion, bin_size: int) -> int:
@@ -328,6 +334,12 @@ def _digest(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
+def _score_id_of(track: Track) -> str:
+    """The score a track reads: its definition's, else its selector."""
+    score_id = getattr(track.definition, "score_id", track.selector)
+    return score_id or ""
+
+
 def _track_stem(track: Track, bin_size: int) -> str:
     """Everything but the region that decides a track's chunk values.
 
@@ -344,9 +356,9 @@ def _track_stem(track: Track, bin_size: int) -> str:
         resource = (
             f"pool{len(track.resource_ids)}"
             f"-{_digest(','.join(track.resource_ids))}")
-    replacement = track.none_value_replacement
+    replacement = getattr(track.definition, "none_value_replacement", None)
     stem = (
-        f"{resource}_{track.score_id}_{track.aggregator}"
+        f"{resource}_{_score_id_of(track)}_{aggregator_of(track)}"
         f"_{'none' if replacement is None else replacement}")
     if track.group:
         stem += f"_g{urllib.parse.quote(track.group, safe='')}"
@@ -446,6 +458,9 @@ def _write_hdf5(
     n_bins = sum(counts)
     n_tracks = len(run.tracks)
     row_block = min(ROW_BLOCK, n_bins)
+    # The table is built first: a definition JSON refuses (a NaN) must
+    # not leave a half-written file behind.
+    tracks_table = _tracks_table(run.tracks)
     # A chunk cache of a few row blocks, so that the region slabs, which
     # start and end mid-block, are recompressed once each, not per slab.
     with h5py.File(
@@ -461,8 +476,9 @@ def _write_hdf5(
                 [np.load(path) for path in paths])
             row += count
         h5.create_dataset("bins", data=_bins_table(run, counts))
-        h5.create_dataset("tracks", data=_tracks_table(run.tracks))
-        h5.attrs["input_reference_genome"] = run.reference_genome
+        h5.create_dataset("tracks", data=tracks_table)
+        h5.attrs["tracks_layout"] = TRACKS_LAYOUT
+        h5.attrs["reference_genome"] = run.reference_genome
         h5.attrs["bin_size"] = run.bin_size
         h5.attrs["regions"] = [
             f"{region.chrom}:{region.start}-{region.stop}"
@@ -519,29 +535,25 @@ def _bins_table(run: RunDefinition, counts: list[int]) -> npt.NDArray[Any]:
 
 
 def _tracks_table(tracks: list[Track]) -> npt.NDArray[Any]:
-    """The ``/tracks`` table, one row per column of ``/values``.
+    """The ``/tracks`` table (``tracks_layout`` 2), one row per column.
 
-    ``resource_ids`` is the comma-separated list of the resources a
-    track was computed from, in resource-id order -- one id for every
-    track that is not pooled -- and ``group`` the track's group, empty
-    for a position-score track.  A resource id never holds a comma.
-    ``mode`` is a fragment track's mode, empty for a position-score
-    track, and ``uncovered_value`` its uncovered value, NaN for none.
+    ``binner_type`` is the kind, ``binner_index`` the entry's position
+    in the run definition and ``track_index`` the track's position in
+    that entry.  ``resource_ids`` is the comma-separated list of the
+    resources a track was computed from, in resource-id order -- a
+    resource id never holds a comma.  ``selector`` picks the track in its
+    resources, and ``binner_def`` is the canonical JSON of the kind's
+    definition.  Raises :class:`ValueError` for a definition with a NaN
+    or an infinity.
     """
     text = h5py.string_dtype(encoding="utf-8")
     return np.array(
         [
-            (t.name, ",".join(t.resource_ids), t.group, t.score_id,
-             t.aggregator, _nan_for_none(t.none_value_replacement),
-             t.mode, _nan_for_none(t.uncovered_value))
+            (t.binner_type, t.binner_index, t.track_index,
+             ",".join(t.resource_ids), t.selector, t.definition.to_json())
             for t in tracks
         ],
         dtype=[
-            ("name", text), ("resource_ids", text), ("group", text),
-            ("score_id", text),
-            ("aggregator", text), ("none_value_replacement", "<f8"),
-            ("mode", text), ("uncovered_value", "<f8")])
-
-
-def _nan_for_none(value: float | None) -> float:
-    return np.nan if value is None else value
+            ("binner_type", text), ("binner_index", "<i8"),
+            ("track_index", "<i8"), ("resource_ids", text),
+            ("selector", text), ("binner_def", text)])

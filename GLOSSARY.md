@@ -83,7 +83,7 @@ _Avoid_: field search, scoped term
 The `-q` filter: gain's own wildcard language, an id glob plus optional **label
 clauses**, parsed by `ResourceQuery`. Unlike a **search term**, it is
 independent of any **column vocabulary**.
-_Avoid_: wildcard query, selector, filter expression
+_Avoid_: wildcard query, filter expression
 
 **Label clause**:
 One condition on one label inside a **resource query** — `key = value` or
@@ -297,6 +297,21 @@ gene id and the probe id are two different things and a read reports both.
 refuses the other kind rather than reading it (ADR 0014).
 _Avoid_: calling either "the 10x h5 format" — the distinction is the whole
 reason a read of one is not a read of the other
+
+**Track**:
+One column of the `binning_tool` output matrix. Row *j* of `/tracks` describes
+column *j* of `/values`. A track belongs to one entry of the run definition,
+named by its `binner_index`, and has a `track_index` among the tracks of that
+entry. The file does not store a track name. The kind-specific part of a track
+is its `binner_def`.
+_Avoid_: series
+
+**Selector**:
+The `/tracks` field that picks a track within its resources: the score id of a
+position-score track, the group of a fragment track. It is a column of the
+`binning_tool` output, not a filter on resources. A filter on resources is a
+**resource query**.
+_Avoid_: group (for a position-score track), filter
 
 ## Relationships
 

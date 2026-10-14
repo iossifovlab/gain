@@ -10,6 +10,7 @@ from gain.binning.binners import (
     BinningJob,
     RunDefinitionError,
     Track,
+    aggregator_of,
     check_keys,
     discover_binner_kinds,
 )
@@ -205,11 +206,18 @@ def _resolve_jobs(
     # back in the order they went in, so each job takes its own back.
     named = iter(_name_tracks([
         (label, track) for label, job in jobs for track in job.tracks]))
-    return [
-        replace(
-            job, tracks=tuple(next(named) for _ in job.tracks), entry=label)
-        for label, job in jobs
-    ]
+    next_index: Counter[str] = Counter()
+    resolved: list[BinningJob] = []
+    for label, job in jobs:
+        tracks = []
+        for _ in job.tracks:
+            tracks.append(replace(
+                next(named),
+                binner_index=int(label.removeprefix("binners[")[:-1]),
+                track_index=next_index[label]))
+            next_index[label] += 1
+        resolved.append(replace(job, tracks=tuple(tracks), entry=label))
+    return resolved
 
 
 def _name_tracks(tracks: list[tuple[str, Track]]) -> list[Track]:
@@ -232,7 +240,7 @@ def _name_tracks(tracks: list[tuple[str, Track]]) -> list[Track]:
     producers: dict[str, str] = {}
     for label, track in tracks:
         named_track = (
-            replace(track, name=f"{track.name}:{track.aggregator}")
+            replace(track, name=f"{track.name}:{aggregator_of(track)}")
             if occurrences[track.name, track.group] > 1 else track)
         if named_track.name in producers:
             raise RunDefinitionError(

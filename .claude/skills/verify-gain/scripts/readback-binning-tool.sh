@@ -4,7 +4,9 @@
 # Open a binning_tool output with h5py from the checkout's .venv and check:
 #   - the file attribute coordinates is 1-based-inclusive;
 #   - bins holds chr1 1-5, chr1 6-10, chr2 1-5, chr2 6-10;
-#   - tracks holds one track, mini_positionscore_bw, aggregator mean;
+#   - the file attribute tracks_layout is 2;
+#   - tracks holds one row: binner_type position_score, resource_ids
+#     mini_positionscore_bw, aggregator mean (read from binner_def);
 #   - values has the shape (4, 1) and holds 0, 0.1, 0.2, 0.3.
 # The bigWig stores float32, so values holds 0.30000001: the values are
 # compared within 1e-6, not exactly. Exits 0 on a match, 1 otherwise.
@@ -20,6 +22,7 @@ python="$checkout/.venv/bin/python"
 [[ -x "$python" ]] || { echo "readback: FAIL: $python is missing; run 'uv sync'" >&2; exit 1; }
 
 exec "$python" -I - "$h5" <<'PY'
+import json
 import sys
 
 import h5py
@@ -42,13 +45,20 @@ with h5py.File(path, "r") as h5:
     if bins != expected_bins:
         fails.append(f"bins are {bins}, not {expected_bins}")
 
+    layout = h5.attrs.get("tracks_layout")
+    print(f"readback: tracks_layout = {layout!r}")
+    if layout != 2:
+        fails.append(f"tracks_layout is {layout!r}, not 2")
+
     tracks = [
-        (row["name"].decode(), row["aggregator"].decode())
+        (row["binner_type"].decode(), row["resource_ids"].decode(),
+         json.loads(row["binner_def"].decode())["aggregator"])
         for row in h5["tracks"][()]
     ]
     print(f"readback: tracks = {tracks}")
-    if tracks != [("mini_positionscore_bw", "mean")]:
-        fails.append(f"tracks are {tracks}, not [('mini_positionscore_bw', 'mean')]")
+    expected_tracks = [("position_score", "mini_positionscore_bw", "mean")]
+    if tracks != expected_tracks:
+        fails.append(f"tracks are {tracks}, not {expected_tracks}")
 
     values = h5["values"][()]
     print(f"readback: values shape = {values.shape}, column 0 = {values[:, 0].tolist()}")

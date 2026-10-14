@@ -11,6 +11,8 @@ from gain.binning.run_definition import (
 from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.repository import GenomicResourceRepo
 
+from tests.small.binning.conftest import kind_def
+
 FRAGMENT = "fragment_score_binner"
 POSITION = "position_score_binner"
 
@@ -88,7 +90,10 @@ def test_two_entries_differing_only_in_name_are_two_tracks(
         {POSITION: {**entry, "name": "b"}},
     ], repo, genome)
 
-    assert [(t.name, t.resource_ids, t.aggregator) for t in run.tracks] == [
+    assert [
+        (t.name, t.resource_ids, kind_def(t).aggregator)
+        for t in run.tracks
+    ] == [
         ("a/scores/one", ("scores/one",), "max"),
         ("b/scores/one", ("scores/one",), "max"),
     ]

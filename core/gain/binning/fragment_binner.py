@@ -105,11 +105,13 @@ from gain.binning.binners import (
     BinningJob,
     RunDefinitionError,
     Track,
+    binner_type_of,
     check_keys,
     entry_name,
     match_resources,
     named_base,
 )
+from gain.binning.fragment_def import FragmentScoreDef
 from gain.binning.fragment_folds import (
     BinFragmentAggregator,
     BinFragmentCoverageAggregator,
@@ -490,6 +492,12 @@ class ValueGrouping:
     @property
     def parameters(self) -> dict[str, Any]:
         return {VALUE_GROUP_KEY: self.group_score_id}
+
+
+def _fragment_def(track: Track) -> FragmentScoreDef:
+    definition = track.definition
+    assert isinstance(definition, FragmentScoreDef)
+    return definition
 
 
 @dataclass(frozen=True)
@@ -1137,6 +1145,8 @@ class _Entry:
 
     label: str
     pool: bool
+    resource_query: str
+    name: str | None
     value: _FragmentValue
     aggregate: _Aggregate
     group: _Group
@@ -1259,7 +1269,7 @@ class FragmentScoreBinding:
         scores = [] if job.score_id is None else [job.score_id]
         if job.grouping is not None:
             scores.append(job.grouping.score_id)
-        starting = job.tracks[0].mode == FRAGMENT_START
+        starting = _fragment_def(job.tracks[0]).mode == FRAGMENT_START
         read = score.get_fragment_scores_starting_in_region if starting \
             else score.get_fragment_scores_overlapping_region
         rows = read(region.chrom, region.start, region.stop, scores=scores)
@@ -1288,22 +1298,29 @@ def _fold_of(
     track: Track, region: BedRegion, bin_size: int,
 ) -> BinFragmentAggregator:
     """The streaming fold of ``track``'s mode over ``region``."""
-    if track.mode == FRAGMENT_START:
+    definition = _fragment_def(track)
+    if definition.mode == FRAGMENT_START:
         return BinFragmentStartAggregator(
             start=region.start, end=region.stop, bin_size=bin_size,
-            aggregator=track.aggregator)
+            aggregator=definition.aggregator)
     fold = (
-        BinFragmentCoverageAggregator if track.mode == COVERAGE_PROFILE
+        BinFragmentCoverageAggregator if definition.mode == COVERAGE_PROFILE
         else BinFragmentLengthAggregator)
     return fold(
         start=region.start, end=region.stop, bin_size=bin_size,
-        aggregator=track.aggregator, uncovered_value=track.uncovered_value)
+        aggregator=definition.aggregator,
+        uncovered_value=definition.uncovered_value)
 
 
 class FragmentScoreBinner:
     """Bins ``fragment_score`` resources matched by a ``resource_query``."""
 
     kind: ClassVar[str] = "fragment_score_binner"
+
+    @staticmethod
+    def load_def(text: str) -> FragmentScoreDef:
+        """Read a ``binner_def`` of this kind."""
+        return FragmentScoreDef.from_json(text)
 
     @classmethod
     def parse_entry(
@@ -1327,6 +1344,8 @@ class FragmentScoreBinner:
         entry = _Entry(
             label=label,
             pool=pool,
+            resource_query=config["resource_query"],
+            name=name,
             value=_FragmentValue.default() if config.get("value") is None
             else _FragmentValue.parse(
                 f"{label}.value", config["value"], matches),
@@ -1436,13 +1455,17 @@ class FragmentScoreBinner:
                 name=f"{base}:{group}",
                 resource_ids=resource_ids,
                 group=group,
-                score_id=value.score_id or "",
-                aggregator=aggregate.aggregator,
-                none_value_replacement=None,
-                binner=cls.kind,
+                selector=group,
+                binner_type=binner_type_of(cls.kind),
+                definition=FragmentScoreDef(
+                    aggregator=aggregate.aggregator,
+                    mode=aggregate.mode,
+                    uncovered_value=aggregate.uncovered_value,
+                    score_id=value.score_id,
+                    resource_query=entry.resource_query,
+                    pool=entry.pool,
+                    name=entry.name),
                 parameters=parameters_text,
-                mode=aggregate.mode,
-                uncovered_value=aggregate.uncovered_value,
             )
             for group in groups
         )

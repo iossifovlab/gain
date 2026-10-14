@@ -7,11 +7,13 @@ registers the way every other gain plugin does, without editing the tool.
 """
 from __future__ import annotations
 
+import json
+import math
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from importlib.metadata import entry_points
 from types import TracebackType
-from typing import Any, ClassVar, Protocol
+from typing import Any, ClassVar, Protocol, Self
 
 import numpy as np
 import numpy.typing as npt
@@ -73,6 +75,67 @@ class RunDefinitionError(ValueError):
     """A run definition that cannot be resolved into a run."""
 
 
+BINNER_SUFFIX = "_binner"
+
+
+def binner_type_of(kind: str) -> str:
+    """The ``binner_type`` the file records for a registered ``kind``.
+
+    The kind without its ``_binner`` suffix: ``position_score_binner``
+    is ``position_score``.  The one place the two names are mapped.
+    """
+    return kind.removesuffix(BINNER_SUFFIX)
+
+
+def canonical_json(fields: dict[str, Any]) -> str:
+    """Sorted keys, no extra whitespace; NaN and infinities are refused.
+
+    Raises :class:`ValueError` for a NaN or an infinite number, which
+    JSON cannot carry.
+    """
+    return json.dumps(
+        fields, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=False, allow_nan=False)
+
+
+class BinnerDef(Protocol):
+    """The typed definition of a track: what the other columns do not say."""
+
+    def to_json(self) -> str:
+        """The definition as canonical JSON."""
+
+
+@dataclass(frozen=True)
+class PositionScoreDef:
+    """A position-score track's definition.
+
+    ``aggregator`` and ``none_value_replacement`` are the resolved ones
+    (``None`` for no replacement); ``name`` is the entry's optional name.
+    The score id is the track's selector, not part of the definition.
+    """
+
+    aggregator: str
+    none_value_replacement: float | None = None
+    name: str | None = None
+
+    def to_json(self) -> str:
+        """The definition as canonical JSON."""
+        return canonical_json({
+            "aggregator": self.aggregator,
+            "none_value_replacement": self.none_value_replacement,
+            "name": self.name,
+        })
+
+    @classmethod
+    def from_json(cls, text: str) -> Self:
+        """The definition ``to_json`` wrote."""
+        fields = json.loads(text)
+        return cls(
+            aggregator=fields["aggregator"],
+            none_value_replacement=fields["none_value_replacement"],
+            name=fields["name"])
+
+
 @dataclass(frozen=True)
 class Track:
     """One column of the output: a score of resources, reduced one way.
@@ -82,33 +145,35 @@ class Track:
     fragment track, every matched resource for a pooled one.  ``group``
     is the column's group of a grouped kind -- a fragment track's cell
     class, or ``all`` -- and empty for a position-score track.
+    ``selector`` is what picks the track within its resources: the score
+    id of a position-score track, the group of a fragment track.
 
-    ``binner`` names the kind that produces the column; it is not
-    written to the file.  ``parameters`` is whatever else a kind needs
-    to say decides the column's values -- a constant contribution, the
-    metadata table and filter that map cells to groups -- as canonical
-    text, empty when the other fields say it all.  It is not written to
-    the file either; it keys the column's chunks, so two run definitions
-    sharing a work directory never share a chunk they compute
-    differently.
+    ``binner_type`` names the kind that produces the column
+    (:func:`binner_type_of`).  ``binner_index`` is the entry's position
+    in the run definition's ``binners`` list and ``track_index`` the
+    track's position among all tracks of that entry, in output order.
+    ``definition`` holds what is specific to the kind; it is written to
+    the file as ``binner_def``.
 
-    ``mode`` is how a fragment track's fragments reach a bin
-    (``fragment_start``, ``fragment_length`` or ``coverage_profile``),
-    and ``uncovered_value`` what an uncovered base adds, ``None`` for
-    nothing; both are written to the file, and a position-score track
-    has neither -- an empty ``mode`` and ``None``.
+    ``name`` is not written to the file; it keeps the uniqueness check,
+    the chunk file names and the plan output.  ``parameters`` is
+    whatever else a kind needs to say decides the column's values -- a
+    constant contribution, the metadata table and filter that map cells
+    to groups -- as canonical text, empty when the other fields say it
+    all.  It is not written to the file either; it keys the column's
+    chunks, so two run definitions sharing a work directory never share
+    a chunk they compute differently.
     """
 
     name: str
     resource_ids: tuple[str, ...]
     group: str
-    score_id: str
-    aggregator: str
-    none_value_replacement: float | None
-    binner: str
+    selector: str
+    binner_type: str
+    definition: BinnerDef
+    binner_index: int = 0
+    track_index: int = 0
     parameters: str = ""
-    mode: str = ""
-    uncovered_value: float | None = None
 
 
 @dataclass(frozen=True)
@@ -145,6 +210,9 @@ class Binner(Protocol):
     """What a registered binner kind provides."""
 
     kind: ClassVar[str]
+
+    # Optional: ``load_def(text) -> BinnerDef`` reads a ``binner_def`` of
+    # this kind back.  A kind without it is read as the plain ``dict``.
 
     @classmethod
     def parse_entry(
@@ -315,13 +383,15 @@ class PositionScoreBinding:
         Returned as a block of one column, the job's one track.
         """
         track = self.track
+        definition = track.definition
+        assert isinstance(definition, PositionScoreDef)
         column = np.fromiter(
             (np.nan if value is None else to_float64(value)
              for _, _, value in self.score.get_score_in_bins(
                  region.chrom, region.start, region.stop, bin_size,
-                 score=track.score_id,
-                 aggregator=track.aggregator,
-                 none_value_replacement=track.none_value_replacement)),
+                 score=track.selector,
+                 aggregator=definition.aggregator,
+                 none_value_replacement=definition.none_value_replacement)),
             dtype=np.float64)
         return column.reshape(-1, 1)
 
@@ -330,6 +400,11 @@ class PositionScoreBinner:
     """Bins ``position_score`` resources matched by a ``resource_query``."""
 
     kind: ClassVar[str] = "position_score_binner"
+
+    @staticmethod
+    def load_def(text: str) -> PositionScoreDef:
+        """Read a ``binner_def`` of this kind."""
+        return PositionScoreDef.from_json(text)
 
     ENTRY_KEYS: ClassVar[frozenset[str]] = frozenset({
         "resource_query", "search_term", "aggregator",
@@ -424,15 +499,57 @@ class PositionScoreBinner:
                 f"{aggregator_name!r} does not produce a number; use one "
                 f"of {', '.join(numeric_aggregators())}")
         assert replacement is None or isinstance(replacement, int | float)
+        if replacement is not None and not _is_finite_number(replacement):
+            raise RunDefinitionError(
+                f"{label}: resource {resource.resource_id!r}: "
+                f"none_value_replacement {replacement!r} must be finite; "
+                f"the binner_def cannot hold NaN or infinity")
         return Track(
             name=named_base(name, resource.resource_id),
             resource_ids=(resource.resource_id,),
             group="",
-            score_id=score_id,
-            aggregator=aggregator_name,
-            none_value_replacement=replacement,
-            binner=cls.kind,
+            selector=score_id,
+            binner_type=binner_type_of(cls.kind),
+            definition=PositionScoreDef(
+                aggregator=aggregator_name,
+                none_value_replacement=replacement, name=name),
         )
+
+
+def _is_finite_number(value: float) -> bool:
+    """Whether value converts to a finite float; a huge int does not."""
+    try:
+        return math.isfinite(float(value))
+    except OverflowError:
+        return False
+
+
+def aggregator_of(track: Track) -> str:
+    """The aggregator a track's definition names, empty if it has none."""
+    return str(getattr(track.definition, "aggregator", ""))
+
+
+def load_track_def(
+    binner_type: str, text: str,
+    kinds: dict[str, type[Binner]] | None = None,
+) -> BinnerDef | dict[str, Any]:
+    """Read a ``binner_def`` of the file back into its typed definition.
+
+    A ``binner_type`` with no installed kind, or a kind without
+    ``load_def``, gives the plain ``dict`` of ``json.loads``, so a file
+    stays readable without its plugin.
+    """
+    if kinds is None:
+        kinds = discover_binner_kinds()
+    for kind, binner in kinds.items():
+        if binner_type_of(kind) == binner_type:
+            load_def = getattr(binner, "load_def", None)
+            if load_def is not None:
+                loaded: BinnerDef = load_def(text)
+                return loaded
+            break
+    plain: dict[str, Any] = json.loads(text)
+    return plain
 
 
 def discover_binner_kinds() -> dict[str, type[Binner]]:

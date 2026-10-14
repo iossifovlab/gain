@@ -57,6 +57,7 @@ from tests.small.binning.conftest import (
     CELL_META,
     S1_FRAGMENTS,
     S2_FRAGMENTS,
+    kind_def,
 )
 
 BIN_SIZE = 10
@@ -139,10 +140,11 @@ def test_a_labelled_resource_alone_counts_fragments_by_class(
     run = parse({"resource_query": "frags/s1"}, repo, genome)
 
     assert [
-        (t.name, t.group, t.score_id, t.aggregator) for t in run.tracks
+        (t.name, t.group, kind_def(t).score_id, kind_def(t).aggregator)
+        for t in run.tracks
     ] == [
-        ("frags/s1:B", "B", "", "sum"),
-        ("frags/s1:T", "T", "", "sum"),
+        ("frags/s1:B", "B", None, "sum"),
+        ("frags/s1:T", "T", None, "sum"),
     ]
     (job,) = run.jobs
     np.testing.assert_array_equal(
@@ -169,9 +171,9 @@ def test_an_unlabelled_resource_is_one_all_track_counting_fragments(
 
     run = parse({"resource_query": "frags/s1"}, repo, genome)
 
-    assert [(t.name, t.group, t.score_id, t.aggregator)
+    assert [(t.name, t.group, kind_def(t).score_id, kind_def(t).aggregator)
             for t in run.tracks] == [
-        ("frags/s1:all", "all", "", "sum")]
+        ("frags/s1:all", "all", None, "sum")]
     (job,) = run.jobs
     np.testing.assert_array_equal(
         bin_job(job, CHR1, repo)[:, 0], S1_FRAGMENT_COUNT)
@@ -191,7 +193,7 @@ def test_value_score_id_count_gives_the_read_pairs_per_bin(
     by_class = parse({"resource_query": "frags/lab",
                       "value": {"score_id": COUNT_SCORE}}, repo, genome)
 
-    assert {(t.score_id, t.aggregator)
+    assert {(kind_def(t).score_id, kind_def(t).aggregator)
             for t in plain.tracks + by_class.tracks} == {(COUNT_SCORE, "sum")}
     np.testing.assert_array_equal(
         bin_job(plain.jobs[0], CHR1, repo)[:, 0], S1_SUM_OF_COUNT)
@@ -250,8 +252,8 @@ def test_a_constant_group_stays_constant_on_a_labelled_resource(
     run = parse({"resource_query": "frags/s1", "group": {"group": "bulk"}},
                 repo, genome)
 
-    assert [(t.name, t.score_id) for t in run.tracks] == [
-        ("frags/s1:bulk", "")]
+    assert [(t.name, kind_def(t).score_id) for t in run.tracks] == [
+        ("frags/s1:bulk", None)]
 
 
 def test_meta_by_resource_label_resolves_the_table_the_label_names(
@@ -304,10 +306,10 @@ def test_an_unpooled_entry_resolves_each_resource_on_its_own(
 
     run = parse({"resource_query": "frags/*", "pool": False}, repo, genome)
 
-    assert [(t.name, t.score_id) for t in run.tracks] == [
-        ("frags/a:B", ""), ("frags/a:T", ""),
-        ("frags/b:B", ""), ("frags/b:T", ""),
-        ("frags/c:all", ""),
+    assert [(t.name, kind_def(t).score_id) for t in run.tracks] == [
+        ("frags/a:B", None), ("frags/a:T", None),
+        ("frags/b:B", None), ("frags/b:T", None),
+        ("frags/c:all", None),
     ]
 
 
@@ -471,8 +473,11 @@ def test_a_pool_with_and_without_an_int_count_score_counts_fragments(
 
     run = parse({"resource_query": "frags/*"}, repo, genome)
 
-    assert [(t.name, t.score_id, t.aggregator) for t in run.tracks] == [
-        ("frags/*:all", "", "sum")]
+    assert [
+        (t.name, kind_def(t).score_id, kind_def(t).aggregator)
+        for t in run.tracks
+    ] == [
+        ("frags/*:all", None, "sum")]
     (job,) = run.jobs
     np.testing.assert_array_equal(
         bin_job(job, CHR1, repo)[:, 0],
@@ -552,8 +557,8 @@ def test_a_local_table_bins_as_the_same_data_frame_resource(
         "filter": BY_SAMPLE}}, repo, genome,
         base_dir=str(tmp_path / "local"))
 
-    assert [(t.name, t.score_id) for t in local.tracks] == [
-        (t.name, t.score_id) for t in resource.tracks]
+    assert [(t.name, kind_def(t).score_id) for t in local.tracks] == [
+        (t.name, kind_def(t).score_id) for t in resource.tracks]
     np.testing.assert_array_equal(
         bin_job(local.jobs[0], CHR1, repo),
         bin_job(resource.jobs[0], CHR1, repo))

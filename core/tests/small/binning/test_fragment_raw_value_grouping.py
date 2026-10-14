@@ -607,10 +607,8 @@ def test_a_value_with_a_slash_or_colon_is_quoted_only_in_its_chunk_name(
     with h5py.File(output, "r") as h5:
         tracks = h5["tracks"][()]
         values = h5["values"][()]
-    assert [(row["name"], row["group"]) for row in tracks] == [
-        (b"frags/odd:S9:AAA", b"S9:AAA"),
-        (b"frags/odd:S9:T/1:x", b"S9:T/1:x"),
-    ]
+    assert [row["selector"] for row in tracks] == [
+        b"S9:AAA", b"S9:T/1:x"]
     np.testing.assert_array_equal(values[:4], [
         [0, 1], [1, 0], [0, 0], [0, 0]])
     chunks = sorted(

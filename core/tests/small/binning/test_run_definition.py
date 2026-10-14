@@ -2,7 +2,12 @@
 from typing import Any
 
 import pytest
-from gain.binning.binners import BinningJob, Track
+from gain.binning.binners import (
+    BinningJob,
+    PositionScoreDef,
+    Track,
+    binner_type_of,
+)
 from gain.binning.run_definition import (
     RENAMED_GENOME_KEY_MESSAGE,
     RunDefinition,
@@ -13,7 +18,7 @@ from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.utils.regions import BedRegion
 
-from .conftest import CHR1_LENGTH, CHR2_LENGTH
+from .conftest import CHR1_LENGTH, CHR2_LENGTH, kind_def
 
 
 def parse_one_entry(
@@ -43,9 +48,8 @@ def test_an_exact_id_entry_becomes_one_track_named_by_the_resource(
     assert run.tracks == [
         Track(
             name="scores/one", resource_ids=("scores/one",), group="",
-            score_id="s",
-            aggregator="max", none_value_replacement=None,
-            binner="position_score_binner"),
+            selector="s", binner_type="position_score",
+            definition=PositionScoreDef(aggregator="max")),
     ]
 
 
@@ -57,7 +61,9 @@ def test_a_glob_entry_expands_to_its_matches_sorted_by_resource_id(
     # whatever the repository yields.
     run = parse_one_entry({"resource_query": "scores/*"}, repo, genome)
 
-    assert [(t.name, t.score_id, t.aggregator) for t in run.tracks] == [
+    assert [
+        (t.name, t.selector, kind_def(t).aggregator) for t in run.tracks
+    ] == [
         ("scores/one", "s", "max"),
         ("scores/two", "t", "mean"),
     ]
@@ -112,7 +118,9 @@ def test_an_entry_overrides_the_aggregator_and_replacement_for_every_match(
     }, repo, genome)
 
     assert [
-        (t.name, t.aggregator, t.none_value_replacement) for t in run.tracks
+        (t.name, kind_def(t).aggregator,
+         kind_def(t).none_value_replacement)
+        for t in run.tracks
     ] == [
         ("scores/one", "min", 0.0),
         ("scores/two", "min", 0.0),
@@ -291,9 +299,10 @@ STUB_KIND = "stub_binner"
 def a_stub_track(resource_id: str, aggregator: str) -> Track:
     return Track(
         name=resource_id, resource_ids=(resource_id,), group="",
-        score_id="s",
-        aggregator=aggregator, none_value_replacement=None,
-        binner=STUB_KIND)
+        selector="s", binner_type=binner_type_of(STUB_KIND),
+        definition=PositionScoreDef(
+            aggregator=aggregator,
+            none_value_replacement=None))
 
 
 def parse_stub_jobs(
@@ -400,7 +409,10 @@ def test_a_resource_matched_by_two_entries_names_both_tracks_by_aggregator(
 
     run = parse_run_definition(config, repo, genome)
 
-    assert [(t.name, t.resource_ids, t.aggregator) for t in run.tracks] == [
+    assert [
+        (t.name, t.resource_ids, kind_def(t).aggregator)
+        for t in run.tracks
+    ] == [
         ("scores/one:max", ("scores/one",), "max"),
         ("scores/two", ("scores/two",), "mean"),
         ("scores/one:min", ("scores/one",), "min"),
@@ -457,6 +469,15 @@ def test_search_term_on_a_repository_without_an_index_is_a_parse_error(
     ({"resource_query": "scores/one", "aggregator": "mediann"}, "mediann"),
     ({"resource_query": "scores/one", "none_value_replacement": "zero"},
      "none_value_replacement"),
+    # NaN and infinity cannot be written to the canonical binner_def, so
+    # the parser refuses them before any chunk is computed.
+    ({"resource_query": "scores/one", "none_value_replacement": float("nan")},
+     "finite"),
+    ({"resource_query": "scores/one", "none_value_replacement": float("inf")},
+     "finite"),
+    # An integer too large for a float is refused, not an OverflowError.
+    ({"resource_query": "scores/one", "none_value_replacement": 10 ** 400},
+     "finite"),
     # A track is one score of one resource; which of several the user
     # meant is not the tool's to guess, so the scores are listed.
     ({"resource_query": "other/pair"}, "['p', 'q']"),
@@ -486,7 +507,7 @@ def test_a_type_preserving_numeric_aggregator_is_accepted(
         {"resource_query": "scores/one", "aggregator": aggregator},
         repo, genome)
 
-    assert [(t.name, t.aggregator) for t in run.tracks] == [
+    assert [(t.name, kind_def(t).aggregator) for t in run.tracks] == [
         ("scores/one", aggregator)]
 
 

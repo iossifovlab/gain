@@ -21,6 +21,7 @@ chr2.  On chr1 ``frags/s2`` has AAA (class B in S2) at (4, 8) and EEE
 (class T) at (12, 20), (16, 22) and (35, 50).
 """
 import datetime
+import json
 import pathlib
 import textwrap
 from typing import Any
@@ -282,9 +283,10 @@ def test_tracks_records_a_length_track_s_mode_and_uncovered_value(
 
     with h5py.File(output, "r") as h5:
         tracks = h5["tracks"][()]
-    assert [row["mode"] for row in tracks] == [
-        b"fragment_length", b"fragment_length"]
-    np.testing.assert_array_equal(tracks["uncovered_value"], [nan, 0.0])
+    definitions = [json.loads(row["binner_def"]) for row in tracks]
+    assert [d["mode"] for d in definitions] == [
+        "fragment_length", "fragment_length"]
+    assert [d["uncovered_value"] for d in definitions] == [None, 0.0]
 
 
 @pytest.mark.parametrize("first, second", [
