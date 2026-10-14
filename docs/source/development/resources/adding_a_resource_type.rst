@@ -153,12 +153,35 @@ your project.
 API
 ---
 
+The classes below are defined in the module
+``gain.genomic_resources.resource_implementation``. The functions are defined
+in the package ``gain.genomic_resources``. ``gain.grr`` exports none of them.
+
 .. currentmodule:: gain.genomic_resources.resource_implementation
+
+.. autosummary::
+
+   GenomicResourceImplementation
+   GenomicResourceImplementation.calc_info_hash
+   GenomicResourceImplementation.calc_statistics_hash
+   GenomicResourceImplementation.create_statistics_build_tasks
+   GenomicResourceImplementation.files
+   GenomicResourceImplementation.get_config
+   GenomicResourceImplementation.get_info
+   GenomicResourceImplementation.get_statistics
+   GenomicResourceImplementation.get_statistics_info
+   GenomicResourceImplementation.reload_statistics
+   GenomicResourceImplementation.resource_id
 
 .. autoclass:: GenomicResourceImplementation
    :members:
 
 .. currentmodule:: gain.genomic_resources
+
+.. autosummary::
+
+   register_implementation
+   get_resource_implementation_builder
 
 .. autofunction:: register_implementation
 

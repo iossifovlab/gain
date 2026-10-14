@@ -25,12 +25,22 @@ _IMPLEMENTATIONS_LOADED = False
 def get_resource_implementation_builder(
     resource_type: str,
 ) -> Callable[[GenomicResource], GenomicResourceImplementation] | None:
-    """
-    Return an implementation builder for a certain resource type.
+    """Return the builder of the implementation of a resource type.
 
-    If the builder is not registered, then it will search for an entry point
-    in the found implementations list. If an entry point is found, it will be
-    loaded and registered and returned.
+    The lookup checks the in-process registry first. It then falls back
+    to the entry points of the group ``gain.genomic_resources.implementations``
+    and caches the builder that it loads.
+
+    Parameters
+    ----------
+    resource_type : str
+        The resource type, the ``type`` field of ``genomic_resource.yaml``.
+
+    Returns
+    -------
+    Callable[[GenomicResource], GenomicResourceImplementation] | None
+        A callable that takes a resource and returns its implementation.
+        ``None`` means that nothing registered the type.
     """
     if resource_type not in _REGISTERED_RESOURCE_IMPLEMENTATIONS:
         if resource_type not in _FOUND_RESOURCE_IMPLEMENTATIONS:
@@ -46,13 +56,19 @@ def register_implementation(
     resource_type: str,
     builder: Callable[[GenomicResource], GenomicResourceImplementation],
 ) -> None:
-    """
-    Register a resource type with a given builder function.
+    """Register the builder of a resource type in the process registry.
 
-    The builder has to be a builder function which takes a genomic resource
-    and returns a ready to use implementation.
-    The type is the type of resource to which this builder will be mapped.
-    This is usually the "type" field in the resource's config.
+    The registration lasts for the life of the process and replaces an
+    earlier builder of the same type.
+
+    Parameters
+    ----------
+    resource_type : str
+        The resource type, the ``type`` field of ``genomic_resource.yaml``.
+    builder : Callable[[GenomicResource], GenomicResourceImplementation]
+        A callable that takes a resource and returns a ready to use
+        implementation. An implementation class whose constructor takes
+        only the resource is its own builder.
     """
     _REGISTERED_RESOURCE_IMPLEMENTATIONS[resource_type] = builder
 

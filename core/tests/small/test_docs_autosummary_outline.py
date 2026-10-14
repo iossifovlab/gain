@@ -33,7 +33,6 @@ GENE_MODELS_PAGE = RESOURCES_DIR / "gene_models.rst"
 # removes the page from this set.
 NOT_ROLLED_OUT = frozenset({
     "factories.rst",
-    "adding_a_resource_type.rst",
 })
 
 _DIRECTIVE = re.compile(r"^(\s*)\.\. autosummary::")
@@ -289,12 +288,15 @@ def page_problems(page: str) -> list[str]:
         page, functions) + exported_name_problems(page, functions)
 
 
+def _has_api(page: str) -> bool:
+    return bool(_AUTOCLASS.search(page) or _AUTOFUNCTION.search(page))
+
+
 def _rolled_out_pages() -> list[Path]:
     return sorted(
         path for path in RESOURCES_DIR.glob("*.rst")
         if path.name not in NOT_ROLLED_OUT
-        and (_AUTOCLASS.search(path.read_text(encoding="utf-8"))
-             or _AUTOFUNCTION.search(path.read_text(encoding="utf-8"))))
+        and _has_api(path.read_text(encoding="utf-8")))
 
 
 def test_gene_models_page_outline_matches_classes() -> None:
@@ -320,7 +322,7 @@ def test_skip_list_names_only_existing_pages_with_an_api() -> None:
     read_docs_page(GENE_MODELS_PAGE)
     for name in NOT_ROLLED_OUT:
         page = read_docs_page(RESOURCES_DIR / name)
-        assert _AUTOCLASS.search(page) or _AUTOFUNCTION.search(page), (
+        assert _has_api(page), (
             f"{name} has no autoclass or autofunction: drop it")
 
 
