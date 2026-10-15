@@ -298,6 +298,8 @@ refuses the other kind rather than reading it (ADR 0014).
 _Avoid_: calling either "the 10x h5 format" — the distinction is the whole
 reason a read of one is not a read of the other
 
+### Binning
+
 **Track**:
 One column of the `binning_tool` output matrix. Row *j* of `/tracks` describes
 column *j* of `/values`. A track belongs to one entry of the run definition,
