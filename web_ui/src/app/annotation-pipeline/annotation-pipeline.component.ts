@@ -52,6 +52,25 @@ import { ViewportService } from '../viewport.service';
  */
 export const VALIDATE_DEBOUNCE_MS = 400;
 
+/**
+ * The change a successful write made to the pipeline list.
+ *
+ * `apply` returns the list with the change in it and leaves its input
+ * unchanged. `selectId` names the pipeline to select afterwards; an empty
+ * id selects as the initial load does.
+ */
+interface PipelineListPatch {
+  apply: (pipelines: Pipeline[]) => Pipeline[];
+  selectId: string;
+}
+
+/** The list with `pipeline` in place of the entry with its id, or added. */
+function upsertPipeline(pipelines: Pipeline[], pipeline: Pipeline): Pipeline[] {
+  return pipelines.some(p => p.id === pipeline.id)
+    ? pipelines.map(p => p.id === pipeline.id ? pipeline : p)
+    : [...pipelines, pipeline];
+}
+
 @Component({
   selector: 'app-annotation-pipeline',
   imports: [
@@ -318,7 +337,21 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     this.getPipelines('', true);
   }
 
-  private getPipelines(defaultPipelineId: string = '', isRefresh = false): void {
+  /**
+   * Load the pipeline list from the server and select as the caller asks.
+   *
+   * `patchOnFailure` is the change a write just made to the list. A write
+   * that succeeded passes it, so that a failed reload still leaves the list
+   * and the selection as the write left them on the server: the error
+   * branch applies it to the list already loaded and selects from the
+   * patched list as a successful reload would. A later successful reload
+   * replaces the patched entries with the server copies.
+   */
+  private getPipelines(
+    defaultPipelineId: string = '',
+    isRefresh = false,
+    patchOnFailure: PipelineListPatch | null = null,
+  ): void {
     if (
       this.pipelineStateService.loadedWhileLoggedIn() === this.isUserLoggedIn &&
       !defaultPipelineId &&
@@ -335,51 +368,20 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     this.pipelinesLoaded = false;
     this.jobsService.getAnnotationPipelines().pipe(take(1)).subscribe({
       next: pipelines => {
-        this.pipelines = pipelines;
-        this.filteredPipelines = this.pipelines;
-        this.pipelineStateService.pipelines.set(pipelines);
         this.pipelineStateService.loadedWhileLoggedIn.set(this.isUserLoggedIn);
-        const keepEditorState = isRefresh && this.pipelineListEverLoaded;
-        this.pipelinesLoaded = true;
-        this.pipelineListEverLoaded = true;
-        if (keepEditorState) {
-          this.rebindSelectedPipeline();
-        } else if (defaultPipelineId) {
-          // Post-saveAs path. onPipelineClick would reset
-          // currentPipelineText to the GET-response's stale (pre-edit)
-          // content, silently dropping any user edits that landed in
-          // the gap between the save POST returning and this GET
-          // response (tb-348). Select without resetting the buffer so
-          // displayUnsavedPipelineIndication picks up edits as a real
-          // diff and adds the * indicator.
-          const pipeline = this.pipelines.find(p => p.id === defaultPipelineId);
-          if (pipeline) {
-            this.selectPipelineAfterSave(pipeline);
-          }
-        } else {
-          // Initial-load path. If the user navigated mid-flight (e.g.
-          // clicked Annotation Jobs while the first GET /api/pipelines
-          // was still pending), a SECOND GET fires from the new
-          // component's ngOnInit and its late response can clobber any
-          // text the user typed in the meantime — same race family as
-          // tb-348 but triggered by navigation, not save (tb-l7c, CI
-          // gain-web-e2e #158). Preserve the buffer when it carries
-          // user content that differs from the default pipeline's
-          // saved content.
-          const firstPipeline = this.pipelines[0];
-          const userHasTyped = this.currentPipelineText.trim() !== ''
-            && this.currentPipelineText.trim() !== firstPipeline?.content.trim();
-          if (userHasTyped && firstPipeline) {
-            this.selectPipelineAfterSave(firstPipeline);
-          } else {
-            this.onPipelineClick(firstPipeline);
-          }
-        }
-        this.runValidationPendingOnLoad();
+        this.applyPipelineList(pipelines, defaultPipelineId, isRefresh);
       },
       error: () => {
         this.disableActions = false;
         if (this.pipelineListEverLoaded) {
+          if (patchOnFailure) {
+            this.applyPipelineList(
+              patchOnFailure.apply(this.pipelines),
+              patchOnFailure.selectId,
+              false,
+            );
+            return;
+          }
           // A failed refetch: keep working on the list already loaded.
           this.pipelinesLoaded = true;
           this.runValidationPendingOnLoad();
@@ -387,11 +389,70 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
       }});
   }
 
+  /** Take `pipelines` as the current list and select from it. */
+  private applyPipelineList(
+    pipelines: Pipeline[],
+    defaultPipelineId: string,
+    isRefresh: boolean,
+  ): void {
+    this.pipelines = pipelines;
+    this.filteredPipelines = this.pipelines;
+    this.pipelineStateService.pipelines.set(pipelines);
+    const keepEditorState = isRefresh && this.pipelineListEverLoaded;
+    this.pipelinesLoaded = true;
+    this.pipelineListEverLoaded = true;
+    if (keepEditorState) {
+      this.rebindSelectedPipeline();
+    } else if (defaultPipelineId) {
+      // Post-saveAs path. onPipelineClick would reset
+      // currentPipelineText to the GET-response's stale (pre-edit)
+      // content, silently dropping any user edits that landed in
+      // the gap between the save POST returning and this GET
+      // response (tb-348). Select without resetting the buffer so
+      // displayUnsavedPipelineIndication picks up edits as a real
+      // diff and adds the * indicator.
+      const pipeline = this.pipelines.find(p => p.id === defaultPipelineId);
+      if (pipeline) {
+        this.selectPipelineAfterSave(pipeline);
+      }
+    } else {
+      // Initial-load path. If the user navigated mid-flight (e.g.
+      // clicked Annotation Jobs while the first GET /api/pipelines
+      // was still pending), a SECOND GET fires from the new
+      // component's ngOnInit and its late response can clobber any
+      // text the user typed in the meantime — same race family as
+      // tb-348 but triggered by navigation, not save (tb-l7c, CI
+      // gain-web-e2e #158). Preserve the buffer when it carries
+      // user content that differs from the default pipeline's
+      // saved content.
+      const firstPipeline = this.pipelines[0];
+      const userHasTyped = this.currentPipelineText.trim() !== ''
+        && this.currentPipelineText.trim() !== firstPipeline?.content.trim();
+      if (!firstPipeline) {
+        this.clearSelection();
+      } else if (userHasTyped) {
+        this.selectPipelineAfterSave(firstPipeline);
+      } else {
+        this.onPipelineClick(firstPipeline);
+      }
+    }
+    this.runValidationPendingOnLoad();
+  }
+
   private runValidationPendingOnLoad(): void {
     if (this.validationPendingOnLoad) {
       this.validationPendingOnLoad = false;
       this.isConfigValid();
     }
+  }
+
+  /** Select no pipeline. The editor keeps its text. */
+  private clearSelection(): void {
+    this.selectedPipeline = null;
+    this.updateDownloadLink();
+    this.pipelineStateService.selectedPipelineId.set('');
+    this.dropdownControl.setValue('');
+    this.disableActions = false;
   }
 
   /** Point the selection at the freshly loaded copy of the same pipeline. */
@@ -759,10 +820,14 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
       maxWidth: this.viewportService.isMobile() ? '90vw' : '700px'
     });
 
+    let savedName = '';
+    let savedContent = '';
     newNameModalRef.afterClosed().pipe(
       switchMap((name: string) => {
         if (name) {
-          return this.annotationPipelineService.savePipeline('', name, this.currentPipelineText);
+          savedName = name;
+          savedContent = this.currentPipelineText;
+          return this.annotationPipelineService.savePipeline('', name, savedContent);
         }
         this.disableActions = false;
         return of(null);
@@ -771,7 +836,11 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
       if (!pipelineId) {
         return;
       }
-      this.getPipelines(pipelineId);
+      const saved = new Pipeline(pipelineId, savedName, savedContent, 'user', 'loading');
+      this.getPipelines(pipelineId, false, {
+        apply: pipelines => upsertPipeline(pipelines, saved),
+        selectId: pipelineId,
+      });
     });
   }
 
@@ -804,15 +873,23 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
 
     this.disableActions = true;
 
+    const target = this.selectedPipeline;
+    const savedContent = this.currentPipelineText;
     this.annotationPipelineService.savePipeline(
-      this.selectedPipeline.id,
-      this.selectedPipeline.name,
-      this.currentPipelineText,
+      target.id,
+      target.name,
+      savedContent,
     ).subscribe((pipelineId: string) => {
       if (!pipelineId) {
         return;
       }
-      this.getPipelines(pipelineId);
+      const saved = new Pipeline(
+        pipelineId, target.name, savedContent, target.type, target.status, target.error,
+      );
+      this.getPipelines(pipelineId, false, {
+        apply: pipelines => upsertPipeline(pipelines, saved),
+        selectId: pipelineId,
+      });
     });
   }
 
@@ -820,7 +897,8 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     if (!this.selectedPipeline?.id) {
       return;
     }
-    this.annotationPipelineService.deletePipeline(this.selectedPipeline.id).subscribe(() => {
+    const deletedId = this.selectedPipeline.id;
+    this.annotationPipelineService.deletePipeline(deletedId).subscribe(() => {
       // Reset the editor buffer before the post-delete getPipelines().
       // Otherwise the no-arg branch's userHasTyped heuristic (tb-l7c) sees
       // the deleted pipeline's content as "user-typed" and routes through
@@ -829,7 +907,10 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
       this.currentPipelineText = '';
       this.pipelineStateService.currentPipelineText.set('');
       this.pipelineStateService.pipelines.set([]);
-      this.getPipelines();
+      this.getPipelines('', false, {
+        apply: pipelines => pipelines.filter(p => p.id !== deletedId),
+        selectId: '',
+      });
     });
     this.showConfimDeletePopup = false;
   }
