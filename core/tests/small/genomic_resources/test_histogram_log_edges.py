@@ -1,4 +1,6 @@
 # pylint: disable=C0114,C0116,W0212
+# C0114, C0116: the repo tests carry no docstrings.
+# W0212: the tests reach numpy internals (``np.logspace.__wrapped__``).
 from collections.abc import Callable
 from typing import Any
 
@@ -10,6 +12,7 @@ from gain.genomic_resources.histogram import (
 )
 
 # ``np.logspace`` calls ``power`` through this module, not through ``np``.
+# mypy does not know ``__wrapped__`` on the numpy stubs, hence the ignore.
 _NUMERIC: Any = np.logspace.__wrapped__.__globals__["_nx"]  # type: ignore[attr-defined]
 _REAL_POWER = _NUMERIC.power
 
