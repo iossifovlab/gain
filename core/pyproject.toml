@@ -68,6 +68,7 @@ annotate_vcf = "gain.annotation.annotate_vcf:cli"
 annotate_doc = "gain.annotation.annotate_doc:cli"
 draw_score_histograms = "gain.genomic_resources.draw_score_histograms:main"
 binning_tool = "gain.binning.cli:cli"
+binning_tool_view = "gain.binning.view_cli:cli"
 to_gpf_gene_models_format = "gain.genomic_resources.gene_models.to_gpf_gene_models_format:main"
 
 [project.entry-points."gain.binning.binners"]

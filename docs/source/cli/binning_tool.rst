@@ -31,7 +31,7 @@ and a list of ``binners`` entries.
 
 .. code-block:: yaml
 
-    input_reference_genome: hg38/genomes/GRCh38-hg38
+    reference_genome: hg38/genomes/GRCh38-hg38
 
     bins:
       bin_size: 10240
@@ -55,7 +55,7 @@ applied default.
 Reference genome
 ^^^^^^^^^^^^^^^^
 
-``input_reference_genome`` (required) names the reference genome resource
+``reference_genome`` (required) names the reference genome resource
 whose chromosomes define the grid. It is the run definition's business alone:
 there is no command-line flag for it, and a genome offered by the genomic
 context is not consulted. The chromosome lengths decide how many bins there
@@ -324,7 +324,7 @@ modes, so each entry gets a ``name`` to keep its tracks apart:
 
 .. code-block:: yaml
 
-    input_reference_genome: genome
+    reference_genome: genome
 
     bins:
       bin_size: 10
@@ -904,32 +904,57 @@ The output is one HDF5 file in a plain layout that any HDF5 reader
 understands without a library beyond ``h5py``. It holds three datasets:
 
 ``/values``
-    ``float64``, shape ``(n_bins, n_tracks)``. ``NaN`` where a bin has no
+    Read it with :func:`gain.binning.h5_reader.read_values`. ``float64``,
+    shape ``(n_bins, n_tracks)``. ``NaN`` where a bin has no
     data. Stored in row blocks and gzip-compressed, so reading every track
     for one chromosome is one contiguous read and the ``NaN``- and
     zero-heavy tracks compress well.
 
 ``/bins``
-    A compound (structured) dataset of shape ``(n_bins,)`` with fields
+    Read it with :func:`gain.binning.h5_reader.read_bins`. A compound
+    (structured) dataset of shape ``(n_bins,)`` with fields
     ``chrom`` (fixed-length bytes, sized to the longest chromosome name in
     the run), ``start`` and ``end`` (``int64``, 1-based inclusive).
 
 ``/tracks``
-    A compound dataset of shape ``(n_tracks,)`` with fields ``name``,
-    ``resource_ids``, ``group``, ``score_id`` and ``aggregator``
-    (variable-length UTF-8 strings) and ``none_value_replacement``
-    (``float64``, ``NaN`` when the entry set none). ``resource_ids`` lists
-    the resources a track was computed from, comma-separated in
-    resource-id order: one id for a position-score track and for an
-    unpooled fragment track, every matched id for a pooled one. ``group``
-    is the track's group, empty for a position-score track. ``score_id``
-    is empty for a fragment track that counts fragments. ``mode``
-    (variable-length UTF-8) is the mode of a fragment track:
-    ``fragment_start``, ``fragment_length`` or ``coverage_profile``. It is
-    empty for a position-score track. ``uncovered_value`` (``float64``)
-    is the uncovered value of a fragment track, ``NaN`` for ``null``. It
-    is ``NaN`` for a ``fragment_start`` track and for a position-score
-    track.
+    Read it with :func:`gain.binning.h5_reader.read_tracks`. A compound
+    dataset of shape ``(n_tracks,)``, one row per track, with
+    the same fields for every binner kind. ``binner_type``,
+    ``resource_ids``, ``selector`` and ``binner_def`` are
+    variable-length UTF-8 strings. ``binner_index`` and ``track_index``
+    are ``int64``.
+
+    ``binner_type``
+        The kind of the entry that produced the track, without the
+        ``_binner`` suffix: ``position_score`` or ``fragment_score``.
+    ``binner_index``
+        The position of the entry in the ``binners`` list of the run
+        definition, counted from 0.
+    ``track_index``
+        The position of the track among all the tracks of that entry,
+        in output order, counted from 0. The pair ``(binner_index,
+        track_index)`` is unique in a file.
+    ``resource_ids``
+        The resources the track was computed from, comma-separated in
+        resource-id order: one id for a position-score track and for an
+        unpooled fragment track, every matched id for a pooled one.
+    ``selector``
+        What picks the track within its resources: the score id of a
+        position-score track, the group of a fragment track.
+    ``binner_def``
+        The definition of the track that the other fields do not carry,
+        as canonical JSON (sorted keys, no extra whitespace). A missing
+        value is JSON ``null``. A position-score definition holds
+        ``aggregator``, ``none_value_replacement`` and ``name``. A
+        fragment definition holds ``aggregator``, ``mode``
+        (``fragment_start``, ``fragment_length`` or
+        ``coverage_profile``), ``uncovered_value``, ``score_id``
+        (``null`` for a track that counts fragments), ``resource_query``,
+        ``pool`` and ``name``. ``name`` is the optional ``name`` of the
+        entry.
+
+    The file has no track name. The name is in memory while the tool
+    runs, where it keeps the tracks apart and names the chunk files.
 
 Row *i* of ``/bins`` describes row *i* of ``/values``, and row *j* of
 ``/tracks`` describes column *j*. The root attributes record what the run
@@ -942,8 +967,13 @@ joined:
 
    * - Attribute
      - Content
-   * - ``input_reference_genome``
+   * - ``tracks_layout``
+     - ``2``, the layout of ``/tracks`` described above. A file without
+       this attribute has an older layout.
+   * - ``reference_genome``
      - The resource id of the reference genome the grid was built on.
+       A file without ``tracks_layout`` keeps the older name
+       ``input_reference_genome`` for this attribute.
    * - ``bin_size``
      - The bin width in base pairs.
    * - ``regions``
@@ -967,15 +997,18 @@ joined:
 .. note::
 
     **The** ``/tracks`` **layout changed after the 2026.9 releases.** A
-    file written by a 2026.9 release of GAIn has a ``resource_id`` column
-    holding one id and no ``group`` column; a later file has
-    ``resource_ids`` and ``group`` instead, for every track, position
-    scores included. Code reading ``resource_id`` must switch to
-    ``resource_ids``. Tell the two layouts apart by the field itself —
-    ``'resource_ids' in h5['tracks'].dtype.names`` — not by the
-    ``gain_version`` root attribute: a development build made after the
-    2026.9.7 release reports a 2026.9 version but already writes the new
-    layout.
+    file written by an earlier release has the fields ``name``,
+    ``resource_ids``, ``group``, ``score_id``, ``aggregator`` and more, or
+    in the oldest files a ``resource_id`` field. A file written now has
+    the root attribute ``tracks_layout`` with the value ``2`` and the
+    fields described above. Tell the layouts apart with
+    ``h5.attrs.get("tracks_layout")``: absent means an older layout. Do
+    not sniff a field, and do not use the ``gain_version`` root attribute:
+    a development build can report an old version and already write the
+    new layout. In the same change the root attribute
+    ``input_reference_genome`` became ``reference_genome``; read the name
+    that matches ``tracks_layout``. The tool does not convert files
+    written by earlier releases.
 
 Every value in ``/values`` is a ``float64``, including the result of an
 integer-valued aggregator such as ``count`` or the ``max`` of an integer
@@ -1000,46 +1033,68 @@ prefer the bigWig for binning.
 Reading the file back
 ---------------------
 
+:func:`gain.binning.h5_reader.read_tracks` and
+:func:`gain.binning.h5_reader.read_bins` read ``/tracks`` and ``/bins`` as
+pandas DataFrames. Each takes a path or an open ``h5py.File``. The columns
+come from the file, the text fields are ``str``, and the index is the
+position in ``/values``. ``read_tracks`` raises ``ValueError`` for a file
+with a missing or unsupported ``tracks_layout``. Both functions raise
+``ValueError`` for a table that is missing, not a dataset, or not compound.
+A path that is missing or not an HDF5 file raises the ``OSError`` of ``h5py``.
+:func:`gain.binning.h5_reader.read_values` reads ``/values`` as a numpy
+``float64`` matrix of shape ``(n_bins, n_tracks)``, not as a DataFrame. It
+reads the whole matrix into memory, and it raises ``ValueError`` for a
+``/values`` that is missing, not a dataset, or not two-dimensional.
+:func:`gain.binning.h5_reader.track_labels` returns one display label for
+each track:
+
+.. code-block:: python
+
+    from gain.binning.h5_reader import (
+        read_bins, read_tracks, read_values, track_labels)
+
+    values = read_values("binning_run.h5")  # numpy matrix, bins x tracks
+    bins = read_bins("binning_run.h5")
+    labels = track_labels(read_tracks("binning_run.h5"))
+
+    column = labels.index("hg38/scores/phyloP100way:mean")
+    on_chr1 = (bins["chrom"] == "chr1").to_numpy()
+    print(values.shape)
+    print(values[on_chr1, column][:5])
+
+``values`` is a numpy matrix, not a DataFrame. Row *i* belongs to row *i* of
+``bins`` and column *j* to ``labels[j]``, which is the label of row *j* of
+the tracks. The label of a
+position-score track is its resource id and its aggregator, for example
+``hg38/scores/phyloP100way:mean``. The label of a fragment track is its
+resource, the group and the aggregator, for example
+``frags/s1:B:sum``. A ``name`` of the entry prefixes the resource id of a
+position-score track and of an unpooled fragment track, and replaces the
+resource query in the label of a pooled fragment track. Tracks with equal
+labels get ``#<position>`` appended, where the position is the column of
+the track.
+
+To print the tables without Python, use :doc:`binning_tool_view`.
+
 With ``h5py`` alone:
 
 .. code-block:: python
+
+    import json
 
     import h5py
 
     with h5py.File("binning_run.h5", "r") as h5:
         values = h5["values"][()]       # numpy float64 array, bins x tracks
         bins = h5["bins"][()]           # structured array: chrom, start, end
-        tracks = h5["tracks"][()]       # structured array: name, resource_ids, group, ...
+        tracks = h5["tracks"][()]       # structured array: binner_type, ...
         attrs = dict(h5.attrs)
 
+    assert attrs["tracks_layout"] == 2  # absent: a file of an older layout
     print(values.shape, attrs["bin_size"], attrs["coordinates"])
-    print(tracks["name"][:3])
-    print(tracks["resource_ids"][-1], tracks["group"][-1])
+    print(tracks["binner_type"][:3], tracks["selector"][:3])
+    print(json.loads(tracks["binner_def"][-1]))
     print(bins[:3])
-
-With ``pandas``, decoding the fixed-length chromosome names once:
-
-.. code-block:: python
-
-    import h5py
-    import pandas as pd
-
-    with h5py.File("binning_run.h5", "r") as h5:
-        tracks = pd.DataFrame(h5["tracks"][()])
-        for column in ("name", "resource_ids", "group", "score_id",
-                       "aggregator", "mode"):
-            tracks[column] = tracks[column].str.decode("utf-8")
-        bins = pd.DataFrame(h5["bins"][()])
-        bins["chrom"] = bins["chrom"].str.decode("utf-8")
-        values = pd.DataFrame(
-            h5["values"][()], columns=tracks["name"],
-            index=pd.MultiIndex.from_frame(bins))
-
-    print(values[["hg38/scores/phyloP100way:mean",
-                  "hg38/scores/phyloP100way:max"]].head())
-
-``values`` is then a DataFrame indexed by ``(chrom, start, end)`` with one
-column per track, and ``tracks`` explains each column.
 
 
 A worked example
@@ -1134,17 +1189,18 @@ window first, then widen it.
     bigWig in full before opening it — about 60 GB for the eight scores of
     this example — whatever the size of the window.
 
-Reading the result back with the ``pandas`` snippet above gives:
+Reading the result back with the ``pandas`` snippet above, where each
+column is labelled ``resource_ids:selector:aggregator``, gives:
 
 .. code-block:: text
 
-    name                     hg38/scores/phyloP100way:mean  hg38/scores/phyloP100way:max
+                             hg38/scores/phyloP100way:phyloP100way:mean  hg38/scores/phyloP100way:phyloP100way:max
     chrom start    end
-    chr21 20000000 20008960                      -0.014157                         3.356
-          20008961 20019200                      -0.006858                         3.539
-          20019201 20029440                       0.001797                         3.694
-          20029441 20039680                      -0.017875                         2.491
-          20039681 20049920                       0.006743                         2.455
+    chr21 20000000 20008960                                                  -0.014157                                      3.356
+          20008961 20019200                                                  -0.006858                                      3.539
+          20019201 20029440                                                   0.001797                                      3.694
+          20029441 20039680                                                  -0.017875                                      2.491
+          20039681 20049920                                                   0.006743                                      2.455
 
 and the two fragment tracks, selected the same way, count the deletions
 and duplications that start in each bin — 826 and 179 over the whole
@@ -1152,13 +1208,13 @@ window:
 
 .. code-block:: text
 
-    name                     hg38/cnv_collections/gnomAD.v4.1_Genome_SV:deletion  hg38/cnv_collections/gnomAD.v4.1_Genome_SV:duplication
+                             hg38/cnv_collections/gnomAD.v4.1_Genome_SV:deletion:sum  hg38/cnv_collections/gnomAD.v4.1_Genome_SV:duplication:sum
     chrom start    end
-    chr21 20000000 20008960                                                2.0                                                  0.0
-          20008961 20019200                                                2.0                                                  3.0
-          20019201 20029440                                                4.0                                                  0.0
-          20029441 20039680                                                1.0                                                  0.0
-          20039681 20049920                                                4.0                                                  0.0
+    chr21 20000000 20008960                                                                     2.0                                                         0.0
+          20008961 20019200                                                                     2.0                                                         3.0
+          20019201 20029440                                                                     4.0                                                         0.0
+          20029441 20039680                                                                     1.0                                                         0.0
+          20039681 20049920                                                                     4.0                                                         0.0
 
 
 .. _binning-tool-option-reference:

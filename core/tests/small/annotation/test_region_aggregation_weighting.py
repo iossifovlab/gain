@@ -31,7 +31,12 @@ import pytest
 from gain.annotation.annotatable import Region
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
-from gain.binning.binners import BinningJob, PositionScoreBinner, Track
+from gain.binning.binners import (
+    BinningJob,
+    PositionScoreBinner,
+    PositionScoreDef,
+    Track,
+)
 from gain.genomic_resources.aggregators import ScoreAggregationQuery
 from gain.genomic_resources.genomic_scores import (
     build_allele_score_from_resource,
@@ -270,9 +275,11 @@ def test_a_region_product_agrees_with_the_binner_over_long_runs(
         .build_repo(tmp_path))
     track = Track(
         name="long_runs", resource_ids=("long_runs",), group="",
-        score_id="s", aggregator="product", none_value_replacement=None,
-        binner="position_score_binner")
-    job = BinningJob(binner=track.binner, tracks=(track,))
+        selector="s", binner_type="position_score",
+        definition=PositionScoreDef(
+            aggregator="product",
+            none_value_replacement=None))
+    job = BinningJob(binner="position_score_binner", tracks=(track,))
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - position_score:
             resource_id: long_runs

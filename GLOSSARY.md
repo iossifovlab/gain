@@ -83,7 +83,7 @@ _Avoid_: field search, scoped term
 The `-q` filter: gain's own wildcard language, an id glob plus optional **label
 clauses**, parsed by `ResourceQuery`. Unlike a **search term**, it is
 independent of any **column vocabulary**.
-_Avoid_: wildcard query, selector, filter expression
+_Avoid_: wildcard query, filter expression
 
 **Label clause**:
 One condition on one label inside a **resource query** — `key = value` or
@@ -297,6 +297,36 @@ gene id and the probe id are two different things and a read reports both.
 refuses the other kind rather than reading it (ADR 0014).
 _Avoid_: calling either "the 10x h5 format" — the distinction is the whole
 reason a read of one is not a read of the other
+
+**Track**:
+One column of the `binning_tool` output matrix. Row *j* of `/tracks` describes
+column *j* of `/values`. A track belongs to one entry of the run definition,
+named by its `binner_index`, and has a `track_index` among the tracks of that
+entry. The file does not store a track name. The kind-specific part of a track
+is its `binner_def`.
+_Avoid_: series
+
+**Selector**:
+The `/tracks` field that picks a track within its resources: the score id of a
+position-score track, the group of a fragment track. It is a column of the
+`binning_tool` output, not a filter on resources. A filter on resources is a
+**resource query**.
+_Avoid_: group (for a position-score track), filter
+
+**Track label**:
+The display name of a **track**, returned by `track_labels` in
+`gain.binning.h5_reader`. The file does not store it. The function builds it
+from `resource_ids`, **selector** and `binner_def`. For a position-score
+track the base is the resource id, or `<name>/<resource id>` when the entry has
+a `name`. For a pooled fragment track the base is the `name`, or the resource
+query when there is no `name`, followed by `:<selector>`. For an unpooled
+fragment track the base is the resource id, or `<name>/<resource id>`,
+followed by `:<selector>`. The label ends with `:<aggregator>` when
+`binner_def` has an aggregator. Every **track** in a set of equal labels gets
+`#<position>` appended, where the position is the row of the **track** in the
+DataFrame.
+_Avoid_: track name (the name of an entry is the optional `name` in
+`binner_def`)
 
 ## Relationships
 

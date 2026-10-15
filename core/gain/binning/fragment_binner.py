@@ -105,11 +105,13 @@ from gain.binning.binners import (
     BinningJob,
     RunDefinitionError,
     Track,
+    binner_type_of,
     check_keys,
     entry_name,
     match_resources,
     named_base,
 )
+from gain.binning.fragment_def import FragmentScoreDef
 from gain.binning.fragment_folds import (
     BinFragmentAggregator,
     BinFragmentCoverageAggregator,
@@ -314,6 +316,37 @@ class DuplicateBarcodeError(ValueError):
 
 
 @dataclass(frozen=True)
+class _TextColumn:
+    """A table column as the text its cells are matched by, factorized.
+
+    ``codes`` holds, per cell, the index of its text in ``texts``, or -1
+    for a cell with no text form.  Matching a resource's operand is then
+    an integer comparison, not a pass of ``_as_text`` over the column.
+    """
+
+    codes: np.ndarray
+    texts: dict[str, int]
+
+    @staticmethod
+    def of(column: pd.Series) -> _TextColumn:
+        """Convert each cell of ``column`` to text once and factorize."""
+        codes, uniques = pd.factorize(
+            pd.Series([_as_text(cell) for cell in column.tolist()],
+                      dtype=object))
+        return _TextColumn(
+            codes, {str(text): i for i, text in enumerate(uniques)})
+
+    def matches(self, operand: str | None) -> np.ndarray:
+        """The boolean mask of the cells whose text is ``operand``."""
+        if operand is None:
+            return np.asarray(self.codes == -1)
+        code = self.texts.get(operand)
+        if code is None:
+            return np.zeros(len(self.codes), dtype=bool)
+        return np.asarray(self.codes == code)
+
+
+@dataclass(frozen=True)
 class CellGrouping:
     """How a fragment's barcode becomes a group: a filtered table lookup.
 
@@ -329,22 +362,31 @@ class CellGrouping:
     table: MetaTable
     filters: tuple[MetaFilter, ...]
 
+    def prepare_filters(self, table: pd.DataFrame) -> dict[str, _TextColumn]:
+        """Each filter column of ``table`` as text, converted once."""
+        return {
+            column: _TextColumn.of(table[column])
+            for column in dict.fromkeys(f.column for f in self.filters)
+        }
+
     def groups_of(
         self, table: pd.DataFrame, resource: GenomicResource,
+        prepared: dict[str, _TextColumn] | None = None,
     ) -> dict[str, str]:
         """Map each barcode of ``resource``'s rows to its group.
 
         The rows are those every filter conjunct selects, as a boolean
         mask; a row whose group is empty names no group and is left out,
         so its barcode maps nowhere.  A barcode on more than one row is
-        a :class:`DuplicateBarcodeError`.
+        a :class:`DuplicateBarcodeError`.  ``prepared`` is
+        :meth:`prepare_filters` of ``table``, when the caller holds it.
         """
+        if prepared is None:
+            prepared = self.prepare_filters(table)
         mask = np.ones(len(table), dtype=bool)
         for conjunct in self.filters:
-            operand = conjunct.operand(resource)
-            mask &= np.array([
-                _as_text(cell) == operand
-                for cell in table[conjunct.column].tolist()], dtype=bool)
+            mask &= prepared[conjunct.column].matches(
+                conjunct.operand(resource))
         rows = table[mask]
         mapping: dict[str, str] = {}
         seen: Counter[str] = Counter()
@@ -382,10 +424,12 @@ class CellGrouping:
     ) -> list[dict[str, int]]:
         """Per resource, each barcode's track index; the table read once."""
         table = self.table.load(grr)
+        prepared = self.prepare_filters(table)
         return [
             {
                 barcode: index_of[group]
-                for barcode, group in self.groups_of(table, resource).items()
+                for barcode, group in self.groups_of(
+                    table, resource, prepared).items()
                 if group in index_of
             }
             for resource in resources
@@ -448,6 +492,12 @@ class ValueGrouping:
     @property
     def parameters(self) -> dict[str, Any]:
         return {VALUE_GROUP_KEY: self.group_score_id}
+
+
+def _fragment_def(track: Track) -> FragmentScoreDef:
+    definition = track.definition
+    assert isinstance(definition, FragmentScoreDef)
+    return definition
 
 
 @dataclass(frozen=True)
@@ -895,6 +945,7 @@ def _resolve_grouping(
                 f"resource(s) {_quoted(resource_ids)} has no column "
                 f"{column!r}; its columns are "
                 f"{[str(c) for c in frame.columns]}")
+    prepared = grouping.prepare_filters(frame)
     groups_of: dict[str, set[str]] = {}
     for resource in resources:
         _score_type(label, resource, grouping.cell_score_id)
@@ -914,7 +965,7 @@ def _resolve_grouping(
                     f"{resource.resource_id!r} has no label "
                     f"{conjunct.label!r} to filter {conjunct.column!r} by")
         try:
-            mapping = grouping.groups_of(frame, resource)
+            mapping = grouping.groups_of(frame, resource, prepared)
         except DuplicateBarcodeError as err:
             raise RunDefinitionError(
                 f"{meta_label}: in the cell metadata table {table.name!r}, "
@@ -1094,6 +1145,8 @@ class _Entry:
 
     label: str
     pool: bool
+    resource_query: str
+    name: str | None
     value: _FragmentValue
     aggregate: _Aggregate
     group: _Group
@@ -1216,7 +1269,7 @@ class FragmentScoreBinding:
         scores = [] if job.score_id is None else [job.score_id]
         if job.grouping is not None:
             scores.append(job.grouping.score_id)
-        starting = job.tracks[0].mode == FRAGMENT_START
+        starting = _fragment_def(job.tracks[0]).mode == FRAGMENT_START
         read = score.get_fragment_scores_starting_in_region if starting \
             else score.get_fragment_scores_overlapping_region
         rows = read(region.chrom, region.start, region.stop, scores=scores)
@@ -1245,22 +1298,29 @@ def _fold_of(
     track: Track, region: BedRegion, bin_size: int,
 ) -> BinFragmentAggregator:
     """The streaming fold of ``track``'s mode over ``region``."""
-    if track.mode == FRAGMENT_START:
+    definition = _fragment_def(track)
+    if definition.mode == FRAGMENT_START:
         return BinFragmentStartAggregator(
             start=region.start, end=region.stop, bin_size=bin_size,
-            aggregator=track.aggregator)
+            aggregator=definition.aggregator)
     fold = (
-        BinFragmentCoverageAggregator if track.mode == COVERAGE_PROFILE
+        BinFragmentCoverageAggregator if definition.mode == COVERAGE_PROFILE
         else BinFragmentLengthAggregator)
     return fold(
         start=region.start, end=region.stop, bin_size=bin_size,
-        aggregator=track.aggregator, uncovered_value=track.uncovered_value)
+        aggregator=definition.aggregator,
+        uncovered_value=definition.uncovered_value)
 
 
 class FragmentScoreBinner:
     """Bins ``fragment_score`` resources matched by a ``resource_query``."""
 
     kind: ClassVar[str] = "fragment_score_binner"
+
+    @staticmethod
+    def load_def(text: str) -> FragmentScoreDef:
+        """Read a ``binner_def`` of this kind."""
+        return FragmentScoreDef.from_json(text)
 
     @classmethod
     def parse_entry(
@@ -1284,6 +1344,8 @@ class FragmentScoreBinner:
         entry = _Entry(
             label=label,
             pool=pool,
+            resource_query=config["resource_query"],
+            name=name,
             value=_FragmentValue.default() if config.get("value") is None
             else _FragmentValue.parse(
                 f"{label}.value", config["value"], matches),
@@ -1393,13 +1455,17 @@ class FragmentScoreBinner:
                 name=f"{base}:{group}",
                 resource_ids=resource_ids,
                 group=group,
-                score_id=value.score_id or "",
-                aggregator=aggregate.aggregator,
-                none_value_replacement=None,
-                binner=cls.kind,
+                selector=group,
+                binner_type=binner_type_of(cls.kind),
+                definition=FragmentScoreDef(
+                    aggregator=aggregate.aggregator,
+                    mode=aggregate.mode,
+                    uncovered_value=aggregate.uncovered_value,
+                    score_id=value.score_id,
+                    resource_query=entry.resource_query,
+                    pool=entry.pool,
+                    name=entry.name),
                 parameters=parameters_text,
-                mode=aggregate.mode,
-                uncovered_value=aggregate.uncovered_value,
             )
             for group in groups
         )

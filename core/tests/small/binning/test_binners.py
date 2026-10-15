@@ -5,7 +5,12 @@ import pathlib
 import numpy as np
 import pytest
 import pytest_mock
-from gain.binning.binners import BinningJob, PositionScoreBinner, Track
+from gain.binning.binners import (
+    BinningJob,
+    PositionScoreBinner,
+    PositionScoreDef,
+    Track,
+)
 from gain.genomic_resources.genomic_scores.position import PositionScore
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing.builders import a_grr, a_position_score
@@ -18,13 +23,14 @@ def scores_one(aggregator: str, replacement: float | None = None) -> Track:
     """scores/one: 1.0 over chr1:1-20, 2.0 over chr1:31-35, nothing else."""
     return Track(
         name="scores/one", resource_ids=("scores/one",), group="",
-        score_id="s",
-        aggregator=aggregator, none_value_replacement=replacement,
-        binner="position_score_binner")
+        selector="s", binner_type="position_score",
+        definition=PositionScoreDef(
+            aggregator=aggregator,
+            none_value_replacement=replacement))
 
 
 def a_job(track: Track) -> BinningJob:
-    return BinningJob(binner=track.binner, tracks=(track,))
+    return BinningJob(binner="position_score_binner", tracks=(track,))
 
 
 def one_region(
@@ -172,9 +178,10 @@ LONG_BIN_SIZE = 2000
 def past_range(aggregator: str) -> Track:
     return Track(
         name="past_range", resource_ids=("past_range",), group="",
-        score_id="s",
-        aggregator=aggregator, none_value_replacement=None,
-        binner="position_score_binner")
+        selector="s", binner_type="position_score",
+        definition=PositionScoreDef(
+            aggregator=aggregator,
+            none_value_replacement=None))
 
 
 def a_past_range_repo(

@@ -21,7 +21,7 @@ evidence="$run_dir/evidence/binning-tool"
 mkdir -p "$evidence"
 
 cat > "$scratch/bin.yaml" <<'YAML'
-input_reference_genome: mini_genome
+reference_genome: mini_genome
 bins:
   bin_size: 5
 binners:

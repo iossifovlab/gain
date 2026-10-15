@@ -41,7 +41,7 @@ from gain.genomic_resources.testing.builders import a_fragment_score, a_grr
 from gain.genomic_resources.testing.data_frame_builder import a_data_frame
 from gain.utils.regions import BedRegion
 
-from tests.small.binning.conftest import CELL_META, S1_FRAGMENTS
+from tests.small.binning.conftest import CELL_META, S1_FRAGMENTS, kind_def
 
 BIN_SIZE = 10
 KIND = "fragment_score_binner"
@@ -280,8 +280,10 @@ def test_a_length_entry_carries_its_mode_and_uncovered_value(
 
     (track,) = run.tracks
     aggregator, uncovered = expected
-    assert (track.mode, track.aggregator, track.uncovered_value) == (
-        "fragment_length", aggregator, uncovered)
+    definition = kind_def(track)
+    assert (
+        definition.mode, definition.aggregator, definition.uncovered_value,
+    ) == ("fragment_length", aggregator, uncovered)
     parameters = json.loads(track.parameters)
     assert parameters["mode"] == "fragment_length"
     assert parameters["uncovered_value"] == uncovered
@@ -688,7 +690,9 @@ def test_a_fragment_track_carries_its_mode_into_its_chunk_key(
     run = parse_fragment_entry(entry, repo, genome)
 
     for track in run.tracks:
-        assert (track.mode, track.uncovered_value) == ("fragment_start", None)
+        assert (
+            kind_def(track).mode, kind_def(track).uncovered_value,
+        ) == ("fragment_start", None)
         parameters = json.loads(track.parameters)
         assert parameters["mode"] == "fragment_start"
         assert parameters["uncovered_value"] is None

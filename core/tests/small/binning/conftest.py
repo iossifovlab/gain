@@ -1,6 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import pathlib
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 from gain.genomic_resources.cli import cli_manage
@@ -17,6 +18,12 @@ from gain.genomic_resources.testing.builders import (
     a_reference_genome,
 )
 from gain.genomic_resources.testing.data_frame_builder import a_data_frame
+
+
+def kind_def(track: Any) -> Any:
+    """The track's kind-specific definition, typed by its concrete kind."""
+    return track.definition
+
 
 CHR1_LENGTH = 100
 CHR2_LENGTH = 40

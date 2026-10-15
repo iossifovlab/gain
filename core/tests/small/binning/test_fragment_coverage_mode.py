@@ -30,6 +30,7 @@ from gain.genomic_resources.testing.builders import (
 )
 from gain.utils.regions import BedRegion
 
+from tests.small.binning.conftest import kind_def
 from tests.small.binning.test_binning_tool_cli import (
     binning_tool,
     read_matrix,
@@ -228,7 +229,7 @@ def test_an_omitted_uncovered_value_is_0_only_in_coverage_profile_mode(
         repo, genome)
 
     (track,) = run.tracks
-    assert (track.mode, track.uncovered_value) == (
+    assert (kind_def(track).mode, kind_def(track).uncovered_value) == (
         aggregate["mode"], expected)
     assert json.loads(track.parameters)["uncovered_value"] == expected
 
@@ -308,9 +309,10 @@ def test_tracks_records_a_coverage_track_s_mode_and_uncovered_value(
 
     with h5py.File(output, "r") as h5:
         tracks = h5["tracks"][()]
-    assert [row["mode"] for row in tracks] == [
-        b"coverage_profile", b"coverage_profile"]
-    np.testing.assert_array_equal(tracks["uncovered_value"], [0.0, nan])
+    definitions = [json.loads(row["binner_def"]) for row in tracks]
+    assert [d["mode"] for d in definitions] == [
+        "coverage_profile", "coverage_profile"]
+    assert [d["uncovered_value"] for d in definitions] == [0.0, None]
 
 
 def test_a_rerun_after_a_change_to_coverage_profile_bins_again(

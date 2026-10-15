@@ -17,6 +17,7 @@ with ``--help``.
     annotate_variant_effects
     annotate_variant_effects_vcf
     binning_tool
+    binning_tool_view
     draw_score_histograms
     to_gpf_gene_models_format
     install_vep_cache
@@ -47,6 +48,7 @@ Resource and score utilities
 ----------------------------
 
 * :doc:`binning_tool`: bin genomic scores into a fixed genome grid.
+* :doc:`binning_tool_view`: print the tables of a ``binning_tool`` file as tab-separated text.
 * :doc:`draw_score_histograms`: draw the histograms of the scores of a resource.
 * :doc:`to_gpf_gene_models_format`: convert gene models to the GPF format.
 * :doc:`install_vep_cache`: download and unpack a VEP cache for the VEP annotator plugin.

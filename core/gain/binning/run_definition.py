@@ -10,6 +10,7 @@ from gain.binning.binners import (
     BinningJob,
     RunDefinitionError,
     Track,
+    aggregator_of,
     check_keys,
     discover_binner_kinds,
 )
@@ -17,10 +18,27 @@ from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.utils.regions import BedRegion, Region
 
-__all__ = ["RunDefinition", "RunDefinitionError", "parse_run_definition"]
+__all__ = [
+    "RENAMED_GENOME_KEY_MESSAGE",
+    "RunDefinition",
+    "RunDefinitionError",
+    "parse_run_definition",
+    "refuse_renamed_genome_key",
+]
 
-TOP_LEVEL_KEYS = frozenset({"input_reference_genome", "bins", "binners"})
+TOP_LEVEL_KEYS = frozenset({"reference_genome", "bins", "binners"})
+RENAMED_GENOME_KEY_MESSAGE = (
+    "input_reference_genome was renamed reference_genome; rename the key")
 BINS_KEYS = frozenset({"bin_size", "regions"})
+
+
+def refuse_renamed_genome_key(config: dict[str, Any]) -> None:
+    """Refuse a run definition that still has the pre-rename genome key.
+
+    A definition with both keys is refused too: the old key is never read.
+    """
+    if "input_reference_genome" in config:
+        raise RunDefinitionError(RENAMED_GENOME_KEY_MESSAGE)
 
 
 @dataclass(frozen=True)
@@ -31,7 +49,7 @@ class RunDefinition:
     columns, every job's tracks in job order.
     """
 
-    input_reference_genome: str
+    reference_genome: str
     bin_size: int
     regions: list[BedRegion]
     jobs: list[BinningJob]
@@ -56,12 +74,14 @@ def parse_run_definition(
     parsed from memory leaves it unset, and the kinds read such a path
     from the current directory.
     """
+    if isinstance(config, dict):
+        refuse_renamed_genome_key(config)
     check_keys("run definition", config, TOP_LEVEL_KEYS)
     bins = config.get("bins")
     check_keys("bins", bins, BINS_KEYS)
     assert isinstance(bins, dict)
     return RunDefinition(
-        input_reference_genome=genome.resource_id,
+        reference_genome=genome.resource_id,
         bin_size=_resolve_bin_size(bins.get("bin_size")),
         regions=_resolve_regions(bins.get("regions"), genome),
         jobs=_resolve_jobs(config.get("binners"), grr, base_dir),
@@ -186,11 +206,18 @@ def _resolve_jobs(
     # back in the order they went in, so each job takes its own back.
     named = iter(_name_tracks([
         (label, track) for label, job in jobs for track in job.tracks]))
-    return [
-        replace(
-            job, tracks=tuple(next(named) for _ in job.tracks), entry=label)
-        for label, job in jobs
-    ]
+    next_index: Counter[str] = Counter()
+    resolved: list[BinningJob] = []
+    for label, job in jobs:
+        tracks = []
+        for _ in job.tracks:
+            tracks.append(replace(
+                next(named),
+                binner_index=int(label.removeprefix("binners[")[:-1]),
+                track_index=next_index[label]))
+            next_index[label] += 1
+        resolved.append(replace(job, tracks=tuple(tracks), entry=label))
+    return resolved
 
 
 def _name_tracks(tracks: list[tuple[str, Track]]) -> list[Track]:
@@ -213,7 +240,7 @@ def _name_tracks(tracks: list[tuple[str, Track]]) -> list[Track]:
     producers: dict[str, str] = {}
     for label, track in tracks:
         named_track = (
-            replace(track, name=f"{track.name}:{track.aggregator}")
+            replace(track, name=f"{track.name}:{aggregator_of(track)}")
             if occurrences[track.name, track.group] > 1 else track)
         if named_track.name in producers:
             raise RunDefinitionError(
