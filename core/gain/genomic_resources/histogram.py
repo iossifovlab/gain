@@ -548,7 +548,9 @@ class NumberHistogram(Statistic):
             if self.config.x_log_scale:
                 assert self.config.x_min_log is not None
                 # ``power`` is not bit-reproducible across hosts, so round
-                # the edges: the stored bytes must not depend on the host.
+                # the edges. A 1 ulp difference then changes a stored edge
+                # only if the raw value sits within an ulp of a rounding
+                # tie: very unlikely, but not impossible.
                 self.bins = np.array([
                     self.config.view_range[0],
                     * (float(f"{edge:.{_LOG_EDGE_DIGITS - 1}e}")

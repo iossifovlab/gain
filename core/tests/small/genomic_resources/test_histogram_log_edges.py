@@ -1,6 +1,5 @@
-# pylint: disable=C0114,C0116,W0212
+# pylint: disable=C0114,C0116
 # C0114, C0116: the repo tests carry no docstrings.
-# W0212: the tests reach numpy internals (``np.logspace.__wrapped__``).
 from collections.abc import Callable
 from typing import Any
 
@@ -11,10 +10,9 @@ from gain.genomic_resources.histogram import (
     NumberHistogramConfig,
 )
 
-# ``np.logspace`` calls ``power`` through this module, not through ``np``.
-# mypy does not know ``__wrapped__`` on the numpy stubs, hence the ignore.
-_NUMERIC: Any = np.logspace.__wrapped__.__globals__["_nx"]  # type: ignore[attr-defined]
-_REAL_POWER = _NUMERIC.power
+# The histogram calls ``np.logspace`` through the ``np`` module, so patching
+# that public name perturbs the raw edges the way a host whose ``power``
+# rounds differently would.
 
 
 def _config(
@@ -31,15 +29,17 @@ def _config(
 
 
 def _off_by_one_ulp(shift: int) -> Callable[..., Any]:
-    """Build a ``power`` whose results are 1 ulp off in several positions."""
-    def power(*args: Any, **kwargs: Any) -> Any:
-        result = np.array(_REAL_POWER(*args, **kwargs), dtype=np.float64)
+    """Build a ``logspace`` whose results are 1 ulp off in several positions."""
+    real_logspace = np.logspace  # captured before the patch replaces it
+
+    def logspace(*args: Any, **kwargs: Any) -> Any:
+        result = np.array(real_logspace(*args, **kwargs), dtype=np.float64)
         flat = result.reshape(-1)
         for i in range(shift % 3, flat.size, 3):
             direction = np.inf if (i + shift) % 2 else -np.inf
             flat[i] = np.nextafter(flat[i], direction)
         return result
-    return power
+    return logspace
 
 
 def _edges(
@@ -49,7 +49,7 @@ def _edges(
 ) -> tuple[list[float], str]:
     with monkeypatch.context() as patch:
         if shift is not None:
-            patch.setattr(_NUMERIC, "power", _off_by_one_ulp(shift))
+            patch.setattr(np, "logspace", _off_by_one_ulp(shift))
         hist = NumberHistogram(config)
     return hist.bins.tolist(), hist.serialize()
 
@@ -58,7 +58,7 @@ def test_perturbation_really_changes_raw_edges(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with monkeypatch.context() as patch:
-        patch.setattr(_NUMERIC, "power", _off_by_one_ulp(0))
+        patch.setattr(np, "logspace", _off_by_one_ulp(0))
         perturbed = np.logspace(-5, 0, 126)
     assert not np.array_equal(perturbed, np.logspace(-5, 0, 126))
 
