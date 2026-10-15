@@ -313,6 +313,21 @@ position-score track, the group of a fragment track. It is a column of the
 **resource query**.
 _Avoid_: group (for a position-score track), filter
 
+**Track label**:
+The display name of a **track**, returned by `track_labels` in
+`gain.binning.h5_reader`. The file does not store it. The function builds it
+from `resource_ids`, **selector** and `binner_def`. For a position-score
+track the base is the resource id, or `<name>/<resource id>` when the entry has
+a `name`. For a pooled fragment track the base is the `name`, or the resource
+query when there is no `name`, followed by `:<selector>`. For an unpooled
+fragment track the base is the resource id, or `<name>/<resource id>`,
+followed by `:<selector>`. The label ends with `:<aggregator>` when
+`binner_def` has an aggregator. Every **track** in a set of equal labels gets
+`#<position>` appended, where the position is the row of the **track** in the
+DataFrame.
+_Avoid_: track name (the name of an entry is the optional `name` in
+`binner_def`)
+
 ## Relationships
 
 - A **group repository** has one or more **children**; each child is a **GRR**,

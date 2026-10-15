@@ -904,18 +904,21 @@ The output is one HDF5 file in a plain layout that any HDF5 reader
 understands without a library beyond ``h5py``. It holds three datasets:
 
 ``/values``
-    ``float64``, shape ``(n_bins, n_tracks)``. ``NaN`` where a bin has no
+    Read it with :func:`gain.binning.h5_reader.read_values`. ``float64``,
+    shape ``(n_bins, n_tracks)``. ``NaN`` where a bin has no
     data. Stored in row blocks and gzip-compressed, so reading every track
     for one chromosome is one contiguous read and the ``NaN``- and
     zero-heavy tracks compress well.
 
 ``/bins``
-    A compound (structured) dataset of shape ``(n_bins,)`` with fields
+    Read it with :func:`gain.binning.h5_reader.read_bins`. A compound
+    (structured) dataset of shape ``(n_bins,)`` with fields
     ``chrom`` (fixed-length bytes, sized to the longest chromosome name in
     the run), ``start`` and ``end`` (``int64``, 1-based inclusive).
 
 ``/tracks``
-    A compound dataset of shape ``(n_tracks,)``, one row per track, with
+    Read it with :func:`gain.binning.h5_reader.read_tracks`. A compound
+    dataset of shape ``(n_tracks,)``, one row per track, with
     the same fields for every binner kind. ``binner_type``,
     ``resource_ids``, ``selector`` and ``binner_def`` are
     variable-length UTF-8 strings. ``binner_index`` and ``track_index``
@@ -1030,6 +1033,47 @@ prefer the bigWig for binning.
 Reading the file back
 ---------------------
 
+:func:`gain.binning.h5_reader.read_tracks` and
+:func:`gain.binning.h5_reader.read_bins` read ``/tracks`` and ``/bins`` as
+pandas DataFrames. Each takes a path or an open ``h5py.File``. The columns
+come from the file, the text fields are ``str``, and the index is the
+position in ``/values``. ``read_tracks`` raises ``ValueError`` for a file
+with a missing or unsupported ``tracks_layout``. Both functions raise
+``ValueError`` for a table that is missing, not a dataset, or not compound.
+A path that is missing or not an HDF5 file raises the ``OSError`` of ``h5py``.
+:func:`gain.binning.h5_reader.read_values` reads ``/values`` as a numpy
+``float64`` matrix of shape ``(n_bins, n_tracks)``, not as a DataFrame. It
+reads the whole matrix into memory, and it raises ``ValueError`` for a
+``/values`` that is missing, not a dataset, or not two-dimensional.
+:func:`gain.binning.h5_reader.track_labels` returns one display label for
+each track:
+
+.. code-block:: python
+
+    from gain.binning.h5_reader import (
+        read_bins, read_tracks, read_values, track_labels)
+
+    values = read_values("binning_run.h5")  # numpy matrix, bins x tracks
+    bins = read_bins("binning_run.h5")
+    labels = track_labels(read_tracks("binning_run.h5"))
+
+    column = labels.index("hg38/scores/phyloP100way:mean")
+    on_chr1 = (bins["chrom"] == "chr1").to_numpy()
+    print(values.shape)
+    print(values[on_chr1, column][:5])
+
+``values`` is a numpy matrix, not a DataFrame. Row *i* belongs to row *i* of
+``bins`` and column *j* to ``labels[j]``, which is the label of row *j* of
+the tracks. The label of a
+position-score track is its resource id and its aggregator, for example
+``hg38/scores/phyloP100way:mean``. The label of a fragment track is its
+resource, the group and the aggregator, for example
+``frags/s1:B:sum``. A ``name`` of the entry prefixes the resource id of a
+position-score track and of an unpooled fragment track, and replaces the
+resource query in the label of a pooled fragment track. Tracks with equal
+labels get ``#<position>`` appended, where the position is the column of
+the track.
+
 With ``h5py`` alone:
 
 .. code-block:: python
@@ -1047,44 +1091,8 @@ With ``h5py`` alone:
     assert attrs["tracks_layout"] == 2  # absent: a file of an older layout
     print(values.shape, attrs["bin_size"], attrs["coordinates"])
     print(tracks["binner_type"][:3], tracks["selector"][:3])
-    print(tracks["resource_ids"][-1], tracks["binner_def"][-1])
     print(json.loads(tracks["binner_def"][-1]))
     print(bins[:3])
-
-With ``pandas``, decoding the text fields and the fixed-length chromosome
-names once. The file has no track name, so the example builds a label for
-each column from the selector and the definition:
-
-.. code-block:: python
-
-    import json
-
-    import h5py
-    import pandas as pd
-
-    with h5py.File("binning_run.h5", "r") as h5:
-        tracks = pd.DataFrame(h5["tracks"][()])
-        for column in ("binner_type", "resource_ids", "selector",
-                       "binner_def"):
-            tracks[column] = tracks[column].str.decode("utf-8")
-        definitions = tracks["binner_def"].map(json.loads)
-        labels = [
-            f"{track.resource_ids}:{track.selector}:{definition['aggregator']}"
-            for track, definition in zip(
-                tracks.itertuples(), definitions, strict=True)]
-        bins = pd.DataFrame(h5["bins"][()])
-        bins["chrom"] = bins["chrom"].str.decode("utf-8")
-        values = pd.DataFrame(
-            h5["values"][()], columns=labels,
-            index=pd.MultiIndex.from_frame(bins))
-
-    print(values.head())
-
-``values`` is then a DataFrame indexed by ``(chrom, start, end)`` with one
-column per track, and ``tracks`` explains each column. A label made from
-``resource_ids``, ``selector`` and the ``aggregator`` of the definition is
-unique only when no two tracks share them; add ``binner_index`` and
-``track_index`` to the label when they do.
 
 
 A worked example
