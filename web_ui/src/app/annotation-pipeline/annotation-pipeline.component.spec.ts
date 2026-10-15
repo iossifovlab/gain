@@ -2182,4 +2182,136 @@ describe('AnnotationPipelineComponent', () => {
     component['updateDownloadLink']();
     expect(component.downloadDocLink).toBe('');
   });
+
+  /** Start on a loaded copy of mockPipelines with `selected` selected. */
+  function startOnLoadedList(selected: string): void {
+    const loaded = mockPipelines.map(p => new Pipeline(p.id, p.name, p.content, p.type, p.status));
+    component.pipelines = loaded;
+    pipelineStateService.pipelines.set(loaded);
+    component.onPipelineClick(loaded.find(p => p.id === selected));
+  }
+
+  it('selects the new pipeline after a save-as whose reload fails, so Save targets it (#1783)', () => {
+    startOnLoadedList('id3');
+    component.currentPipelineText = 'saved as new';
+    jest.spyOn(mockMatDialogRef, 'afterClosed').mockReturnValueOnce(of('new name'));
+    const savePipelineSpy = jest.spyOn(annotationPipelineServiceMock, 'savePipeline')
+      .mockReturnValueOnce(of('4'));
+    jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
+      .mockReturnValueOnce(throwError(() => new Error('backend restarting')));
+    component.saveAs();
+
+    expect(component.selectedPipeline.id).toBe('4');
+    expect(component.pipelines.map(p => p.id)).toStrictEqual(['id1', 'id2', 'id3', '4']);
+    expect(pipelineStateService.pipelines().map(p => p.id)).toStrictEqual(['id1', 'id2', 'id3', '4']);
+    expect(pipelineStateService.selectedPipelineId()).toBe('4');
+    expect(component.dropdownControl.value).toBe('new name');
+
+    savePipelineSpy.mockClear();
+    component.currentPipelineText = 'saved as new, then edited';
+    component.save();
+
+    expect(savePipelineSpy).toHaveBeenCalledWith('4', 'new name', 'saved as new, then edited');
+    expect(savePipelineSpy).not.toHaveBeenCalledWith('id3', expect.anything(), expect.anything());
+  });
+
+  it('drops the deleted pipeline and selects the first one after a delete whose reload fails (#1783)', () => {
+    startOnLoadedList('id3');
+    jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
+      .mockReturnValueOnce(throwError(() => new Error('backend restarting')));
+    component.delete();
+
+    expect(component.selectedPipeline.id).toBe('id1');
+    expect(component.currentPipelineText).toBe('content1');
+    expect(component.pipelines.map(p => p.id)).toStrictEqual(['id1', 'id2']);
+    expect(pipelineStateService.pipelines().map(p => p.id)).toStrictEqual(['id1', 'id2']);
+    expect(pipelineStateService.selectedPipelineId()).toBe('id1');
+
+    const savePipelineSpy = jest.spyOn(annotationPipelineServiceMock, 'savePipeline');
+    component.currentPipelineText = 'edited after the delete';
+    component.save();
+    component.autoSave().subscribe();
+
+    expect(savePipelineSpy).not.toHaveBeenCalledWith('id3', expect.anything(), expect.anything());
+  });
+
+  it('leaves the selection empty after deleting the last pipeline when the reload fails (#1783)', () => {
+    const only = new Pipeline('id3', 'name3', 'content3', 'user', 'loaded');
+    component.pipelines = [only];
+    pipelineStateService.pipelines.set([only]);
+    component.onPipelineClick(only);
+    jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
+      .mockReturnValueOnce(throwError(() => new Error('backend restarting')));
+
+    component.delete();
+
+    expect(component.selectedPipeline).toBeNull();
+    expect(pipelineStateService.selectedPipelineId()).toBe('');
+    expect(component.pipelines).toStrictEqual([]);
+    expect(component.dropdownControl.value).toBe('');
+  });
+
+  it('shows the saved text as unchanged after a save whose reload fails (#1783)', () => {
+    startOnLoadedList('id3');
+    component.currentPipelineText = 'saved content';
+    component.onConfigChanged();
+    jest.spyOn(annotationPipelineServiceMock, 'savePipeline').mockReturnValueOnce(of('id3'));
+    jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
+      .mockReturnValueOnce(throwError(() => new Error('backend restarting')));
+
+    component.save();
+
+    expect(component.isPipelineChanged()).toBe(false);
+    expect(component.dropdownControl.value).toBe('name3');
+    expect(component.selectedPipeline.id).toBe('id3');
+    expect(pipelineStateService.pipelines().find(p => p.id === 'id3').content).toBe('saved content');
+    expect(mockPipelines[2].content).toBe('content3');
+  });
+
+  it('keeps text typed before a failed post-save-as reload as an unsaved edit of the new pipeline (#1783)', () => {
+    startOnLoadedList('id3');
+    component.currentPipelineText = 'saved as new';
+    jest.spyOn(mockMatDialogRef, 'afterClosed').mockReturnValueOnce(of('new name'));
+    jest.spyOn(annotationPipelineServiceMock, 'savePipeline').mockReturnValueOnce(of('4'));
+    const reload = new Subject<Pipeline[]>();
+    jest.spyOn(jobsServiceMock, 'getAnnotationPipelines').mockReturnValueOnce(reload.asObservable());
+    component.saveAs();
+    component.currentPipelineText = 'saved as new, then typed';
+    component.onConfigChanged();
+
+    reload.error(new Error('backend restarting'));
+
+    expect(component.currentPipelineText).toBe('saved as new, then typed');
+    expect(component.selectedPipeline.id).toBe('4');
+    expect(component.selectedPipeline.content).toBe('saved as new');
+    expect(component.isPipelineChanged()).toBe(true);
+    expect(component.dropdownControl.value).toBe('new name *');
+  });
+
+  it('replaces the patched entries with the server copies on the next successful reload (#1783)', () => {
+    const reconnect = armReconnect();
+    component.ngOnInit();
+    startOnLoadedList('id3');
+    component.currentPipelineText = 'saved as new';
+    jest.spyOn(mockMatDialogRef, 'afterClosed').mockReturnValueOnce(of('new name'));
+    jest.spyOn(annotationPipelineServiceMock, 'savePipeline').mockReturnValueOnce(of('4'));
+    jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
+      .mockReturnValueOnce(throwError(() => new Error('backend restarting')));
+    component.saveAs();
+    const serverPipelines = [
+      new Pipeline('id1', 'name1', 'content1', 'default', 'loaded'),
+      new Pipeline('id2', 'name2', 'content2', 'default', 'loaded'),
+      new Pipeline('id3', 'name3', 'content3', 'user', 'loaded'),
+      new Pipeline('4', 'new name', 'saved as new', 'user', 'loaded'),
+    ];
+    pipelineStateService.loadedWhileLoggedIn.set(!component.isUserLoggedIn);
+    jest.spyOn(jobsServiceMock, 'getAnnotationPipelines').mockReturnValueOnce(of(serverPipelines));
+
+    reconnect();
+
+    expect(component.pipelines).toBe(serverPipelines);
+    expect(pipelineStateService.pipelines()).toBe(serverPipelines);
+    expect(component.selectedPipeline).toBe(serverPipelines[3]);
+    expect(component.isPipelineChanged()).toBe(false);
+  });
 });
