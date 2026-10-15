@@ -42,6 +42,9 @@ from gain.genomic_resources.statistics.moments import Moments, MomentsSummary
 
 logger = logging.getLogger(__name__)
 
+# Significant digits of the stored log-scale bin edges.
+_LOG_EDGE_DIGITS = 10
+
 
 #: Which score value types a NUMBER histogram can accumulate, one value at a
 #: time.  ``bool`` is in: ``numpy`` folds it as 0/1, and a two-bin histogram
@@ -544,13 +547,16 @@ class NumberHistogram(Statistic):
         elif bins is None and bars is None:
             if self.config.x_log_scale:
                 assert self.config.x_min_log is not None
+                # ``power`` is not bit-reproducible across hosts, so round
+                # the edges: the stored bytes must not depend on the host.
                 self.bins = np.array([
                     self.config.view_range[0],
-                    * np.logspace(
-                        np.log10(self.config.x_min_log),
-                        np.log10(self.config.view_range[1]),
-                        self.config.number_of_bins,
-                    )])
+                    * (float(f"{edge:.{_LOG_EDGE_DIGITS - 1}e}")
+                       for edge in np.logspace(
+                           np.log10(self.config.x_min_log),
+                           np.log10(self.config.view_range[1]),
+                           self.config.number_of_bins,
+                       ))])
                 self._rstep = (self.config.number_of_bins - 1) / \
                     (np.log10(self.view_max())
                      - np.log10(self.config.x_min_log))
