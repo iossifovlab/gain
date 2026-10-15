@@ -1074,6 +1074,8 @@ resource query in the label of a pooled fragment track. Tracks with equal
 labels get ``#<position>`` appended, where the position is the column of
 the track.
 
+To print the tables without Python, use :doc:`binning_tool_view`.
+
 With ``h5py`` alone:
 
 .. code-block:: python
