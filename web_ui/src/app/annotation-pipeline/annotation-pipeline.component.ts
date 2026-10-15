@@ -64,11 +64,17 @@ interface PipelineListPatch {
   selectId: string;
 }
 
-/** The list with `pipeline` in place of the entry with its id, or added. */
-function upsertPipeline(pipelines: Pipeline[], pipeline: Pipeline): Pipeline[] {
-  return pipelines.some(p => p.id === pipeline.id)
-    ? pipelines.map(p => p.id === pipeline.id ? pipeline : p)
-    : [...pipelines, pipeline];
+/**
+ * The patch a save makes: `saved` in place of the entry with its id, or
+ * added, and selected.
+ */
+function savedPipelinePatch(saved: Pipeline): PipelineListPatch {
+  return {
+    apply: pipelines => pipelines.some(p => p.id === saved.id)
+      ? pipelines.map(p => p.id === saved.id ? saved : p)
+      : [...pipelines, saved],
+    selectId: saved.id,
+  };
 }
 
 @Component({
@@ -837,10 +843,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
         return;
       }
       const saved = new Pipeline(pipelineId, savedName, savedContent, 'user', 'loading');
-      this.getPipelines(pipelineId, false, {
-        apply: pipelines => upsertPipeline(pipelines, saved),
-        selectId: pipelineId,
-      });
+      this.getPipelines(pipelineId, false, savedPipelinePatch(saved));
     });
   }
 
@@ -886,10 +889,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
       const saved = new Pipeline(
         pipelineId, target.name, savedContent, target.type, target.status, target.error,
       );
-      this.getPipelines(pipelineId, false, {
-        apply: pipelines => upsertPipeline(pipelines, saved),
-        selectId: pipelineId,
-      });
+      this.getPipelines(pipelineId, false, savedPipelinePatch(saved));
     });
   }
 
