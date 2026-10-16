@@ -1,2 +1,0 @@
-Annotators Plugin Library
-=========================
