@@ -137,7 +137,8 @@ Aggregators define how these multiple values are combined into a single output v
 The available aggregators are:
 
 - ``mean``, ``median``, ``max``, ``min``, ``sum``, ``product`` — numeric only (``int`` or ``float``).
-  ``sum`` and ``product`` keep the score's own type: an ``int`` score sums to an ``int``.
+  ``max``, ``min``, ``sum`` and ``product`` keep the score's own type: an ``int`` score sums to an ``int``,
+  and the ``max`` of an ``int`` score is an ``int``.
   A ``product`` past the float range (about 1.8e308) saturates to ``inf`` or ``-inf``, by the sign
   of the exact product, also for an ``int`` score. A ``product`` that holds a ``0`` is ``0``.
   The running product decides the result, as in repeated multiplication: once it passes the float
@@ -152,6 +153,44 @@ values first appeared. For example, ``most_common(2)`` folds the values ``b``,
 ``a``, ``b``, ``c``, ``a``, ``b`` into ``[b, a]``.
 The ``aggregator`` field accepts either the string form (``join(,)``) or a dict
 (``{aggregator_type: join, parameters: [","]}``), both are equivalent.
+
+An aggregator can receive no values: the region matches no score record, or
+every matched value is NA. The table below gives the value that each
+aggregator answers in that case.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Aggregator
+     - Answer for no values
+   * - ``mean``
+     - ``None``
+   * - ``median``
+     - ``None``
+   * - ``max``
+     - ``None``
+   * - ``min``
+     - ``None``
+   * - ``sum``
+     - ``None``
+   * - ``product``
+     - ``None``
+   * - ``mode``
+     - ``None``
+   * - ``concatenate``
+     - ``None``
+   * - ``join(separator)``
+     - ``None``
+   * - ``count``
+     - ``0``
+   * - ``list``
+     - ``[]``
+   * - ``most_common(k)``
+     - ``[]``
+   * - ``value_count``
+     - ``{}``
+   * - ``bool``
+     - ``False``
 
 Every one of these names is equally available as a resource-level default —
 ``aggregator`` on a score in a ``genomic_resource.yaml`` — with one

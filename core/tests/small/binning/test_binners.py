@@ -10,6 +10,7 @@ from gain.binning.binners import (
     PositionScoreBinner,
     PositionScoreDef,
     Track,
+    numeric_aggregators,
 )
 from gain.genomic_resources.genomic_scores.position import PositionScore
 from gain.genomic_resources.repository import GenomicResourceRepo
@@ -65,6 +66,26 @@ def test_a_sum_track_adds_each_bin_by_base_pair(
 
     assert values.dtype == np.float64
     np.testing.assert_array_equal(values, [10.0, 10.0, np.nan, 10.0])
+
+
+def test_a_count_track_stores_zero_for_an_uncovered_bin(
+    repo: GenomicResourceRepo,
+) -> None:
+    # A count of nothing is 0 (gain#262), so the uncovered 21-30 is 0.0,
+    # not NaN.  31-40 counts its five covered positions.
+    values = one_region(
+        scores_one("count"), BedRegion("chr1", 1, 40), repo)
+
+    np.testing.assert_array_equal(values, [10.0, 10.0, 0.0, 5.0])
+
+
+def test_a_count_track_stores_zero_on_a_chromosome_the_score_never_mentions(
+    repo: GenomicResourceRepo,
+) -> None:
+    values = one_region(
+        scores_one("count"), BedRegion("chr2", 1, 25), repo)
+
+    np.testing.assert_array_equal(values, [0.0, 0.0, 0.0])
 
 
 def test_a_replacement_stands_in_for_every_uncovered_position(
@@ -242,3 +263,9 @@ def test_an_int_result_past_the_float_range_is_stored_as_a_signed_inf(
     values = bin_past_range(past_range(aggregator), repo)
 
     np.testing.assert_array_equal(values, [-math.inf, math.inf])
+
+
+@pytest.mark.parametrize("aggregator", ["min", "max"])
+def test_min_and_max_stay_numeric_aggregators(aggregator: str) -> None:
+    """``min`` and ``max`` declare no output type, yet bin a number."""
+    assert aggregator in numeric_aggregators()

@@ -73,6 +73,13 @@ def test_max_aggregator_string() -> None:
     assert agg.get_final() == "zob"
 
 
+@pytest.mark.parametrize("aggregator_class", [MinAggregator, MaxAggregator])
+def test_min_and_max_take_the_type_of_their_input(
+    aggregator_class: type[Aggregator],
+) -> None:
+    assert aggregator_class.output_value_type is None
+
+
 def test_mean_aggregator() -> None:
     values = [1, 2, 3, 4]
     agg = MeanAggregator()
@@ -98,6 +105,14 @@ def test_count_aggregator() -> None:
     assert agg.get_final() == 3
 
 
+def test_count_of_no_values_is_zero() -> None:
+    assert CountAggregator().aggregate([]) == 0
+
+
+def test_count_of_only_none_values_is_zero() -> None:
+    assert CountAggregator().aggregate([None, None]) == 0
+
+
 def test_median_aggregator_even() -> None:
     values = [2, 3, 4, 1]
     agg = MedianAggregator()
@@ -116,22 +131,14 @@ def test_median_aggregator_odd() -> None:
     assert agg.get_final() == 3
 
 
-def test_median_aggregator_string_even() -> None:
-    values = ["a", "c", "b", "d"]
-    agg = MedianAggregator()
-    for val in values:
-        agg.add(val)
-
-    assert agg.get_final() == "bc"
+def test_median_aggregator_refuses_an_even_count_of_strings() -> None:
+    with pytest.raises(TypeError, match=r"median.*str"):
+        MedianAggregator().aggregate(["a", "c", "b", "d"])
 
 
-def test_median_aggregator_string_odd() -> None:
-    values = ["a", "c", "b", "d", "f"]
-    agg = MedianAggregator()
-    for val in values:
-        agg.add(val)
-
-    assert agg.get_final() == "c"
+def test_median_aggregator_refuses_an_odd_count_of_strings() -> None:
+    with pytest.raises(TypeError, match=r"median.*str"):
+        MedianAggregator().aggregate(["a", "c", "b", "d", "f"])
 
 
 def test_mode_aggregator() -> None:

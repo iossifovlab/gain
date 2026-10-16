@@ -125,8 +125,9 @@ def test_rows_all_filtered_fold_to_an_empty_selection_not_none(
 ) -> None:
     """The same values the region fold gives an all-filtered region.
 
-    Each aggregator's empty-selection answer: ``max`` and ``count`` have
-    no row to answer for and give ``None``, ``list`` gives ``[]``.
+    Each aggregator's empty-selection answer: ``max`` has no row to
+    answer for and gives ``None``, ``list`` gives ``[]`` and ``count``
+    gives ``0``.
     """
     queries = [
         ScoreAggregationQuery("freq", "max"),
@@ -142,7 +143,7 @@ def test_rows_all_filtered_fold_to_an_empty_selection_not_none(
             "1", 10, 10, queries=queries, allele_keys=(),
             score_filter=rejecting)
 
-    assert aggregate == AlleleAggregate(values=(None, [], None), allele_keys=())
+    assert aggregate == AlleleAggregate(values=(None, [], 0), allele_keys=())
     assert aggregate == region
 
 

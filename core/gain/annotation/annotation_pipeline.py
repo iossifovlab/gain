@@ -234,7 +234,14 @@ def print_annotation_plan(
 
 @dataclass
 class AttributeSpec:
-    """Describes a single attribute an annotator can produce."""
+    """Describes a single attribute an annotator can produce.
+
+    ``folded_value_type`` is the type of one value that an aggregator
+    folds, when it differs from ``value_type``: a gene score attribute is
+    an ``object`` (one score per gene), and its scores are ``float``.  An
+    aggregator that declares no output type of its own answers this type.
+    ``None`` means the folded values have the type ``value_type`` names.
+    """
 
     source: str
     value_type: str
@@ -243,6 +250,7 @@ class AttributeSpec:
     internal_default: bool = False
     supports_aggregation: bool = True
     attribute_type: str = "attribute"
+    folded_value_type: str | None = None
 
     def __post_init__(self) -> None:
         if self.attribute_type == "annotatable":

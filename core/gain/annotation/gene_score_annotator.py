@@ -60,6 +60,7 @@ class GeneScoreAnnotator(AnnotatorBase):
                 value_type="object",
                 description=score_def.desc,
                 supports_aggregation=True,
+                folded_value_type=score_def.value_type,
             )
 
         default_annotation = self.score.config.get("default_annotation")
@@ -73,6 +74,7 @@ class GeneScoreAnnotator(AnnotatorBase):
                     internal_default=specs[source].internal_default,
                     supports_aggregation=True,
                     attribute_type=specs[source].attribute_type,
+                    folded_value_type=specs[source].folded_value_type,
                 )
             for attr in default_annotation:
                 default_attr = \
