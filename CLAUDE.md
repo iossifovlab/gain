@@ -169,8 +169,18 @@ The Gene Models page is the pattern (epic #1893). Each page of the "Genomic reso
 <important if="you are on a feature or bugfix branch and tempted to touch docs/source/changes.rst">
 
 Do not. Release notes are composed once, when the version is cut; a branch leaves `changes.rst` untouched and adds no `unreleased` section (past commits that did are not the precedent, and every such edit is a guaranteed rebase conflict). Describe the user-visible change in the PR body; the notes are composed from there.
+</important>
 
-**Composing release notes** (when the version is cut): run `scripts/release_note_inputs.sh <previous tag> <new tag>` to collect the inputs. It prints one tab-separated line for each first-parent commit in the range: the short SHA, the PR number, the PR title and the issues the PR closes. A commit with no PR is printed with a `no PR` marker. The script reads PR numbers from GitHub, because commit subjects often end in the closed issue's number, not the PR's. For gpf, use `scripts/release_note_inputs.sh --repo iossifovlab/gpf <previous tag> <new tag>`. It needs no gpf checkout. Then read the PR bodies of the listed PRs.
+<important if="you are composing the release notes for a version that has been tagged">
+
+The notes are an index into the issues, not a second write-up: a reader skims the groups, then follows the links. The `2026.10.1` section of `docs/source/changes.rst` is the reference shape.
+
+1. **Inputs.** `scripts/release_note_inputs.sh <previous tag> <new tag>` prints one tab-separated line per first-parent commit in the range: short SHA, PR number, PR title and the issues the PR closes (`no PR` marks a commit without one). It reads GitHub, because commit subjects often end in the closed issue's number, not the PR's; `--repo iossifovlab/gpf` does the same for gpf without a checkout. It needs bash 4 (`declare -A`), so on macOS bash 3.2 harvest by hand: `gh pr list --state merged --search "merged:<a>..<b>" --json number,title,body` and `gh issue list --state closed --search "closed:<a>..<b>" --json number,title,labels`. Then read the PR bodies and the issue titles.
+2. **Heading.** One top-level `* <version>` bullet per release, newest first, a blank line between releases. Each change is a 4-space-indented `* ` bullet with continuation lines indented 6 spaces, wrapped at 72 columns.
+3. **Groups.** Five to eight bullets, each one group of related changes with a short lead-in (`binning_tool:`, `Aggregation:`, `Annotation:`, `GRR:`, `gainweb:`, `Docs:`) and one or two sentences that state what changed: the API, command, config key or behaviour, in double backticks where it is a name. The issue links carry the mechanism, the rationale and the measurements, so the bullets carry none, and no issue numbers. A behaviour change is stated in plain prose ("a file written before this ... "), with no category label. CI, test-only and developer-tooling changes (fixtures, flakes, skills, CLAUDE.md, review config) stay out of the bullets; a feature added and dropped inside one release gets none.
+4. **Closing bullet.** `**Issues closed in this release:**` with two GitHub query links, `all issues` and `bug issues`, over the window between the two tags' commit times in UTC (`git log -1 --format=%cI <tag>`): `issues?q=is%3Aissue+is%3Aclosed+reason%3Acompleted+closed%3A<a>..<b>`, and the same with `label%3Abug`. The query is the full list; the section enumerates no issues.
+5. **Check.** `uv run --no-sync bash docs/build_docs.sh` passes (a bare `bash` call exits 127 and leaves stale HTML), and the first `<dt>` of `docs/build/html/changes.html` is the new version.
+6. **Commit.** Straight to `master`, titled `docs: release notes for <version>`, then bump the meta-repo pin. Deploy docs publishes it to `iossifovlab.com/gaindocs/changes.html`.
 </important>
 
 <important if="you are changing or extending an area that has an ADR, or naming a concept in an issue or docstring">
