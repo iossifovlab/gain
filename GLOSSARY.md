@@ -94,6 +94,32 @@ that reads it; an annotator factory turns a configuration into an annotator.
 _Avoid_: factory (unqualified), builder, plugin (which is the package that
 registers one or more annotator factories)
 
+**Region fold**:
+The one value per attribute that a score annotator answers for an
+annotatable's span, reduced from every overlapping score record by the
+attribute's aggregator. A substitution that the annotator reads at one
+position is not a fold. An exactly matched VCF allele reads the lines keyed to
+the allele, not a span, so it is not a fold either. On an
+`allele_multiplicity: many` resource the annotator reduces those lines by each
+attribute's aggregator, but the region length cutoff does not apply to that
+reduction. Under the `mode: region` override, the allele score annotator folds
+every `VCFAllele`, substitutions included.
+_Avoid_: region aggregation, region path, region mode (the `mode` setting of
+an allele score annotator picks the fold for every VCF allele and is not the
+fold itself)
+
+**Region length cutoff**:
+The longest annotatable that a score annotator folds. Past it the annotator
+declines the fold before it reads a record, logs a warning and answers no
+value for every attribute. A declined region and an unscored region give the
+same output and differ only in the log (gain#264). The position and allele
+score annotators apply the cutoff to every fold, the `mode: region` override
+included. The reduction of the lines of an exactly matched allele is not a
+fold, so the cutoff does not apply to it. The fragment score annotator has no
+cutoff. The effect annotator has a cutoff of the same name that answers a
+coarse CNV effect instead.
+_Avoid_: region cutoff, length limit, maximum region length
+
 ### Searching
 
 **Search term**:
