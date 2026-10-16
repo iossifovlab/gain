@@ -330,6 +330,19 @@ DataFrame.
 _Avoid_: track name (the name of an entry is the optional `name` in
 `binner_def`)
 
+### Named clusters
+
+**Cluster definition**:
+The `type`, `params` and worker count that build one dask cluster for the
+task graph. A file passed with `-c` holds one cluster definition without a
+name.
+_Avoid_: cluster config, cluster configuration
+
+**Named cluster**:
+A **cluster definition** stored under a name in the named cluster file and
+selected by that name with `-N`.
+_Avoid_: named dask cluster, cluster profile
+
 ## Relationships
 
 - A **group repository** has one or more **children**; each child is a **GRR**,
