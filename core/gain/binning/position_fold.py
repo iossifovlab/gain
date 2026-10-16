@@ -318,12 +318,17 @@ class ArrayBinFold:
         if self.aggregator == "count":
             return
 
-        if self.aggregator in {"sum", "mean"}:
-            operand = value * length
-        else:
-            operand = value
-        operand[missing] = _IDENTITY[self.aggregator]
-        self._fold_in_order(operand, missing, seen, group_start, group_bin)
+        # The per-run fold adds Python floats, which overflow to ``inf``
+        # and give NaN for ``inf - inf`` without a warning.  The array
+        # fold gives the same values, and silences numpy's warnings.
+        with np.errstate(over="ignore", invalid="ignore"):
+            if self.aggregator in {"sum", "mean"}:
+                operand = value * length
+            else:
+                operand = value
+            operand[missing] = _IDENTITY[self.aggregator]
+            self._fold_in_order(
+                operand, missing, seen, group_start, group_bin)
 
     def _fold_in_order(
         self, operand: FloatArray, missing: BoolArray, seen: BoolArray,

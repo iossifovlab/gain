@@ -9,6 +9,8 @@
 other case keeps the per-run fold of ``get_score_in_bins``, which stays
 the reference: the parity tests here compare the two bit for bit.
 """
+import warnings
+
 import numpy as np
 import pytest
 import pytest_mock
@@ -426,3 +428,47 @@ def test_a_nan_value_is_a_value_in_the_array_fold(
 
     assert_same_bits(
         actual, reference_column(nan_repo, track, NAN_REGION, bin_size))
+
+
+#: Values near the float range: a part of three positions overflows
+#: ``value * length``, two parts overflow their sum, and parts of
+#: opposite signs give ``inf - inf``.  The per-run fold gives ``inf``
+#: and NaN for them without a warning.
+HUGE_TABIX_DATA = """
+    chrom  pos_begin  pos_end  s
+    chr1   1          3        1e+308
+    chr1   4          4        1.7e+308
+    chr1   5          5        1.7e+308
+    chr1   6          8        -1e+308
+    chr1   9          9        -1.7e+308
+"""
+
+HUGE_REGION = BedRegion("chr1", 1, 10)
+
+
+@pytest.fixture(scope="module")
+def huge_repo(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> GenomicResourceRepo:
+    return (
+        a_grr()
+        .with_resource("tabix", a_position_score()
+                       .with_score("s", "float")
+                       .with_tabix()
+                       .with_data(HUGE_TABIX_DATA))
+        .build_repo(tmp_path_factory.mktemp("huge_grr")))
+
+
+@pytest.mark.parametrize("bin_size", [1, 3, 5, LARGE_BIN_SIZE])
+@pytest.mark.parametrize("aggregator", AGGREGATORS)
+def test_an_overflow_gives_no_warning_in_the_array_fold(
+    huge_repo: GenomicResourceRepo, aggregator: str, bin_size: int,
+) -> None:
+    track = a_track("tabix", aggregator, None)
+    expected = reference_column(huge_repo, track, HUGE_REGION, bin_size)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        actual = bin_column(huge_repo, track, HUGE_REGION, bin_size)
+
+    assert_same_bits(actual, expected)
