@@ -47,7 +47,6 @@ from gain.genomic_resources.genomic_scores.aggregation import (
     fold_region_segments,
     request_score_ids,
     resolve_aggregation_queries,
-    resolve_aggregator_requests,
 )
 from gain.genomic_resources.score_def import GenomicScoreDef, ScoreValue
 from gain.genomic_resources.testing.builders import (
@@ -129,8 +128,8 @@ def _fold(
 def test_a_bare_score_id_resolves_to_the_definitions_default(
     score_definitions: dict[str, GenomicScoreDef],
 ) -> None:
-    assert resolve_aggregator_requests(
-        ["s"],
+    assert resolve_aggregation_queries(
+        [ScoreAggregationQuery("s")],
         score_definitions=score_definitions,
         all_scores=["s", "t"],
         resource_id="two",
@@ -243,24 +242,12 @@ def test_a_tuple_valued_stream_folds_exactly_like_a_list_valued_one() -> None:
     assert as_tuples == [pytest.approx((0.2 * 4 + 0.8) / 5), 0.8]
 
 
-def test_a_pair_names_the_aggregator_and_passes_through(
+def test_a_named_aggregator_passes_through(
     score_definitions: dict[str, GenomicScoreDef],
 ) -> None:
-    assert resolve_aggregator_requests(
-        [("s", "max"), "t"],
-        score_definitions=score_definitions,
-        all_scores=["s", "t"],
-        resource_id="two",
-    ) == [("s", "max"), ("t", "mean")]
-
-
-def test_a_query_list_resolves_to_the_same_pairs(
-    score_definitions: dict[str, GenomicScoreDef],
-) -> None:
-    # The query surface of the pair surface above: what the fragment and
-    # allele folding reads hand in, answered as pairs in the order asked,
-    # a named aggregator kept and an unset one filled from the score's
-    # own default.
+    # What the fragment and allele folding reads hand in, answered as
+    # pairs in the order asked, a named aggregator kept and an unset one
+    # filled from the score's own default.
     assert resolve_aggregation_queries(
         [ScoreAggregationQuery("t", "max"), ScoreAggregationQuery("s")],
         score_definitions=score_definitions,
@@ -274,7 +261,7 @@ def test_no_request_list_asks_for_every_score(
 ) -> None:
     # `None` means "all of them", and it is `all_scores` -- not the
     # definitions dict -- that says which those are and in what order.
-    assert resolve_aggregator_requests(
+    assert resolve_aggregation_queries(
         None,
         score_definitions=score_definitions,
         all_scores=["t", "s"],
@@ -286,8 +273,8 @@ def test_an_unknown_score_names_the_resource_and_what_it_has(
     score_definitions: dict[str, GenomicScoreDef],
 ) -> None:
     with pytest.raises(ValueError) as excinfo:
-        resolve_aggregator_requests(
-            ["nope"],
+        resolve_aggregation_queries(
+            [ScoreAggregationQuery("nope")],
             score_definitions=score_definitions,
             all_scores=["s", "t"],
             resource_id="two",
@@ -302,15 +289,15 @@ def test_a_score_with_no_default_aggregator_says_how_to_name_one(
     definitions = flags.score_definitions
 
     with pytest.raises(ValueError) as excinfo:
-        resolve_aggregator_requests(
-            ["flag"],
+        resolve_aggregation_queries(
+            [ScoreAggregationQuery("flag")],
             score_definitions=definitions,
             all_scores=["flag"],
             resource_id="flags",
         )
     assert str(excinfo.value) == (
         "score 'flag' of resource 'flags' has no default aggregator for "
-        "value type 'bool'; name one explicitly as (score_id, aggregator)")
+        "value type 'bool'; name one on the query")
 
 
 @pytest.mark.parametrize(("name", "value"), [
@@ -407,12 +394,13 @@ def test_the_distinct_scores_keep_the_order_they_were_asked_for() -> None:
 
 # -- The two surfaces that resolve an aggregation request (gain#1087) ------
 #
-# ``resolve_aggregator_requests`` serves a list of score ids and
-# ``(score_id, aggregator)`` pairs; ``PositionScore``'s
-# logical plane serves ``PositionScoreAggregationQuery`` objects, which
-# carry a ``none_value_replacement`` besides.  They are different request
-# SHAPES asking the same two questions, and what these pin is that the
-# answers are one statement rather than two that happen to coincide.
+# ``resolve_aggregation_queries`` serves the kind-neutral
+# ``ScoreAggregationQuery`` objects of the allele and fragment reads;
+# ``PositionScore``'s logical plane serves ``PositionScoreAggregationQuery``
+# objects, which carry a ``none_value_replacement`` besides.  They are
+# different request SHAPES asking the same two questions, and what these
+# pin is that the answers are one statement rather than two that happen
+# to coincide.
 
 
 @pytest.fixture
@@ -431,8 +419,8 @@ def test_both_surfaces_refuse_an_unknown_score_in_the_same_words(
 ) -> None:
     # One rule, one wording: there is nothing about "this resource does not
     # define that score" that depends on which shape asked.
-    from_request_list = _refusal(lambda: resolve_aggregator_requests(
-        ["nope"],
+    from_neutral_query = _refusal(lambda: resolve_aggregation_queries(
+        [ScoreAggregationQuery("nope")],
         score_definitions=flags.score_definitions,
         all_scores=["flag"],
         resource_id="flags",
@@ -441,24 +429,21 @@ def test_both_surfaces_refuse_an_unknown_score_in_the_same_words(
         from_query = _refusal(lambda: score.get_scores_in_region_agg(
             "1", 10, 10, [PositionScoreAggregationQuery("nope")]))
 
-    assert from_request_list == from_query == (
+    assert from_neutral_query == from_query == (
         "score 'nope' is not defined by resource 'flags'; it has ['flag']")
 
 
 def test_both_surfaces_state_the_missing_default_rule_identically(
     flags: PositionScore,
 ) -> None:
-    """The RULE is shared; only the remedy names each surface's own API.
+    """The neutral and the position resolvers refuse in one sentence.
 
-    A caller of the request list writes a ``(score_id, aggregator)``
-    pair and a caller of the plane writes it on the query, so telling each
-    of them to do the other's thing would be wrong.  Everything up to that
-    remedy -- which score, which resource, which value type, and that the
-    ground is a missing default -- is one statement, and this is what says
-    the two cannot drift apart again.
+    Both surfaces take the aggregator as a field on the query, so the
+    whole refusal is one statement: which score, which resource, which
+    value type, that the ground is a missing default, and the remedy.
     """
-    from_request_list = _refusal(lambda: resolve_aggregator_requests(
-        ["flag"],
+    from_neutral_query = _refusal(lambda: resolve_aggregation_queries(
+        [ScoreAggregationQuery("flag")],
         score_definitions=flags.score_definitions,
         all_scores=["flag"],
         resource_id="flags",
@@ -467,14 +452,9 @@ def test_both_surfaces_state_the_missing_default_rule_identically(
         from_query = _refusal(lambda: score.get_scores_in_region_agg(
             "1", 10, 10, [PositionScoreAggregationQuery("flag")]))
 
-    rule, _, request_remedy = from_request_list.partition("; ")
-    query_rule, _, query_remedy = from_query.partition("; ")
-
-    assert rule == query_rule == (
+    assert from_neutral_query == from_query == (
         "score 'flag' of resource 'flags' has no default aggregator "
-        "for value type 'bool'")
-    assert request_remedy == "name one explicitly as (score_id, aggregator)"
-    assert query_remedy == "name one on the query"
+        "for value type 'bool'; name one on the query")
 
 
 # Each refusal this package words about an aggregation request, anchored
@@ -494,7 +474,7 @@ def test_each_aggregation_refusal_is_written_in_exactly_one_place() -> None:
     """The tests above cannot see two copies that agree; this can.
 
     A fence that only counted files would pass while
-    ``resolve_aggregator_requests`` quietly re-inlined the rule that
+    ``resolve_aggregation_queries`` quietly re-inlined the rule that
     ``resolve_aggregator_name`` exists to state -- see
     :func:`~tests.small.genomic_resources.conftest.phrase_sites` for how
     the spellings are counted.

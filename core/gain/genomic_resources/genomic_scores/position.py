@@ -33,7 +33,6 @@ from ..aggregators import (
     PositionScoreAggregationQuery,
 )
 from .aggregation import (
-    QUERY_AGGREGATOR_REMEDY,
     build_region_aggregator,
     distinct_score_ids,
     resolve_aggregator_name,
@@ -476,12 +475,10 @@ class PositionScore(GenomicScore):
             type that the score cannot take, or a query names no aggregator
             and the value type of the score has no default one.
         """
-        # A query asks the same two questions a request list does -- which
-        # score, and what reduces it -- so they are asked where they are
-        # answered for every surface, in :mod:`.aggregation`
-        # (score_def_for, resolve_aggregator_name).  Only the remedy of the
-        # missing-default refusal is this surface's own, because a caller
-        # here names an aggregator on the query rather than in a pair.
+        # A query asks the same two questions every aggregation request
+        # does -- which score, and what reduces it -- so they are asked
+        # where they are answered for every surface, in :mod:`.aggregation`
+        # (score_def_for, resolve_aggregator_name).
         #
         # What a query asks BESIDES is the third: a none_value_replacement
         # must be of a type the score can mean, following
@@ -524,8 +521,7 @@ class PositionScore(GenomicScore):
                 query.none_value_replacement)
             aggregator = resolve_aggregator_name(
                 query.aggregator, score_def,
-                resource_id=self.resource_id,
-                remedy=QUERY_AGGREGATOR_REMEDY)
+                resource_id=self.resource_id)
             resolved.append((
                 query.score, aggregator, query.none_value_replacement))
         return resolved

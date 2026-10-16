@@ -844,7 +844,16 @@ calls it any more.
 
 **What a migrating caller has to know.**  Call the per-kind read, with one
 query object per ``(score_id, aggregator)`` request: a bare score id becomes
-a query that names no aggregator.  Each read answers a tuple, not a list.
+a query that names no aggregator.  The old method answered a list.  Each
+read answers its own shape:
+
+* ``get_scores_in_region_agg`` answers a tuple, one value for each query.
+* ``get_allele_scores_in_region_agg`` answers an ``AlleleAggregate``, or
+  ``None`` for a region no row overlaps.
+* ``get_fragment_scores_overlapping_region_agg`` answers a
+  ``FragmentAggregate``.
+
+In both aggregates, ``.values`` holds the tuple of one value for each query.
 Three answers differ from the old method's:
 
 * For a fragment score the count semantics differ.  The ``count`` of
