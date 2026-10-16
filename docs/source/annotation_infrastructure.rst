@@ -557,9 +557,10 @@ The example also renames ``worst_effect`` to ``MANE_1.5_worst_effect``.
 
 The ``effect_annotator`` takes the same optional ``region_length_cutoff``, with the
 same default of 15 000 000 bp as the score annotators. An annotatable longer than the
-cutoff is not resolved against the gene models at all. It is reported as ``CNV-`` or ``CNV+`` if it is a large deletion or
-duplication and ``unknown`` otherwise, with its length and an empty gene list, so the
-answer says the annotatable was too long rather than that it hit nothing.
+cutoff is not resolved against the gene models at all. It is reported as ``CNV-`` or
+``CNV+`` if it is a large deletion or duplication and ``unknown`` otherwise, with its
+length and an empty gene list, so the answer says the annotatable was too long rather
+than that it hit nothing.
 
 .. code:: yaml
 
