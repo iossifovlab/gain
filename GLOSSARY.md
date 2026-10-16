@@ -222,6 +222,15 @@ ref or alt column at all. Counted rather than dropped.
 _Avoid_: unknown, invalid, unclassified, error (a row here is well-formed
 data the classification declines to interpret, not a fault)
 
+**Only score**:
+The one score of a score resource that defines exactly one, whatever its
+family: a bigWig, a one-column position score, a gene score with a single
+column. It is what a histogram accessor reads when the caller names no score
+id. A resource with several scores, or none, has no only score, and such a
+call is refused with the ids it does define.
+_Avoid_: default score (the default-annotation attribute, a different
+choice), first score, primary score, implicit score
+
 ### Score tables
 
 **Payload kind**:
