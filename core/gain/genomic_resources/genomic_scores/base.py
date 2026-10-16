@@ -14,9 +14,9 @@ extraction (gain#1044) moved the scoredef lifecycle to
 here when it restored that cap is gone; its second (gain#1074) moved the
 region-aggregation machinery to :mod:`.aggregation`, which the per-kind
 aggregating reads drive, each handing it the kind's weight rule; its third
-(gain#1114) moved the
-value-extraction seam -- picking the per-record read, and addressing each
-score def to a payload column -- to :mod:`.value_extraction`, leaving
+(gain#1114) moved the value-extraction seam -- picking the per-record read,
+and addressing each score def to a payload column -- to
+:mod:`.value_extraction`, leaving
 :meth:`GenomicScore.open` calling both in the order that seam requires and
 the two public per-record getters here.  The remaining seams are #1027's
 other children.

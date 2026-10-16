@@ -40,9 +40,7 @@ from .aggregation import (
     score_def_for,
 )
 from .base import GenomicScore
-from .records import (
-    clip_span,
-)
+from .records import clip_span
 
 
 class PositionScore(GenomicScore):
