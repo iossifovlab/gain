@@ -412,6 +412,53 @@ def test_old_key_value_wins_over_the_bundled_value(
     assert mocked_local.call_args.kwargs["memory_limit"] == "1GB"
 
 
+def test_old_key_merges_into_the_hyphenated_new_key(
+    mocker: pytest_mock.MockerFixture,
+    tmp_path: pathlib.Path,
+    restored_dask_config: None,
+) -> None:
+    mocker.patch("dask.distributed.LocalCluster", autospec=True)
+    mocker.patch("gain.dask.named_cluster.Client", autospec=True)
+    (tmp_path / "named_cluster.yaml").write_text(textwrap.dedent("""\
+        gain-named-cluster:
+          clusters:
+            mine:
+              type: local
+        dae_named_cluster:
+          clusters:
+            - name: old
+              type: local
+        """))
+    # The order of an import of gain.dask: dask collects the user files,
+    # then reconfigure() merges the bundled defaults into the spelling
+    # that the user file uses. config.refresh() would respell the key.
+    bundled = yaml.safe_load(
+        (pathlib.Path(gain.dask.config.__file__).parent
+         / "named_cluster.yaml").read_text())
+    collected = config.collect(paths=[str(tmp_path)], env={})
+    config.update_defaults(bundled, config=collected, defaults=[])
+    config.update_defaults(
+        {"distributed": bundled["gain_named_cluster"]["distributed"]},
+        config=collected, defaults=[])
+    config.config.clear()
+    config.config.update(collected)
+
+    gain.dask.config.translate_legacy_named_cluster()
+
+    assert sorted(
+        key for key in config.config
+        if key.replace("-", "_") == "gain_named_cluster") == [
+        "gain-named-cluster"]
+    clusters = config.get("gain_named_cluster.clusters")
+    assert {"mine", "old", "local"} <= set(clusters)
+    assert config.get("gain_named_cluster.default") == "local"
+    assert config.get(
+        "gain_named_cluster.distributed.scheduler.unknown-task-duration",
+    ) == "10m"
+    _, cluster_config = setup_client("old")
+    assert cluster_config == {"type": "local"}
+
+
 def test_list_of_named_clusters_is_refused(
     mocker: pytest_mock.MockerFixture,
     named_cluster_config: dict[str, Any],

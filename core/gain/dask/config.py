@@ -42,14 +42,19 @@ def reconfigure() -> None:
     translate_legacy_named_cluster()
 
 
-def _legacy_keys(config: dict[str, Any]) -> list[str]:
-    """Return the spellings of the old key in the config.
+def _spellings(config: dict[str, Any], key: str) -> list[str]:
+    """Return the spellings of the key in the config.
 
     dask treats ``-`` and ``_`` in a key as the same character.
     """
     return [
-        key for key in config
-        if key.replace("-", "_") == LEGACY_NAMED_CLUSTER_KEY]
+        existing for existing in config
+        if existing.replace("-", "_") == key]
+
+
+def _legacy_keys(config: dict[str, Any]) -> list[str]:
+    """Return the spellings of the old key in the config."""
+    return _spellings(config, LEGACY_NAMED_CLUSTER_KEY)
 
 
 def translate_legacy_named_cluster() -> None:
@@ -94,8 +99,10 @@ def translate_legacy_named_cluster() -> None:
     if clusters:
         translated["clusters"] = clusters
 
-    config[NAMED_CLUSTER_KEY] = dask.config.merge(  # pyright: ignore
-        config.get(NAMED_CLUSTER_KEY, {}), translated)
+    target = next(
+        iter(_spellings(config, NAMED_CLUSTER_KEY)), NAMED_CLUSTER_KEY)
+    config[target] = dask.config.merge(  # pyright: ignore
+        config.get(target) or {}, translated)
 
     logger.warning(
         "The dask config key '%s' is deprecated and GAIn "
