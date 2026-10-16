@@ -413,3 +413,66 @@ def test_gene_score_annotator_aggregation(
         {"gene_list": ["LRP1", "TRRAP"]},
     )
     assert result["LGD_rank"] == 3.0
+
+
+@pytest.mark.parametrize("resource_id,aggregator,expected", [
+    ("int_score", "min", "int"),
+    ("int_score", "max", "int"),
+    ("int_score", "sum", "int"),
+    ("LGD_rank", "min", "float"),
+    ("LGD_rank", "max", "float"),
+    ("LGD_rank", "mode", "float"),
+])
+def test_a_folded_gene_score_takes_the_type_of_the_score(
+    scores_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+    resource_id: str,
+    aggregator: str,
+    expected: str,
+) -> None:
+    # The spec says ``object``: unfolded, the value is one score per gene.
+    # An aggregator that declares no output type folds those scores into
+    # one of them, so the attribute answers the type of the score.
+    resource = scores_repo.get_resource(resource_id)
+    annotator = GeneScoreAnnotator(
+        None,
+        AnnotatorInfo(
+            "gosho",
+            [AttributeConfig(
+                resource_id, resource_id, internal=False,
+                aggregator=aggregator, parameters={})],
+            {"work_dir": str(tmp_path)},
+        ),
+        resource,
+        "gene_list",
+    )
+
+    assert len(annotator.attributes) == 1
+    attribute = annotator.attributes[0]
+
+    assert attribute.aggregator == aggregator
+    assert attribute.get_value_type() == expected
+
+
+def test_an_unfolded_gene_score_stays_an_object(
+    scores_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = scores_repo.get_resource("int_score")
+    annotator = GeneScoreAnnotator(
+        None,
+        AnnotatorInfo(
+            "gosho",
+            [AttributeConfig(
+                "int_score", "int_score", internal=False,
+                aggregator="max", parameters={})],
+            {"work_dir": str(tmp_path)},
+        ),
+        resource,
+        "gene_list",
+    )
+
+    assert len(annotator.attributes) == 1
+    attribute = annotator.attributes[0]
+
+    assert attribute.get_value_type(aggregated=False) == "object"

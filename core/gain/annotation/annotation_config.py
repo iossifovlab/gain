@@ -491,10 +491,13 @@ class Attribute:
 
         Pass ``aggregated=True`` (default) when the aggregator is known to have
         run; the aggregator's ``output_value_type`` then takes precedence over
-        the spec's declared type.  Pass ``aggregated=False`` when aggregation
-        was skipped (e.g. a scalar value that bypassed a list aggregator) so
-        that the spec type is returned instead.  The raw spec type is always
-        accessible via ``self.spec.value_type``.
+        the spec's declared type.  An aggregator that declares no output
+        type answers the type of the values it folds: the spec's
+        ``folded_value_type`` when it names one, else ``value_type``.  Pass
+        ``aggregated=False`` when aggregation was skipped (e.g. a scalar
+        value that bypassed a list aggregator) so that the spec type is
+        returned instead.  The raw spec type is always accessible via
+        ``self.spec.value_type``.
 
         The type is read off the aggregator's NAME -- the only thing the
         attribute holds since gain#1133 -- through
@@ -506,6 +509,8 @@ class Attribute:
                 Aggregator.resolve_class(self.aggregator).output_value_type
             if agg_output_type is not None:
                 return agg_output_type
+            if self.spec is not None and self.spec.folded_value_type:
+                return self.spec.folded_value_type
         return self.spec.value_type if self.spec else ""
 
     @property

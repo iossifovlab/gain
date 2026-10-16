@@ -809,3 +809,38 @@ def test_non_unlimited_user_is_blocked_by_quota(
     )
 
     assert response.status_code == 429
+
+
+def test_a_gene_score_folded_by_min_is_typed_as_the_score(
+    test_grr: GenomicResourceRepo, tmp_path: pathlib.Path,
+    mocker: MockerFixture,
+) -> None:
+    # The web UI drops a scalar typed ``object``: the report then shows an
+    # empty cell where the min of the gene scores belongs.
+    pipeline = load_pipeline_from_yaml("""
+        - effect_annotator:
+            gene_models: t4c8/t4c8_genes
+            genome: t4c8/t4c8_genome
+            attributes:
+            - name: gene_list
+              internal: true
+        - gene_score_annotator:
+            resource_id: t4c8/gene_scores/t4c8_score
+            input_gene_list: gene_list
+            attributes:
+            - source: t4c8_score
+              name: t4c8_score_min
+              aggregator: min
+    """, test_grr, work_dir=tmp_path)
+    annotator = pipeline.annotators[-1]
+    (attribute_info,) = annotator.attributes
+    view = SingleAnnotation()
+    view._grr = test_grr
+    mocker.patch.object(view, "generate_annotator_help", return_value=None)
+
+    description = view._build_attribute_description(
+        {"t4c8_score_min": 7.5}, annotator, attribute_info)
+
+    assert attribute_info.aggregator == "min"
+    assert description["type"] == "float"
+    assert description["result"]["value"] == 7.5
