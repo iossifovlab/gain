@@ -365,6 +365,37 @@ DataFrame.
 _Avoid_: track name (the name of an entry is the optional `name` in
 `binner_def`)
 
+### Task graph
+
+**Task graph**:
+A directed acyclic graph of **tasks** that GAIn's drivers build and a
+**task executor** runs: the statistics build of `grr_manage`, the parallel runs of
+`annotate_tabular` and `annotate_vcf`, and the binning tool.
+_Avoid_: DAG, job graph, workflow
+
+**Task**:
+One node of a **task graph**: a function with its arguments, the tasks it
+depends on, and the files it reads and writes. A script adds one with
+`create_task`. A resource implementation builds one as a `TaskDesc` with
+`make_task` and adds it with `add_task`.
+_Avoid_: job, step, node
+
+**Task executor**:
+The object that runs a **task graph**, yielding each task as it completes.
+GAIn ships three: sequential, process pool and dask.
+_Avoid_: executor (unqualified), runner, scheduler, backend
+
+**Task cache**:
+The object a **task executor** asks whether a **task** must run or can be skipped,
+and that records the outcome of each task. The file form keys on file
+modification times; the no-op form runs every task.
+_Avoid_: task status, task progress, flag files
+
+**Task status directory**:
+The directory a file **task cache** writes its records to, named by
+`--task-status-dir`.
+_Avoid_: task progress dir, cache dir, status dir
+
 ### Named clusters
 
 **Cluster definition**:
