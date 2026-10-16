@@ -47,13 +47,19 @@ the graph with a task executor:
 The drivers of GAIn do both steps through
 :class:`~gain.task_graph.cli_tools.TaskGraphCli`. Its ``add_arguments``
 adds the task graph options to a command-line parser. Its ``process_graph``
-creates a task cache and a task executor from those options, and then runs
-the graph. With ``-j 1``, the task executor runs the tasks sequentially.
-Otherwise, ``--process-pool`` selects
+creates a task cache from those options. For the ``run`` command, which is
+the default, it also creates a task executor and runs the graph. For the
+``list`` and ``status`` commands, it only reports the state of the task
+cache, and it creates no task executor.
+
+With ``-j 1``, the task executor runs the tasks sequentially. Otherwise,
+``--process-pool`` selects
 :class:`~gain.task_graph.process_pool_executor.ProcessPoolTaskExecutor`,
-which runs the tasks in a pool of ``-j`` processes. Without
-``--process-pool``, a run without ``-j`` starts the default named cluster,
-and a dask task executor runs the tasks on it.
+which runs the tasks in a pool of ``-j`` processes. Without ``-j``, the pool
+has one process for each CPU. Without ``--process-pool``, a dask task
+executor runs the tasks on a cluster with ``-j`` workers. The cluster is the
+default named cluster, the named cluster that ``-N`` names, or the cluster
+that the ``-c`` cluster config file describes.
 
 .. rubric:: Not covered here
 
