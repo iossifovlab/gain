@@ -12,7 +12,8 @@ from __future__ import annotations
 import base64
 import socket
 import threading
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs
@@ -42,12 +43,16 @@ class _CaptureHandler(BaseHTTPRequestHandler):
         # The stub types ``self.server`` as ``BaseServer``, but this handler
         # only ever serves a ``_CaptureServer``.
         server: _CaptureServer = self.server  # type: ignore[assignment]
-        server.posts.append(Post(
+        post = Post(
             path=self.path,
             authorization=self.headers.get("Authorization", ""),
             form={k: v[0] for k, v in parse_qs(raw).items()},
-        ))
-        self.send_response(server.status)
+        )
+        server.posts.append(post)
+        failing = (server.failing_prefix is not None
+                   and post.form.get("content", "").startswith(
+                       server.failing_prefix))
+        self.send_response(500 if failing else server.status)
         self.send_header("Content-Length", "0")
         self.end_headers()
 
@@ -61,6 +66,8 @@ class _CaptureServer(HTTPServer):
         super().__init__(("127.0.0.1", 0), _CaptureHandler)
         self.posts: list[Post] = []
         self.status = 200
+        # A post whose content starts with this prefix gets a 500.
+        self.failing_prefix: str | None = None
 
     @property
     def site(self) -> str:
@@ -79,10 +86,17 @@ def zulip_server() -> Iterator[_CaptureServer]:
 
 
 class _CountingZulipHandler(ZulipHandler):
-    """Count the ``handleError`` calls instead of printing to stderr."""
+    """Count the ``handleError`` calls instead of printing to stderr.
 
-    def __init__(self, site: str) -> None:
-        super().__init__(site, BOT_EMAIL, API_KEY, STREAM, TOPIC)
+    The handler posts one record in each window of the given ``clock``.
+    """
+
+    def __init__(
+        self, site: str, clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        super().__init__(
+            site, BOT_EMAIL, API_KEY, STREAM, TOPIC,
+            max_posts=1, window_seconds=600, clock=clock)
         self.errors: list[logging.LogRecord] = []
 
     def handleError(self, record: logging.LogRecord) -> None:
@@ -337,3 +351,155 @@ def test_multi_line_message_puts_only_its_first_line_in_the_title(
     title, body = content.split("\n\n", 1)
     assert title == f"**INFO {TOPIC} gain.zulip: first line**"
     assert body == "````\nfirst line\nsecond line\n````"
+
+
+class _FakeClock:
+    """A monotonic clock that moves only when the test advances it."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+@pytest.fixture
+def clock() -> _FakeClock:
+    return _FakeClock()
+
+
+@pytest.fixture
+def throttled_logger(
+    zulip_server: _CaptureServer, clock: _FakeClock,
+) -> Iterator[logging.Logger]:
+    logger = logging.getLogger("gain.zulip.throttle_test")
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+    handler = ZulipHandler(
+        zulip_server.site, BOT_EMAIL, API_KEY, STREAM, TOPIC,
+        max_posts=10, window_seconds=600, clock=clock)
+    logger.addHandler(handler)
+    yield logger
+    logger.removeHandler(handler)
+
+
+def _titles(server: _CaptureServer) -> list[str]:
+    return [p.form["content"].split("\n", 1)[0] for p in server.posts]
+
+
+def _record_title(message: str) -> str:
+    return f"**INFO {TOPIC} gain.zulip.throttle_test: {message}**"
+
+
+def test_flood_posts_max_posts_then_one_summary_after_the_window(
+    zulip_server: _CaptureServer,
+    throttled_logger: logging.Logger,
+    clock: _FakeClock,
+) -> None:
+    for i in range(25):
+        throttled_logger.info("record %d", i)
+    clock.advance(600)
+    throttled_logger.info("after the window")
+
+    expected = [_record_title(f"record {i}") for i in range(10)]
+    expected += [
+        f"**{TOPIC}: suppressed 15 messages in the last 10 min**",
+        _record_title("after the window"),
+    ]
+    assert _titles(zulip_server) == expected
+    assert len(zulip_server.posts) == 12
+
+
+def test_window_without_suppressed_records_posts_no_summary(
+    zulip_server: _CaptureServer,
+    throttled_logger: logging.Logger,
+    clock: _FakeClock,
+) -> None:
+    for i in range(9):
+        throttled_logger.info("record %d", i)
+    clock.advance(600)
+    throttled_logger.info("after the window")
+
+    expected = [_record_title(f"record {i}") for i in range(9)]
+    expected.append(_record_title("after the window"))
+    assert _titles(zulip_server) == expected
+
+
+def test_window_after_a_summary_allows_max_posts_again(
+    zulip_server: _CaptureServer,
+    throttled_logger: logging.Logger,
+    clock: _FakeClock,
+) -> None:
+    for i in range(11):
+        throttled_logger.info("first %d", i)
+    clock.advance(600)
+    for i in range(11):
+        throttled_logger.info("second %d", i)
+    clock.advance(600)
+    throttled_logger.info("third")
+
+    second = [_record_title(f"second {i}") for i in range(10)]
+    summary = f"**{TOPIC}: suppressed 1 messages in the last 10 min**"
+    assert _titles(zulip_server)[10:] == [
+        summary,
+        *second,
+        summary,
+        _record_title("third"),
+    ]
+
+
+def test_refused_post_counts_against_the_window(clock: _FakeClock) -> None:
+    handler = _CountingZulipHandler(_refused_site(), clock=clock)
+
+    _log_exception_through(handler)
+    _log_exception_through(handler)
+
+    assert [r.getMessage() for r in handler.errors] == ["boom"]
+
+
+_SUMMARY_PREFIX = f"**{TOPIC}: suppressed"
+
+
+def test_failed_summary_still_posts_the_record(
+    zulip_server: _CaptureServer,
+    throttled_logger: logging.Logger,
+    clock: _FakeClock,
+) -> None:
+    for i in range(11):
+        throttled_logger.info("record %d", i)
+    zulip_server.failing_prefix = _SUMMARY_PREFIX
+    clock.advance(600)
+
+    throttled_logger.info("after the window")
+
+    assert _titles(zulip_server)[10:] == [
+        f"**{TOPIC}: suppressed 1 messages in the last 10 min**",
+        _record_title("after the window"),
+    ]
+
+
+def test_failed_summary_keeps_its_count_for_the_next_summary(
+    zulip_server: _CaptureServer,
+    throttled_logger: logging.Logger,
+    clock: _FakeClock,
+) -> None:
+    for i in range(11):
+        throttled_logger.info("first %d", i)
+    zulip_server.failing_prefix = _SUMMARY_PREFIX
+    clock.advance(600)
+    throttled_logger.info("second")
+    zulip_server.failing_prefix = None
+    clock.advance(600)
+
+    throttled_logger.info("third")
+
+    summary = f"**{TOPIC}: suppressed 1 messages in the last 10 min**"
+    assert _titles(zulip_server)[10:] == [
+        summary,
+        _record_title("second"),
+        summary,
+        _record_title("third"),
+    ]
