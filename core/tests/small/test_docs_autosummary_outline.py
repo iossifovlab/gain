@@ -4,10 +4,12 @@ A docs page lists the members of a class by hand in an ``autosummary``
 block. These tests compare that list with the class, so a new public member
 cannot stay out of the outline without a failure. The test finds each
 ``autoclass`` directive on the pages under
-``docs/source/development/resources``. A page of functions, such as the
+``docs/source/development/resources`` and
+``docs/source/development/task_graph``. A page of functions, such as the
 Data frames and AnnData page, has no class. The test then finds each
 ``autofunction`` directive, and the outline must list each function. A page
-that is not rolled out yet sits on ``NOT_ROLLED_OUT``. The page source is
+that is not rolled out yet sits on ``NOT_ROLLED_OUT``, as a path relative to
+``docs/source/development``. The page source is
 read as text. No Sphinx build runs.
 """
 import importlib
@@ -26,10 +28,15 @@ from gain.genomic_resources.gene_models import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-RESOURCES_DIR = REPO_ROOT / "docs/source/development/resources"
+DEVELOPMENT_DIR = REPO_ROOT / "docs/source/development"
+RESOURCES_DIR = DEVELOPMENT_DIR / "resources"
+# The directories whose pages the outline tests check, relative to
+# DEVELOPMENT_DIR.
+PAGE_DIRS = ("resources", "task_graph")
 GENE_MODELS_PAGE = RESOURCES_DIR / "gene_models.rst"
 
-# Pages whose API section is not rolled out yet. The slice of a page
+# Pages whose API section is not rolled out yet, as paths relative to
+# DEVELOPMENT_DIR, for example "resources/<page>.rst". The slice of a page
 # removes the page from this set.
 NOT_ROLLED_OUT: frozenset[str] = frozenset()
 
@@ -290,11 +297,23 @@ def _has_api(page: str) -> bool:
     return bool(_AUTOCLASS.search(page) or _AUTOFUNCTION.search(page))
 
 
-def _rolled_out_pages() -> list[Path]:
+def collect_pages(root: Path) -> list[Path]:
+    """Return the pages of each directory in ``PAGE_DIRS`` under ``root``."""
     return sorted(
-        path for path in RESOURCES_DIR.glob("*.rst")
-        if path.name not in NOT_ROLLED_OUT
-        and _has_api(path.read_text(encoding="utf-8")))
+        path for directory in PAGE_DIRS
+        for path in (root / directory).glob("*.rst"))
+
+
+def _page_key(path: Path, root: Path = DEVELOPMENT_DIR) -> str:
+    """Return the path of a page relative to ``root``, as a skip list key."""
+    return path.relative_to(root).as_posix()
+
+
+def _rolled_out_pages() -> list[Path]:
+    return [
+        path for path in collect_pages(DEVELOPMENT_DIR)
+        if _page_key(path) not in NOT_ROLLED_OUT
+        and _has_api(path.read_text(encoding="utf-8"))]
 
 
 def test_gene_models_page_outline_matches_classes() -> None:
@@ -302,14 +321,14 @@ def test_gene_models_page_outline_matches_classes() -> None:
     page = read_docs_page(GENE_MODELS_PAGE)
 
     assert not page_problems(page)
-    assert GENE_MODELS_PAGE.name not in NOT_ROLLED_OUT
+    assert _page_key(GENE_MODELS_PAGE) not in NOT_ROLLED_OUT
 
 
 def test_every_page_with_an_autoclass_is_rolled_out_or_skipped() -> None:
     """Each page with an autoclass or autofunction passes, or is skipped."""
     read_docs_page(GENE_MODELS_PAGE)
     failures = {
-        path.name: problems for path in _rolled_out_pages()
+        _page_key(path): problems for path in _rolled_out_pages()
         if (problems := page_problems(path.read_text(encoding="utf-8")))}
 
     assert not failures
@@ -319,7 +338,7 @@ def test_skip_list_names_only_existing_pages_with_an_api() -> None:
     """A stale skip list entry fails, so a finished page leaves the list."""
     read_docs_page(GENE_MODELS_PAGE)
     for name in NOT_ROLLED_OUT:
-        page = read_docs_page(RESOURCES_DIR / name)
+        page = read_docs_page(DEVELOPMENT_DIR / name)
         assert _has_api(page), (
             f"{name} has no autoclass or autofunction: drop it")
 
@@ -331,7 +350,7 @@ def test_data_frames_page_documents_its_loaders() -> None:
 
     assert len(page_functions(page)) == 4
     assert not page_problems(page)
-    assert path.name not in NOT_ROLLED_OUT
+    assert _page_key(path) not in NOT_ROLLED_OUT
 
 
 def test_function_missing_from_outline_is_reported() -> None:
@@ -482,6 +501,18 @@ def test_unknown_name_is_reported() -> None:
 
     assert len(problems) == 1
     assert "Exon.no_such_method" in problems[0]
+
+
+def test_pages_are_collected_from_both_directories(tmp_path: Path) -> None:
+    """A page under ``task_graph/`` is collected with the resource pages."""
+    for directory in ("resources", "task_graph", "annotators"):
+        (tmp_path / directory).mkdir()
+        (tmp_path / directory / "page.rst").write_text("Page\n====\n")
+
+    pages = collect_pages(tmp_path)
+
+    assert [_page_key(path, tmp_path) for path in pages] == [
+        "resources/page.rst", "task_graph/page.rst"]
 
 
 def test_missing_docs_page_fails(tmp_path: Path) -> None:
