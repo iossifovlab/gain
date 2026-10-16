@@ -139,8 +139,10 @@ takes, besides ``resource_query`` and ``search_term``, these keys:
     A value fed to the aggregator for every position no record covers. By
     default there is no replacement: a bin that no record covers is ``NaN``
     in the output, so missing data cannot masquerade as a measurement in a
-    correlation. Set a replacement, typically ``0.0``, when "no signal" is
-    genuinely zero for the track, as it is for a coverage track.
+    correlation. The exception is ``aggregator: count``: an uncovered bin
+    is ``0.0``, because a count of nothing is zero. Set a replacement,
+    typically ``0.0``, when "no signal" is genuinely zero for the track, as
+    it is for a coverage track.
 
 ``name`` (optional)
     The base of the entry's track names, in place of the resource id: a
@@ -876,7 +878,9 @@ score: the matrix has one dtype, and HDF5 has no null for integers. For a
 position-score track, a bin no record covers is ``NaN`` unless the entry
 set ``none_value_replacement``, in which case the replacement was fed to
 the aggregator for every uncovered position and the bin holds the
-aggregate of that. For a fragment track, an empty bin holds the
+aggregate of that. A ``count`` track is the exception: an uncovered bin
+is ``0.0``, because a count of nothing is zero. For a fragment track, an
+empty bin holds the
 aggregator's empty value (see `Empty bins`_).
 
 Two notes on scores stored as bigWig. First, a bigWig stores ``float32``, so

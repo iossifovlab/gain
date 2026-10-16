@@ -875,8 +875,7 @@ class FragmentScore(GenomicScore):
     # The count comes off the walk itself (``_CountingStream``), not off a
     # ``count`` aggregator: ``CountAggregator`` has the wrong count semantics
     # here -- it skips ``None`` values, so it counts non-null VALUES rather
-    # than fragments, and answers ``None`` rather than ``0`` for a region no
-    # fragment overlaps.
+    # than fragments.
     #
     # THIS READ holds nothing per fragment: the stream is folded as it arrives
     # and never materialised. Whether the CALL is constant in the number of
@@ -915,7 +914,7 @@ class FragmentScore(GenomicScore):
 
         The ``count`` of the result counts fragments. A query with the
         ``count`` aggregator counts the non-null values instead, and gives
-        ``None`` for an empty region.
+        ``0`` for an empty region.
 
         Parameters
         ----------

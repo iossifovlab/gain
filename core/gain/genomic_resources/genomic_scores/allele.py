@@ -932,8 +932,8 @@ class AlleleScore(GenomicScore):
             ``None`` when no row holds the allele. The check happens before
             the filter. When the filter rejects every row, the answer is an
             :class:`AlleleAggregate` in which each aggregator answers for
-            no rows: ``max`` and ``count`` give ``None``, and ``list``
-            gives ``[]``.
+            no rows: ``max`` gives ``None``, ``list`` gives ``[]`` and
+            ``count`` gives ``0``.
 
         Raises
         ------
