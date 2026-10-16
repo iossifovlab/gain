@@ -1014,8 +1014,10 @@ Check what the run would produce first:
         mode: fragment_start
         uncovered_value: null
 
-Nine position-score tracks are nine jobs, and the fragment entry's two
-tracks are one job, so the single region makes ten tasks.
+A *job* is what one task binds to, and a *task* is one job over one
+bundle of regions (see :ref:`binning-tool-parallelism`). Nine
+position-score tracks are nine jobs, and the fragment entry's two tracks
+are one job, so the single region makes ten tasks.
 
 Then run it:
 

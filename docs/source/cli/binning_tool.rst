@@ -111,6 +111,8 @@ and for the local-file entry, the report carries the warning:
 Use it to see what a query matched, how large the matrix will be and how
 the work will be cut before committing cluster time.
 
+.. _binning-tool-parallelism:
+
 Parallelism
 ^^^^^^^^^^^
 
