@@ -1,6 +1,40 @@
 Release Notes
 =============
 
+* 2026.10.1
+    * ``binning_tool`` output and tooling: the ``/tracks`` table has one
+      layout for every binner kind (``tracks_layout`` 2), the run
+      definition names its genome with ``reference_genome`` instead of
+      ``input_reference_genome``, ``gain.binning.h5_reader`` reads the
+      tables as data frames, and the new ``binning_tool_view`` command
+      prints them as text. A pooled fragment entry over hundreds of
+      resources starts in seconds instead of a minute.
+    * Aggregation: the ``most_common(k)`` aggregator is added, and a
+      ``product`` or an int ``sum`` past the float range saturates to a
+      signed ``inf`` instead of raising or stalling.
+    * Annotation: ``annotate_vcf`` writes the missing value for an INFO
+      value that does not fit the declared type instead of stopping,
+      the promoter check treats the ``+`` strand as it does the ``-``
+      strand, and the effect annotator's ``promoter_len`` is documented
+      and offered in the pipeline editor.
+    * GRR: the tabix bulk read parses each batch with the pandas C
+      parser, and a search index that left a resource out is rebuilt by
+      the next ``repo-repair``.
+    * gainweb: the web UI refetches jobs and pipelines only once a
+      reconnected socket has opened.
+    * Docs: a Command line tools section with a page per tool, the
+      Python interface and Genomic resources chapters reorganised with
+      new resource pages and a guide to reading histograms, and an API
+      section on every resource page, with the examples importing
+      ``gain.grr`` as ``grr``.
+    * **Issues closed in this release:** `all issues
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+is%3Aclos
+      ed+reason%3Acompleted+closed%3A2026-10-08T07%3A30%3A31Z..2026-10-1
+      5T09%3A03%3A43Z>`__, `bug issues
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+label%3Ab
+      ug+is%3Aclosed+reason%3Acompleted+closed%3A2026-10-08T07%3A30%3A31
+      Z..2026-10-15T09%3A03%3A43Z>`__.
+
 * 2026.10.0
     * The allele plane: ``AlleleScore`` gains the exact-allele and
       region reads ``get_allele_scores_for_allele`` /
