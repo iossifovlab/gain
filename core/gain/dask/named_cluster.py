@@ -7,6 +7,7 @@ from distributed.client import Client
 from distributed.deploy import Cluster  # pyright: ignore
 
 from gain import logging
+from gain.dask.config import check_named_cluster_config, clusters_shape_error
 
 _CLUSTER_TYPES: dict[str, Callable[[dict[str, Any]], Cluster]] = {}
 logger = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ def set_up_local_cluster(cluster_conf: dict[str, Any]) -> Cluster:
     threads_per_worker = kwargs.pop("threads_per_worker", None)
     if threads_per_worker is not None:
         logger.warning(
-            "The 'threads_per_worker' key in the dae_named_cluster config is "
+            "The 'threads_per_worker' key in the named cluster config is "
             "not supported. We support only one thread per worker.")
     threads_per_worker = 1
 
@@ -139,29 +140,73 @@ def _resilence_distributed_logging() -> None:
 def _adjust_default_distributed_config() -> None:
     """Adjust some default distributed config values if they are not set."""
     task_duration = dask.config.get(
-        "dae_named_cluster.distributed.scheduler.unknown-task-duration")
+        "gain_named_cluster.distributed.scheduler.unknown-task-duration")
     dask.config.config[
         "distributed"]["scheduler"]["unknown-task-duration"] = task_duration
 
     memory_pause = dask.config.get(
-        "dae_named_cluster.distributed.worker.memory.pause")
+        "gain_named_cluster.distributed.worker.memory.pause")
     dask.config.config[
         "distributed"]["worker"]["memory"]["pause"] = memory_pause
+
+
+def _named_clusters() -> dict[str, dict[str, Any]]:
+    """Return the named clusters, checked for the dict shape."""
+    check_named_cluster_config()
+    clusters = dask.config.get(  # pyright: ignore
+        "gain_named_cluster.clusters")
+    if not isinstance(clusters, dict):
+        # ValueError, not the TypeError that TRY004 asks for: the wrong
+        # shape is a configuration error, and the issue (gain#1972) asks
+        # for ValueError like the other refusals of the named clusters.
+        raise clusters_shape_error(clusters)
+    for name, cluster_config in clusters.items():
+        if isinstance(cluster_config, dict) and "name" in cluster_config:
+            raise ValueError(
+                f"The cluster definition of the named cluster {name!r} "
+                "holds a 'name' key. The key under "
+                "'gain_named_cluster.clusters' is the name. Put a dask job "
+                "name under 'params'.")
+    return clusters
 
 
 def setup_client(
     cluster_name: str | None = None,
     number_of_workers: int | None = None,
 ) -> tuple[Client, dict[str, Any]]:
-    """Create a dask client from the provided cluster name."""
+    """Create a dask client for a named cluster.
+
+    Parameters
+    ----------
+    cluster_name
+        The name of a named cluster under ``gain_named_cluster.clusters``.
+        ``None`` selects the named cluster in ``gain_named_cluster.default``.
+    number_of_workers
+        The number of workers. ``None`` keeps the number in the cluster
+        definition.
+
+    Returns
+    -------
+    tuple[Client, dict[str, Any]]
+        The dask client and the cluster definition that built it.
+
+    Raises
+    ------
+    ValueError
+        When ``gain_named_cluster.clusters`` is not a mapping from names to
+        cluster definitions, when a cluster definition holds a ``name`` key,
+        or when no named cluster has the name ``cluster_name``.
+    """
     if cluster_name is None:
         cluster_name = dask.config.get(  # pyright: ignore
-            "dae_named_cluster.default")
+            "gain_named_cluster.default")
 
-    clusters = {
-        conf["name"]: conf
-        for conf in dask.config.get(  # pyright: ignore
-            "dae_named_cluster.clusters")}
+    clusters = _named_clusters()
+    if cluster_name not in clusters:
+        defined = ", ".join(sorted(clusters))
+        raise ValueError(
+            f"Unknown named cluster {cluster_name!r}; "
+            f"defined named clusters: {defined}.")
     cluster_config = clusters[cluster_name]
     return setup_client_from_config(
         cluster_config,

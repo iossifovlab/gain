@@ -49,7 +49,8 @@ class TaskGraphCli:
             "-N", "--dask-cluster-name", "--dcn",
             dest="dask_cluster_name",
             type=str, default=None,
-            help="The named of the named dask cluster",
+            help="The name of a named cluster in the dask config, under "
+            "'gain_named_cluster.clusters'. The tasks run on it.",
         )
         executor_group.add_argument(
             "-c", "--dccf", "--dask-cluster-config-file",
