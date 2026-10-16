@@ -1,4 +1,14 @@
-dae_named_cluster:
+# The named clusters bundled with GAIn.
+#
+# `clusters` maps each named cluster to its cluster definition: the key is
+# the name that `-N <name>` selects, and the value is the cluster definition.
+# A cluster definition has no `name` key. A dask job name goes under `params`.
+#
+# dask merges a user file in the dask config directory (for example
+# `~/.config/dask/`) over this file. An entry in the user file adds a named
+# cluster, or overrides single keys of a bundled named cluster. See
+# https://iossifovlab.com/gaindocs/named_clusters.html
+gain_named_cluster:
   distributed:
     scheduler:
       unknown-task-duration: 10m
@@ -8,31 +18,30 @@ dae_named_cluster:
 
   default: local
   clusters:
-    - name: local_small
+    local_small:
       type: local
       params:
         memory_limit: 4GB
-      # By default, the local cluster will allocate by default as many threads 
-      # as the number of cores on the host, spread across several workers each
-      # with certain number of threads.  See the documentation of LocalCluster
-      # for more information. 
-      # To set the default a number of threads we can set:
-      # number_of_threads: 10
+      # By default, the local cluster allocates as many workers as the
+      # number of cores on the host. See the documentation of LocalCluster
+      # for more information.
+      # To set the number of workers, set:
+      # number_of_workers: 10
       #
-      # If present, the params will be provided to the LocalCluster 
-      # constructor. Some usefull params are given, but the LocalCluster 
-      # documentation provides the complete description.
+      # GAIn passes the params to the LocalCluster constructor. Some useful
+      # params are given here. The LocalCluster documentation has the
+      # complete description.
       # params:
       #   dashboard_address: :8898
-    - name: local
+    local:
       type: local
       params:
         memory_limit: 10GB
-    - name: local_large
+    local_large:
       type: local
       params:
         memory_limit: 16GB
-    - name: sge_small
+    sge_small:
       type: sge
       number_of_workers: 10
       params:
@@ -44,7 +53,7 @@ dae_named_cluster:
         log_directory: ./.sge_worker_logs
         job_extra_directives:
         - "-V"
-    - name: sge
+    sge:
       type: sge
       number_of_workers: 150
       params:
@@ -58,8 +67,10 @@ dae_named_cluster:
         - "-V"
         - "-l h_rss=4G"
         # - "-l h_vmem=4G"
-    - name: sge_large
+    sge_large:
       type: sge
+      # When a cluster definition holds both `number_of_workers` and
+      # `adapt_params`, GAIn uses `number_of_workers`.
       adapt_params:
         minimum: 3
         maximum: 200
@@ -74,7 +85,7 @@ dae_named_cluster:
         - "-V"
         - "-l h_rss=8G"
         # - "-l h_vmem=8G"
-    - name: slurm
+    slurm:
       type: slurm
       number_of_threads: 10
       params:
@@ -82,5 +93,3 @@ dae_named_cluster:
         cores: 1
         memory: 1GB
         log_directory: ./slurm_worker_logs
-
-

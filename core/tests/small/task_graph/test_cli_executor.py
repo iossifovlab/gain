@@ -21,7 +21,6 @@ def test_cli_cluster_with_config_file(
         tmp_path: pathlib.Path) -> None:
     setup_directories(
         tmp_path / "cluster.yaml", textwrap.dedent("""
-        name: special
         type: local
         number_of_threads: 20
         params:
