@@ -86,7 +86,7 @@ of one decision will drift.
 | [0022](0022-a-file-state-is-judged-by-the-stores-change-token.md) | A resource file state is judged by the store's change token | accepted |
 | [0023](0023-url-credentials-are-redacted-at-the-handle.md) | Url credentials are redacted at the handle, and redaction preserves retryability | accepted |
 | [0024](0024-a-bool-score-reads-its-cells-text.md) | A bool score reads its cell's text, and declares no NA sentinels | accepted |
-| [0025](0025-binning-tool-writes-one-hdf5-matrix-from-a-fixed-grid.md) | `binning_tool` writes one HDF5 matrix from a fixed grid, and a query is always a search | accepted |
+| [0025](0025-binning-tool-writes-one-hdf5-matrix-from-a-fixed-grid.md) | `binning_tool` writes one HDF5 matrix from a fixed grid, and a query is always a search | accepted; D14 amended by 0038 |
 | [0026](0026-annotation-output-spells-a-flag-yes-no.md) | Annotation output spells a flag `yes`/`no`, in every sink | accepted |
 | [0027](0027-record-validation-is-a-registry-in-the-statistics-package.md) | Record validation is a registry in the statistics package | accepted |
 | [0028](0028-a-test-may-not-grow-the-heap-past-its-own-budget.md) | A test may not grow the heap past its own budget | accepted |
@@ -99,6 +99,7 @@ of one decision will drift.
 | [0035](0035-a-fragment-belongs-to-the-bin-of-its-start.md) | A fragment belongs to the bin of its start, and its grouping is declared | accepted; amended by 0037 |
 | [0036](0036-objects-built-from-a-resource-are-memoised-on-its-memo-key.md) | An object built from a resource is memoised on its memo key, through one `Memo` | accepted |
 | [0037](0037-a-fragment-can-be-binned-by-its-overlap-or-its-coverage.md) | A fragment can also be binned by its overlap or by its coverage, and an entry can name its tracks | accepted |
+| [0038](0038-the-position-binner-folds-value-arrays-with-numpy.md) | The position binner folds value arrays with numpy, bit for bit | accepted |
 
 > **Note:** `0003` was allocated twice, by two changes that landed the same day.
 > "Numbers are never reused" is a rule about not re-issuing a *retired* number;

@@ -455,6 +455,12 @@ here: per-base conservation tracks becoming routine in binning runs, where
 the fold is 60% of binned time on bigWig with a 2.5× ceiling.
 `grr_bench/scripts/time_binning.py` re-runs to re-open the question.
 
+> **Amended by [ADR 0038](0038-the-position-binner-folds-value-arrays-with-numpy.md)
+> (gain#1841, gain#1957).** The vectorised fold is filed and shipped. A
+> `float` score under `count`, `sum`, `mean`, `max` or `min` is folded from
+> `fetch_region_value_arrays` with numpy, and its bins are identical to the
+> bins of `get_score_in_bins`. Every other track keeps the read above.
+
 **Rejected: native `pyBigWig.stats` binning.** Its results depend on the
 storage format of the input — it aggregates the raw float32 payload and
 cannot honour the score's declared value type or `na_values` — so two forms
