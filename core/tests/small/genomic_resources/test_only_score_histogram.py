@@ -17,7 +17,12 @@ from gain.genomic_resources.histogram import (
     CategoricalHistogram,
     NumberHistogram,
 )
-from gain.genomic_resources.testing import build_filesystem_test_repository
+from gain.genomic_resources.repository import GR_CONF_FILE_NAME
+from gain.genomic_resources.testing import (
+    build_filesystem_test_repository,
+    build_inmemory_test_resource,
+    convert_to_tab_separated,
+)
 from gain.genomic_resources.testing.builders import (
     a_gene_score,
     a_grr,
@@ -114,3 +119,26 @@ def test_a_two_score_position_score_has_no_only_score(
     assert str(excinfo.value) == (
         "resource 'pos' has no only score to read without a score id; "
         "it has ['s', 't']")
+
+
+def test_a_zero_score_position_score_has_no_only_score() -> None:
+    res = build_inmemory_test_resource({
+        GR_CONF_FILE_NAME: """
+            type: position_score
+            table:
+              filename: data.txt
+            scores: []
+        """,
+        "data.txt": convert_to_tab_separated("""
+            chrom  pos_begin  pos_end
+            1      10         10
+        """),
+    })
+    score = PositionScore(res)
+
+    with pytest.raises(ValueError) as excinfo:
+        score.get_score_histogram()
+
+    assert str(excinfo.value) == (
+        "resource '' has no only score to read without a score id; "
+        "it has []")
