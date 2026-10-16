@@ -55,8 +55,11 @@ of these is re-exported:
 Every builder comes in two forms, ``*_from_resource_id(resource_id, grr)``
 and ``*_from_resource(resource)`` for a
 :class:`~gain.genomic_resources.repository.GenomicResource` already in hand.
-Every page below opens with a "Creating a …" section that names its builder
-pair, and the pair's reference entries sit in the page's API section. Each
+Each page for a resource kind with a builder opens with a "Creating a …"
+section that names its builder pair, and the pair's reference entries sit in
+the page's API section. The data-frame and AnnData page opens with "Loading
+a …" sections for its loader pairs instead. The histograms page and the page
+on adding a resource type have no builder section. Each
 name is the same object as in the module that defines
 it, and the chapters below refer to those defining modules; importing from
 either place gives the same thing.
