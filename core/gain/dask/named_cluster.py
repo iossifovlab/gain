@@ -7,6 +7,7 @@ from distributed.client import Client
 from distributed.deploy import Cluster  # pyright: ignore
 
 from gain import logging
+from gain.dask.config import check_named_cluster_config, clusters_shape_error
 
 _CLUSTER_TYPES: dict[str, Callable[[dict[str, Any]], Cluster]] = {}
 logger = logging.getLogger(__name__)
@@ -149,26 +150,16 @@ def _adjust_default_distributed_config() -> None:
         "distributed"]["worker"]["memory"]["pause"] = memory_pause
 
 
-_DICT_SHAPE_EXAMPLE = """\
-gain_named_cluster:
-  clusters:
-    <name>:
-      type: <cluster type>
-      params: {...}"""
-
-
 def _named_clusters() -> dict[str, dict[str, Any]]:
     """Return the named clusters, checked for the dict shape."""
+    check_named_cluster_config()
     clusters = dask.config.get(  # pyright: ignore
         "gain_named_cluster.clusters")
     if not isinstance(clusters, dict):
         # ValueError, not the TypeError that TRY004 asks for: the wrong
         # shape is a configuration error, and the issue (gain#1972) asks
         # for ValueError like the other refusals of the named clusters.
-        raise ValueError(  # ruff: ignore[type-check-without-type-error]
-            "'gain_named_cluster.clusters' must map each named cluster to "
-            f"its cluster definition, not hold a "
-            f"{type(clusters).__name__}:\n{_DICT_SHAPE_EXAMPLE}")
+        raise clusters_shape_error(clusters)
     for name, cluster_config in clusters.items():
         if isinstance(cluster_config, dict) and "name" in cluster_config:
             raise ValueError(

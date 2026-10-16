@@ -304,8 +304,11 @@ def test_adjust_default_distributed_config(
 
 
 @pytest.fixture
-def restored_dask_config() -> Iterator[None]:
+def restored_dask_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[None]:
     saved = copy.deepcopy(config.config)
+    monkeypatch.setattr(gain.dask.config, "_deferred_error", None)
     try:
         yield
     finally:
@@ -567,3 +570,59 @@ def test_old_cluster_definition_replaces_the_bundled_one_of_that_name(
         "adapt_params": {"minimum": 1, "maximum": 50},
         "params": {"queue": "all.q"},
     }
+
+
+def test_list_of_named_clusters_in_a_user_file_is_refused(
+    mocker: pytest_mock.MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    restored_dask_config: None,
+) -> None:
+    # The user file renames the old key but keeps the old list shape. The
+    # bundled defaults that reconfigure() merges must not hide the list.
+    monkeypatch.setattr(config, "PATH", str(tmp_path))
+    mocked_client = mocker.patch(
+        "gain.dask.named_cluster.Client", autospec=True)
+    _load_user_config(tmp_path, """\
+        gain_named_cluster:
+          clusters:
+            - name: local
+              type: local
+        """)
+
+    gain.dask.config.reconfigure()
+    with pytest.raises(ValueError, match="<name>:") as excinfo:
+        setup_client("local")
+
+    assert "gain_named_cluster.clusters" in str(excinfo.value)
+    assert mocked_client.call_count == 0
+
+
+@pytest.mark.parametrize("legacy_clusters, message", [
+    ("\n    - type: sge", "has no 'name' key"),
+    ("\n    my_sge:\n      type: sge", "must be a list"),
+    ("\n    -", "must be a mapping"),
+])
+def test_malformed_old_key_is_refused_when_named_clusters_are_read(
+    mocker: pytest_mock.MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    restored_dask_config: None,
+    legacy_clusters: str,
+    message: str,
+) -> None:
+    # A malformed old key must not abort the import of gain.dask: a run
+    # with -c never reads the named clusters.
+    monkeypatch.setattr(config, "PATH", str(tmp_path))
+    mocked_client = mocker.patch(
+        "gain.dask.named_cluster.Client", autospec=True)
+    (tmp_path / "named_cluster.yaml").write_text(
+        "dae_named_cluster:\n  clusters:" + legacy_clusters + "\n")
+    config.refresh(paths=[str(tmp_path)])
+
+    gain.dask.config.reconfigure()
+    with pytest.raises(ValueError, match=message) as excinfo:
+        setup_client("my_sge")
+
+    assert "dae_named_cluster.clusters" in str(excinfo.value)
+    assert mocked_client.call_count == 0

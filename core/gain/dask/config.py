@@ -1,4 +1,5 @@
 import os
+from collections.abc import Mapping
 from typing import Any
 
 import dask
@@ -22,15 +23,67 @@ LEGACY_NAMED_CLUSTER_REMOVAL_RELEASE = "2026.11.0"
 
 NAMED_CLUSTERS_DOCS_URL = "https://iossifovlab.com/gaindocs/named_clusters.html"
 
+_DICT_SHAPE_EXAMPLE = """\
+gain_named_cluster:
+  clusters:
+    <name>:
+      type: <cluster type>
+      params: {...}"""
+
+#: A refusal of the named cluster config that :func:`reconfigure` found.
+#: :func:`check_named_cluster_config` raises it when GAIn reads the named
+#: clusters, so that a run with ``-c`` is not stopped at import.
+_deferred_error: ValueError | None = None  # pylint: disable=invalid-name
+
+
+def clusters_shape_error(clusters: Any) -> ValueError:
+    """Return the refusal of a ``clusters`` value that is not a mapping."""
+    return ValueError(
+        f"'{NAMED_CLUSTER_KEY}.clusters' must map each named cluster to "
+        f"its cluster definition, not hold a "
+        f"{type(clusters).__name__}:\n{_DICT_SHAPE_EXAMPLE}")
+
+
+def check_named_cluster_config() -> None:
+    """Raise the refusal that :func:`reconfigure` found, if any.
+
+    Raises
+    ------
+    ValueError
+        When the named cluster config that dask loaded has the wrong shape.
+    """
+    if _deferred_error is not None:
+        raise _deferred_error
+
+
+def _check_user_clusters_shape(config: dict[str, Any]) -> ValueError | None:
+    """Return the refusal of a user ``clusters`` value that is not a mapping.
+
+    The check must run before the bundled defaults are merged:
+    ``dask.config.update_defaults`` replaces a user value that is not a
+    mapping with the bundled mapping, and the user value is lost.
+    """
+    for key in _spellings(config, NAMED_CLUSTER_KEY):
+        named_clusters = config[key]
+        if not isinstance(named_clusters, Mapping):
+            continue
+        clusters = named_clusters.get("clusters")
+        if clusters is not None and not isinstance(clusters, Mapping):
+            return clusters_shape_error(clusters)
+    return None
+
 
 def reconfigure() -> None:
     """Load default config into dask."""
+    global _deferred_error  # pylint: disable=global-statement
     filename = os.path.join(os.path.dirname(__file__), "named_cluster.yaml")
     dask.config.ensure_file(source=filename)  # pyright: ignore
 
     with open(filename) as file:
         defaults = yaml.safe_load(file)
 
+    _deferred_error = _check_user_clusters_shape(
+        dask.config.config)  # pyright: ignore
     dask.config.update_defaults(defaults)  # pyright: ignore
 
     distributed_config = {}
@@ -39,7 +92,9 @@ def reconfigure() -> None:
         "distributed", {})
     dask.config.update_defaults(distributed_config)  # pyright: ignore
 
-    translate_legacy_named_cluster()
+    error = translate_legacy_named_cluster()
+    if _deferred_error is None:
+        _deferred_error = error
 
 
 def _spellings(config: dict[str, Any], key: str) -> list[str]:
@@ -52,7 +107,38 @@ def _spellings(config: dict[str, Any], key: str) -> list[str]:
         if existing.replace("-", "_") == key]
 
 
-def translate_legacy_named_cluster() -> None:
+def _legacy_clusters(clusters: Any) -> dict[str, Any]:
+    """Convert the old ``clusters`` list to a mapping keyed by each name.
+
+    Raises
+    ------
+    ValueError
+        When the old ``clusters`` value is not a list, or when an entry is
+        not a mapping or has no ``name`` key.
+    """
+    where = f"'{LEGACY_NAMED_CLUSTER_KEY}.clusters'"
+    if clusters is None:
+        return {}
+    if not isinstance(clusters, list):
+        raise ValueError(  # ruff: ignore[type-check-without-type-error]
+            f"{where} must be a list of cluster definitions, not a "
+            f"{type(clusters).__name__}.")
+    result: dict[str, Any] = {}
+    for cluster_config in clusters:
+        if not isinstance(cluster_config, Mapping):
+            raise ValueError(  # ruff: ignore[type-check-without-type-error]
+                f"Each entry of {where} must be a mapping, not a "
+                f"{type(cluster_config).__name__}: {cluster_config!r}")
+        cluster_config = dict(cluster_config)
+        if "name" not in cluster_config:
+            raise ValueError(
+                f"A cluster definition in {where} has no 'name' key: "
+                f"{cluster_config}")
+        result[cluster_config.pop("name")] = cluster_config
+    return result
+
+
+def translate_legacy_named_cluster() -> ValueError | None:
     """Translate the old named cluster key in the dask config.
 
     When the dask config holds ``dae_named_cluster``, the function converts
@@ -64,15 +150,20 @@ def translate_legacy_named_cluster() -> None:
     removes the old key from the dask config and logs one warning. It does
     not change any file.
 
-    Raises
-    ------
-    ValueError
-        When an entry of the old ``clusters`` list has no ``name`` key.
+    The function does not raise. When the old ``clusters`` value has the
+    wrong shape, the function translates the other values and returns the
+    refusal. :func:`reconfigure` defers the refusal until GAIn reads the
+    named clusters.
+
+    Returns
+    -------
+    ValueError | None
+        The refusal of a malformed old ``clusters`` value, or ``None``.
     """
     config = dask.config.config  # pyright: ignore
     keys = _spellings(config, LEGACY_NAMED_CLUSTER_KEY)
     if not keys:
-        return
+        return None
 
     legacy: dict[str, Any] = {}
     for key in keys:
@@ -84,14 +175,12 @@ def translate_legacy_named_cluster() -> None:
         for field in ("default", "distributed")
         if field in legacy
     }
-    clusters: dict[str, Any] = {}
-    for cluster_config in legacy.get("clusters") or []:
-        cluster_config = dict(cluster_config)
-        if "name" not in cluster_config:
-            raise ValueError(
-                f"A cluster definition in '{LEGACY_NAMED_CLUSTER_KEY}."
-                f"clusters' has no 'name' key: {cluster_config}")
-        clusters[cluster_config.pop("name")] = cluster_config
+    error: ValueError | None = None
+    try:
+        clusters = _legacy_clusters(legacy.get("clusters"))
+    except ValueError as refusal:
+        error = refusal
+        clusters = {}
 
     target = next(
         iter(_spellings(config, NAMED_CLUSTER_KEY)), NAMED_CLUSTER_KEY)
@@ -117,6 +206,7 @@ def translate_legacy_named_cluster() -> None:
         NAMED_CLUSTER_KEY,
         NAMED_CLUSTERS_DOCS_URL,
     )
+    return error
 
 
 reconfigure()

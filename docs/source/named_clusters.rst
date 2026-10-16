@@ -148,9 +148,14 @@ dask wrote for an earlier release has this shape.
 
 When the dask configuration holds ``dae_named_cluster``, GAIn converts it to
 the new shape for the run and logs a warning. The values of the old key win
-over the bundled values, and a bundled key that the old key lacks stays.
-An old cluster definition replaces the bundled cluster definition of the same
+over every ``gain_named_cluster`` value: the bundled values and the values in
+your own config files too. Thus an old full copy of ``named_cluster.yaml``
+overrides an entry in the new shape in another file, for example
+``gain.yaml``. A key that the old key lacks keeps its ``gain_named_cluster``
+value. An old cluster definition replaces the cluster definition of the same
 name whole, as the old list replaced the bundled list in earlier releases.
+When the old key has the wrong shape, GAIn refuses the named clusters when
+it reads them, for example for ``-N``. A run with ``-c`` still works.
 GAIn stops reading ``dae_named_cluster`` in release 2026.11.0. Before that
 release, delete the old ``named_cluster.yaml`` in the dask config directory,
 or move its entries to ``gain_named_cluster`` in the new shape.
