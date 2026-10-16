@@ -37,8 +37,10 @@ A function in `gain.grr` that turns a **resource** into the typed object that
 reads it, for example `build_score_from_resource_id`. Builders come in pairs:
 one takes a resource id and a **GRR**, the other a `GenomicResource` already
 in hand. The data-frame and AnnData loaders are not builders: they read the
-data at once and return a pandas or anndata object.
-_Avoid_: factory, constructor
+data at once and return a pandas or anndata object. "Factory" is an
+acceptable synonym, and the modules that define some builders carry it in
+their names (`repository_factory`, `gene_models_factory`).
+_Avoid_: constructor
 
 **Implementation builder**:
 The callable registered for one resource type under the
