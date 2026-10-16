@@ -823,6 +823,40 @@ measured exactly that shape of cost at 0.088 us/rec -- about a third of
 what gain#823 won on the same path.  The rule is one function either way;
 only the generator costs.  Rewriting an inline call as a composed stream
 reads as a cleanup and quietly gives that third back.
+
+**``GenomicScore.aggregate_region`` is gone; use the per-kind aggregating
+read** (gain#1981).  The private hook it alone called,
+``GenomicScore._aggregation_segments`` and its ``PositionScore`` override,
+goes with it.  The replacements, by kind:
+
+* ``PositionScore.get_scores_in_region_agg``
+* ``AlleleScore.get_allele_scores_in_region_agg``
+* ``FragmentScore.get_fragment_scores_overlapping_region_agg``
+
+Removed outright, with no forwarder and no ``DeprecationWarning``.  That is
+a deliberate exception to the rule ``gain.grr`` states for its own surface,
+a release with a warning first: no code in ``gain`` called the method, a
+code search of the iossifovlab and seqpipe organisations finds no caller
+outside ``gain``, and the per-kind reads have existed since gain#1131.  A
+call to ``aggregate_region`` is an ``AttributeError``.
+``genomic_scores.clip_to_region`` stays exported, though no production code
+calls it any more.
+
+**What a migrating caller has to know.**  Call the per-kind read, with one
+query object per ``(score_id, aggregator)`` request: a bare score id becomes
+a query that names no aggregator.  Each read answers a tuple, not a list.
+Three answers differ from the old method's:
+
+* For a fragment score the count semantics differ.  The ``count`` of
+  ``FragmentAggregate`` counts FRAGMENTS, and is ``0`` for a region no
+  fragment overlaps; the ``count`` aggregator counts the non-null values and
+  answers ``None`` there.
+* The allele read answers ``None`` for a region no row overlaps, where the
+  old method let each aggregator answer for the empty region.
+* The position read counts each position once: where two records cover one
+  position, the first answers, and the old method counted both.  A contig
+  the score never mentions answers as uncovered (gain#1211), where the old
+  method refused it.
 """
 from .line import LineBuffer
 from .table import ChromLengthSource, ContigExtent, PayloadKind

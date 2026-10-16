@@ -683,6 +683,23 @@ def test_one_source_asked_twice_answers_twice(
     assert aggregate == FragmentAggregate(count=4, values=(1.0, 4.0))
 
 
+def test_a_fragment_counts_once_however_long_it_is(
+    fragments: FragmentScore,
+) -> None:
+    """A fragment is one observation, not one per base pair it spans.
+
+    The four fragments differ in length and in overlap with the region,
+    so a mean weighed by either differs from the plain mean of the four
+    values: ``2.5``.
+    """
+    with fragments.open() as score:
+        aggregate = score.get_fragment_scores_overlapping_region_agg(
+            "1", 100, 199, queries=[ScoreAggregationQuery("v", "mean")])
+
+    assert aggregate == FragmentAggregate(
+        count=4, values=(pytest.approx((3.0 + 1.0 + 2.0 + 4.0) / 4),))
+
+
 def test_a_region_no_fragment_overlaps_counts_zero(
     fragments: FragmentScore,
 ) -> None:

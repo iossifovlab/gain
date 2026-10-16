@@ -12,9 +12,12 @@ the code already had:
 
 and decomposing the class itself (gain#1027) has since added two more:
 
-- :mod:`.aggregation` (gain#1074) -- the machinery
-  :meth:`~.base.GenomicScore.aggregate_region` orchestrates; knows no score
-  class, and is handed the per-kind weight rule rather than reading it
+- :mod:`.aggregation` (gain#1074) -- the machinery the per-kind aggregating
+  reads share (:meth:`~.position.PositionScore.get_scores_in_region_agg`,
+  :meth:`~.allele.AlleleScore.get_allele_scores_in_region_agg` and
+  :meth:`~.fragment.FragmentScore.get_fragment_scores_overlapping_region_agg`);
+  knows no score class, and is handed the per-kind weight rule rather than
+  reading it
 - :mod:`.value_extraction` (gain#1114) -- the two decisions
   :meth:`~.base.GenomicScore.open` takes about how a record's cell becomes a
   value: which extractor reads the payload, and which payload column each

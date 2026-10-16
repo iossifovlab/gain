@@ -42,7 +42,6 @@ from .aggregation import (
 from .base import GenomicScore
 from .records import (
     clip_span,
-    clip_to_region,
 )
 
 
@@ -147,35 +146,6 @@ class PositionScore(GenomicScore):
         :meta private:
         """
         return right - left + 1
-
-    def _aggregation_segments(
-        self,
-        chrom: str,
-        pos_begin: int | None = None,
-        pos_end: int | None = None,
-        scores: list[str] | None = None,
-    ) -> Generator[tuple[int, int, list[ScoreValue]], None, None]:
-        """The base's stream, clipped to the queried window first.
-
-        Clipping before weighing is a position-score fact: a record's weight
-        is how many bases OF THE QUERY it covers, so the part reaching
-        outside must come off before :meth:`record_weight` measures it.
-        Left unclipped, a record straddling the edge would count for its
-        whole width, and one entirely past the window for a negative number
-        of times.
-
-        Written as the ADR 0008 idiom -- compose the region transducer over
-        the unclipped stream.  Every SEGMENT-shaped read of this kind states
-        the rule here and only here, which is now
-        :meth:`aggregate_region` alone: the weighted read that was its
-        other reader left with gain#1131, when the annotator moved to the
-        logical plane.  The plane's :meth:`_position_runs` clips for itself
-        still, because it is not reducing records but tiling positions --
-        gain#1027 carries that.
-        """
-        return clip_to_region(
-            super()._aggregation_segments(chrom, pos_begin, pos_end, scores),
-            pos_begin, pos_end)
 
     @staticmethod
     def get_schema() -> dict[str, Any]:
@@ -731,9 +701,9 @@ class PositionScore(GenomicScore):
 
         One fetch serves every query: each DISTINCT score is fetched once,
         and each query folds the column its score landed in -- so one score
-        may be requested twice with different aggregators, exactly as
-        ``aggregate_region`` allows.  Which scores those are, and in what
-        order, is :func:`~.aggregation.distinct_score_ids`, the derivation
+        may be requested twice with different aggregators, as the allele and
+        fragment aggregating reads allow too.  Which scores those are, and in
+        what order, is :func:`~.aggregation.distinct_score_ids`, the derivation
         the aggregating reads hand to
         :func:`~.aggregation.fold_region_segments` as its column list: the
         list both names what is fetched and indexes what comes back, so a

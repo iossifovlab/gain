@@ -226,6 +226,14 @@ a weight is asked of it instead of quietly weighing every record 1. That is the
 stronger position — an inherited "counts once" reads exactly like a kind whose
 author considered the question and answered it.
 
+*Amended by gain#1981:* `aggregate_region` and its `_aggregation_segments` hook
+no longer exist. The per-kind aggregating reads replace them:
+`PositionScore.get_scores_in_region_agg`,
+`AlleleScore.get_allele_scores_in_region_agg` and
+`FragmentScore.get_fragment_scores_overlapping_region_agg`. The allele and
+fragment reads fold with `record_weight`. The position read weighs each run of
+positions by its length.
+
 ### The condition is now a list of exercised kinds
 
 *Superseded by gain#1261 — the list no longer exists; see the [gain#1261

@@ -12,9 +12,9 @@ extraction (gain#1044) moved the scoredef lifecycle to
 :mod:`~gain.genomic_resources.score_def` and took this module under the
 1500-line cap, so the file-scoped ``too-many-lines`` pragma gain#1007 added
 here when it restored that cap is gone; its second (gain#1074) moved the
-region-aggregation machinery to :mod:`.aggregation`, leaving
-:meth:`GenomicScore.aggregate_region` here as the orchestrator that hands
-it the per-kind weight rule; its third (gain#1114) moved the
+region-aggregation machinery to :mod:`.aggregation`, which the per-kind
+aggregating reads drive, each handing it the kind's weight rule; its third
+(gain#1114) moved the
 value-extraction seam -- picking the per-record read, and addressing each
 score def to a payload column -- to :mod:`.value_extraction`, leaving
 :meth:`GenomicScore.open` calling both in the order that seam requires and
@@ -96,12 +96,6 @@ from gain.genomic_resources.vcf_scores import (
     parse_vcf_scoredefs,
 )
 
-from .aggregation import (
-    build_region_aggregators,
-    fold_region_segments,
-    request_score_ids,
-    resolve_aggregator_requests,
-)
 from .batch_budget import value_arrays_batch_rows
 from .chrom_lengths import (
     ChromLength,
@@ -154,16 +148,12 @@ DEFAULT_VALUE_ARRAYS_BATCH_SIZE = 100_000
 #   kind, and a read holding an already-resolved request composes this body
 #   without going through it (gain#1282).
 # - record_weight(): how many times one record's value counts when a region
-#   is aggregated.  Every reader goes through it -- the annotators'
-#   ``aggregate_region``, the per-record scan, and the bulk scan via
-#   ``record_weights`` (gain#1095).
-# - _aggregation_segments(): whether those records are cut down to the
-#   queried window before they are weighed.  Unlike the others this HAS a
-#   default -- not clipping -- because it is a consequence of the weight
-#   rule rather than a rule of its own: a kind that counts a record once
-#   counts it wherever it falls.
+#   is aggregated.  Every reader goes through it -- the allele and fragment
+#   aggregating reads (``get_allele_scores_in_region_agg``,
+#   ``get_fragment_scores_overlapping_region_agg``), the per-record scan,
+#   and the bulk scan via ``record_weights`` (gain#1095).
 #
-# All but the last have no default.  A kind that inherited one would be
+# Neither has a default.  A kind that inherited one would be
 # weighed by a rule nobody chose for it, which is the failure ADR 0008
 # exists to undo.
 #
@@ -1502,10 +1492,11 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
             chrom, scores)
 
     # The kind's single statement of the weight rule, and every reader that
-    # weighs a RECORD goes through it: ``aggregate_region`` folds with it, the
-    # per-record statistics scan calls it, and the bulk scan broadcasts it over
-    # a whole batch through ``record_weights``.  One statement, so a kind cannot
-    # weigh its records one way in one of those and another way in the next.
+    # weighs a RECORD goes through it: the allele and fragment aggregating
+    # reads fold with it, the per-record statistics scan calls it, and the bulk
+    # scan broadcasts it over a whole batch through ``record_weights``.  One
+    # statement, so a kind cannot weigh its records one way in one of those
+    # and another way in the next.
     # Pinned by test_the_weight_rule_is_stated_once_per_kind.
     #
     # A position score's logical plane is deliberately NOT among them.  It tiles
@@ -1605,125 +1596,3 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         if weights.ndim == 0:
             weights = np.full(begins.shape, weights)
         return weights.astype(np.int64, copy=False)
-
-    # The aggregating counterpart of ``fetch_region_segments_scores``, which it
-    # is built on: that method yields one entry per record, this one folds those
-    # entries into a single value per request.
-    #
-    # The default aggregator of a score is the one
-    # ``score_def.finish_scoredefs`` resolved from this class's
-    # ``DEFAULT_AGGREGATORS``.
-    #
-    # ``["s", ("s", "max")]`` is what an annotation config does when it exposes
-    # one source as both a min and a max attribute, and a dict keyed by score id
-    # would silently drop one of them.
-    #
-    # ``count`` chooses to report nothing rather than 0 for an empty region (see
-    # ``CountAggregator.get_final``); this method does not second-guess any
-    # aggregator.  That is deliberately unlike the per-position reads
-    # (``get_scores_at_position``, ``get_allele_scores_for_allele``), which
-    # answer ``None`` where there is no data -- aggregating nothing is a
-    # well-defined question, reading a value where there is none is not.
-    #
-    # Values reach the aggregator exactly as the record carried them, ``None``
-    # included, because that is what the annotators do (each aggregator decides
-    # what a null means for it) and the point of this method is to give the
-    # answer they would.
-    def aggregate_region(
-        self,
-        chrom: str,
-        pos_begin: int | None = None,
-        pos_end: int | None = None,
-        scores: list[str | tuple[str, str]] | None = None,
-    ) -> list[ScoreValue]:
-        """Reduce a region to one value for each requested score.
-
-        Parameters
-        ----------
-        chrom : str
-            The chromosome name.
-        pos_begin : int | None, default None
-            The start of the region. ``None`` means no lower bound.
-        pos_end : int | None, default None
-            The end of the region. ``None`` means no upper bound.
-        scores : list[str | tuple[str, str]] | None, default None
-            The requests. A request is a score id, reduced by the default
-            aggregator of the score, or a pair ``(score_id, aggregator)``
-            that names the aggregator. An aggregator string can carry
-            parameters, for example ``join(,)``. ``None`` requests every
-            score with its default aggregator.
-
-        Returns
-        -------
-        list[ScoreValue]
-            One value for each request, in the order of ``scores``. A score
-            can be requested twice with two aggregators, so the result is a
-            list and not a dict. An empty region is not an error: each
-            aggregator answers for itself, and ``max`` and ``count`` give
-            ``None``, while ``list`` gives ``[]``.
-
-        Raises
-        ------
-        ValueError
-            If the score is not open, if the table does not hold ``chrom``,
-            if a score id is unknown, or if an aggregator name is not valid.
-        """
-        requests = resolve_aggregator_requests(
-            scores,
-            score_definitions=self.score_definitions,
-            all_scores=self.get_all_scores(),
-            resource_id=self.resource_id,
-        )
-        # Built BEFORE the fetch, because the fetch is not lazy: the
-        # not-open and unknown-contig guards of fetch_region_segments_scores run
-        # when it is CALLED, not on the first next().  An aggregator built
-        # afterwards would have a misspelled name reported only for the
-        # regions a resource happens to cover, so `mediann` would be a
-        # missing-contig error until someone queried a covered contig.
-        aggregators = build_region_aggregators(
-            requests, resource_id=self.resource_id)
-        score_ids = request_score_ids(requests)
-        return fold_region_segments(
-            self._aggregation_segments(
-                chrom, pos_begin, pos_end, score_ids),
-            aggregators,
-            requests,
-            score_ids=score_ids,
-            weigh=self.record_weight,
-        )
-
-    def _aggregation_segments(
-        self,
-        chrom: str,
-        pos_begin: int | None = None,
-        pos_end: int | None = None,
-        scores: list[str] | None = None,
-    ) -> Iterator[tuple[int, int, list[ScoreValue]]]:
-        """The segment stream this kind's aggregating reads consume.
-
-        The records as this kind means them, which for everything but a
-        position score is :meth:`fetch_region_segments_scores` unchanged: a kind
-        that counts a record ONCE counts it wherever the point it collapses
-        to falls, window or not (see
-        test_an_allele_point_outside_the_window_still_aggregates_once).
-
-        Clipping the records to the window first is a position-score fact,
-        so it is stated on :class:`~.position.PositionScore` and nowhere
-        else.  This hook is what lets it be: without it the fold would have
-        to carry a flag saying which kind it is serving, and that flag
-        would be a second statement of the weight rule.
-
-        Underscored by a criterion rather than by a list of callers, as
-        :meth:`_score_segments` is: the hooks that are part of the read API
-        are asked for by name (``fetch_region_segments_scores`` IS
-        :meth:`values_from_records`; the scan calls
-        :meth:`record_weight` by name, and reads the kind's validation rule
-        by dispatching on its class), while
-        this one is never a caller's question -- it is composed, from
-        inside this hierarchy, by whichever reads aggregate.  A kind
-        overrides it; nothing outside the hierarchy calls it.  Stated as
-        the criterion because the census of those reads is not stable: it
-        was one until gain#1087 gave the annotators' read the same stream.
-        """
-        return self.fetch_region_segments_scores(
-            chrom, pos_begin, pos_end, scores)

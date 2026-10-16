@@ -143,7 +143,6 @@ Inherited from ``GenomicScore``, which :doc:`scores` describes:
 
 .. autosummary::
 
-   GenomicScore.aggregate_region
    GenomicScore.chrom_length_source
    GenomicScore.chrom_length_sources
    GenomicScore.close

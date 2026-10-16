@@ -1,18 +1,20 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 """The region-aggregation machinery, apart from any score class.
 
-``GenomicScore.aggregate_region`` is the orchestrator these three functions
-serve, and ``test_aggregate_region`` pins what it answers.  What is pinned
-HERE is what each piece promises the orchestrator on its own: which requests
-resolve to which pairs, that every built aggregator is a fresh accumulator,
-and -- the reason the fold takes ``weigh`` as an argument at all -- that the
-fold applies the per-kind weight rule it is HANDED rather than deriving one
-of its own.
+The per-kind aggregating reads -- ``PositionScore.get_scores_in_region_agg``,
+``AlleleScore.get_allele_scores_in_region_agg`` and
+``FragmentScore.get_fragment_scores_overlapping_region_agg`` -- are what
+these functions serve, and each read's own test module pins what it
+answers.  What is pinned HERE is what each piece promises a read on its
+own: which requests resolve to which pairs, that every built aggregator is
+a fresh accumulator, and -- the reason the fold takes ``weigh`` as an
+argument at all -- that the fold applies the per-kind weight rule it is
+HANDED rather than deriving one of its own.
 
 Nothing here knows what a KIND is, which is why nothing here pins clipping:
-whether a record is cut down to the query window before it reaches the fold
-is settled by the kind's ``_aggregation_segments``, and pinned against the
-score classes in ``test_aggregate_region`` and ``test_clip_span``.
+whether a record is cut down to the query window before it is weighed is
+settled by each kind's read, and pinned against the score classes in
+``test_position_score_get_plane`` and ``test_clip_span``.
 
 The exception is the last section, which reaches for a ``PositionScore``
 deliberately: what it pins is that the position score's own query surface
@@ -25,6 +27,7 @@ import pathlib
 from collections.abc import Callable, Sequence
 
 import gain
+import gain.genomic_resources.genomic_scores.allele
 import gain.genomic_resources.genomic_scores.position
 import pytest
 from gain.genomic_resources.aggregators import (
@@ -33,7 +36,11 @@ from gain.genomic_resources.aggregators import (
     PositionScoreAggregationQuery,
     ScoreAggregationQuery,
 )
-from gain.genomic_resources.genomic_scores import PositionScore
+from gain.genomic_resources.genomic_scores import (
+    AlleleScore,
+    PositionScore,
+    build_allele_score_from_resource,
+)
 from gain.genomic_resources.genomic_scores.aggregation import (
     build_region_aggregator,
     distinct_score_ids,
@@ -43,7 +50,11 @@ from gain.genomic_resources.genomic_scores.aggregation import (
     resolve_aggregator_requests,
 )
 from gain.genomic_resources.score_def import GenomicScoreDef, ScoreValue
-from gain.genomic_resources.testing.builders import a_grr, a_position_score
+from gain.genomic_resources.testing.builders import (
+    a_grr,
+    a_position_score,
+    an_allele_score,
+)
 
 from tests.small.genomic_resources.conftest import (
     a_flag_score,
@@ -152,8 +163,22 @@ def test_the_fold_indexes_the_columns_it_is_told_the_fetch_carries() -> None:
     ) == [0.8, 2]
 
 
+@pytest.fixture
+def two_alleles(tmp_path: pathlib.Path) -> AlleleScore:
+    return build_allele_score_from_resource(
+        an_allele_score()
+        .with_score("s", "float")
+        .with_score("t", "int")
+        .with_data("""
+            chrom  pos_begin  reference  alternative  s    t
+            1      10         A          C            0.2  1
+            1      14         C          T            0.8  2
+        """)
+        .build_resource(tmp_path / "alleles"))
+
+
 def test_a_region_read_derives_its_score_list_once(
-    two: PositionScore,
+    two_alleles: AlleleScore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # One derivation per read, handed to both the fetch and the fold --
@@ -161,12 +186,15 @@ def test_a_region_read_derives_its_score_list_once(
     calls = count_calls(
         monkeypatch, "request_score_ids",
         gain.genomic_resources.genomic_scores.aggregation,
-        gain.genomic_resources.genomic_scores.base,
+        gain.genomic_resources.genomic_scores.allele,
     )
 
-    with two.open() as score:
-        assert score.aggregate_region("1", 10, 14, ["s", "t"]) == [
-            pytest.approx((0.2 * 4 + 0.8) / 5), pytest.approx(1.2)]
+    with two_alleles.open() as score:
+        assert score.get_allele_scores_in_region_agg(
+            "1", 10, 14, queries=[
+                ScoreAggregationQuery("s", "mean"),
+                ScoreAggregationQuery("t", "mean"),
+            ]).values == (pytest.approx(0.5), pytest.approx(1.5))
 
     assert len(calls) == 1
 
@@ -177,7 +205,7 @@ def test_the_fold_aggregates_the_segments_it_is_handed() -> None:
     # meant to aggregate, whatever window was asked for.  Which kind
     # clips BEFORE the fold, and why, is pinned where that decision is
     # now made -- on the score classes, by
-    # test_a_record_the_query_clips_to_nothing_is_not_aggregated and
+    # test_a_record_outside_the_region_is_dropped_not_counted and
     # test_an_allele_point_outside_the_window_still_aggregates_once.
     assert _fold(
         [(20, 25, [0.7])],
@@ -349,23 +377,23 @@ def test_a_bad_name_is_refused_every_time_it_is_asked(
 
 
 def test_a_bad_aggregator_is_refused_before_the_region_is_read(
-    two: PositionScore,
+    two_alleles: AlleleScore,
 ) -> None:
-    """The orchestrator builds every aggregator BEFORE it fetches.
+    """The allele read builds every aggregator BEFORE it fetches.
 
-    ``fetch_region_segments_scores`` is not lazy -- its not-open and
-    unknown-contig guards run when it is CALLED, not on the first ``next()``
-    -- so building
-    the aggregators after the fetch would let a region complaint mask a
-    misspelled aggregator.  An annotation config with a typo would then
-    surface only once someone queried a contig the resource covers.
+    The allele read refuses an unknown contig when it is CALLED, so
+    building the aggregators after the fetch would let a region complaint
+    mask a misspelled aggregator.  An annotation config with a typo would
+    then surface only once someone queried a contig the resource covers.
     """
-    with two.open() as score, pytest.raises(ValueError) as excinfo:
-        score.aggregate_region("nosuchchrom", 10, 14, [("s", "mediann")])
+    with two_alleles.open() as score, pytest.raises(ValueError) as excinfo:
+        score.get_allele_scores_in_region_agg(
+            "nosuchchrom", 10, 14,
+            queries=[ScoreAggregationQuery("s", "mediann")])
 
     assert str(excinfo.value) == (
-        "score 's' of resource 'two' asks for aggregator 'mediann', "
-        "which is not valid: 'mediann'")
+        f"score 's' of resource {score.resource_id!r} asks for aggregator "
+        "'mediann', which is not valid: 'mediann'")
 
 
 def test_the_distinct_scores_keep_the_order_they_were_asked_for() -> None:
@@ -379,8 +407,8 @@ def test_the_distinct_scores_keep_the_order_they_were_asked_for() -> None:
 
 # -- The two surfaces that resolve an aggregation request (gain#1087) ------
 #
-# ``resolve_aggregator_requests`` serves ``aggregate_region``'s list of
-# score ids and ``(score_id, aggregator)`` pairs; ``PositionScore``'s
+# ``resolve_aggregator_requests`` serves a list of score ids and
+# ``(score_id, aggregator)`` pairs; ``PositionScore``'s
 # logical plane serves ``PositionScoreAggregationQuery`` objects, which
 # carry a ``none_value_replacement`` besides.  They are different request
 # SHAPES asking the same two questions, and what these pin is that the
@@ -422,7 +450,7 @@ def test_both_surfaces_state_the_missing_default_rule_identically(
 ) -> None:
     """The RULE is shared; only the remedy names each surface's own API.
 
-    A caller of ``aggregate_region`` writes a ``(score_id, aggregator)``
+    A caller of the request list writes a ``(score_id, aggregator)``
     pair and a caller of the plane writes it on the query, so telling each
     of them to do the other's thing would be wrong.  Everything up to that
     remedy -- which score, which resource, which value type, and that the

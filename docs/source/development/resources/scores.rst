@@ -208,7 +208,6 @@ factories ``grr.build_score_from_resource_id`` and
 .. autosummary::
 
    GenomicScore
-   GenomicScore.aggregate_region
    GenomicScore.chrom_length_source
    GenomicScore.chrom_length_sources
    GenomicScore.close

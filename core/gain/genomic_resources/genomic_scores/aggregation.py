@@ -1,7 +1,10 @@
 """Reducing a region to one value per requested score.
 
-The machinery :meth:`~.base.GenomicScore.aggregate_region` orchestrates,
-apart from any score class: resolving a caller's request list to
+The machinery the per-kind aggregating reads share --
+:meth:`~.position.PositionScore.get_scores_in_region_agg`,
+:meth:`~.allele.AlleleScore.get_allele_scores_in_region_agg` and
+:meth:`~.fragment.FragmentScore.get_fragment_scores_overlapping_region_agg`
+-- apart from any score class: resolving a caller's request list to
 ``(score_id, aggregator)`` pairs, building a fresh aggregator for each, and
 folding a stream of fetched segments into one value per request.
 
@@ -27,8 +30,8 @@ handed and does not re-derive or cross-check it: the rule is stated once
 per kind, on the kind (see
 ``test_the_weight_rule_is_stated_once_per_kind``).  Whether the segments
 were clipped to the query window before they got here is settled the same
-way, by the kind's :meth:`~.base.GenomicScore._aggregation_segments`, so
-the fold carries no flag saying which kind it serves.
+way, by the kind's own read, so the fold carries no flag saying which kind
+it serves.
 
 Every BACKEND feeds one path here -- this generic weighted stream over
 fetched records -- and a backend-specific fast path was considered and
@@ -147,8 +150,7 @@ def resolve_aggregation_queries(
     returns exactly these pairs and already expands ``None``: it hardcodes
     :data:`PAIR_AGGREGATOR_REMEDY`, and a query surface must say
     :data:`QUERY_AGGREGATOR_REMEDY`.  Giving it a ``remedy`` parameter
-    would change a function :meth:`~.base.GenomicScore.aggregate_region`
-    also calls, for the sake of one sentence.
+    would change the request-list surface for the sake of one sentence.
     """
     if queries is None:
         queries = [
@@ -249,8 +251,8 @@ def distinct_score_ids(score_ids: Iterable[str]) -> list[str]:
     is what the derivation is about.  Each surface projects its own shape
     at its call site; the request list gets a named projection,
     :func:`request_score_ids`, because it is the one shape TWO readers
-    (:meth:`~.base.GenomicScore.aggregate_region` and the fragment kind's
-    folding read) project, and each hands the result on to the fold.
+    (the allele and fragment kinds' folding reads) project, and each hands
+    the result on to the fold.
 
     Note this is the aggregating reads' derivation, not a package-wide
     one: nothing else in the package fetches one list and indexes it
@@ -345,17 +347,17 @@ def fold_region_segments(
 
     ``aggregators`` is parallel to ``requests`` and built by the CALLER,
     which is what lets an invalid aggregator name be refused before the
-    region is read at all (see :meth:`~.base.GenomicScore.aggregate_region`,
-    which explains why that ordering matters).
+    region is read at all: a read that refuses an unknown contig when it is
+    called would otherwise mask a misspelled aggregator behind that
+    complaint.
 
     ``weigh`` is the caller's per-kind weight rule, applied as handed: it
     turns a segment's span into the number of times that record's value
     counts.  It is not second-guessed here, and neither is the stream --
     whether a record was first cut down to the query window is the
-    caller's business, settled before the segments arrive (see
-    :meth:`~.base.GenomicScore._aggregation_segments`).  A kind that counts
-    a record once counts it wherever the point it collapses to falls,
-    window or not.
+    caller's business, settled before the segments arrive.  A kind that
+    counts a record once counts it wherever the point it collapses to
+    falls, window or not.
     """
     column_of = {score_id: i for i, score_id in enumerate(score_ids)}
     targets = [

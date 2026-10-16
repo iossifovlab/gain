@@ -115,7 +115,6 @@ Inherited from ``GenomicScore``. The entries link to the page :doc:`scores`.
 
 .. autosummary::
 
-   GenomicScore.aggregate_region
    GenomicScore.chrom_length_source
    GenomicScore.chrom_length_sources
    GenomicScore.close

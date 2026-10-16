@@ -92,6 +92,25 @@ def test_one_source_asked_twice_answers_twice(alleles: AlleleScore) -> None:
         values=(0.1, 0.3), allele_keys=None)
 
 
+def test_an_allele_score_counts_each_line_once(alleles: AlleleScore) -> None:
+    """An allele line counts once, whatever the position span.
+
+    The rule ``record_weight`` states per kind: two alleles at one
+    position average as two values.  The default aggregator of a float
+    allele score is ``max``, not the position kind's ``mean``.
+    """
+    with alleles.open() as score:
+        (mean,) = score.get_allele_scores_in_region_agg(
+            "1", 10, 10,
+            queries=[ScoreAggregationQuery("freq", "mean")]).values
+        (default,) = score.get_allele_scores_in_region_agg(
+            "1", 10, 10,
+            queries=[ScoreAggregationQuery("freq")]).values
+
+    assert mean == pytest.approx(0.15)
+    assert default == 0.2
+
+
 def test_a_region_no_allele_overlaps_reads_as_absent(
     alleles: AlleleScore,
 ) -> None:
