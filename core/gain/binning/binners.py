@@ -18,6 +18,11 @@ from typing import Any, ClassVar, Protocol, Self
 import numpy as np
 import numpy.typing as npt
 
+from gain.binning.position_fold import (
+    ARRAY_FOLD_AGGREGATORS,
+    ArrayBinFold,
+    replacement_is_exact,
+)
 from gain.genomic_resources.aggregators import (
     AGGREGATOR_CLASS_DICT,
     NUMERIC_ONLY_AGGREGATORS,
@@ -26,6 +31,9 @@ from gain.genomic_resources.aggregators import (
     get_aggregator_class,
     to_float64,
     validate_aggregator,
+)
+from gain.genomic_resources.genomic_scores import (
+    DEFAULT_VALUE_ARRAYS_BATCH_SIZE,
 )
 from gain.genomic_resources.genomic_scores.position import PositionScore
 from gain.genomic_resources.repository import (
@@ -344,11 +352,17 @@ class PositionScoreBinding:
 
     Entering opens the score once, whatever number of regions are then
     binned through it; leaving closes it, on success or failure alike.
+    ``value_arrays_batch_size`` is the rows hint of each batch that the
+    array fold of :meth:`bin_region` reads.
     """
 
-    def __init__(self, track: Track, score: PositionScore) -> None:
+    def __init__(
+        self, track: Track, score: PositionScore, *,
+        value_arrays_batch_size: int = DEFAULT_VALUE_ARRAYS_BATCH_SIZE,
+    ) -> None:
         self.track = track
         self.score = score
+        self.value_arrays_batch_size = value_arrays_batch_size
 
     def __enter__(self) -> PositionScoreBinding:
         self.score.open()
@@ -367,33 +381,93 @@ class PositionScoreBinding:
     ) -> npt.NDArray[np.float64]:
         """Reduce the track over ``region`` to one float64 per grid bin.
 
-        Consumes :meth:`PositionScore.get_score_in_bins` unchanged: it is
-        the semantic reference for the global grid, the boundary split and
-        first-record-wins.  A bin no record covers comes back ``None`` and
-        is stored as NaN, unless the track's replacement made it count.
-        An exact int past the float range (an int ``sum`` or ``product``)
-        is stored as a signed infinity: see
+        The bins are those of :meth:`PositionScore.get_score_in_bins`, the
+        semantic reference for the global grid, the boundary split and
+        first-record-wins.  A ``float`` score under ``count``, ``sum``,
+        ``mean``, ``max`` or ``min``, on a backend that serves
+        :meth:`~gain.genomic_resources.genomic_scores.base.GenomicScore.fetch_region_value_arrays`,
+        is folded from those arrays by
+        :class:`~gain.binning.position_fold.ArrayBinFold`, with the same
+        bins bit for bit.  Every other track is folded from
+        ``get_score_in_bins`` itself.
+
+        A bin no record covers comes back ``None`` and is stored as NaN,
+        unless the track's replacement made it count.  An exact int past
+        the float range (an int ``sum`` or ``product``) is stored as a
+        signed infinity: see
         :func:`~gain.genomic_resources.aggregators.to_float64`.
 
-        Unconditionally, a chromosome the score never mentions included:
-        that read folds an absent contig as one uncovered run of its own
+        A chromosome the score never mentions is one uncovered run
         (gain#1211), so the chromosome's bins are uncovered like any
         other's.
 
         Returned as a block of one column, the job's one track.
         """
-        track = self.track
-        definition = track.definition
+        definition = self.track.definition
         assert isinstance(definition, PositionScoreDef)
-        column = np.fromiter(
+        if self._folds_arrays(definition, bin_size):
+            column = self._array_column(definition, region, bin_size)
+        else:
+            column = self._per_run_column(definition, region, bin_size)
+        return column.reshape(-1, 1)
+
+    def _folds_arrays(
+        self, definition: PositionScoreDef, bin_size: int,
+    ) -> bool:
+        """Whether the array fold gives this track's bins."""
+        selector = self.track.selector
+        score_def = self.score.score_definitions.get(selector)
+        return (
+            score_def is not None
+            and score_def.value_type == "float"
+            and definition.aggregator in ARRAY_FOLD_AGGREGATORS
+            and replacement_is_exact(
+                definition.none_value_replacement, bin_size)
+            and self.score.supports_region_value_arrays([selector]))
+
+    def _array_column(
+        self, definition: PositionScoreDef, region: BedRegion,
+        bin_size: int,
+    ) -> npt.NDArray[np.float64]:
+        """The bins folded from the value arrays of the region."""
+        if region.start < 1 or region.stop < region.start:
+            raise ValueError(
+                f"genomic score <{self.score.resource_id}> asked for the "
+                f"region {region.chrom}:{region.start}-{region.stop}; "
+                f"positions are 1-based and the end does not precede "
+                f"the start")
+        if bin_size < 1:
+            raise ValueError(
+                f"genomic score <{self.score.resource_id}> asked for bins "
+                f"of size {bin_size}; a bin holds at least one position")
+        fold = ArrayBinFold(
+            definition.aggregator, definition.none_value_replacement,
+            region.start, region.stop, bin_size)
+        # The array read refuses a contig the table does not hold, and
+        # such a contig is one uncovered run: no batch reaches the fold.
+        if self.score.has_chromosome(region.chrom):
+            selector = self.track.selector
+            for pos_begin, pos_end, values in (
+                    self.score.fetch_region_value_arrays(
+                        region.chrom, region.start, region.stop,
+                        [selector],
+                        batch_size=self.value_arrays_batch_size)):
+                fold.add_batch(pos_begin, pos_end, values[selector])
+        return fold.finish()
+
+    def _per_run_column(
+        self, definition: PositionScoreDef, region: BedRegion,
+        bin_size: int,
+    ) -> npt.NDArray[np.float64]:
+        """The bins of ``get_score_in_bins``, as float64."""
+        return np.fromiter(
             (np.nan if value is None else to_float64(value)
              for _, _, value in self.score.get_score_in_bins(
                  region.chrom, region.start, region.stop, bin_size,
-                 score=track.selector,
+                 score=self.track.selector,
                  aggregator=definition.aggregator,
                  none_value_replacement=definition.none_value_replacement)),
             dtype=np.float64)
-        return column.reshape(-1, 1)
 
 
 class PositionScoreBinner:
