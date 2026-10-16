@@ -52,11 +52,6 @@ def _spellings(config: dict[str, Any], key: str) -> list[str]:
         if existing.replace("-", "_") == key]
 
 
-def _legacy_keys(config: dict[str, Any]) -> list[str]:
-    """Return the spellings of the old key in the config."""
-    return _spellings(config, LEGACY_NAMED_CLUSTER_KEY)
-
-
 def translate_legacy_named_cluster() -> None:
     """Translate the old named cluster key in the dask config.
 
@@ -75,7 +70,7 @@ def translate_legacy_named_cluster() -> None:
         When an entry of the old ``clusters`` list has no ``name`` key.
     """
     config = dask.config.config  # pyright: ignore
-    keys = _legacy_keys(config)
+    keys = _spellings(config, LEGACY_NAMED_CLUSTER_KEY)
     if not keys:
         return
 
