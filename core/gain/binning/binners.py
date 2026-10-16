@@ -448,30 +448,26 @@ class PositionScoreBinding:
         bin_size: int,
     ) -> npt.NDArray[np.float64]:
         """The bins folded from the value arrays of the region."""
-        if region.start < 1 or region.stop < region.start:
-            raise ValueError(
-                f"genomic score <{self.score.resource_id}> asked for the "
-                f"region {region.chrom}:{region.start}-{region.stop}; "
-                f"positions are 1-based and the end does not precede "
-                f"the start")
+        # pylint: disable=protected-access
+        score = self.score
+        score._guard_region_span(  # ruff: ignore[private-member-access]
+            region.start, region.stop)
         if bin_size < 1:
             raise ValueError(
-                f"genomic score <{self.score.resource_id}> asked for bins "
+                f"genomic score <{score.resource_id}> asked for bins "
                 f"of size {bin_size}; a bin holds at least one position")
         fold = ArrayBinFold(
             definition.aggregator, definition.none_value_replacement,
             region.start, region.stop, bin_size)
         # The table refuses a contig it does not hold, and such a contig
         # is one uncovered run: no batch reaches the fold.
-        if self.score.has_chromosome(region.chrom):
+        if score.has_chromosome(region.chrom):
             selector = self.track.selector
-            score_def = self.score.score_definitions[selector]
+            score_def = score.score_definitions[selector]
             # ``fetch_region_value_arrays`` gives ``nan`` both for a
             # missing value and for a NaN value of the score, and the fold
             # must tell the two apart.  The parse that it is made of also
             # gives the raw cells, which tell them apart.
-            # pylint: disable=protected-access
-            score = self.score
             columns = score._score_column_indexes(  # ruff: ignore[private-member-access]
                 [selector])
             batches = score._parsed_column_batches(  # ruff: ignore[private-member-access]

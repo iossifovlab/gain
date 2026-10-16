@@ -48,6 +48,7 @@ _EXACT_INT_LIMIT = 2 ** 53
 
 FloatArray = npt.NDArray[np.float64]
 IntArray = npt.NDArray[np.int64]
+BoolArray = npt.NDArray[np.bool_]
 
 #: The value a bin's accumulator starts from, and the value that a part
 #: without a value adds: the identity of the step, so the part changes
@@ -75,9 +76,6 @@ def replacement_is_exact(
     if replacement is None or isinstance(replacement, float):
         return True
     return abs(replacement) * bin_size <= _EXACT_INT_LIMIT
-
-
-BoolArray = npt.NDArray[np.bool_]
 
 
 # A step folds one part into each of several bins.  ``first`` marks the
