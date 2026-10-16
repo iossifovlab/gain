@@ -394,6 +394,35 @@ def test_old_key_is_translated_once(
     assert config.get("dae_named_cluster", default=None) is None
 
 
+def test_reconfigure_translates_the_old_key(
+    mocker: pytest_mock.MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    restored_dask_config: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # reconfigure() runs at the import of gain.dask. Point the dask config
+    # directory at tmp_path, so ensure_file() finds the old user file there
+    # and never writes to the real dask config directory.
+    monkeypatch.setattr(config, "PATH", str(tmp_path))
+    mocker.patch("dask_jobqueue.SGECluster", autospec=True)
+    mocker.patch("gain.dask.named_cluster.Client", autospec=True)
+    _load_user_config(tmp_path, OLD_SHAPE)
+
+    with caplog.at_level(logging.WARNING, logger="gain.dask.config"):
+        gain.dask.config.reconfigure()
+    _, cluster_config = setup_client("my_sge")
+
+    assert cluster_config == {
+        "type": "sge",
+        "number_of_workers": 7,
+        "params": {"memory": "3GB", "cores": 2},
+    }
+    assert len([
+        record for record in caplog.records
+        if "dae_named_cluster" in record.getMessage()]) == 1
+
+
 def test_old_key_value_wins_over_the_bundled_value(
     mocker: pytest_mock.MockerFixture,
     tmp_path: pathlib.Path,
