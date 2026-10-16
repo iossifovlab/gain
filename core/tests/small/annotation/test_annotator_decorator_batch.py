@@ -1,4 +1,4 @@
-# pylint: disable=W0621,C0114,C0116,W0212,W0613
+# pylint: disable=W0621,C0116
 """The annotator decorators forward the batch path to the child (gain#1984).
 
 The stub child below works only in batches: its ``annotate`` refuses,
@@ -167,7 +167,8 @@ def test_input_annotatable_decorator_refuses_a_batch_value_that_is_not_one(
             annotator_parameters={"input_annotatable": "lifted"}),
         pipeline=pipeline)
     decorator = InputAnnotableAnnotatorDecorator.decorate(child)
-    contexts = [{"lifted": Position("chr1", 7)}, {"lifted": "chr1:9"}]
+    contexts: list[dict[str, Any]] = [
+        {"lifted": Position("chr1", 7)}, {"lifted": "chr1:9"}]
 
     with pytest.raises(ValueError, match="is not an Annotatable"):
         list(decorator.batch_annotate(
