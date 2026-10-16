@@ -10,6 +10,7 @@ from gain.binning.binners import (
     PositionScoreBinner,
     PositionScoreDef,
     Track,
+    numeric_aggregators,
 )
 from gain.genomic_resources.genomic_scores.position import PositionScore
 from gain.genomic_resources.repository import GenomicResourceRepo
@@ -242,3 +243,9 @@ def test_an_int_result_past_the_float_range_is_stored_as_a_signed_inf(
     values = bin_past_range(past_range(aggregator), repo)
 
     np.testing.assert_array_equal(values, [-math.inf, math.inf])
+
+
+@pytest.mark.parametrize("aggregator", ["min", "max"])
+def test_min_and_max_stay_numeric_aggregators(aggregator: str) -> None:
+    """``min`` and ``max`` declare no output type, yet bin a number."""
+    assert aggregator in numeric_aggregators()

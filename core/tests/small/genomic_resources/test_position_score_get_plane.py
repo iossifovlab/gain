@@ -170,15 +170,15 @@ def test_an_empty_region_lets_each_aggregator_answer(
     gapped: PositionScore,
 ) -> None:
     # Not a blanket None from the read: the answer belongs to each
-    # aggregator, and they disagree with each other -- `list` says [] where
-    # `count` says None rather than 0 (CountAggregator.get_final chooses
-    # that).  Pinned as-is so the read is never tempted to normalize them.
+    # aggregator, and they disagree with each other -- `list` says [],
+    # `count` says 0 and `max` says None.  Pinned so the read is never
+    # tempted to normalize them.
     with gapped:
         assert gapped.get_scores_in_region_agg("1", 900, 950, [
             PositionScoreAggregationQuery("s", "count"),
             PositionScoreAggregationQuery("s", "list"),
             PositionScoreAggregationQuery("s", "max"),
-        ]) == (None, [], None)
+        ]) == (0, [], None)
 
 
 def test_a_parametrized_aggregator_is_accepted(

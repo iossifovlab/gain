@@ -70,10 +70,10 @@ def numeric_aggregators() -> list[str]:
     """The registered aggregators whose result is a number (D11).
 
     Those that declare a numeric output type, and the numeric-only ones
-    that answer in their input's type (``sum``, ``product``) -- a binned
-    score is numeric, so they answer a number too.  Read off the
-    registry, so a numeric aggregator added to it is accepted here
-    without a list to keep in step.
+    that answer in their input's type (``min``, ``max``, ``sum``,
+    ``product``) -- a binned score is numeric, so they answer a number
+    too.  Read off the registry, so a numeric aggregator added to it is
+    accepted here without a list to keep in step.
     """
     return sorted(
         name for name in AGGREGATOR_CLASS_DICT

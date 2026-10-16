@@ -423,7 +423,7 @@ class SingleAnnotation(AsyncAnnotationBaseView):
         )
         # Aggregation ran when the value is a list (list aggregator applied),
         # or when the aggregator declares a fixed non-list output type and a
-        # non-None value was produced (e.g. max/min collapsing to a float).
+        # non-None value was produced (e.g. mean collapsing to a float).
         aggregated = isinstance(value, list) or (
             agg_class is not None
             and agg_output_type != "list"

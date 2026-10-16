@@ -177,9 +177,13 @@ class Aggregator(abc.ABC):
 
 
 class MaxAggregator(Aggregator):
-    """Maximum value aggregator for genomic scores."""
+    """Maximum value aggregator for genomic scores.
 
-    output_value_type: ClassVar[str | None] = "float"
+    The result is one of the added values, so it has the type of the
+    input.  Strings are ordered lexicographically.
+    """
+
+    output_value_type: ClassVar[str | None] = None
 
     @classmethod
     def preserves_domain(
@@ -209,9 +213,13 @@ class MaxAggregator(Aggregator):
 
 
 class MinAggregator(Aggregator):
-    """Minimum value aggregator for genomic scores."""
+    """Minimum value aggregator for genomic scores.
 
-    output_value_type: ClassVar[str | None] = "float"
+    The result is one of the added values, so it has the type of the
+    input.  Strings are ordered lexicographically.
+    """
+
+    output_value_type: ClassVar[str | None] = None
 
     @classmethod
     def preserves_domain(
@@ -438,9 +446,8 @@ class CountAggregator(Aggregator):
         self.count = 0
 
     def get_final(self) -> Any:
-        if self.count > 0:
-            return self.count
-        return None
+        # A count of nothing is 0, not "unknown".
+        return self.count
 
 
 class ConcatAggregator(Aggregator):
@@ -516,16 +523,18 @@ class MedianAggregator(Aggregator):
     def get_final(self) -> Any:
         if not self.values or self.used_count <= 0:
             return None
+        # The annotation layer refuses ``median`` on a ``str`` attribute;
+        # the aggregator refuses it too, for an odd count and an even one.
+        if any(isinstance(value, str) for value, _ in self.values):
+            raise TypeError(
+                "the median aggregator does not accept values of type str",
+            )
         self.values.sort(key=operator.itemgetter(0))
         if self.used_count % 2 == 1:
             return self._select(math.floor(self.used_count / 2))
 
         first = self._select(int(self.used_count / 2) - 1)
         second = self._select(int(self.used_count / 2))
-        if isinstance(first, str):
-            assert isinstance(second, str)
-            return first + second
-
         return (first + second) / 2
 
 

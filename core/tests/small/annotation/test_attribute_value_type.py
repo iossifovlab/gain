@@ -70,3 +70,14 @@ def test_the_spec_type_answers_when_aggregation_was_skipped() -> None:
     attr = _an_attribute(aggregator="list", value_type="float")
 
     assert attr.get_value_type(aggregated=False) == "float"
+
+
+@pytest.mark.parametrize("aggregator", ["min", "max"])
+@pytest.mark.parametrize("value_type", ["int", "float", "str"])
+def test_min_and_max_keep_the_input_type(
+    aggregator: str, value_type: str,
+) -> None:
+    """``min`` and ``max`` answer one of the added values, typed as added."""
+    attr = _an_attribute(aggregator=aggregator, value_type=value_type)
+
+    assert attr.get_value_type() == value_type

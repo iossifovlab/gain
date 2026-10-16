@@ -129,12 +129,13 @@ def test_median_aggregator_weighted_out_of_order_values() -> None:
     assert agg.get_final() == 3.0
 
 
-def test_median_aggregator_weighted_strings() -> None:
+def test_median_aggregator_refuses_weighted_strings() -> None:
     agg = MedianAggregator()
     agg.add("b", 2)
     agg.add("a", 2)
 
-    assert agg.get_final() == "ab"
+    with pytest.raises(TypeError, match=r"median.*str"):
+        agg.get_final()
 
 
 def test_list_aggregator_expands_the_weight_in_order() -> None:
