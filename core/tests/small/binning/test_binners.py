@@ -68,6 +68,26 @@ def test_a_sum_track_adds_each_bin_by_base_pair(
     np.testing.assert_array_equal(values, [10.0, 10.0, np.nan, 10.0])
 
 
+def test_a_count_track_stores_zero_for_an_uncovered_bin(
+    repo: GenomicResourceRepo,
+) -> None:
+    # A count of nothing is 0 (gain#262), so the uncovered 21-30 is 0.0,
+    # not NaN.  31-40 counts its five covered positions.
+    values = one_region(
+        scores_one("count"), BedRegion("chr1", 1, 40), repo)
+
+    np.testing.assert_array_equal(values, [10.0, 10.0, 0.0, 5.0])
+
+
+def test_a_count_track_stores_zero_on_a_chromosome_the_score_never_mentions(
+    repo: GenomicResourceRepo,
+) -> None:
+    values = one_region(
+        scores_one("count"), BedRegion("chr2", 1, 25), repo)
+
+    np.testing.assert_array_equal(values, [0.0, 0.0, 0.0])
+
+
 def test_a_replacement_stands_in_for_every_uncovered_position(
     repo: GenomicResourceRepo,
 ) -> None:

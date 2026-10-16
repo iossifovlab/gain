@@ -331,7 +331,9 @@ def fold_region_segments(
 #: nothing to fold), and it differs on purpose from the position-score
 #: binner's, which stores NaN for an uncovered bin unless the track's
 #: ``none_value_replacement`` says otherwise; that key does not exist on
-#: the fragment kind.
+#: the fragment kind.  The two rules agree on ``count``: its aggregator
+#: answers ``0`` for no values, so the position-score binner stores 0.0
+#: for an uncovered bin of a ``count`` track too.
 EMPTY_BIN_VALUES: dict[str, float] = {
     "count": 0.0,
     "sum": 0.0,
