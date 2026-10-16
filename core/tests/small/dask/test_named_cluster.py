@@ -507,3 +507,34 @@ def test_unknown_named_cluster_is_refused_with_the_defined_names(
 
     assert "local, sge_big" in str(excinfo.value)
     assert mocked_client.call_count == 0
+
+
+def test_old_cluster_definition_replaces_the_bundled_one_of_that_name(
+    mocker: pytest_mock.MockerFixture,
+    tmp_path: pathlib.Path,
+    restored_dask_config: None,
+) -> None:
+    mocker.patch("dask_jobqueue.SGECluster", autospec=True)
+    mocker.patch("gain.dask.named_cluster.Client", autospec=True)
+    _load_user_config(tmp_path, """\
+        dae_named_cluster:
+          clusters:
+            - name: sge
+              type: sge
+              adapt_params:
+                minimum: 1
+                maximum: 50
+              params:
+                queue: all.q
+        """)
+    assert config.get(
+        "gain_named_cluster.clusters.sge.number_of_workers") == 150
+
+    gain.dask.config.translate_legacy_named_cluster()
+    _, cluster_config = setup_client("sge")
+
+    assert cluster_config == {
+        "type": "sge",
+        "adapt_params": {"minimum": 1, "maximum": 50},
+        "params": {"queue": "all.q"},
+    }

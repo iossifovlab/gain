@@ -149,6 +149,8 @@ dask wrote for an earlier release has this shape.
 When the dask configuration holds ``dae_named_cluster``, GAIn converts it to
 the new shape for the run and logs a warning. The values of the old key win
 over the bundled values, and a bundled key that the old key lacks stays.
+An old cluster definition replaces the bundled cluster definition of the same
+name whole, as the old list replaced the bundled list in earlier releases.
 GAIn stops reading ``dae_named_cluster`` in release 2026.11.0. Before that
 release, delete the old ``named_cluster.yaml`` in the dask config directory,
 or move its entries to ``gain_named_cluster`` in the new shape.

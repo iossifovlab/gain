@@ -63,7 +63,8 @@ def translate_legacy_named_cluster() -> None:
     When the dask config holds ``dae_named_cluster``, the function converts
     its ``clusters`` list to a mapping keyed by each ``name`` and merges the
     result over ``gain_named_cluster``: the values of the old key win, and a
-    key that the old key lacks keeps its value. The ``default`` and
+    key that the old key lacks keeps its value. An old cluster definition
+    replaces the cluster definition of the same name whole. The ``default`` and
     ``distributed`` values of the old key come across too. The function
     removes the old key from the dask config and logs one warning. It does
     not change any file.
@@ -96,13 +97,19 @@ def translate_legacy_named_cluster() -> None:
                 f"A cluster definition in '{LEGACY_NAMED_CLUSTER_KEY}."
                 f"clusters' has no 'name' key: {cluster_config}")
         clusters[cluster_config.pop("name")] = cluster_config
-    if clusters:
-        translated["clusters"] = clusters
 
     target = next(
         iter(_spellings(config, NAMED_CLUSTER_KEY)), NAMED_CLUSTER_KEY)
-    config[target] = dask.config.merge(  # pyright: ignore
+    merged = dask.config.merge(  # pyright: ignore
         config.get(target) or {}, translated)
+    if clusters:
+        # Merge at the level of the clusters mapping, not inside each
+        # cluster definition: before the new key, the old list replaced the
+        # bundled list whole. A deep merge would bring back bundled keys
+        # that the user removed, for example a number_of_workers next to the
+        # user's adapt_params.
+        merged["clusters"] = {**(merged.get("clusters") or {}), **clusters}
+    config[target] = merged
 
     logger.warning(
         "The dask config key '%s' is deprecated and GAIn "
