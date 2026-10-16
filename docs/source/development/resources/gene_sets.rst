@@ -7,8 +7,14 @@ genes of a disorder. The class that reads a resource is
 :class:`~gain.gene_sets.gene_set.GeneSetCollection`, and each of its sets is
 a :class:`~gain.gene_sets.gene_set.GeneSet`.
 
-Build a collection with the builder from ``gain.grr``, and call ``load``
-before the first read:
+Creating a gene set collection
+------------------------------
+
+Build it from a resource id and a repository with
+:func:`~gain.gene_sets.gene_set.build_gene_set_collection_from_resource_id`,
+or from a resource you already hold with
+:func:`~gain.gene_sets.gene_set.build_gene_set_collection_from_resource`.
+Both are exported by ``gain.grr``. Call ``load`` before the first read:
 
 .. code-block:: python
 
@@ -30,8 +36,8 @@ For a collection with two gene sets, the example prints:
     epilepsy 2 Epilepsy genes
     ['SCN2A', 'CHD8']
 
-Loading
--------
+The lifecycle
+-------------
 
 The builder memoizes collections for each resource. A second build of the
 same resource returns the same collection, and that collection may already be
@@ -81,14 +87,19 @@ API
 
 The classes below are defined in the module ``gain.gene_sets.gene_set``.
 ``GeneSetCollection`` is also exported by ``gain.grr``, as
-``grr.GeneSetCollection``. The factory pair
+``grr.GeneSetCollection``. The builders
 ``build_gene_set_collection_from_resource_id`` and
-``build_gene_set_collection_from_resource`` is on :doc:`factories`.
+``build_gene_set_collection_from_resource`` are defined in the same module.
+They are also exported by ``gain.grr``, as
+``grr.build_gene_set_collection_from_resource_id`` and
+``grr.build_gene_set_collection_from_resource``.
 
 .. currentmodule:: gain.gene_sets.gene_set
 
 .. autosummary::
 
+   build_gene_set_collection_from_resource
+   build_gene_set_collection_from_resource_id
    GeneSetCollection
    GeneSetCollection.files
    GeneSetCollection.get_all_gene_sets
@@ -100,6 +111,10 @@ The classes below are defined in the module ``gain.gene_sets.gene_set``.
    GeneSetCollection.is_loaded
    GeneSetCollection.load
    GeneSet
+
+.. autofunction:: build_gene_set_collection_from_resource
+
+.. autofunction:: build_gene_set_collection_from_resource_id
 
 .. autoclass:: GeneSetCollection
    :members:

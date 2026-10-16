@@ -17,21 +17,30 @@ or, from a resource you already hold,
 declares ``type: fragment_score``; the older name ``cnv_collection`` is
 still accepted, with a deprecation warning. The generic
 :func:`~gain.genomic_resources.genomic_scores.build_score_from_resource_id` returns the same
-object:
+object. Both typed builders are exported by ``gain.grr``:
 
 .. code-block:: python
 
     import gain.grr as grr
 
     repo = grr.build_genomic_resource_repository()
+    score = grr.build_fragment_score_from_resource_id(
+        "hg38/scores/my_CNVcollection", repo)
+
+The lifecycle
+-------------
+
+As with every score, the object is built closed. Call ``open()`` before the
+first read and let a ``with`` block close it; the rule is described on
+:doc:`scores`:
+
+.. code-block:: python
+
     with grr.build_fragment_score_from_resource_id(
             "hg38/scores/my_CNVcollection", repo).open() as score:
         for begin, end, values in score.get_fragment_scores_overlapping_region(
                 "chr1", 1_000_000, 2_000_000):
             print(begin, end, values)
-
-As with every score, the object is built closed; see :doc:`scores` for the
-lifecycle.
 
 Groups of methods
 -----------------
@@ -92,10 +101,19 @@ The classes below are defined in the module
 ``gain.genomic_resources.genomic_scores``. ``FragmentScore`` is also exported
 by ``gain.grr``, as ``grr.FragmentScore``.
 
+The builders ``build_fragment_score_from_resource_id`` and
+``build_fragment_score_from_resource`` build a closed score. They are
+defined in the module ``gain.genomic_resources.genomic_scores.builders`` and
+are imported from ``gain.genomic_resources.genomic_scores``. They are also
+exported by ``gain.grr``, as ``grr.build_fragment_score_from_resource_id``
+and ``grr.build_fragment_score_from_resource``.
+
 .. currentmodule:: gain.genomic_resources.genomic_scores
 
 .. autosummary::
 
+   build_fragment_score_from_resource
+   build_fragment_score_from_resource_id
    FragmentScore
    FragmentScore.DEFAULT_AGGREGATORS
    FragmentScore.HISTOGRAM_COUNT_UNIT
@@ -133,6 +151,10 @@ Inherited from ``GenomicScore``. The entries link to the page :doc:`scores`.
    GenomicScore.is_open
    GenomicScore.open
    GenomicScore.supports_region_value_arrays
+
+.. autofunction:: build_fragment_score_from_resource
+
+.. autofunction:: build_fragment_score_from_resource_id
 
 .. autoclass:: FragmentScore
    :members:

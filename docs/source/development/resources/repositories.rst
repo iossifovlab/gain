@@ -16,11 +16,12 @@ stops there. Turning one into a reference genome or a score is the job of the
 typed builders described in the following pages, which is why every one of
 them takes a repository and an id rather than a bare path.
 
-Opening a repository
---------------------
+Creating a repository
+---------------------
 
-:func:`~gain.genomic_resources.repository_factory.build_genomic_resource_repository`
-called with no arguments builds the repository named by the user's
+Build a repository with
+:func:`~gain.genomic_resources.repository_factory.build_genomic_resource_repository`.
+It is exported by ``gain.grr``. Called with no arguments, it builds the repository named by the user's
 environment — in a standard installation, the public IossifovLab GRR. Passing
 a definition dictionary instead builds exactly the repository it describes:
 
@@ -42,6 +43,27 @@ The definition dictionary is the same structure the ``.grr_definition.yaml``
 file holds. :doc:`/grr` documents its keys, the repository types available,
 and the ``cache_dir`` key — caching is a key any type can carry, not a type
 of its own.
+
+:func:`~gain.genomic_resources.repository_factory.build_genomic_resource_group_repository`
+puts several repositories together as one group. Code that runs inside a
+genomic context gets the repository of that context with
+:func:`~gain.genomic_resources.genomic_context.get_grr_from_context`.
+
+The lifecycle
+-------------
+
+A repository is built open: the builder returns it ready for lookups, and
+there is no ``open`` to call.
+:meth:`~gain.genomic_resources.repository.GenomicResourceRepo.close`
+releases what the repository holds. After the call, its ``definition`` is
+``None``.
+:meth:`~gain.genomic_resources.repository.GenomicResourceRepo.invalidate`
+drops the cached state instead, and the next access loads the resource list,
+the metadata and the file contents again.
+
+Closing the repository does not close the objects built through it. A
+reference genome or a score reads its own resource's files and has its own
+``close``.
 
 Finding a resource
 ------------------
@@ -133,8 +155,7 @@ API
 The classes below are defined in the module
 ``gain.genomic_resources.repository``. ``GenomicResourceRepo`` and
 ``GenomicResource`` are also exported by ``gain.grr``, as
-``grr.GenomicResourceRepo`` and ``grr.GenomicResource``. The factory
-functions are listed on the :ref:`factories` page.
+``grr.GenomicResourceRepo`` and ``grr.GenomicResource``.
 
 .. currentmodule:: gain.genomic_resources.repository
 
@@ -188,9 +209,42 @@ functions are listed on the :ref:`factories` page.
 .. autoclass:: Manifest
    :members:
 
-The factory function below is defined in the module
-``gain.genomic_resources.repository_factory``.
+The repository builders below are defined in the module
+``gain.genomic_resources.repository_factory``. They are also exported by
+``gain.grr``, as ``grr.build_genomic_resource_repository``,
+``grr.build_genomic_resource_group_repository``,
+``grr.get_default_grr_definition`` and
+``grr.get_default_grr_definition_path``.
 
 .. currentmodule:: gain.genomic_resources.repository_factory
 
+.. autosummary::
+
+   build_genomic_resource_repository
+   build_genomic_resource_group_repository
+   get_default_grr_definition
+   get_default_grr_definition_path
+
 .. autofunction:: build_genomic_resource_repository
+
+.. autofunction:: build_genomic_resource_group_repository
+
+.. autofunction:: get_default_grr_definition
+
+.. autofunction:: get_default_grr_definition_path
+
+The genomic-context functions below are defined in the module
+``gain.genomic_resources.genomic_context``. They are also exported by
+``gain.grr``, as ``grr.get_genomic_context`` and
+``grr.get_grr_from_context``.
+
+.. currentmodule:: gain.genomic_resources.genomic_context
+
+.. autosummary::
+
+   get_genomic_context
+   get_grr_from_context
+
+.. autofunction:: get_genomic_context
+
+.. autofunction:: get_grr_from_context

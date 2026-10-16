@@ -21,8 +21,21 @@ and which one a resource is decides what "a place" means:
      - an interval carrying attributes
      - CNV collections, ATAC fragments, region annotations
 
-All three are built by the same function, which reads the resource's declared
-type and returns the matching class:
+They share the base class
+:class:`~gain.genomic_resources.genomic_scores.GenomicScore`, which owns
+everything that does not depend on what a record means: the lifecycle, the
+score definitions, the filter compiler, and the raw record and column-array
+reads.
+
+Creating a genomic score
+------------------------
+
+All three kinds are built by the same generic builder pair:
+:func:`~gain.genomic_resources.genomic_scores.build_score_from_resource_id`
+takes a resource id and a repository, and
+:func:`~gain.genomic_resources.genomic_scores.build_score_from_resource`
+takes a resource you already hold. Both are exported by ``gain.grr``. They
+read the resource's declared type and return the matching class:
 
 .. code-block:: python
 
@@ -31,11 +44,7 @@ type and returns the matching class:
     repo = grr.build_genomic_resource_repository()
     score = grr.build_score_from_resource_id("hg38/scores/phastCons100way", repo)
 
-They share the base class
-:class:`~gain.genomic_resources.genomic_scores.GenomicScore`, which owns
-everything that does not depend on what a record means: the lifecycle, the
-score definitions, the filter compiler, and the raw record and column-array
-reads.
+Each kind also has a typed builder pair of its own, described on its page.
 
 The lifecycle
 -------------
@@ -200,13 +209,18 @@ package ``gain.genomic_resources.genomic_scores``. ``GenomicScoreDef`` is
 defined in the module ``gain.genomic_resources.score_def``. ``ScoreFilter`` is
 defined in the module ``gain.genomic_resources.score_filter``. ``GenomicScore``
 is also exported by ``gain.grr``, as ``grr.GenomicScore``. The generic
-factories ``grr.build_score_from_resource_id`` and
-``grr.build_score_from_resource`` are described on :doc:`factories`.
+builders ``build_score_from_resource_id`` and ``build_score_from_resource``
+are defined in the module ``gain.genomic_resources.genomic_scores.builders``
+and are imported from the package ``gain.genomic_resources.genomic_scores``.
+They are also exported by ``gain.grr``, as
+``grr.build_score_from_resource_id`` and ``grr.build_score_from_resource``.
 
 .. currentmodule:: gain.genomic_resources.genomic_scores
 
 .. autosummary::
 
+   build_score_from_resource
+   build_score_from_resource_id
    GenomicScore
    GenomicScore.aggregate_region
    GenomicScore.chrom_length_source
@@ -244,6 +258,10 @@ factories ``grr.build_score_from_resource_id`` and
    ScoreFilter.select
 
 .. currentmodule:: gain.genomic_resources.genomic_scores
+
+.. autofunction:: build_score_from_resource
+
+.. autofunction:: build_score_from_resource_id
 
 .. autoclass:: GenomicScore
    :members:

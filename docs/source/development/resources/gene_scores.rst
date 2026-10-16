@@ -13,7 +13,14 @@ gene symbols. The two share only the score catalogue: the score definitions
 and the histogram reads. A gene score has no position, no allele and no
 fragment reads, and nothing in :doc:`scores` applies to it.
 
-Build a gene score with the builder from ``gain.grr``:
+Creating a gene score
+---------------------
+
+Build it from a resource id and a repository with
+:func:`~gain.gene_scores.gene_scores.build_gene_score_from_resource_id`, or
+from a resource you already hold with
+:func:`~gain.gene_scores.gene_scores.build_gene_score_from_resource`. Both
+are exported by ``gain.grr``:
 
 .. code-block:: python
 
@@ -35,12 +42,12 @@ For a resource with the scores ``LGD_rank``, the three calls print:
     12.0
     ['CHD8', 'POGZ', 'SCN2A']
 
-No lifecycle
-------------
+The lifecycle
+-------------
 
-A gene score has no ``open`` and no ``close``. The builder reads the whole
-table into memory, so the returned object is ready to use. The table is small
-enough for this: it has one row for each gene.
+A gene score has no lifecycle: it has no ``open`` and no ``close``. The
+builder reads the whole table into memory, so the returned object is ready
+to use. The table is small enough for this: it has one row for each gene.
 
 Reading values
 --------------
@@ -107,14 +114,18 @@ API
 
 The classes below are defined in the module
 ``gain.gene_scores.gene_scores``. ``GeneScore`` is also exported by
-``gain.grr``, as ``grr.GeneScore``. The factory pair
+``gain.grr``, as ``grr.GeneScore``. The builders
 ``build_gene_score_from_resource_id`` and
-``build_gene_score_from_resource`` is on :doc:`factories`.
+``build_gene_score_from_resource`` are defined in the same module. They are
+also exported by ``gain.grr``, as ``grr.build_gene_score_from_resource_id``
+and ``grr.build_gene_score_from_resource``.
 
 .. currentmodule:: gain.gene_scores.gene_scores
 
 .. autosummary::
 
+   build_gene_score_from_resource
+   build_gene_score_from_resource_id
    GeneScore
    GeneScore.HISTOGRAM_COUNT_UNIT
    GeneScore.build_score_help
@@ -131,6 +142,10 @@ The classes below are defined in the module
    GeneScore.to_dict
    GeneScore.to_tsv
    GeneScoreDef
+
+.. autofunction:: build_gene_score_from_resource
+
+.. autofunction:: build_gene_score_from_resource_id
 
 .. autoclass:: GeneScore
    :members:

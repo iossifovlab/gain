@@ -16,22 +16,32 @@ Build it with :func:`~gain.genomic_resources.genomic_scores.build_allele_score_f
 or, from a resource you already hold,
 :func:`~gain.genomic_resources.genomic_scores.build_allele_score_from_resource`. The generic
 :func:`~gain.genomic_resources.genomic_scores.build_score_from_resource_id` returns the same
-object:
+object. Both typed builders are exported by ``gain.grr``:
 
 .. code-block:: python
 
     import gain.grr as grr
 
     repo = grr.build_genomic_resource_repository()
-    with grr.build_allele_score_from_resource_id(
-            "hg38/scores/CADD_v1.7", repo).open() as score:
-        print(score.get_allele_scores_for_allele("chr1", 69_094, "G", "A"))
+    score = grr.build_allele_score_from_resource_id(
+        "hg38/scores/CADD_v1.7", repo)
 
-The score is built closed; see :doc:`scores` for the lifecycle. Three
-properties describe the resource and are fixed when it is built:
+Three properties describe the resource and are fixed when it is built:
 :attr:`~gain.genomic_resources.genomic_scores.AlleleScore.multiplicity`,
 :meth:`~gain.genomic_resources.genomic_scores.AlleleScore.substitutions_mode` and
 :meth:`~gain.genomic_resources.genomic_scores.AlleleScore.alleles_mode`. They are explained below.
+
+The lifecycle
+-------------
+
+The score is built closed. Call ``open()`` before the first read and let a
+``with`` block close it; the rule is described on :doc:`scores`:
+
+.. code-block:: python
+
+    with grr.build_allele_score_from_resource_id(
+            "hg38/scores/CADD_v1.7", repo).open() as score:
+        print(score.get_allele_scores_for_allele("chr1", 69_094, "G", "A"))
 
 Groups of methods
 -----------------
@@ -212,10 +222,19 @@ The classes below are defined in the module
 ``gain.genomic_resources.genomic_scores`` exports them. ``AlleleScore`` is also
 exported by ``gain.grr``, as ``grr.AlleleScore``.
 
+The builders ``build_allele_score_from_resource_id`` and
+``build_allele_score_from_resource`` build a closed score. They are
+defined in the module ``gain.genomic_resources.genomic_scores.builders`` and
+are imported from ``gain.genomic_resources.genomic_scores``. They are also
+exported by ``gain.grr``, as ``grr.build_allele_score_from_resource_id``
+and ``grr.build_allele_score_from_resource``.
+
 .. currentmodule:: gain.genomic_resources.genomic_scores
 
 .. autosummary::
 
+   build_allele_score_from_resource
+   build_allele_score_from_resource_id
    AlleleScore
    AlleleScore.DEFAULT_AGGREGATORS
    AlleleScore.HISTOGRAM_COUNT_UNIT
@@ -264,6 +283,10 @@ Inherited from ``GenomicScore``, which has its own page,
    GenomicScore.is_open
    GenomicScore.open
    GenomicScore.supports_region_value_arrays
+
+.. autofunction:: build_allele_score_from_resource
+
+.. autofunction:: build_allele_score_from_resource_id
 
 .. autoclass:: AlleleScore
    :members:

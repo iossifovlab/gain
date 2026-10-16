@@ -7,8 +7,15 @@ The class that reads it is
 :class:`~gain.genomic_resources.liftover_chain.LiftoverChain`, a wrapper
 around a ``pyliftover`` object.
 
-Build a chain with the builder from ``gain.grr``, and call ``open`` before
-the first conversion:
+Creating a liftover chain
+-------------------------
+
+Build it from a resource id and a repository with
+:func:`~gain.genomic_resources.liftover_chain.build_liftover_chain_from_resource_id`,
+or from a resource you already hold with
+:func:`~gain.genomic_resources.liftover_chain.build_liftover_chain_from_resource`.
+Both are exported by ``gain.grr``. Call ``open`` before the first
+conversion:
 
 .. code-block:: python
 
@@ -70,9 +77,11 @@ with its own contig names.
 API
 ---
 
-The class and the factories below are defined in the module
+The class and the builders below are defined in the module
 ``gain.genomic_resources.liftover_chain``. ``LiftoverChain`` is also
-exported by ``gain.grr``, as ``grr.LiftoverChain``.
+exported by ``gain.grr``, as ``grr.LiftoverChain``. The builders are also
+exported by ``gain.grr``, as ``grr.build_liftover_chain_from_resource_id``
+and ``grr.build_liftover_chain_from_resource``.
 
 .. currentmodule:: gain.genomic_resources.liftover_chain
 
