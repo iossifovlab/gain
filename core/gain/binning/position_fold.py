@@ -266,17 +266,22 @@ class ArrayBinFold:
             piece_value[nonempty], piece_missing[nonempty])
 
     def finish(self) -> FloatArray:
-        """The value of each bin, NaN for a bin without a value."""
+        """The value of each bin, NaN for a bin without a value.
+
+        A ``count`` bin without a value is ``0.0``: a count of nothing is
+        zero, as :class:`~gain.genomic_resources.aggregators.CountAggregator`
+        answers.
+        """
         if self._cursor <= self.end:
             self._fold_pieces(
                 np.array([self._cursor], dtype=np.int64),
                 np.array([self.end], dtype=np.int64),
                 np.array([np.nan]), np.array([True]))
             self._cursor = self.end + 1
-        has_value = self._used > 0
         if self.aggregator == "count":
-            result = self._used.astype(np.float64)
-        elif self.aggregator == "mean":
+            return self._used.astype(np.float64)
+        has_value = self._used > 0
+        if self.aggregator == "mean":
             result = np.divide(
                 self._acc, self._used, out=np.zeros_like(self._acc),
                 where=has_value)
