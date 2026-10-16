@@ -23,7 +23,10 @@ from gain.genomic_resources.testing.builders import (
     a_grr,
     a_position_score,
 )
-from gain.genomic_resources.testing.statistics import publish_statistics
+from gain.genomic_resources.testing.statistics import (
+    a_score_with_too_many_categories,
+    publish_statistics,
+)
 
 
 def test_a_one_score_position_score_reads_its_only_score_histogram(
@@ -53,13 +56,9 @@ def test_a_truncated_read_of_the_only_score_reads_its_sidecar(
 ) -> None:
     # A STATED categorical histogram past the limit is truncated and gets
     # a sidecar; the default one is nulled instead and has none.
-    past_limit = CategoricalHistogram.UNIQUE_VALUES_LIMIT + 1
-    rows = "\n".join(f"1  {10 + i}  v{i:03d}" for i in range(past_limit))
     a_grr().with_resource("cats", (
-        a_position_score()
-        .with_score("cell", "str")
+        a_score_with_too_many_categories()
         .with_histogram({"type": "categorical", "value_order": []})
-        .with_data("chrom  pos_begin  cell\n" + rows)
     )).build_repo(tmp_path)
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
     repo = build_filesystem_test_repository(tmp_path)
@@ -70,7 +69,7 @@ def test_a_truncated_read_of_the_only_score_reads_its_sidecar(
     assert isinstance(hist, CategoricalHistogram)
     assert hist.truncated is True
     assert hist.to_dict() == score.get_score_histogram(
-        "cell", truncated=True).to_dict()
+        "score", truncated=True).to_dict()
 
 
 def test_a_one_score_gene_score_reads_its_only_score_histogram(
