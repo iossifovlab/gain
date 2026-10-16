@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 import logging
 import os
 import pathlib
+import socket
 from typing import Any
 
 from django.core.exceptions import ImproperlyConfigured
@@ -412,7 +413,7 @@ LOG_DIR = os.environ.get("GPFWA_LOG_DIR", f"{DATA_STORAGE_DIR}/logs")
 if not os.path.exists(LOG_DIR):
     os.makedirs(LOG_DIR)
 
-LOGGING = {
+LOGGING: dict[str, Any] = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
@@ -467,6 +468,27 @@ LOGGING = {
         },
     },
 }
+
+# Post uncaught exceptions and ``zulip_logger()`` records to a Zulip stream
+# when all four GPFWA_ZULIP_* variables are set. The handler carries no
+# level: its ``ZulipFilter`` decides what it posts. Django logs an uncaught
+# view exception on ``django.request``, which propagates to the root logger.
+_ZULIP_SETTINGS = {
+    key: os.environ.get(variable, "").strip()
+    for key, variable in (
+        ("site", "GPFWA_ZULIP_SITE"),
+        ("bot_email", "GPFWA_ZULIP_BOT_EMAIL"),
+        ("api_key", "GPFWA_ZULIP_API_KEY"),
+        ("stream", "GPFWA_ZULIP_STREAM"),
+    )
+}
+if all(_ZULIP_SETTINGS.values()):
+    LOGGING["handlers"]["zulip"] = {
+        "class": "gain.utils.zulip_logging.ZulipHandler",
+        **_ZULIP_SETTINGS,
+        "topic": os.environ.get("GPFWA_PUBLIC_NAME") or socket.gethostname(),
+    }
+    LOGGING["loggers"][""]["handlers"].append("zulip")
 
 
 # Width of the annotation *file-job* thread pool -- the one bound on how many
