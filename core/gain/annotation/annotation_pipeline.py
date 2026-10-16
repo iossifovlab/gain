@@ -758,6 +758,19 @@ class AnnotatorDecorator(Annotator):
     def is_open(self) -> bool:
         return self.child.is_open()
 
+    @property
+    def used_context_attributes(self) -> tuple[str, ...]:
+        return self.child.used_context_attributes
+
+    def batch_annotate(
+        self, annotatables: Sequence[Annotatable | None],
+        contexts: list[dict[str, Any]],
+        batch_work_dir: str | None = None,
+    ) -> Iterable[dict[str, Any]]:
+        """Hand the whole batch to the child in one call."""
+        return self.child.batch_annotate(
+            annotatables, contexts, batch_work_dir=batch_work_dir)
+
     def __getattr__(self, name: str) -> Any:
         return getattr(self.child, name)
 
@@ -794,12 +807,25 @@ class InputAnnotableAnnotatorDecorator(AnnotatorDecorator):
         self, annotatable: Annotatable | None,  # ruff: ignore[unused-method-argument]
         context: dict[str, Any],
     ) -> dict[str, Any]:
+        return self.child.annotate(self._input_annotatable(context), context)
 
+    def batch_annotate(
+        self, annotatables: Sequence[Annotatable | None],  # ruff: ignore[unused-method-argument]
+        contexts: list[dict[str, Any]],
+        batch_work_dir: str | None = None,
+    ) -> Iterable[dict[str, Any]]:
+        """Hand the child the input annotatables of the whole batch."""
+        return self.child.batch_annotate(
+            [self._input_annotatable(context) for context in contexts],
+            contexts, batch_work_dir=batch_work_dir)
+
+    def _input_annotatable(
+        self, context: dict[str, Any],
+    ) -> Annotatable | None:
         input_annotatable = context[self.input_annotatable_name]
-
         if input_annotatable is None or \
            isinstance(input_annotatable, Annotatable):
-            return self.child.annotate(input_annotatable, context)
+            return input_annotatable
         raise ValueError(
             f"The object with a key {input_annotatable} in the "
             f"annotation context {context} is not an Annotatable.",
@@ -835,7 +861,18 @@ class ValueTransformAnnotatorDecorator(AnnotatorDecorator):
     def annotate(
         self, annotatable: Annotatable | None, context: dict[str, Any],
     ) -> dict[str, Any]:
-        result = self.child.annotate(annotatable, context)
+        return self._transform(self.child.annotate(annotatable, context))
+
+    def batch_annotate(
+        self, annotatables: Sequence[Annotatable | None],
+        contexts: list[dict[str, Any]],
+        batch_work_dir: str | None = None,
+    ) -> Iterable[dict[str, Any]]:
+        """Transform each result of one batch call to the child."""
+        return map(self._transform, self.child.batch_annotate(
+            annotatables, contexts, batch_work_dir=batch_work_dir))
+
+    def _transform(self, result: dict[str, Any]) -> dict[str, Any]:
         return {k: (self.value_transformers[k](v)
                     if k in self.value_transformers else v)
                 for k, v in result.items()}
