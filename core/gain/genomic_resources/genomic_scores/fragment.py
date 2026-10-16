@@ -872,11 +872,11 @@ class FragmentScore(GenomicScore):
     # consume :meth:`_segments_overlapping_region`, and only the public read
     # tuples what comes out. A fragment is weighed by :meth:`record_weight`.
     #
-    # Deliberately NOT built on :meth:`~.base.GenomicScore.aggregate_region`,
-    # despite reducing the same way: that surface takes no ``score_filter``,
-    # and its ``CountAggregator`` has the wrong count semantics here -- it skips
-    # ``None`` values, so it counts non-null VALUES rather than fragments, and
-    # answers ``None`` rather than ``0`` for a region no fragment overlaps.
+    # The count comes off the walk itself (``_CountingStream``), not off a
+    # ``count`` aggregator: ``CountAggregator`` has the wrong count semantics
+    # here -- it skips ``None`` values, so it counts non-null VALUES rather
+    # than fragments, and answers ``None`` rather than ``0`` for a region no
+    # fragment overlaps.
     #
     # THIS READ holds nothing per fragment: the stream is folded as it arrives
     # and never materialised. Whether the CALL is constant in the number of
@@ -913,9 +913,9 @@ class FragmentScore(GenomicScore):
         ``join``. The default aggregator of a ``str`` score is ``join(,)``,
         which is one of them.
 
-        The ``count`` of the result counts fragments. Use it instead of the
-        ``count`` aggregator of :meth:`~GenomicScore.aggregate_region`, which
-        counts the non-null values and gives ``None`` for an empty region.
+        The ``count`` of the result counts fragments. A query with the
+        ``count`` aggregator counts the non-null values instead, and gives
+        ``None`` for an empty region.
 
         Parameters
         ----------

@@ -61,8 +61,9 @@ def gene(tmp_path: pathlib.Path) -> GeneScore:
 
 
 _POSITION_SURFACES: dict[str, Callable[[PositionScore], object]] = {
-    "aggregate_region":
-        lambda score: score.aggregate_region("1", 10, 10, ["nope"]),
+    "get_scores_in_region_agg":
+        lambda score: score.get_scores_in_region_agg(
+            "1", 10, 10, [PositionScoreAggregationQuery("nope")]),
     "resolve_aggregation_queries":
         lambda score: score.resolve_aggregation_queries(
             [PositionScoreAggregationQuery("nope")]),

@@ -1,7 +1,9 @@
 # pylint: disable=C0114,C0116,W0621
 import pathlib
 
+from gain.genomic_resources.aggregators import ScoreAggregationQuery
 from gain.genomic_resources.genomic_scores import (
+    AlleleAggregate,
     AlleleScore,
     build_allele_score_from_resource,
     clip_span,
@@ -57,8 +59,10 @@ def test_an_allele_point_outside_the_window_still_aggregates_once(
     tmp_path: pathlib.Path,
 ) -> None:
     with _multibase_allele_score(tmp_path).open() as score:
-        assert score.aggregate_region(
-            "chr1", 15, 25, [("s", "count")]) == [1]
+        assert score.get_allele_scores_in_region_agg(
+            "chr1", 15, 25,
+            queries=[ScoreAggregationQuery("s", "count")],
+        ) == AlleleAggregate(values=(1,), allele_keys=None)
 
 
 def test_clip_to_region_clips_the_kept_segments_and_drops_the_rest() -> None:

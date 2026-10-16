@@ -485,10 +485,10 @@ def test_the_weight_rule_is_stated_once_per_kind(
 ) -> None:
     # ``record_weight`` is the kind's ONE statement of how many times a
     # record's value counts, and every reader goes through it: the
-    # per-record scan calls it, ``aggregate_region`` folds with it, and the
-    # bulk scan broadcasts it over a batch's position columns.  Pinned in
-    # numbers rather than in code: a ten-base record weighs its span for a
-    # position score and 1 for the other two kinds.
+    # per-record scan calls it, the allele and fragment aggregating reads
+    # fold with it, and the bulk scan broadcasts it over a batch's position
+    # columns.  Pinned in numbers rather than in code: a ten-base record
+    # weighs its span for a position score and 1 for the other two kinds.
     assert score_class.record_weight(10, 19) == expected_weight
 
     # The broadcast must agree with the scalar hook record by record.

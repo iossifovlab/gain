@@ -265,7 +265,6 @@ Inherited from ``GenomicScore``, which has its own page,
 
 .. autosummary::
 
-   GenomicScore.aggregate_region
    GenomicScore.chrom_length_source
    GenomicScore.chrom_length_sources
    GenomicScore.close

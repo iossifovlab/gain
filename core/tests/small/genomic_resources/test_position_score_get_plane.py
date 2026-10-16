@@ -4,9 +4,8 @@
 On this plane a position score is a function from a genomic position to a
 record of named score values, defined on the per-position expansion: a gap in
 coverage is not an absence but a run of positions whose value is ``None``,
-and it counts.  These tests pin the plane's own contract; its agreement with
-the segment-shaped reads is pinned by the bridge test against
-``aggregate_region``.
+and it counts.  These tests pin the plane's own contract, including the
+aggregating read ``get_scores_in_region_agg``.
 """
 from __future__ import annotations
 
@@ -110,8 +109,7 @@ def test_a_malformed_region_is_refused_when_called_not_when_consumed(
 
 def test_a_replacement_makes_the_gap_count(gapped: PositionScore) -> None:
     # Positions 14 and 15 are uncovered.  Without a replacement they are
-    # inert for every aggregator; with one they count -- the entire
-    # observable difference between this plane and `aggregate_region`.
+    # inert for every aggregator; with one they count.
     with gapped:
         assert gapped.get_scores_in_region_agg(
             "1", 10, 16,
@@ -131,6 +129,84 @@ def test_the_singular_aggregating_read_returns_a_bare_value(
         ) == pytest.approx((0.2 * 4 + 0.8) / 7)
         assert gapped.get_score_in_region_agg(
             "1", 10, 16, aggregator="max") == 0.8
+
+
+def test_a_query_names_the_aggregator(gapped: PositionScore) -> None:
+    with gapped:
+        assert gapped.get_scores_in_region_agg(
+            "1", 10, 16, [PositionScoreAggregationQuery("s", "max")],
+        ) == (0.8,)
+        assert gapped.get_scores_in_region_agg(
+            "1", 10, 16, [PositionScoreAggregationQuery("s", "min")],
+        ) == (0.2,)
+
+
+def test_one_score_may_be_queried_twice_with_different_aggregators(
+    gapped: PositionScore,
+) -> None:
+    # The reason the result is parallel to the queries and not a dict: an
+    # annotation config routinely exposes one source as both a min and a
+    # max attribute, and a dict keyed by score id would drop one of them.
+    with gapped:
+        assert gapped.get_scores_in_region_agg("1", 10, 16, [
+            PositionScoreAggregationQuery("s", "min"),
+            PositionScoreAggregationQuery("s"),
+            PositionScoreAggregationQuery("s", "max"),
+        ]) == (0.2, pytest.approx((0.2 * 4 + 0.8) / 5), 0.8)
+
+
+def test_a_position_score_weights_by_base_pair(gapped: PositionScore) -> None:
+    # 0.32 is the mean over the covered positions; 0.5 would be the mean
+    # over the records, each counted once.
+    with gapped:
+        (mean,) = gapped.get_scores_in_region_agg(
+            "1", 10, 16, [PositionScoreAggregationQuery("s", "mean")])
+
+    assert mean == pytest.approx(0.32)
+    assert mean != pytest.approx(0.5)
+
+
+def test_an_empty_region_lets_each_aggregator_answer(
+    gapped: PositionScore,
+) -> None:
+    # Not a blanket None from the read: the answer belongs to each
+    # aggregator, and they disagree with each other -- `list` says [] where
+    # `count` says None rather than 0 (CountAggregator.get_final chooses
+    # that).  Pinned as-is so the read is never tempted to normalize them.
+    with gapped:
+        assert gapped.get_scores_in_region_agg("1", 900, 950, [
+            PositionScoreAggregationQuery("s", "count"),
+            PositionScoreAggregationQuery("s", "list"),
+            PositionScoreAggregationQuery("s", "max"),
+        ]) == (None, [], None)
+
+
+def test_a_parametrized_aggregator_is_accepted(
+    tmp_path: pathlib.Path,
+) -> None:
+    repo = a_grr().with_resource("s", (
+        a_position_score().with_score("s", "str").with_data("""
+            chrom  pos_begin  pos_end  s
+            1      10         10       a
+            1      11         11       b
+        """)
+    )).build_repo(tmp_path)
+    score = PositionScore(repo.get_resource("s")).open()
+    with score:
+        assert score.get_scores_in_region_agg(
+            "1", 10, 11, [PositionScoreAggregationQuery("s", "join(;)")],
+        ) == ("a;b",)
+
+
+def test_an_unknown_aggregator_names_the_score(gapped: PositionScore) -> None:
+    # Aggregator.build raises a bare KeyError('mediann') on its own.
+    with gapped, pytest.raises(ValueError) as excinfo:
+        gapped.get_scores_in_region_agg(
+            "1", 10, 16, [PositionScoreAggregationQuery("s", "mediann")])
+
+    assert str(excinfo.value) == (
+        "score 's' of resource 's' asks for aggregator 'mediann', "
+        "which is not valid: 'mediann'")
 
 
 def test_a_replacement_of_the_wrong_type_is_refused(
@@ -238,18 +314,16 @@ def test_where_two_records_cover_one_position_the_first_answers(
         ]
 
 
-def test_first_wins_repairs_the_double_count_aggregate_region_has(
+def test_where_two_records_cover_one_position_it_is_aggregated_once(
     overlapping: PositionScore,
 ) -> None:
-    # `aggregate_region` weighs each record by its clipped span, so the
-    # three shared positions count twice: (1.0*5 + 2.0*5) / 10 = 1.5.  On
-    # the logical plane each position contributes exactly once by
+    # A fold that weighed each record by its clipped span would count the
+    # three shared positions twice: (1.0*5 + 2.0*5) / 10 = 1.5.  On the
+    # logical plane each position contributes exactly once by
     # construction, so accumulated weight equals the region width, 7.
     with overlapping:
         assert overlapping.get_score_in_region_agg("1", 10, 16) == \
             pytest.approx((1.0 * 5 + 2.0 * 2) / 7)
-        assert overlapping.aggregate_region("1", 10, 16, ["s"]) == [
-            pytest.approx(1.5)]
 
 
 def test_bins_follow_the_global_grid_and_edge_bins_are_clipped(
@@ -423,33 +497,6 @@ def test_every_backend_answers_the_logical_plane_alike(
         ]
 
 
-# All eleven registered aggregators skip None, so with no replacement set
-# the logical plane answers exactly what `aggregate_region` answers -- for
-# every one of them, not just the numeric ones.  Removable together with
-# `aggregate_region`, should #258's remaining slices retire it.
-_ALL_AGGREGATORS = (
-    "max", "min", "mean", "median", "count", "concatenate", "mode",
-    "join(;)", "list", "bool", "value_count",
-)
-
-
-@pytest.mark.parametrize("aggregator", _ALL_AGGREGATORS)
-def test_without_replacement_it_bridges_to_aggregate_region(
-    gapped: PositionScore, aggregator: str,
-) -> None:
-    """With no replacement, nulls are inert and the two paths agree.
-
-    The bridge that says `none_value_replacement` is the ENTIRE observable
-    difference between the logical plane and `aggregate_region` on
-    non-overlapping data.  Removable together with `aggregate_region`.
-    """
-    with gapped:
-        assert gapped.get_scores_in_region_agg(
-            "1", 10, 16, [PositionScoreAggregationQuery("s", aggregator)],
-        ) == tuple(gapped.aggregate_region(
-            "1", 10, 16, [("s", aggregator)]))
-
-
 def test_a_fully_shadowed_record_contributes_nothing(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -499,8 +546,7 @@ def test_a_record_outside_the_region_is_dropped_not_counted(
     ``_score_segments`` deliberately yields such a record through, at its
     own extent -- the misconfigured backend it implies is refused at
     ``open()``, not by a read (gain#553, ADR 0008).  The walker must drop
-    it, as ``aggregate_region`` drops
-    it with the same ``clip_span``; counting it would yield phantom
+    it with ``clip_span``; counting it would yield phantom
     positions past the region width and feed the aggregator a negative
     weight.
 

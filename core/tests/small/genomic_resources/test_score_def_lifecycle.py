@@ -15,6 +15,7 @@ the seam a reader of the config meets them at.
 import pathlib
 
 import pytest
+from gain.genomic_resources.aggregators import PositionScoreAggregationQuery
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     GenomicScore,
@@ -210,4 +211,6 @@ def test_a_parametrized_aggregator_the_parser_accepts_still_reduces(
     )
 
     with PositionScore(res).open() as score:
-        assert score.aggregate_region("chr1", 10, 11, ["s"]) == ["x,y"]
+        assert score.get_scores_in_region_agg(
+            "chr1", 10, 11, [PositionScoreAggregationQuery("s")],
+        ) == ("x,y",)

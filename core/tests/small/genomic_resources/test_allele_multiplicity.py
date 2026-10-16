@@ -109,7 +109,6 @@ def _reads(score: AlleleScore) -> tuple[object, ...]:
         score.get_allele_scores_for_allele_rows("1", 10, "A", "G"),
         score.get_allele_scores_for_allele_rows("1", 16, "C", "T"),
         list(score.fetch_region_segments_scores("1", 1, 20)),
-        score.aggregate_region("1", 1, 20),
         score.get_allele_scores_in_region_agg("1", 1, 20),
     )
 

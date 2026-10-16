@@ -222,7 +222,6 @@ They are also exported by ``gain.grr``, as
    build_score_from_resource
    build_score_from_resource_id
    GenomicScore
-   GenomicScore.aggregate_region
    GenomicScore.chrom_length_source
    GenomicScore.chrom_length_sources
    GenomicScore.close

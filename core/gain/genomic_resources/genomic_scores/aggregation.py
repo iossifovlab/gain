@@ -1,7 +1,10 @@
 """Reducing a region to one value per requested score.
 
-The machinery :meth:`~.base.GenomicScore.aggregate_region` orchestrates,
-apart from any score class: resolving a caller's request list to
+The machinery the per-kind aggregating reads share --
+:meth:`~.position.PositionScore.get_scores_in_region_agg`,
+:meth:`~.allele.AlleleScore.get_allele_scores_in_region_agg` and
+:meth:`~.fragment.FragmentScore.get_fragment_scores_overlapping_region_agg`
+-- apart from any score class: resolving a caller's queries to
 ``(score_id, aggregator)`` pairs, building a fresh aggregator for each, and
 folding a stream of fetched segments into one value per request.
 
@@ -27,8 +30,8 @@ handed and does not re-derive or cross-check it: the rule is stated once
 per kind, on the kind (see
 ``test_the_weight_rule_is_stated_once_per_kind``).  Whether the segments
 were clipped to the query window before they got here is settled the same
-way, by the kind's :meth:`~.base.GenomicScore._aggregation_segments`, so
-the fold carries no flag saying which kind it serves.
+way, by the kind's own read, so the fold carries no flag saying which kind
+it serves.
 
 Every BACKEND feeds one path here -- this generic weighted stream over
 fetched records -- and a backend-specific fast path was considered and
@@ -67,49 +70,11 @@ from gain.utils.regions import calc_bin_index
 
 from ..aggregators import Aggregator, ScoreAggregationQuery, to_float64
 
-# How each surface tells a caller to name an aggregator the score has no
-# default for.  Both live HERE, with the rule they are appended to, so the
-# whole sentence a caller sees is written in this module -- a surface
-# selects its remedy, it does not word one.  Fragments: lowercase, no
-# leading punctuation, spliced after the rule's "; ".
-PAIR_AGGREGATOR_REMEDY = "name one explicitly as (score_id, aggregator)"
+# How a query surface tells a caller to name an aggregator the score has
+# no default for.  It lives HERE, with the rule it is appended to, so the
+# whole sentence a caller sees is written in this module.  A fragment:
+# lowercase, no leading punctuation, spliced after the rule's "; ".
 QUERY_AGGREGATOR_REMEDY = "name one on the query"
-
-
-def resolve_aggregator_requests(
-    scores: list[str | tuple[str, str]] | None,
-    *,
-    score_definitions: dict[str, GenomicScoreDef],
-    all_scores: list[str],
-    resource_id: str,
-) -> list[tuple[str, str]]:
-    """Normalize the request list to ``(score_id, aggregator)`` pairs.
-
-    Two arguments, because they answer two questions: ``all_scores`` says
-    which scores "all of them" means and in what order, for a ``scores``
-    of ``None``; ``score_definitions`` says what each one IS.  Today a
-    score class answers the first with ``list(self.score_definitions)``,
-    so the two cannot disagree -- but which scores a resource OFFERS is
-    the class's decision to change, and this asks for it rather than
-    assuming the answer stays derivable.
-    """
-    if scores is None:
-        scores = list(all_scores)
-
-    requests = []
-    for request in scores:
-        score_id, aggregator = (
-            (request, None) if isinstance(request, str) else request)
-        score_def = score_def_for(
-            score_id,
-            score_definitions=score_definitions,
-            resource_id=resource_id)
-        resolved = resolve_aggregator_name(
-            aggregator, score_def,
-            resource_id=resource_id,
-            remedy=PAIR_AGGREGATOR_REMEDY)
-        requests.append((score_id, resolved))
-    return requests
 
 
 def resolve_aggregation_queries(
@@ -121,10 +86,9 @@ def resolve_aggregation_queries(
 ) -> list[tuple[str, str]]:
     """Resolve kind-neutral queries to ``(score_id, aggregator NAME)`` pairs.
 
-    :func:`resolve_aggregator_requests` for the query surface: the same
-    two questions (:func:`score_def_for`, :func:`resolve_aggregator_name`),
-    the query's remedy, and ``None`` expanded to every score with its own
-    default.  Stops at the NAME, as
+    Asks the two questions every aggregation request asks
+    (:func:`score_def_for`, :func:`resolve_aggregator_name`), and expands
+    ``None`` to every score with its own default.  Stops at the NAME, as
     :meth:`~.position.PositionScore.resolve_aggregation_queries` does, so
     a caller can ask whether a query list is answerable without reading --
     an annotator asks exactly that as its pipeline loads.  Building the
@@ -142,13 +106,6 @@ def resolve_aggregation_queries(
     :class:`~..aggregators.PositionScoreAggregationQuery` is a sibling of
     the neutral query, not a subclass, so it does not type-check here --
     see :class:`~..aggregators.ScoreAggregationQuery` for why (gain#1302).
-
-    Not routed through :func:`resolve_aggregator_requests`, though that
-    returns exactly these pairs and already expands ``None``: it hardcodes
-    :data:`PAIR_AGGREGATOR_REMEDY`, and a query surface must say
-    :data:`QUERY_AGGREGATOR_REMEDY`.  Giving it a ``remedy`` parameter
-    would change a function :meth:`~.base.GenomicScore.aggregate_region`
-    also calls, for the sake of one sentence.
     """
     if queries is None:
         queries = [
@@ -164,8 +121,7 @@ def resolve_aggregation_queries(
             query.score,
             resolve_aggregator_name(
                 query.aggregator, score_def,
-                resource_id=resource_id,
-                remedy=QUERY_AGGREGATOR_REMEDY)))
+                resource_id=resource_id)))
     return requests
 
 
@@ -199,21 +155,16 @@ def resolve_aggregator_name(
     score_def: GenomicScoreDef,
     *,
     resource_id: str,
-    remedy: str,
 ) -> str:
     """The aggregator to reduce a score with: the caller's, else its own.
 
     The second question, and the one statement of the rule that a score
-    with neither is refused.  ``remedy`` is the only part that differs
-    between surfaces, because it tells the caller what to write and the
-    two surfaces take an aggregator in different places -- a
-    ``(score_id, aggregator)`` pair for
-    :func:`resolve_aggregator_requests`, a field on the query for
-    :meth:`~.position.PositionScore.get_scores_in_region_agg`.  Pass one of
-    :data:`PAIR_AGGREGATOR_REMEDY` / :data:`QUERY_AGGREGATOR_REMEDY`, which
-    is why they live here and not at the call sites.  Everything ahead of
-    the remedy is shared, and pinned so by
-    ``test_both_surfaces_state_the_missing_default_rule_identically``.
+    with neither is refused.  Every surface takes the aggregator as a
+    field on its query, so every refusal ends with
+    :data:`QUERY_AGGREGATOR_REMEDY`.  The neutral resolver and the
+    position score's resolver share the whole sentence, and
+    ``test_both_surfaces_state_the_missing_default_rule_identically``
+    pins that.
 
     The score is named by ``score_def`` rather than beside it:
     ``score_definitions`` is keyed by ``score_id`` at every construction
@@ -228,7 +179,7 @@ def resolve_aggregator_name(
         raise ValueError(
             f"score {score_def.score_id!r} of resource {resource_id!r} "
             f"has no default aggregator for value type "
-            f"{score_def.value_type!r}; {remedy}")
+            f"{score_def.value_type!r}; {QUERY_AGGREGATOR_REMEDY}")
     return resolved
 
 
@@ -249,8 +200,8 @@ def distinct_score_ids(score_ids: Iterable[str]) -> list[str]:
     is what the derivation is about.  Each surface projects its own shape
     at its call site; the request list gets a named projection,
     :func:`request_score_ids`, because it is the one shape TWO readers
-    (:meth:`~.base.GenomicScore.aggregate_region` and the fragment kind's
-    folding read) project, and each hands the result on to the fold.
+    (the allele and fragment kinds' folding reads) project, and each hands
+    the result on to the fold.
 
     Note this is the aggregating reads' derivation, not a package-wide
     one: nothing else in the package fetches one list and indexes it
@@ -345,17 +296,17 @@ def fold_region_segments(
 
     ``aggregators`` is parallel to ``requests`` and built by the CALLER,
     which is what lets an invalid aggregator name be refused before the
-    region is read at all (see :meth:`~.base.GenomicScore.aggregate_region`,
-    which explains why that ordering matters).
+    region is read at all: a read that refuses an unknown contig when it is
+    called would otherwise mask a misspelled aggregator behind that
+    complaint.
 
     ``weigh`` is the caller's per-kind weight rule, applied as handed: it
     turns a segment's span into the number of times that record's value
     counts.  It is not second-guessed here, and neither is the stream --
     whether a record was first cut down to the query window is the
-    caller's business, settled before the segments arrive (see
-    :meth:`~.base.GenomicScore._aggregation_segments`).  A kind that counts
-    a record once counts it wherever the point it collapses to falls,
-    window or not.
+    caller's business, settled before the segments arrive.  A kind that
+    counts a record once counts it wherever the point it collapses to
+    falls, window or not.
     """
     column_of = {score_id: i for i, score_id in enumerate(score_ids)}
     targets = [
