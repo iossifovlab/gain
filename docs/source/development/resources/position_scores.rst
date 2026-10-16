@@ -28,6 +28,9 @@ object when the resource is a position score:
     score = grr.build_position_score_from_resource_id(
         "hg38/scores/phastCons100way", repo)
 
+The lifecycle
+-------------
+
 The score is built closed. Call ``open()`` before the first read and let a
 ``with`` block close it; the rule is described on :doc:`scores`:
 
@@ -119,14 +122,19 @@ The class below is defined in the module
 ``gain.genomic_resources.genomic_scores``. ``PositionScore`` is also exported
 by ``gain.grr``, as ``grr.PositionScore``.
 
-The factories ``build_position_score_from_resource_id`` and
+The builders ``build_position_score_from_resource_id`` and
 ``build_position_score_from_resource`` build a closed score. They are
-documented in the :ref:`factories` chapter.
+defined in the module ``gain.genomic_resources.genomic_scores.builders`` and
+are imported from ``gain.genomic_resources.genomic_scores``. They are also
+exported by ``gain.grr``, as ``grr.build_position_score_from_resource_id``
+and ``grr.build_position_score_from_resource``.
 
 .. currentmodule:: gain.genomic_resources.genomic_scores
 
 .. autosummary::
 
+   build_position_score_from_resource
+   build_position_score_from_resource_id
    PositionScore
    PositionScore.get_schema
    PositionScore.get_score_at_position
@@ -161,6 +169,10 @@ Inherited from ``GenomicScore``, which :doc:`scores` describes:
    GenomicScore.is_open
    GenomicScore.open
    GenomicScore.supports_region_value_arrays
+
+.. autofunction:: build_position_score_from_resource
+
+.. autofunction:: build_position_score_from_resource_id
 
 .. autoclass:: PositionScore
    :members:

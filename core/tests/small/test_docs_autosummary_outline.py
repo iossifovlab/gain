@@ -31,9 +31,7 @@ GENE_MODELS_PAGE = RESOURCES_DIR / "gene_models.rst"
 
 # Pages whose API section is not rolled out yet. The slice of a page
 # removes the page from this set.
-NOT_ROLLED_OUT = frozenset({
-    "factories.rst",
-})
+NOT_ROLLED_OUT: frozenset[str] = frozenset()
 
 _DIRECTIVE = re.compile(r"^(\s*)\.\. autosummary::")
 _AUTOCLASS = re.compile(r"^\.\. autoclass:: (\S+)", re.MULTILINE)

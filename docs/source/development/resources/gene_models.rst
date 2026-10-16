@@ -7,25 +7,41 @@ parsed out of whatever format the resource stores it in (GTF, refFlat,
 refSeq, CCDS and several others; :doc:`/grr` lists the formats and the
 ``format`` key that selects one).
 
-Unlike the other resource types, gene models are loaded wholly into memory
-rather than read from an open file. The consequence is that
-:meth:`~gain.genomic_resources.gene_models.GeneModels.load` is expensive and
-:meth:`~gain.genomic_resources.gene_models.GeneModels.close` does nothing:
+Creating gene models
+--------------------
+
+Build them from a resource id and a repository with
+:func:`~gain.genomic_resources.gene_models.build_gene_models_from_resource_id`,
+or from a resource you already hold with
+:func:`~gain.genomic_resources.gene_models.build_gene_models_from_resource`.
+Both are exported by ``gain.grr``:
 
 .. code-block:: python
 
     import gain.grr as grr
 
     repo = grr.build_genomic_resource_repository()
+    genes = grr.build_gene_models_from_resource_id("hg38/gene_models/MANE/1.5", repo)
+
+Calls that find the same resource return the same object, so an earlier
+caller may have loaded it already.
+
+The lifecycle
+-------------
+
+Unlike the other resource types, gene models are loaded wholly into memory
+rather than read from an open file. The consequence is that
+:meth:`~gain.genomic_resources.gene_models.GeneModels.load` is expensive and
+:meth:`~gain.genomic_resources.gene_models.GeneModels.close` does nothing.
+``load`` returns the object, so the call chains onto the builder:
+
+.. code-block:: python
+
     genes = grr.build_gene_models_from_resource_id("hg38/gene_models/MANE/1.5", repo).load()
 
 :meth:`~gain.genomic_resources.gene_models.GeneModels.is_loaded` distinguishes
 a built-but-empty object from a loaded one, which library code that accepts
 either should check rather than calling ``load`` a second time.
-
-The builders ``build_gene_models_from_resource_id`` and
-``build_gene_models_from_resource`` are documented in the
-:ref:`factories` chapter.
 
 Two lookups
 -----------
@@ -96,13 +112,19 @@ API
 ---
 
 The classes below are defined in the module
-``gain.genomic_resources.gene_models``. ``GeneModels`` is also exported by
-``gain.grr``, as ``grr.GeneModels``.
+``gain.genomic_resources.gene_models``, and so are the builders
+``build_gene_models_from_resource_id`` and
+``build_gene_models_from_resource``. ``GeneModels`` is also exported by
+``gain.grr``, as ``grr.GeneModels``. The builders are also exported by
+``gain.grr``, as ``grr.build_gene_models_from_resource_id`` and
+``grr.build_gene_models_from_resource``.
 
 .. currentmodule:: gain.genomic_resources.gene_models
 
 .. autosummary::
 
+   build_gene_models_from_resource
+   build_gene_models_from_resource_id
    GeneModels
    GeneModels.close
    GeneModels.from_transcript_models
@@ -130,6 +152,10 @@ The classes below are defined in the module
    TranscriptModel.utr5_regions
    Exon
    Exon.contains
+
+.. autofunction:: build_gene_models_from_resource
+
+.. autofunction:: build_gene_models_from_resource_id
 
 .. autoclass:: GeneModels
    :members:

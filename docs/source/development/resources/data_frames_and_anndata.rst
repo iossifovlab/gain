@@ -18,11 +18,14 @@ ways:
   ``close`` or ``load`` to call. The one exception is an AnnData backed by a
   file, described below.
 
-Data frames
------------
+Loading a data frame
+--------------------
 
 :func:`~gain.genomic_resources.data_frame_resource.load_data_frame_from_resource_id`
-returns a pandas ``DataFrame``:
+takes a resource id and a repository, and
+:func:`~gain.genomic_resources.data_frame_resource.load_data_frame_from_resource`
+takes a resource you already hold. Both are exported by ``gain.grr`` and
+return a pandas ``DataFrame``:
 
 .. code-block:: python
 
@@ -55,11 +58,14 @@ The loader promises a single ``DataFrame``. A ``parameters`` block that makes
 pandas return something else, such as ``chunksize`` or ``sheet_name: null``,
 raises ``ValueError`` naming the resource.
 
-AnnData
--------
+Loading an AnnData object
+-------------------------
 
 :func:`~gain.genomic_resources.ann_data_resource.load_ann_data_from_resource_id`
-returns an ``AnnData`` object:
+takes a resource id and a repository, and
+:func:`~gain.genomic_resources.ann_data_resource.load_ann_data_from_resource`
+takes a resource you already hold. Both are exported by ``gain.grr`` and
+return an ``AnnData`` object:
 
 .. code-block:: python
 
@@ -118,13 +124,6 @@ missing, the suffix of the ``file:`` key decides:
      - ``*.h5``
      - A 10x HDF5 matrix.
 
-**The caller owns the file handle.** An ``h5ad`` file is opened read-only and
-backed by the file, so a large matrix stays out of memory. The AnnData keeps
-the file open until you close it. Call ``ann_data.file.close()`` when
-``ann_data.isbacked`` is true, as in the example, in particular when you load
-many resources in a loop. The two 10x formats are read into memory and hold
-no handle.
-
 The ``matrix_free`` keyword of
 :func:`~gain.genomic_resources.ann_data_resource.load_ann_data_from_resource`
 is for tools that read only ``obs`` and ``var``. It applies to the
@@ -132,6 +131,20 @@ is for tools that read only ``obs`` and ``var``. It applies to the
 because the file already backs ``X``. **For a 10x resource, the ``X`` it
 returns is a matrix of zeros, not the data of the resource.** Do not use it
 to read values.
+
+The lifecycle
+-------------
+
+A data frame and most AnnData objects have no lifecycle. The loader reads
+the data at once, and the result holds nothing open: there is no ``open``,
+``close`` or ``load`` to call.
+
+**The caller owns the file handle of an AnnData backed by a file.** An
+``h5ad`` file is opened read-only and backed by the file, so a large matrix
+stays out of memory. The AnnData keeps the file open until you close it.
+Call ``ann_data.file.close()`` when ``ann_data.isbacked`` is true, as in the
+example, in particular when you load many resources in a loop. The two 10x
+formats are read into memory and hold no handle.
 
 API
 ---

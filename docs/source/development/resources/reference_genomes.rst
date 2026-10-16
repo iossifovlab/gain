@@ -6,8 +6,25 @@ A :class:`~gain.genomic_resources.reference_genome.ReferenceGenome` wraps a
 answers two kinds of question: what chromosomes are there and how long are
 they, and what are the nucleotides in a given interval.
 
-Opening and closing
--------------------
+Creating a reference genome
+---------------------------
+
+Build it from a resource id and a repository with
+:func:`~gain.genomic_resources.reference_genome.build_reference_genome_from_resource_id`,
+or from a resource you already hold with
+:func:`~gain.genomic_resources.reference_genome.build_reference_genome_from_resource`.
+Both are exported by ``gain.grr``:
+
+.. code-block:: python
+
+    import gain.grr as grr
+
+    repo = grr.build_genomic_resource_repository()
+    genome = grr.build_reference_genome_from_resource_id(
+        "hg38/genomes/GRCh38-hg38", repo)
+
+The lifecycle
+-------------
 
 The genome holds an open FASTA handle, so it is built closed and must be
 opened. :meth:`~gain.genomic_resources.reference_genome.ReferenceGenome.open`
@@ -15,9 +32,6 @@ returns the genome itself, so the call chains onto the builder:
 
 .. code-block:: python
 
-    import gain.grr as grr
-
-    repo = grr.build_genomic_resource_repository()
     genome = grr.build_reference_genome_from_resource_id("hg38/genomes/GRCh38-hg38", repo).open()
 
 In anything longer than a script, wrap it in a ``with`` block so the handle is
@@ -94,17 +108,19 @@ API
 ---
 
 The class below is defined in the module
-``gain.genomic_resources.reference_genome``. ``ReferenceGenome`` is also
-exported by ``gain.grr``, as ``grr.ReferenceGenome``.
-
-The builders ``build_reference_genome_from_resource_id`` and
-``build_reference_genome_from_resource`` are documented in the
-:ref:`factories` chapter.
+``gain.genomic_resources.reference_genome``, and so are the builders
+``build_reference_genome_from_resource_id`` and
+``build_reference_genome_from_resource``. ``ReferenceGenome`` is also
+exported by ``gain.grr``, as ``grr.ReferenceGenome``. The builders are also
+exported by ``gain.grr``, as ``grr.build_reference_genome_from_resource_id``
+and ``grr.build_reference_genome_from_resource``.
 
 .. currentmodule:: gain.genomic_resources.reference_genome
 
 .. autosummary::
 
+   build_reference_genome_from_resource
+   build_reference_genome_from_resource_id
    ReferenceGenome
    ReferenceGenome.chrom_prefix
    ReferenceGenome.chromosomes
@@ -119,6 +135,10 @@ The builders ``build_reference_genome_from_resource_id`` and
    ReferenceGenome.open
    ReferenceGenome.resource_id
    ReferenceGenome.split_into_regions
+
+.. autofunction:: build_reference_genome_from_resource
+
+.. autofunction:: build_reference_genome_from_resource_id
 
 .. autoclass:: ReferenceGenome
    :members:
