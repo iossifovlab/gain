@@ -100,6 +100,11 @@ REGIONS = {
 #: Larger than every region above, so each region is one bin.
 LARGE_BIN_SIZE = 1000
 
+#: The replacements of the parity tests.  A non-zero replacement adds
+#: itself once for each position of a part, and an ``int`` one stays
+#: exact in the aggregators.
+REPLACEMENTS = {"none": None, "zero": 0.0, "float": 1.5, "int": 3}
+
 
 @pytest.fixture(scope="module")
 def repo(tmp_path_factory: pytest.TempPathFactory) -> GenomicResourceRepo:
@@ -183,7 +188,8 @@ def assert_same_bits(actual: np.ndarray, expected: np.ndarray) -> None:
 
 @pytest.mark.parametrize("region", REGIONS.values(), ids=REGIONS.keys())
 @pytest.mark.parametrize("bin_size", [1, 7, LARGE_BIN_SIZE])
-@pytest.mark.parametrize("replacement", [None, 0.0], ids=["none", "zero"])
+@pytest.mark.parametrize(
+    "replacement", REPLACEMENTS.values(), ids=REPLACEMENTS.keys())
 @pytest.mark.parametrize("aggregator", AGGREGATORS)
 @pytest.mark.parametrize("batch_size", [
     DEFAULT_VALUE_ARRAYS_BATCH_SIZE, 7, 1])
@@ -201,7 +207,8 @@ def test_the_array_fold_of_a_tabix_score_equals_get_score_in_bins(
 
 @pytest.mark.parametrize("region", REGIONS.values(), ids=REGIONS.keys())
 @pytest.mark.parametrize("bin_size", [1, 7, LARGE_BIN_SIZE])
-@pytest.mark.parametrize("replacement", [None, 0.0], ids=["none", "zero"])
+@pytest.mark.parametrize(
+    "replacement", REPLACEMENTS.values(), ids=REPLACEMENTS.keys())
 @pytest.mark.parametrize("aggregator", AGGREGATORS)
 def test_the_array_fold_of_a_bigwig_score_equals_get_score_in_bins(
     repo: GenomicResourceRepo, aggregator: str,
@@ -278,6 +285,49 @@ def test_the_other_cases_keep_the_per_run_fold(
     assert per_run.call_count == 1
     np.testing.assert_array_equal(
         actual, reference_column(repo, track, BedRegion("chr1", 1, 40), 10))
+
+
+#: An ``int`` replacement that a float64 does not hold: the aggregators
+#: add it exactly, and a float fold would add ``2 ** 53`` instead.
+INEXACT_INT_REPLACEMENT = 2 ** 53 + 1
+
+#: The uncovered stretch of chr1: one bin of 9 missing positions, and
+#: 9 * (2 ** 53 + 1) is past the integers that a float64 holds.
+INEXACT_REGION = BedRegion("chr1", 31, 39)
+
+
+@pytest.mark.parametrize("aggregator", ["sum", "mean"])
+def test_an_inexact_int_replacement_keeps_the_per_run_fold(
+    repo: GenomicResourceRepo, mocker: pytest_mock.MockerFixture,
+    aggregator: str,
+) -> None:
+    region = INEXACT_REGION
+    arrays = mocker.spy(PositionScore, "_parsed_column_batches")
+    per_run = mocker.spy(PositionScore, "get_score_in_bins")
+    track = a_track("tabix", aggregator, INEXACT_INT_REPLACEMENT)
+
+    actual = bin_column(repo, track, region, LARGE_BIN_SIZE)
+
+    assert arrays.call_count == 0
+    assert per_run.call_count == 1
+    np.testing.assert_array_equal(
+        actual, reference_column(repo, track, region, LARGE_BIN_SIZE))
+
+
+def test_the_inexact_int_replacement_is_not_vacuous(
+    repo: GenomicResourceRepo,
+) -> None:
+    # The test above is not vacuous: the float sum of the replacement
+    # differs from the exact sum that the per-run fold gives.
+    float_sum = float(INEXACT_INT_REPLACEMENT) * 9
+
+    reference = reference_column(
+        repo, a_track("tabix", "sum", INEXACT_INT_REPLACEMENT),
+        INEXACT_REGION, LARGE_BIN_SIZE)
+
+    assert reference[0] != float_sum
+    np.testing.assert_array_equal(
+        reference, [float(INEXACT_INT_REPLACEMENT * 9)])
 
 
 def test_a_contig_the_score_does_not_have_is_not_read(
