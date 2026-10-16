@@ -161,6 +161,21 @@ def undefined_scores_message(
         f"{sorted(defined)}")
 
 
+def no_only_score_message(
+    resource_id: str, defined: Iterable[str],
+) -> str:
+    """State that a resource has no only score for a call with no score id.
+
+    A caller that omits the score id asks for the only score of the
+    resource. A resource with several scores, or none, has no only score.
+    The message names the resource and every score id it defines, sorted,
+    so the caller can name the one it wants.
+    """
+    return (
+        f"resource {resource_id!r} has no only score to read without a "
+        f"score id; it has {sorted(defined)}")
+
+
 def vcf_header_file_error(
     resource_id: str, header_filename: str, detail: str,
 ) -> MalformedResourceError:

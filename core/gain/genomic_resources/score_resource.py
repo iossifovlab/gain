@@ -43,6 +43,7 @@ from gain.genomic_resources.histogram import (
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_errors import (
     HistogramError,
+    no_only_score_message,
     score_configuration_error,
     undefined_scores_message,
 )
@@ -157,6 +158,21 @@ class ScoreResource[ScoreDefT: ScoreDef](ResourceConfigValidationMixin):
     def get_score_definition(self, score_id: str) -> ScoreDefT | None:
         return self.score_definitions.get(score_id)
 
+    def _resolve_score_id(self, score_id: str | None) -> str:
+        """Return ``score_id``, or the only score when it is ``None``.
+
+        A given id is returned unchanged; the guards of the accessor that
+        reads it refuse an undefined one. With ``None``, a resource that
+        does not define exactly one score raises ``ValueError``.
+        """
+        if score_id is not None:
+            return score_id
+        if len(self.score_definitions) != 1:
+            raise ValueError(no_only_score_message(
+                self.resource.resource_id, self.score_definitions))
+        (only,) = self.score_definitions
+        return only
+
     def _guard_score_id(self, score_id: str) -> None:
         """Raise if ``score_id`` is not a defined score."""
         self._guard_score_ids([score_id])
@@ -235,7 +251,7 @@ class ScoreResource[ScoreDefT: ScoreDef](ResourceConfigValidationMixin):
         return plain
 
     def get_score_histogram(
-        self, score_id: str, *, truncated: bool = False,
+        self, score_id: str | None = None, *, truncated: bool = False,
     ) -> Histogram:
         """Return defined histogram for a score.
 
@@ -255,7 +271,19 @@ class ScoreResource[ScoreDefT: ScoreDef](ResourceConfigValidationMixin):
         :meth:`get_histogram_config`) is answered from the definition
         alone, with its configured reason: no statistics file is written
         for it (gain#305), and a stale one is not consulted (gain#1604).
+
+        Parameters
+        ----------
+        score_id : str or None
+            The id of the score to read. ``None``, the default, reads the
+            only score: the one score of a resource that defines exactly
+            one. A resource with several scores, or none, has no only
+            score, and the call raises ``ValueError`` with the ids it
+            does define.
+        truncated : bool
+            Accept the truncated sidecar instead of the full histogram.
         """
+        score_id = self._resolve_score_id(score_id)
         hist_conf = self.get_histogram_config(score_id)
         if isinstance(hist_conf, NullHistogramConfig):
             return NullHistogram(hist_conf)

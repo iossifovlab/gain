@@ -82,6 +82,15 @@ counts the values from ``bins[i]`` up to ``bins[i + 1]``. ``min_value`` and
 ``out_of_range_bins`` is a pair of counts: the values below and the values
 above the configured view range.
 
+``phastCons100way`` defines exactly one score, its only score, so a call with
+no score id reads the same histogram, and a resource with several scores
+refuses such a call with a ``ValueError`` that lists its score ids:
+
+.. code-block:: python
+
+    hist = score.get_score_histogram()
+    assert hist.to_dict() == score.get_score_histogram("phastCons100way").to_dict()
+
 The histogram also keeps three summary numbers:
 
 .. code-block:: python
