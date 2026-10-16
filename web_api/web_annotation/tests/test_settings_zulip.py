@@ -11,12 +11,16 @@ from typing import cast
 from urllib.parse import parse_qs
 
 import pytest
+from django.core.exceptions import ObjectDoesNotExist
+from django.core.files.base import ContentFile
 from django.http import HttpRequest, HttpResponse
 from django.test import Client
 from django.urls import path
 from gain.utils.zulip_logging import ZulipHandler, zulip_logger
 
 from web_annotation import settings_default
+from web_annotation.jobs import views as jobs_views
+from web_annotation.messages import CANNOT_BUILD_ANNOTATABLE
 
 ZULIP_ENV = {
     "GPFWA_ZULIP_SITE": "https://zulip.example",
@@ -267,4 +271,63 @@ def test_an_error_without_an_exception_posts_nothing(
 ) -> None:
     logging.getLogger("web_annotation.jobs.views").error("job failed")
 
+    assert zulip_server.posts == []
+
+
+def test_an_undecodable_pipeline_config_posts_nothing(
+    zulip_server: _CaptureServer,
+    live_zulip_handler: ZulipHandler,
+    user_client: Client,
+) -> None:
+    response = user_client.post("/api/pipelines/user", {
+        "config": ContentFile(b"\xff\xfe\xfa", "config.yaml"),
+        "name": "undecodable",
+    })
+
+    assert response.status_code == 400
+    assert zulip_server.posts == []
+
+
+def test_a_job_lost_during_setup_posts_nothing(
+    zulip_server: _CaptureServer,
+    live_zulip_handler: ZulipHandler,
+    admin_client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _lost_job(*_args: object, **_kwargs: object) -> None:
+        raise ObjectDoesNotExist("job vanished")
+
+    monkeypatch.setattr(jobs_views, "specify_job", _lost_job)
+
+    response = admin_client.post("/api/jobs/annotate_tabular", {
+        "pipeline_id": "pipeline/test_pipeline",
+        "data": ContentFile("chrom\tpos\tref\talt\nchr1\t1\tC\tA\n",
+                            "input.tsv"),
+        "separator": "\t",
+        "col_chrom": "chrom",
+        "col_pos": "pos",
+        "col_ref": "ref",
+        "col_alt": "alt",
+    })
+
+    assert response.status_code == 404
+    assert zulip_server.posts == []
+
+
+def test_columns_without_an_annotatable_post_nothing(
+    zulip_server: _CaptureServer,
+    live_zulip_handler: ZulipHandler,
+    admin_client: Client,
+) -> None:
+    response = admin_client.post(
+        "/api/jobs/validate_columns",
+        {
+            "file_columns": ["chr", "pos_beg"],
+            "column_mapping": {"col_chrom": "chr", "col_pos_beg": "pos_beg"},
+        },
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["errors"] == CANNOT_BUILD_ANNOTATABLE
     assert zulip_server.posts == []

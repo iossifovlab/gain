@@ -343,7 +343,7 @@ class AnnotateTabular(AnnotationBaseView):
             specify_job(job, **cast(dict[str, str], params))
             details = job.get_job_details()
         except ObjectDoesNotExist:
-            logger.exception("Job not found!")
+            logger.warning("Job not found!", exc_info=True)
             job.delete()
             return Response(status=views.status.HTTP_404_NOT_FOUND)
 
@@ -467,7 +467,7 @@ class ColumnValidation(AnnotationBaseView):
                 annotatable_name,
             )
         except ValueError:
-            logger.exception("Annotatable error.\n")
+            logger.warning("Annotatable error.\n", exc_info=True)
             return Response(
                 {
                     "annotatable": "",
