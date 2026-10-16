@@ -83,6 +83,9 @@ BoolArray = npt.NDArray[np.bool_]
 # A step folds one part into each of several bins.  ``first`` marks the
 # bins that get their first value from the part.  The caller keeps the
 # accumulator of a bin whose part is missing.
+# All steps share one signature, because ``_STEPS`` dispatches on the
+# aggregator.  The steps that do not read ``first`` silence the
+# unused-argument check for it.
 def _add_step(
     acc: FloatArray, parts: FloatArray,
     first: BoolArray,  # ruff: ignore[unused-function-argument]
@@ -115,6 +118,9 @@ def _min_step(
 
 # An along fold folds the parts of one bin into its accumulator, from
 # ``start``.  ``seen`` says whether the bin had a value before the parts.
+# All along folds share the ``_AlongFold`` signature, because ``_ALONG``
+# dispatches on the aggregator.  The folds that do not read ``missing``
+# or ``seen`` silence the unused-argument check for them.
 def _add_along(
     start: float, parts: FloatArray,
     missing: BoolArray,  # ruff: ignore[unused-function-argument]

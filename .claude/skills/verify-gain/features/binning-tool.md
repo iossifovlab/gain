@@ -73,6 +73,13 @@ The read-back opens the file with `h5py` from the checkout `.venv`.
 
 ## Gotchas
 
+- **The array fold.** `mini_positionscore_bw` is a `float` bigWig score
+  under `mean`. So `PositionScoreBinding.bin_region` folds the batches of
+  `fetch_region_value_arrays` with numpy (ADR 0038), not the runs of
+  `get_score_in_bins`. The two folds give bit-identical bins, so the
+  expected `values` stay the same. A drive that gives other `values`
+  points at the array fold first.
+
 - **Float32 values.** The bigWig stores float32, so `values` holds
   `0.30000001`, not `0.3`. The read-back compares each value within `1e-6`.
 - **Output location.** Without `-o`, the HDF5 file lands beside the run

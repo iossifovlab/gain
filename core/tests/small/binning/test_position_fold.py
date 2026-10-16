@@ -1,4 +1,6 @@
-# pylint: disable=W0621,C0114,C0116,W0212,W0613
+# pylint: disable=W0621,C0116
+# W0621: the tests take the pytest fixtures by their names.
+# C0116: the test names say what each test checks.
 """The position binner's array fold agrees with ``get_score_in_bins``.
 
 ``PositionScoreBinding.bin_region`` folds the batches of
