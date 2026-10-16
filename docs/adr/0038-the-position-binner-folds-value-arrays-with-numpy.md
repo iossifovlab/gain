@@ -59,6 +59,9 @@ all of these conditions are true:
 - The score serves the array read: `supports_region_value_arrays` is true.
 - The value type of the score is `float`.
 - The aggregator is `count`, `sum`, `mean`, `max` or `min`.
+- The `none_value_replacement` is exact as a float sum over one bin:
+  `replacement_is_exact` is true. The Consequences section gives the
+  reason.
 
 In all other cases, `bin_region` folds `get_score_in_bins`, as before. The
 maintainer decided three points on 2026-10-16.
@@ -99,7 +102,8 @@ score keeps the present fold.
 
 ### 3. `median` and `product` keep the present fold
 
-Two follow-up issues vectorise them.
+This is a gap that two open issues track, not a permanent choice:
+gain#1969 vectorises `median`, and gain#1970 vectorises `product`.
 
 ## Consequences
 
