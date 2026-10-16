@@ -115,13 +115,16 @@ Two follow-up issues vectorise them.
   times the bin size stays within 2**53. The aggregators keep an `int`
   replacement exact, and the fold adds it as a float. The two agree in
   that range. A larger replacement keeps the present fold.
-- The array read gives `nan` for a missing value. The fold treats `nan` as
-  a missing value, so the record claims its positions and the replacement
-  stands in for it. A cell that parses to a real NaN is the one difference.
-  An example is the text `NaN` in a score without that text in `na_values`,
-  or a NaN payload in a bigWig file. The present fold adds that NaN, and the
-  array fold treats it as a missing value. The default `na_values` of a
-  `float` score hold `nan`, so the difference needs an unusual resource.
+- The array read gives `nan` both for a missing value and for a cell that
+  parses to a NaN value. An example of a NaN value is the text `NaN`, which
+  the case-sensitive default `na_values` do not hold, or a NaN payload in a
+  bigWig file. The present fold adds a NaN value, and a missing record only
+  claims its positions. So the binner reads the parse that
+  `fetch_region_value_arrays` is made of
+  (`GenomicScore._parsed_column_batches`), which also gives the raw cells.
+  For each `nan` value, `parse_value` of its cell decides: `None` is a
+  missing value, and NaN is a value. Only the `nan` cells cost a scalar
+  parse.
 - Two folds now give the bins of a position track. The parity tests in
   `core/tests/small/binning/test_position_fold.py` pin their agreement. A
   change to the aggregators or to `get_score_in_bins` must keep those tests

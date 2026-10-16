@@ -245,7 +245,7 @@ def test_a_float_score_reads_through_the_array_read(
     repo: GenomicResourceRepo, mocker: pytest_mock.MockerFixture,
     aggregator: str,
 ) -> None:
-    arrays = mocker.spy(PositionScore, "fetch_region_value_arrays")
+    arrays = mocker.spy(PositionScore, "_parsed_column_batches")
     per_run = mocker.spy(PositionScore, "get_score_in_bins")
 
     bin_column(
@@ -266,7 +266,7 @@ def test_the_other_cases_keep_the_per_run_fold(
     repo: GenomicResourceRepo, mocker: pytest_mock.MockerFixture,
     resource_id: str, aggregator: str,
 ) -> None:
-    arrays = mocker.spy(PositionScore, "fetch_region_value_arrays")
+    arrays = mocker.spy(PositionScore, "_parsed_column_batches")
     per_run = mocker.spy(PositionScore, "get_score_in_bins")
     track = a_track(resource_id, aggregator, None)
 
@@ -283,7 +283,7 @@ def test_a_contig_the_score_does_not_have_is_not_read(
 ) -> None:
     # The array read refuses a contig the table does not hold, so the
     # array fold answers it as one uncovered run without a read.
-    arrays = mocker.spy(PositionScore, "fetch_region_value_arrays")
+    arrays = mocker.spy(PositionScore, "_parsed_column_batches")
 
     actual = bin_column(
         repo, a_track("tabix", "mean", 0.0), BedRegion("chr3", 1, 25), 10)
@@ -295,7 +295,7 @@ def test_a_contig_the_score_does_not_have_is_not_read(
 def test_a_binding_reads_default_size_batches_unless_told_otherwise(
     repo: GenomicResourceRepo, mocker: pytest_mock.MockerFixture,
 ) -> None:
-    arrays = mocker.spy(PositionScore, "fetch_region_value_arrays")
+    arrays = mocker.spy(PositionScore, "_parsed_column_batches")
     track = a_track("tabix", "mean", None)
     score = PositionScore(repo.get_resource("tabix"))
 
@@ -304,3 +304,73 @@ def test_a_binding_reads_default_size_batches_unless_told_otherwise(
 
     assert arrays.call_args.kwargs["batch_size"] == (
         DEFAULT_VALUE_ARRAYS_BATCH_SIZE)
+
+
+#: A ``NaN`` cell is not one of the default NA sentinels, which are
+#: case-sensitive: the score holds a NaN value there, and the per-run
+#: fold reads it as a value, not as a missing one.  The NaN records sit
+#: first in a bin (1-3), after a value (5-6), and ahead of a missing
+#: value (9-10 NA) and a later value (11-12), and after an infinite
+#: minimum (17 inf, 18 NaN).
+NAN_TABIX_DATA = """
+    chrom  pos_begin  pos_end  s
+    chr1   1          3        NaN
+    chr1   4          4        1.5
+    chr1   5          6        NaN
+    chr1   7          8        inf
+    chr1   9          10       NA
+    chr1   11         12       NaN
+    chr1   13         14       -2.0
+    chr1   17         17       inf
+    chr1   18         18       NaN
+"""
+
+#: The bigWig counterpart: its payload holds NaN values, which no NA
+#: sentinel matches.
+NAN_BIGWIG_DATA = """
+    chr1   0          3        nan
+    chr1   3          4        1.5
+    chr1   4          6        nan
+    chr1   6          8        inf
+    chr1   10         12       nan
+    chr1   12         14       -2.0
+    chr1   16         17       inf
+    chr1   17         18       nan
+"""
+
+NAN_REGION = BedRegion("chr1", 1, 20)
+
+
+@pytest.fixture(scope="module")
+def nan_repo(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> GenomicResourceRepo:
+    return (
+        a_grr()
+        .with_resource("tabix", a_position_score()
+                       .with_score("s", "float")
+                       .with_tabix()
+                       .with_data(NAN_TABIX_DATA))
+        .with_resource("bigwig", a_bigwig_score()
+                       .with_score("s", "float")
+                       .with_data(NAN_BIGWIG_DATA)
+                       .with_chrom_lens({"chr1": 20}))
+        .build_repo(tmp_path_factory.mktemp("nan_grr")))
+
+
+@pytest.mark.parametrize("resource_id", ["tabix", "bigwig"])
+@pytest.mark.parametrize("bin_size", [1, 4, LARGE_BIN_SIZE])
+@pytest.mark.parametrize("replacement", [None, 0.0], ids=["none", "zero"])
+@pytest.mark.parametrize("aggregator", AGGREGATORS)
+@pytest.mark.parametrize("batch_size", [
+    DEFAULT_VALUE_ARRAYS_BATCH_SIZE, 1])
+def test_a_nan_value_is_a_value_in_the_array_fold(
+    nan_repo: GenomicResourceRepo, batch_size: int, aggregator: str,
+    replacement: float | None, bin_size: int, resource_id: str,
+) -> None:
+    track = a_track(resource_id, aggregator, replacement)
+
+    actual = bin_column(nan_repo, track, NAN_REGION, bin_size, batch_size)
+
+    assert_same_bits(
+        actual, reference_column(nan_repo, track, NAN_REGION, bin_size))

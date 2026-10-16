@@ -43,6 +43,7 @@ from gain.genomic_resources.repository import (
     SearchTermError,
 )
 from gain.genomic_resources.resource_query import ResourceQueryParseError
+from gain.genomic_resources.score_def import GenomicScoreDef
 from gain.utils.regions import BedRegion
 
 BINNERS_ENTRY_POINT_GROUP = "gain.binning.binners"
@@ -347,6 +348,23 @@ def match_resources(
     return matches
 
 
+def _missing_mask(
+    score_def: GenomicScoreDef, values: npt.NDArray[np.float64],
+    cells: npt.NDArray[Any],
+) -> npt.NDArray[np.bool_]:
+    """Which parsed values are missing, as the per-run fold reads them.
+
+    A ``nan`` value is missing when
+    :meth:`~gain.genomic_resources.score_def.GenomicScoreDef.parse_value`
+    gives ``None`` for its cell: an NA sentinel or a cell that does not
+    parse.  A cell that parses to NaN is a value.
+    """
+    missing = np.isnan(values)
+    for index in np.flatnonzero(missing):
+        missing[index] = score_def.parse_value(cells[index]) is None
+    return missing
+
+
 class PositionScoreBinding:
     """One track's score, open for as long as the ``with`` lasts.
 
@@ -443,16 +461,28 @@ class PositionScoreBinding:
         fold = ArrayBinFold(
             definition.aggregator, definition.none_value_replacement,
             region.start, region.stop, bin_size)
-        # The array read refuses a contig the table does not hold, and
-        # such a contig is one uncovered run: no batch reaches the fold.
+        # The table refuses a contig it does not hold, and such a contig
+        # is one uncovered run: no batch reaches the fold.
         if self.score.has_chromosome(region.chrom):
             selector = self.track.selector
-            for pos_begin, pos_end, values in (
-                    self.score.fetch_region_value_arrays(
-                        region.chrom, region.start, region.stop,
-                        [selector],
-                        batch_size=self.value_arrays_batch_size)):
-                fold.add_batch(pos_begin, pos_end, values[selector])
+            score_def = self.score.score_definitions[selector]
+            # ``fetch_region_value_arrays`` gives ``nan`` both for a
+            # missing value and for a NaN value of the score, and the fold
+            # must tell the two apart.  The parse that it is made of also
+            # gives the raw cells, which tell them apart.
+            # pylint: disable=protected-access
+            score = self.score
+            columns = score._score_column_indexes(  # ruff: ignore[private-member-access]
+                [selector])
+            batches = score._parsed_column_batches(  # ruff: ignore[private-member-access]
+                columns, (region.chrom, region.start, region.stop),
+                batch_size=self.value_arrays_batch_size)
+            for pos_begin, pos_end, values, cells in batches:
+                fold.add_batch(
+                    pos_begin, pos_end, values[selector],
+                    _missing_mask(
+                        score_def, values[selector],
+                        cells[columns[selector]]))
         return fold.finish()
 
     def _per_run_column(
