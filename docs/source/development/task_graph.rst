@@ -48,9 +48,12 @@ The drivers of GAIn do both steps through
 :class:`~gain.task_graph.cli_tools.TaskGraphCli`. Its ``add_arguments``
 adds the task graph options to a command-line parser. Its ``process_graph``
 creates a task cache and a task executor from those options, and then runs
-the graph. With ``-j 1``, the task executor runs the tasks sequentially. A
-run without ``-j`` starts the default named cluster, and a dask task
-executor runs the tasks on it.
+the graph. With ``-j 1``, the task executor runs the tasks sequentially.
+Otherwise, ``--process-pool`` selects
+:class:`~gain.task_graph.process_pool_executor.ProcessPoolTaskExecutor`,
+which runs the tasks in a pool of ``-j`` processes. Without
+``--process-pool``, a run without ``-j`` starts the default named cluster,
+and a dask task executor runs the tasks on it.
 
 .. rubric:: Not covered here
 
