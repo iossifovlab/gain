@@ -228,8 +228,8 @@ configured:
 * a substitution, which reads a single position;
 * an annotatable on a chromosome the score resource does not carry;
 * an annotatable longer than the annotator's ``region_length_cutoff``
-  (500 000 bp by default), which is declined before it is read. Note that
-  this is the case for large CNVs — raise ``region_length_cutoff`` on the
+  (15 000 000 bp by default), which is declined before it is read. Note that
+  this is the case for very large CNVs — raise ``region_length_cutoff`` on the
   annotator if such a CNV is to be annotated at all.
 
 **region_length_cutoff**
@@ -238,7 +238,15 @@ The optional ``region_length_cutoff`` parameter caps how long an annotatable may
 before the annotator declines to read it, which keeps a single very long annotatable
 from turning into a very expensive region query. An annotatable longer than the
 cutoff is answered with empty values for every attribute, without the score file
-being read at all; the default is 500 000 bp.
+being read at all; the default is 15 000 000 bp. The annotator logs one warning for
+each such annotatable, naming its length and the cutoff, so a declined annotatable
+can be told apart from one with no scores in the log, though not in the output.
+An annotatable of exactly the cutoff length is read.
+
+Over a long region, the ``list``, ``join``, ``concatenate`` and ``most_common``
+aggregators answer one element for each record they fold, so their output grows
+with the region; use a summary aggregator such as ``max``, ``mean`` or ``count``
+for long regions.
 
 .. code:: yaml
 
@@ -379,10 +387,12 @@ The optional ``include_attributes`` parameter appends one or more score values t
 **region_length_cutoff**
 
 An ``allele_score_annotator`` takes the same optional ``region_length_cutoff`` as a
-``position_score_annotator``, with the same 500 000 bp default and the same meaning:
-an annotatable longer than the cutoff is answered with empty values rather than read.
-It bounds the annotatables that are read as a region: a VCF allele is dispatched on
-its own, in either ``mode``, and never reaches the cutoff.
+``position_score_annotator``, with the same 15 000 000 bp default and the same meaning:
+an annotatable longer than the cutoff is answered with empty values rather than read,
+and the annotator logs a warning. Every region fold is subject to the cutoff: a
+region, a CNV, a VCF allele in ``region`` mode, and a VCF allele that the resource
+does not match exactly in ``allele`` mode. An exact match is not a fold, so a VCF
+allele that the resource matches exactly is never subject to the cutoff.
 
 
 gene_score_annotator
@@ -545,11 +555,9 @@ The example also renames ``worst_effect`` to ``MANE_1.5_worst_effect``.
 
 **region_length_cutoff**
 
-The ``effect_annotator`` takes the same optional ``region_length_cutoff``, but with a
-default of 15 000 000 bp rather than the score annotators' 500 000 — a CNV too long to
-resolve gene by gene still has an effect worth reporting, where a score has no value
-worth aggregating. An annotatable longer than the cutoff is not resolved against the
-gene models at all. It is reported as ``CNV-`` or ``CNV+`` if it is a large deletion or
+The ``effect_annotator`` takes the same optional ``region_length_cutoff``, with the
+same default of 15 000 000 bp as the score annotators. An annotatable longer than the
+cutoff is not resolved against the gene models at all. It is reported as ``CNV-`` or ``CNV+`` if it is a large deletion or
 duplication and ``unknown`` otherwise, with its length and an empty gene list, so the
 answer says the annotatable was too long rather than that it hit nothing.
 

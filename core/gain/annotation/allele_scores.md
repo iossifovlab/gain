@@ -59,7 +59,8 @@ The annotator has two modes selected by the `mode` parameter:
 - **`region`**: the score reduces all allele lines overlapping
   the annotatable's span, streaming them through
   `AlleleScore.get_allele_scores_in_region_agg`. Works with any `Annotatable`,
-  and folds every `VCFAllele` whatever the resource's mode.
+  and folds every `VCFAllele` whatever the resource's mode, subject to
+  `region_length_cutoff`.
   Each score attribute must have an aggregator defined either in the attribute
   config or as the resource's default; an attribute with neither — only a
   `bool` score has no default — is refused when the pipeline loads, in

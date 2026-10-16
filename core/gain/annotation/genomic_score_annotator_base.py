@@ -14,6 +14,8 @@ which reads the types they accept off ``ACCEPTED_RESOURCE_TYPES``.
 import abc
 from typing import Any
 
+from gain import logging
+from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import (
     AnnotationConfigParser,
     AnnotatorInfo,
@@ -25,13 +27,15 @@ from gain.annotation.annotation_pipeline import (
     Annotator,
     AttributeSpec,
 )
-from gain.annotation.annotator_base import AnnotatorBase
+from gain.annotation.annotator_base import AnnotatedValues, AnnotatorBase
 from gain.genomic_resources.aggregators import (
     AggregatorSource,
     aggregator_name,
 )
 from gain.genomic_resources.genomic_scores import GenomicScore
 from gain.templates import get_template
+
+logger = logging.getLogger(__name__)
 
 
 class GenomicScoreAnnotatorBase(AnnotatorBase):
@@ -84,11 +88,30 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
         # comparison instead and raised per annotated variant
         # (gain#1166).
         self._region_length_cutoff = info.parameters.get_integer(
-            "region_length_cutoff", default=500_000, minimum=0)
+            "region_length_cutoff", default=15_000_000, minimum=0)
 
         self.simple_score_queries: list[str] = [
             attr.source for attr in self._attributes
             if attr.source in self.score.score_definitions]
+
+    def _beyond_region_length_cutoff(
+        self, annotatable: Annotatable,
+    ) -> AnnotatedValues | None:
+        """Answer an annotatable too long to fold, or ``None`` to fold it.
+
+        An annotatable longer than ``region_length_cutoff`` base pairs
+        is not folded: the annotator logs one warning that names the
+        length, the cutoff and the annotatable, and answers ``None``
+        for every attribute.  An annotatable of exactly the cutoff
+        length is folded.  Every region fold calls this first.
+        """
+        length = len(annotatable)
+        if length <= self._region_length_cutoff:
+            return None
+        logger.warning(
+            "region length %s is longer than cutoff %s; %s",
+            length, self._region_length_cutoff, annotatable)
+        return self._empty_result()
 
     def open(self) -> Annotator:
         self.score.open()

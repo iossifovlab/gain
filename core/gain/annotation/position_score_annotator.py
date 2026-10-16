@@ -60,7 +60,7 @@ class PositionScoreAnnotator(GenomicScoreAnnotatorBase):
     Neither applies to an annotatable that never reaches the region fold: a
     substitution, which reads a single position; one on a chromosome the
     resource does not carry; or one longer than region_length_cutoff, which
-    is declined before it is read.
+    is declined with a warning before it is read.
     """
 
     ACCEPTED_RESOURCE_TYPES = (PREFERRED_POSITION_SCORE_TYPE,)
@@ -175,8 +175,9 @@ phastCons, phyloP, FitCons2, etc.
             return self._pair_all(
                 point_scores, resource_id=self.position_score.resource_id)
 
-        if len(annotatable) > self._region_length_cutoff:
-            return self._empty_result()
+        too_long = self._beyond_region_length_cutoff(annotatable)
+        if too_long is not None:
+            return too_long
 
         values = self.position_score.get_scores_in_region_agg(
             annotatable.chrom, annotatable.pos, annotatable.pos_end,
