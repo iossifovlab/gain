@@ -32,6 +32,22 @@ One versioned, self-describing unit of a GRR — a score, a genome, a gene model
 — configured by its `genomic_resource.yaml`.
 _Avoid_: dataset, asset, entry
 
+**Builder**:
+A function in `gain.grr` that turns a **resource** into the typed object that
+reads it, for example `build_score_from_resource_id`. Builders come in pairs:
+one takes a resource id and a **GRR**, the other a `GenomicResource` already
+in hand. The data-frame and AnnData loaders are not builders: they read the
+data at once and return a pandas or anndata object.
+_Avoid_: factory, constructor
+
+**Implementation builder**:
+The callable registered for one resource type under the
+`gain.genomic_resources.implementations` entry-point group. It takes a
+`GenomicResource` and returns that type's resource implementation: the class
+that describes the resource, computes its statistics and renders its summary
+page.
+_Avoid_: builder (unqualified), factory, plugin
+
 ### Describing a resource
 
 **Label**:
