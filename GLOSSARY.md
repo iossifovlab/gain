@@ -82,6 +82,16 @@ resource, and a GRR whose every resource failed to index has no `contents`
 table at all.
 _Avoid_: builtin column, system column
 
+### Annotation
+
+**Annotator factory**:
+The callable registered under the `gain.annotation.annotators` entry-point
+group for one annotator type. It takes a pipeline and an `AnnotatorInfo` and
+returns a built annotator. A **builder** turns a **resource** into the object
+that reads it; an annotator factory turns a configuration into an annotator.
+_Avoid_: factory (unqualified), builder, plugin (which is the package that
+registers one or more annotator factories)
+
 ### Searching
 
 **Search term**:
