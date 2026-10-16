@@ -1,4 +1,3 @@
-# pylint: disable=redefined-outer-name,C0114,C0116
 """A score annotator's ``region_length_cutoff`` (gain#264).
 
 Every region fold of a ``position_score`` or an ``allele_score`` is
@@ -31,8 +30,8 @@ from gain.genomic_resources.testing.builders import (
 _CUTOFF_LOGGER = "gain.annotation.genomic_score_annotator_base"
 
 
-@pytest.fixture
-def repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
+@pytest.fixture(name="repo")
+def repo_fixture(tmp_path: pathlib.Path) -> GenomicResourceRepo:
     return (
         a_grr()
         .with_resource(
@@ -77,8 +76,11 @@ def _annotate(
               name: value
               aggregator: max
         """), repo)
-    with pipeline.open() as work_pipeline:
+    work_pipeline = pipeline.open()
+    try:
         return work_pipeline.annotate(annotatable)
+    finally:
+        work_pipeline.close()
 
 
 def _warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
@@ -90,6 +92,7 @@ def _warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
 def test_a_region_longer_than_the_cutoff_answers_none_and_warns(
     repo: GenomicResourceRepo, caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """A region past the cutoff answers None and logs one warning."""
     with caplog.at_level(logging.WARNING, logger=_CUTOFF_LOGGER):
         result = _annotate(
             repo, "position_score", Region("chr1", 1, 11),
@@ -104,6 +107,7 @@ def test_a_region_longer_than_the_cutoff_answers_none_and_warns(
 def test_a_region_of_exactly_the_cutoff_length_is_folded_silently(
     repo: GenomicResourceRepo, caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """A region of exactly the cutoff length is folded with no warning."""
     with caplog.at_level(logging.WARNING, logger=_CUTOFF_LOGGER):
         result = _annotate(
             repo, "position_score", Region("chr1", 1, 10),
@@ -116,6 +120,7 @@ def test_a_region_of_exactly_the_cutoff_length_is_folded_silently(
 def test_the_default_cutoff_folds_a_one_megabase_region(
     repo: GenomicResourceRepo,
 ) -> None:
+    """The default cutoff is larger than one megabase."""
     result = _annotate(
         repo, "position_score", Region("chr1", 1, 1_000_000))
 
@@ -125,6 +130,7 @@ def test_the_default_cutoff_folds_a_one_megabase_region(
 def test_region_mode_folds_a_vcf_allele_subject_to_the_cutoff(
     repo: GenomicResourceRepo, caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """The ``mode: region`` fold of a VCF allele obeys the cutoff."""
     allele = VCFAllele("chr1", 10, "ACG", "A")
 
     with caplog.at_level(logging.WARNING, logger=_CUTOFF_LOGGER):
@@ -141,6 +147,7 @@ def test_region_mode_folds_a_vcf_allele_subject_to_the_cutoff(
 def test_an_exact_match_is_not_subject_to_the_cutoff(
     repo: GenomicResourceRepo, caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """An exact match answers its value under any cutoff."""
     allele = VCFAllele("chr1", 10, "ACG", "A")
 
     with caplog.at_level(logging.WARNING, logger=_CUTOFF_LOGGER):
