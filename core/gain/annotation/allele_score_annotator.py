@@ -67,7 +67,8 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
       annotatable's span, in one streaming walk
       (``AlleleScore.get_allele_scores_in_region_agg``).  Works with any
       ``Annotatable`` (``VCFAllele``, ``Region``, CNV, …), and folds every
-      ``VCFAllele`` whatever the resource's mode.  An aggregator
+      ``VCFAllele`` whatever the resource's mode, subject to
+      ``region_length_cutoff``.  An aggregator
       must be defined for every score attribute, either in the attribute
       config or as the score's ``aggregator`` default in the resource YAML;
       an attribute with neither -- only a ``bool`` score can be in that
@@ -364,18 +365,20 @@ Non-``VCFAllele`` annotatables always use region aggregation.
         allele on an ``alleles`` resource, only a substitution on a
         ``substitutions`` one.  The rest -- and a ``VCFAllele`` in
         ``region`` mode, an explicit override -- is region-folded.
-        Everything except that override is subject to
-        ``region_length_cutoff`` on the fold.
+        Every fold is subject to ``region_length_cutoff``; the exact
+        match is not a fold and never is.
         """
         if not self.allele_score.has_chromosome(annotatable.chromosome):
             return self._empty_result()
 
-        if isinstance(annotatable, VCFAllele):
-            if self.mode == "region":
-                return self._annotate_region(annotatable)
-            if self._matched_exactly(annotatable):
-                return self._annotate_allele(annotatable)
+        if (
+            isinstance(annotatable, VCFAllele)
+            and self.mode != "region"
+            and self._matched_exactly(annotatable)
+        ):
+            return self._annotate_allele(annotatable)
 
-        if len(annotatable) > self._region_length_cutoff:
-            return self._empty_result()
+        too_long = self._beyond_region_length_cutoff(annotatable)
+        if too_long is not None:
+            return too_long
         return self._annotate_region(annotatable)

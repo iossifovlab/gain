@@ -140,10 +140,10 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
                 # Read by `GenomicScoreAnnotatorBase`, so a parameter of
                 # both genomic score annotators.  The effect annotator
                 # offers it too, but reads it for itself rather than off
-                # that base, and with a much higher default of its own
-                # (gain#1184).  `string` for the reason recorded on the
-                # fragment score template below: the form renders no
-                # numeric field.  What makes the text safe is
+                # that base (gain#1184).  All three annotators share the
+                # 15,000,000 bp default.  `string` for the reason
+                # recorded on the fragment score template below: the
+                # form renders no numeric field.  What makes the text safe is
                 # gain#1166, which gave the annotators
                 # `ParamsUsageMonitor.get_integer` -- a cutoff this form
                 # posts quoted means the number it spells.  Offered
@@ -310,8 +310,9 @@ class EditorMixin:  # pylint: disable=too-few-public-methods
                 },
                 # The same cutoff, for the reason recorded on the
                 # position score template above.  The effect annotator
-                # reads it with a default of its own, but the form offers
-                # the key, not the default.
+                # reads it itself, with the same 15,000,000 bp default as
+                # the score annotators, and the form offers the key, not
+                # the default.
                 "region_length_cutoff": {
                     "field_type": "string",
                     "optional": True,
