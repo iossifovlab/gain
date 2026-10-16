@@ -95,7 +95,8 @@ at 100 bp:
         mode: fragment_start
         uncovered_value: null
 
-and for the local-file entry, the report carries the warning:
+and for the local-file entry of :ref:`binning-local-metadata-files`, the
+report carries the warning:
 
 .. code-block:: text
 

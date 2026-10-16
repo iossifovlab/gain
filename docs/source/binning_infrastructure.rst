@@ -655,6 +655,8 @@ which is thousands of columns per sample, and the full histogram of a
 reports the group count read from the histograms, so the width of the
 matrix is known before it is built.
 
+.. _binning-local-metadata-files:
+
 Local metadata files
 """"""""""""""""""""
 
