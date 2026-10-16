@@ -110,14 +110,14 @@ fold itself)
 
 **Region length cutoff**:
 The longest annotatable that a score annotator folds. Past it the annotator
-declines the fold before it reads a record and answers no value for every
-attribute. The annotator logs nothing, so a declined region and an unscored
-region give the same output (gain#264). The position score annotator applies
-the cutoff to every fold. The allele score annotator applies it to every fold
-except a `VCFAllele` under the `mode: region` override. The reduction of the
-lines of an exactly matched allele is not a fold, so the cutoff does not apply
-to it. The fragment score annotator has no cutoff. The effect annotator has a
-cutoff of the same name that answers a coarse CNV effect instead.
+declines the fold before it reads a record, logs a warning and answers no
+value for every attribute. A declined region and an unscored region give the
+same output and differ only in the log (gain#264). The position and allele
+score annotators apply the cutoff to every fold, the `mode: region` override
+included. The reduction of the lines of an exactly matched allele is not a
+fold, so the cutoff does not apply to it. The fragment score annotator has no
+cutoff. The effect annotator has a cutoff of the same name that answers a
+coarse CNV effect instead.
 _Avoid_: region cutoff, length limit, maximum region length
 
 ### Searching
