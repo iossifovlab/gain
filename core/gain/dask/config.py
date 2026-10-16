@@ -57,16 +57,19 @@ def check_named_cluster_config() -> None:
 
 
 def _check_user_clusters_shape(config: dict[str, Any]) -> ValueError | None:
-    """Return the refusal of a user ``clusters`` value that is not a mapping.
+    """Return the refusal of a user named cluster value that is not a mapping.
 
-    The check must run before the bundled defaults are merged:
-    ``dask.config.update_defaults`` replaces a user value that is not a
-    mapping with the bundled mapping, and the user value is lost.
+    The function checks the ``gain_named_cluster`` value and its
+    ``clusters`` value. The check must run before the bundled defaults are
+    merged: ``dask.config.update_defaults`` replaces a user value that is not
+    a mapping with the bundled mapping, and the user value is lost.
     """
     for key in _spellings(config, NAMED_CLUSTER_KEY):
         named_clusters = config[key]
-        if not isinstance(named_clusters, Mapping):
+        if named_clusters is None:
             continue
+        if not isinstance(named_clusters, Mapping):
+            return _mapping_shape_error(NAMED_CLUSTER_KEY, named_clusters)
         clusters = named_clusters.get("clusters")
         if clusters is not None and not isinstance(clusters, Mapping):
             return clusters_shape_error(clusters)

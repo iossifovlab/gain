@@ -598,6 +598,33 @@ def test_list_of_named_clusters_in_a_user_file_is_refused(
     assert mocked_client.call_count == 0
 
 
+@pytest.mark.parametrize("content", [
+    "gain_named_cluster:\n  - name: local\n    type: local\n",
+    "gain_named_cluster: local\n",
+])
+def test_non_mapping_new_key_in_a_user_file_is_refused(
+    mocker: pytest_mock.MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    restored_dask_config: None,
+    content: str,
+) -> None:
+    # The user file puts the old list directly under the new key. The
+    # bundled defaults that reconfigure() merges must not replace it.
+    monkeypatch.setattr(config, "PATH", str(tmp_path))
+    mocked_client = mocker.patch(
+        "gain.dask.named_cluster.Client", autospec=True)
+    (tmp_path / "named_cluster.yaml").write_text(content)
+    config.refresh(paths=[str(tmp_path)])
+
+    gain.dask.config.reconfigure()
+    with pytest.raises(
+            ValueError, match="'gain_named_cluster' must be a mapping"):
+        setup_client("local")
+
+    assert mocked_client.call_count == 0
+
+
 @pytest.mark.parametrize("legacy_clusters, message", [
     ("\n    - type: sge", "has no 'name' key"),
     ("\n    my_sge:\n      type: sge", "must be a list"),
