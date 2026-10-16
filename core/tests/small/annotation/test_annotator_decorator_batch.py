@@ -60,6 +60,8 @@ class BatchOnlyAnnotator(AnnotatorBase):
     ) -> AnnotatedValues:
         raise NotImplementedError("batch only")
 
+    # The stub returns a lazy iterator on purpose, to prove that the
+    # decorators accept a lazy iterable; AnnotatorBase declares Sequence.
     def batch_annotate(  # type: ignore[override]
         self,
         annotatables: Sequence[Annotatable | None],
