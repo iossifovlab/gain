@@ -626,3 +626,48 @@ def test_malformed_old_key_is_refused_when_named_clusters_are_read(
 
     assert "dae_named_cluster.clusters" in str(excinfo.value)
     assert mocked_client.call_count == 0
+
+
+@pytest.mark.parametrize("content, message", [
+    ("dae_named_cluster:\n  - name: my_sge\n    type: sge\n",
+     "'dae_named_cluster' must be a mapping"),
+    ("dae_named_cluster: sge\n", "'dae_named_cluster' must be a mapping"),
+])
+def test_non_mapping_old_key_is_refused_when_named_clusters_are_read(
+    mocker: pytest_mock.MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    restored_dask_config: None,
+    content: str,
+    message: str,
+) -> None:
+    # An old key that is not a mapping must not abort the import of
+    # gain.dask either.
+    monkeypatch.setattr(config, "PATH", str(tmp_path))
+    mocked_client = mocker.patch(
+        "gain.dask.named_cluster.Client", autospec=True)
+    (tmp_path / "named_cluster.yaml").write_text(content)
+    config.refresh(paths=[str(tmp_path)])
+
+    gain.dask.config.reconfigure()
+    with pytest.raises(ValueError, match=message):
+        setup_client("my_sge")
+
+    assert mocked_client.call_count == 0
+
+
+def test_translation_refuses_a_non_mapping_new_key_next_to_the_old_key(
+    restored_dask_config: None,
+) -> None:
+    config.config.clear()
+    config.config.update({
+        "gain_named_cluster": ["local"],
+        "dae_named_cluster": {
+            "clusters": [{"name": "my_sge", "type": "sge"}]},
+    })
+
+    error = gain.dask.config.translate_legacy_named_cluster()
+
+    assert isinstance(error, ValueError)
+    assert "'gain_named_cluster' must be a mapping" in str(error)
+    assert "dae_named_cluster" not in config.config

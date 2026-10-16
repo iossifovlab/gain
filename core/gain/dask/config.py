@@ -138,6 +138,13 @@ def _legacy_clusters(clusters: Any) -> dict[str, Any]:
     return result
 
 
+def _mapping_shape_error(key: str, value: Any) -> ValueError:
+    """Return the refusal of a named cluster key that is not a mapping."""
+    return ValueError(
+        f"'{key}' must be a mapping, not a {type(value).__name__}:\n"
+        f"{_DICT_SHAPE_EXAMPLE}")
+
+
 def translate_legacy_named_cluster() -> ValueError | None:
     """Translate the old named cluster key in the dask config.
 
@@ -150,42 +157,49 @@ def translate_legacy_named_cluster() -> ValueError | None:
     removes the old key from the dask config and logs one warning. It does
     not change any file.
 
-    The function does not raise. When the old ``clusters`` value has the
-    wrong shape, the function translates the other values and returns the
-    refusal. :func:`reconfigure` defers the refusal until GAIn reads the
-    named clusters.
+    The function does not raise. When the old key, the new key or the old
+    ``clusters`` value has the wrong shape, the function translates the other
+    values and returns the first refusal. :func:`reconfigure` defers the
+    refusal until GAIn reads the named clusters.
 
     Returns
     -------
     ValueError | None
-        The refusal of a malformed old ``clusters`` value, or ``None``.
+        The refusal of a malformed named cluster value, or ``None``.
     """
     config = dask.config.config  # pyright: ignore
     keys = _spellings(config, LEGACY_NAMED_CLUSTER_KEY)
     if not keys:
         return None
 
+    error: ValueError | None = None
     legacy: dict[str, Any] = {}
     for key in keys:
-        legacy = dask.config.merge(  # pyright: ignore
-            legacy, config.pop(key) or {})
+        value = config.pop(key) or {}
+        if not isinstance(value, Mapping):
+            error = error or _mapping_shape_error(
+                LEGACY_NAMED_CLUSTER_KEY, value)
+            continue
+        legacy = dask.config.merge(legacy, value)  # pyright: ignore
 
     translated: dict[str, Any] = {
         field: legacy[field]
         for field in ("default", "distributed")
         if field in legacy
     }
-    error: ValueError | None = None
     try:
         clusters = _legacy_clusters(legacy.get("clusters"))
     except ValueError as refusal:
-        error = refusal
+        error = error or refusal
         clusters = {}
 
     target = next(
         iter(_spellings(config, NAMED_CLUSTER_KEY)), NAMED_CLUSTER_KEY)
-    merged = dask.config.merge(  # pyright: ignore
-        config.get(target) or {}, translated)
+    current = config.get(target) or {}
+    if not isinstance(current, Mapping):
+        error = error or _mapping_shape_error(NAMED_CLUSTER_KEY, current)
+        current = {}
+    merged = dask.config.merge(current, translated)  # pyright: ignore
     if clusters:
         # Merge at the level of the clusters mapping, not inside each
         # cluster definition: before the new key, the old list replaced the
