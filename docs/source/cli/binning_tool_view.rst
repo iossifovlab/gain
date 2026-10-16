@@ -65,7 +65,7 @@ Header
     binning_tool_view run.h5 --matrix --header index
 
 The track label comes from :func:`gain.binning.h5_reader.track_labels`.
-See "Reading the file back" in :doc:`binning_tool` for the rule.
+See "Reading the file back" in :doc:`/binning_infrastructure` for the rule.
 
 Selecting bins
 --------------
