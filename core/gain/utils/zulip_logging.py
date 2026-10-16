@@ -12,6 +12,9 @@ traceback included, in a four-backtick fence::
     ````
     <formatted record>
     ````
+
+The handler strips url credentials from the whole content, the
+formatted traceback included.
 """
 from __future__ import annotations
 
@@ -22,6 +25,7 @@ from collections.abc import Callable
 from urllib.parse import urlencode
 
 from gain import logging
+from gain.utils.url_redaction import strip_url_credentials
 
 _TIMEOUT_SECONDS = 5
 _FENCE = "````"
@@ -93,6 +97,16 @@ class ZulipHandler(logging.Handler):
         window.
     clock
         The monotonic time source of the window, in seconds.
+    max_chars
+        The maximum length of the message content. The Zulip default is
+        10,000. The handler cuts a longer formatted record from the
+        front and puts the line ``... (cut <N> characters)`` first in
+        the fence. The title stays. The end of the record stays, so the
+        last line stays whole only when it fits: the handler cuts a
+        longer last line from its front too. The title takes at most a
+        quarter of the limit: the handler cuts a longer title from the
+        end and ends it with ``...``. A limit under 16 characters cannot
+        hold the title markup and the fences.
     """
 
     def __init__(
@@ -106,6 +120,7 @@ class ZulipHandler(logging.Handler):
         max_posts: int = 10,
         window_seconds: int = 600,
         clock: Callable[[], float] = time.monotonic,
+        max_chars: int = 10_000,
     ) -> None:
         super().__init__()
         self.addFilter(ZulipFilter())
@@ -118,14 +133,55 @@ class ZulipHandler(logging.Handler):
         self.max_posts = max_posts
         self.window_seconds = window_seconds
         self._clock = clock
+        self.max_chars = max_chars
         self._window_start: float | None = None
         self._posts_in_window = 0
         self._suppressed = 0
 
     def _content(self, record: logging.LogRecord, topic: str) -> str:
         first_line = (record.getMessage().splitlines() or [""])[0]
-        title = f"**{record.levelname} {topic} {record.name}: {first_line}**"
-        return f"{title}\n\n{_FENCE}\n{self.format(record)}\n{_FENCE}"
+        heading = strip_url_credentials(
+            f"{record.levelname} {topic} {record.name}: {first_line}")
+        heading = self._clip(heading, self.max_chars // 4 - len("****"))
+        body = strip_url_credentials(self.format(record))
+        head = f"**{heading}**\n\n{_FENCE}\n"
+        tail = f"\n{_FENCE}"
+        budget = self.max_chars - len(head) - len(tail)
+        return f"{head}{self._cut(body, budget)}{tail}"
+
+    @staticmethod
+    def _clip(text: str, limit: int) -> str:
+        """Cut ``text`` from the end to at most ``limit`` characters.
+
+        A clipped text ends with ``...``.
+        """
+        limit = max(limit, 0)
+        if len(text) <= limit:
+            return text
+        if limit < len("..."):
+            return text[:limit]
+        return f"{text[:limit - len('...')]}..."
+
+    @staticmethod
+    def _cut(body: str, budget: int) -> str:
+        """Cut ``body`` from the front to at most ``budget`` characters.
+
+        A cut body starts with the line ``... (cut <N> characters)``. When
+        the budget cannot hold that line, the body keeps only its last
+        ``budget`` characters.
+        """
+        budget = max(budget, 0)
+        if len(body) <= budget:
+            return body
+        cut = len(body) - budget
+        while True:
+            marker = f"... (cut {cut} characters)\n"
+            if len(marker) > budget:
+                return body[len(body) - budget:]
+            keep = budget - len(marker)
+            if len(body) - keep == cut:
+                return f"{marker}{body[len(body) - keep:]}"
+            cut = len(body) - keep
 
     def _post(self, topic: str, content: str) -> None:
         data = urlencode({

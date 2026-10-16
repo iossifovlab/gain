@@ -10,6 +10,7 @@ each POST.  No mock replaces the HTTP call.
 from __future__ import annotations
 
 import base64
+import re
 import socket
 import threading
 import time
@@ -503,3 +504,205 @@ def test_failed_summary_keeps_its_count_for_the_next_summary(
         summary,
         _record_title("third"),
     ]
+
+
+def test_exception_quoting_a_url_posts_it_without_credentials(
+    zulip_server: _CaptureServer, test_logger: logging.Logger,
+) -> None:
+    try:
+        _raise_value_error("fetch https://user:secret@host/path failed")
+    except ValueError:
+        test_logger.exception("boom")
+
+    content = zulip_server.posts[0].form["content"]
+    assert "secret" not in content
+    assert "host/path" in content
+
+
+def _long_message(length: int) -> str:
+    """Return a message of ``length`` characters with a distinct last line."""
+    lines = [f"line {i:05d} " + "x" * 68 for i in range(length // 80 + 1)]
+    message = "\n".join(lines)[:length - len("\nlast line")]
+    return f"{message}\nlast line"
+
+
+@pytest.mark.usefixtures("gain_root_handler")
+def test_long_record_is_cut_from_the_front_of_the_body(
+    zulip_server: _CaptureServer,
+) -> None:
+    message = _long_message(14_000)
+    assert len(message) == 14_000
+
+    zulip_logger().info(message)
+
+    content = zulip_server.posts[0].form["content"]
+    lines = content.split("\n")
+    assert len(content) <= 10_000
+    assert lines[0] == f"**INFO {TOPIC} gain.zulip: line 00000 {'x' * 68}**"
+    assert lines[1:3] == ["", "````"]
+    assert re.fullmatch(r"\.\.\. \(cut \d+ characters\)", lines[3])
+    assert lines[-2:] == ["last line", "````"]
+    assert content.count("````") == 2
+
+
+@pytest.mark.usefixtures("gain_root_handler")
+def test_record_under_the_limit_posts_without_a_cut_marker(
+    zulip_server: _CaptureServer,
+) -> None:
+    message = _long_message(9_000)
+
+    zulip_logger().info(message)
+
+    content = zulip_server.posts[0].form["content"]
+    assert "(cut " not in content
+    assert content.endswith(f"````\n{message}\n````")
+
+
+@pytest.mark.usefixtures("gain_root_handler")
+def test_title_keeps_its_bold_close_after_a_url_query_is_stripped(
+    zulip_server: _CaptureServer,
+) -> None:
+    zulip_logger().info("fetch https://host/f?X-Amz-Signature=abc")
+
+    content = zulip_server.posts[0].form["content"]
+    assert content.split("\n")[0] == (
+        f"**INFO {TOPIC} gain.zulip: fetch https://host/f**")
+
+
+@pytest.mark.usefixtures("gain_root_handler")
+def test_long_first_line_is_cut_to_the_limit(
+    zulip_server: _CaptureServer,
+) -> None:
+    message = "x" * 13_990 + "last chars"
+
+    zulip_logger().info(message)
+
+    content = zulip_server.posts[0].form["content"]
+    lines = content.split("\n")
+    assert len(content) <= 10_000
+    assert lines[0].startswith(f"**INFO {TOPIC} gain.zulip: xxx")
+    assert lines[0].endswith("...**")
+    assert lines[1:3] == ["", "````"]
+    assert re.fullmatch(r"\.\.\. \(cut \d+ characters\)", lines[3])
+    assert lines[-2].endswith("xlast chars")
+    assert lines[-1] == "````"
+    assert content.count("````") == 2
+
+
+@pytest.mark.parametrize("max_chars", [40, 60, 100])
+def test_small_limit_still_bounds_the_content(
+    zulip_server: _CaptureServer, max_chars: int,
+) -> None:
+    logger = logging.getLogger("gain_test.zulip_logging.small")
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+    handler = ZulipHandler(
+        zulip_server.site, BOT_EMAIL, API_KEY, STREAM, TOPIC,
+        max_chars=max_chars)
+    logger.addHandler(handler)
+    try:
+        try:
+            _raise_value_error("y" * 500)
+        except ValueError:
+            logger.exception("z" * 500)
+    finally:
+        logger.removeHandler(handler)
+
+    content = zulip_server.posts[0].form["content"]
+    assert len(content) <= max_chars
+    assert content.endswith("y" * 3 + "\n````")
+    assert content.count("````") == 2
+
+
+_BOUNDARY_LIMIT = 2_000
+_BOUNDARY_HEAD = (
+    f"**INFO {TOPIC} gain.zulip.boundary_test: first**\n\n````\n")
+_BOUNDARY_TAIL = "\n````"
+_BOUNDARY_BUDGET = _BOUNDARY_LIMIT - len(_BOUNDARY_HEAD) - len(_BOUNDARY_TAIL)
+
+
+def _boundary_message(length: int) -> str:
+    """Return a message of ``length`` characters with the first line
+    ``first`` and distinct later lines."""
+    lines = ["first"] + [f"line {i:05d}" for i in range(length // 11 + 1)]
+    message = "\n".join(lines)[:length]
+    assert len(message) == length
+    return message
+
+
+def _post_with_boundary_limit(
+    zulip_server: _CaptureServer, message: str,
+) -> str:
+    logger = logging.getLogger("gain.zulip.boundary_test")
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+    handler = ZulipHandler(
+        zulip_server.site, BOT_EMAIL, API_KEY, STREAM, TOPIC,
+        max_chars=_BOUNDARY_LIMIT)
+    logger.addHandler(handler)
+    try:
+        logger.info(message)
+    finally:
+        logger.removeHandler(handler)
+    return zulip_server.posts[0].form["content"]
+
+
+def test_record_of_exactly_the_limit_posts_without_a_cut_marker(
+    zulip_server: _CaptureServer,
+) -> None:
+    message = _boundary_message(_BOUNDARY_BUDGET)
+
+    content = _post_with_boundary_limit(zulip_server, message)
+
+    assert content == f"{_BOUNDARY_HEAD}{message}{_BOUNDARY_TAIL}"
+    assert len(content) == _BOUNDARY_LIMIT
+
+
+# The marker ``... (cut <N> characters)\n`` has 22 characters plus the
+# digits of N, so N is the overflow plus 24 or more. An overflow of 75
+# cuts 99 characters, an overflow of 76 cuts 101: the marker gains a
+# digit. An overflow of 975 crosses from three to four digits.
+@pytest.mark.parametrize(
+    ("overflow", "expected_cut"),
+    [(1, 25), (75, 99), (76, 101), (974, 999), (975, 1001)])
+def test_record_over_the_limit_cuts_exactly_the_overflow_and_the_marker(
+    zulip_server: _CaptureServer,
+    overflow: int, expected_cut: int,
+) -> None:
+    message = _boundary_message(_BOUNDARY_BUDGET + overflow)
+
+    content = _post_with_boundary_limit(zulip_server, message)
+
+    assert content.startswith(_BOUNDARY_HEAD)
+    assert content.endswith(_BOUNDARY_TAIL)
+    body = content[len(_BOUNDARY_HEAD):-len(_BOUNDARY_TAIL)]
+    marker, kept = body.split("\n", 1)
+    assert marker == f"... (cut {expected_cut} characters)"
+    assert message.endswith(kept)
+    assert len(message) - len(kept) == expected_cut
+    assert len(content) == _BOUNDARY_LIMIT
+
+
+def test_last_line_over_the_limit_keeps_its_end(
+    zulip_server: _CaptureServer,
+) -> None:
+    logger = logging.getLogger("gain_test.zulip_logging.long_last_line")
+    logger.propagate = False
+    handler = ZulipHandler(
+        zulip_server.site, BOT_EMAIL, API_KEY, STREAM, TOPIC,
+        max_chars=1_000)
+    logger.addHandler(handler)
+    try:
+        try:
+            _raise_value_error("y" * 2_000 + " end of message")
+        except ValueError:
+            logger.exception("boom")
+    finally:
+        logger.removeHandler(handler)
+
+    content = zulip_server.posts[0].form["content"]
+    lines = content.split("\n")
+    assert len(content) == 1_000
+    assert re.fullmatch(r"\.\.\. \(cut \d+ characters\)", lines[3])
+    assert lines[4].startswith("yyy")
+    assert lines[-2].endswith("y end of message")
