@@ -36,6 +36,7 @@ PAGE_DIRS = ("resources", "task_graph")
 GENE_MODELS_PAGE = RESOURCES_DIR / "gene_models.rst"
 GRAPHS_PAGE = DEVELOPMENT_DIR / "task_graph/graphs.rst"
 TASK_EXECUTORS_PAGE = DEVELOPMENT_DIR / "task_graph/task_executors.rst"
+RUNNING_FROM_A_CLI_PAGE = DEVELOPMENT_DIR / "task_graph/running_from_a_cli.rst"
 
 # Pages whose API section is not rolled out yet, as paths relative to
 # DEVELOPMENT_DIR, for example "resources/<page>.rst". The slice of a page
@@ -357,6 +358,16 @@ def test_task_executors_page_outline_matches_classes_and_functions() -> None:
         "task_graph_run", "task_graph_run_with_results"]
     assert not page_problems(page)
     assert _page_key(TASK_EXECUTORS_PAGE) not in NOT_ROLLED_OUT
+
+
+def test_running_from_a_cli_page_outline_matches_task_graph_cli() -> None:
+    """The Running from a CLI outline lists ``TaskGraphCli`` alone."""
+    page = read_docs_page(RUNNING_FROM_A_CLI_PAGE)
+
+    assert [cls.__name__ for cls in page_classes(page)] == ["TaskGraphCli"]
+    assert not page_functions(page)
+    assert not page_problems(page)
+    assert _page_key(RUNNING_FROM_A_CLI_PAGE) not in NOT_ROLLED_OUT
 
 
 def test_every_page_with_an_autoclass_is_rolled_out_or_skipped() -> None:

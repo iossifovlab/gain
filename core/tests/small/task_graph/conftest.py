@@ -70,6 +70,19 @@ def executor(
     executor.close()
 
 
+# The fixture genome of the docs examples of the task graph chapter. The
+# chromosomes have 5, 0 and 2 ``N`` bases, and the examples count them.
+_N_COUNT_GENOME = textwrap.dedent("""
+    >chr1
+    NNACGTACGT
+    ACGTNNNACG
+    >chr2
+    ACGTACGTAC
+    >chr3
+    NACGTACGTN
+""")
+
+
 @pytest.fixture(name="genome_resource")
 def fixture_genome_resource(tmp_path: pathlib.Path) -> GenomicResource:
     """Return a genome resource with three chromosomes.
@@ -77,13 +90,36 @@ def fixture_genome_resource(tmp_path: pathlib.Path) -> GenomicResource:
     The chromosomes have 5, 0 and 2 ``N`` bases. The docs examples of the
     task graph chapter count them.
     """
-    setup_genome(tmp_path / "genome.fa", textwrap.dedent("""
-        >chr1
-        NNACGTACGT
-        ACGTNNNACG
-        >chr2
-        ACGTACGTAC
-        >chr3
-        NACGTACGTN
-    """))
+    setup_genome(tmp_path / "genome.fa", _N_COUNT_GENOME)
     return build_filesystem_test_resource(tmp_path)
+
+
+@pytest.fixture(name="genome_grr_dir")
+def fixture_genome_grr_dir(tmp_path: pathlib.Path) -> pathlib.Path:
+    """Return a directory GRR that holds the fixture genome.
+
+    The genome has the resource id ``genome``, and its chromosomes have
+    5, 0 and 2 ``N`` bases.
+    """
+    grr_dir = tmp_path / "grr"
+    setup_genome(grr_dir / "genome" / "genome.fa", _N_COUNT_GENOME)
+    return grr_dir
+
+
+@pytest.fixture(name="work_in_tmp_path")
+def fixture_work_in_tmp_path(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Make ``tmp_path`` the current directory of the test.
+
+    A task executor writes its task log directory into the current
+    directory, so the docs examples keep it out of the source tree.
+    """
+    monkeypatch.chdir(tmp_path)
+
+
+@pytest.fixture(name="process_pool_enabled")
+def fixture_process_pool_enabled(request: pytest.FixtureRequest) -> None:
+    """Skip a process pool test unless pytest gets ``--pp``."""
+    if not request.config.getoption("enable_pp"):
+        pytest.skip("process_pool executor not enabled")

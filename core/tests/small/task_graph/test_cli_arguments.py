@@ -161,3 +161,42 @@ def test_cli_args_without_progress_mode(
     TaskGraphCli.add_arguments(parser, task_progress_mode=False)
     with pytest.raises(SystemExit):
         parser.parse_args(argv)
+
+
+def _option_dests() -> dict[str, str]:
+    """Map the first flag of each option of ``add_arguments`` to its key."""
+    parser = argparse.ArgumentParser(add_help=False)
+    TaskGraphCli.add_arguments(parser)
+    return {
+        action.option_strings[0]: action.dest
+        for action in parser._actions
+        if action.option_strings
+    }
+
+
+def test_add_arguments_docstring_names_the_key_of_each_option() -> None:
+    doc = TaskGraphCli.add_arguments.__doc__
+    assert doc is not None
+
+    missing = [
+        dest for dest in _option_dests().values()
+        if f"``{dest}``" not in doc
+    ]
+
+    assert missing == []
+
+
+def test_add_arguments_adds_no_verbose_option() -> None:
+    parser = argparse.ArgumentParser(add_help=False)
+    TaskGraphCli.add_arguments(parser)
+
+    assert "verbose" not in _option_dests().values()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["status", "-v"])
+
+
+def test_process_graph_docstring_says_where_verbose_comes_from() -> None:
+    doc = TaskGraphCli.process_graph.__doc__
+    assert doc is not None
+
+    assert "VerbosityConfiguration.set_arguments" in doc

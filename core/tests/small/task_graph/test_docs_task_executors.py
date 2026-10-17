@@ -23,6 +23,9 @@ from .test_docs_graphs import build_n_count_graph
 # The fixture genome has 5, 0 and 2 ``N`` bases in its three chromosomes.
 N_COUNT = 7
 
+# Keep the task log directory of each task executor out of the tree.
+pytestmark = pytest.mark.usefixtures("work_in_tmp_path")
+
 
 # The docs example of a sequential run starts here.
 def run_sequentially(resource: GenomicResource) -> int:
@@ -72,21 +75,6 @@ def rerun_with_file_task_cache(
         completed = list(executor.execute(graph))
     return completed, records
 # The docs example of a run with a task cache ends here.
-
-
-@pytest.fixture(autouse=True)
-def _work_in_tmp_path(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Keep the task log directory of each task executor out of the tree."""
-    monkeypatch.chdir(tmp_path)
-
-
-@pytest.fixture(name="process_pool_enabled")
-def fixture_process_pool_enabled(request: pytest.FixtureRequest) -> None:
-    """Skip a process pool test unless pytest gets ``--pp``."""
-    if not request.config.getoption("enable_pp"):
-        pytest.skip("process_pool executor not enabled")
 
 
 def test_sequential_run_returns_the_sum_as_the_last_result(
