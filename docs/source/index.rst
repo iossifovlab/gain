@@ -37,6 +37,7 @@ A preprint describing GAIn is available on `bioRxiv <https://doi.org/10.64898/20
     grr
     grr_configuration
     annotation_infrastructure
+    running_in_parallel
     binning_infrastructure
     cli/index
     named_clusters

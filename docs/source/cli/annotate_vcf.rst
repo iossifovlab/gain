@@ -42,6 +42,8 @@ See also
 * :ref:`annotation-cli-annotate-vcf`: the common options.
 * :ref:`annotation-cli-notes`: the options that ``annotate_vcf`` shares with
   ``annotate_tabular``.
+* :doc:`/running_in_parallel`: the number of workers, the named clusters and
+  the reruns.
 
 Option reference
 ----------------
