@@ -72,7 +72,10 @@ class UserPipeline(AnnotationBaseView):
             raw_content = config_file.read()
             content = raw_content.decode()
         except UnicodeDecodeError as e:
-            logger.exception("Unicode decode error in pipeline config file")
+            logger.warning(
+                "Unicode decode error in pipeline config file",
+                exc_info=True,
+            )
             return Response(
                 {"reason": f"Invalid pipeline configuration file: {e!s}"},
                 status=views.status.HTTP_400_BAD_REQUEST,
