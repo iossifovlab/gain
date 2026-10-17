@@ -5,12 +5,12 @@ block. These tests compare that list with the class, so a new public member
 cannot stay out of the outline without a failure. The test finds each
 ``autoclass`` directive on the pages under
 ``docs/source/development/resources`` and
-``docs/source/development/task_graph``. A page of functions, such as the
-Data frames and AnnData page, has no class. The test then finds each
-``autofunction`` directive, and the outline must list each function. A page
-that is not rolled out yet sits on ``NOT_ROLLED_OUT``, as a path relative to
-``docs/source/development``. The page source is
-read as text. No Sphinx build runs.
+``docs/source/development/task_graph``. It also finds each
+``autofunction`` directive, and the outline must list each function, on a
+page with classes and on a page of functions alone, such as the Data frames
+and AnnData page. A page that is not rolled out yet sits on
+``NOT_ROLLED_OUT``, as a path relative to ``docs/source/development``. The
+page source is read as text. No Sphinx build runs.
 """
 import importlib
 import inspect
@@ -34,6 +34,7 @@ RESOURCES_DIR = DEVELOPMENT_DIR / "resources"
 # DEVELOPMENT_DIR.
 PAGE_DIRS = ("resources", "task_graph")
 GENE_MODELS_PAGE = RESOURCES_DIR / "gene_models.rst"
+GRAPHS_PAGE = DEVELOPMENT_DIR / "task_graph/graphs.rst"
 
 # Pages whose API section is not rolled out yet, as paths relative to
 # DEVELOPMENT_DIR, for example "resources/<page>.rst". The slice of a page
@@ -281,16 +282,19 @@ def _page_without(name: str) -> str:
 
 
 def page_problems(page: str) -> list[str]:
-    """Return all outline problems of a page with an autoclass or function."""
+    """Return all outline problems of a page with an autoclass or function.
+
+    The problems cover the classes and the functions of the page, so a
+    page with both directives reports a function that its outline lacks.
+    """
     classes = page_classes(page)
     if not autosummary_blocks(page):
         return ["the page has an autoclass but no autosummary outline"]
-    if classes:
-        return outline_problems(page, classes) + exported_name_problems(
-            page, classes)
     functions = page_functions(page)
-    return function_outline_problems(
-        page, functions) + exported_name_problems(page, functions)
+    return (
+        outline_problems(page, classes)
+        + function_outline_problems(page, functions)
+        + exported_name_problems(page, [*classes, *functions]))
 
 
 def _has_api(page: str) -> bool:
@@ -322,6 +326,17 @@ def test_gene_models_page_outline_matches_classes() -> None:
 
     assert not page_problems(page)
     assert _page_key(GENE_MODELS_PAGE) not in NOT_ROLLED_OUT
+
+
+def test_graphs_page_outline_matches_classes_and_functions() -> None:
+    """The Graphs outline lists the graph classes and ``chain_tasks``."""
+    page = read_docs_page(GRAPHS_PAGE)
+
+    assert [cls.__name__ for cls in page_classes(page)] == [
+        "TaskGraph", "TaskDesc", "Task"]
+    assert [f.__name__ for f in page_functions(page)] == ["chain_tasks"]
+    assert not page_problems(page)
+    assert _page_key(GRAPHS_PAGE) not in NOT_ROLLED_OUT
 
 
 def test_every_page_with_an_autoclass_is_rolled_out_or_skipped() -> None:
@@ -365,6 +380,23 @@ def test_function_missing_from_outline_is_reported() -> None:
 
     assert problems == [(
         "load_data_frame_from_resource_id is documented "
+        "but missing from the outline"
+    )]
+
+
+def test_function_missing_from_outline_of_class_page_is_reported() -> None:
+    """A page with classes still reports a function that the outline lacks."""
+    page = (
+        "It is ``grr.build_gene_models_from_resource``.\n\n"
+        ".. currentmodule:: gain.genomic_resources.gene_models\n\n"
+        ".. autosummary::\n\n   Exon\n   Exon.contains\n\n"
+        ".. autofunction:: build_gene_models_from_resource\n\n"
+        ".. autoclass:: Exon\n   :members:\n")
+
+    problems = page_problems(page)
+
+    assert problems == [(
+        "build_gene_models_from_resource is documented "
         "but missing from the outline"
     )]
 

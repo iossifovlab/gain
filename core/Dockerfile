@@ -74,6 +74,9 @@ COPY docs/source/development/resources/ ./docs/source/development/resources/
 # options that the "Running in parallel" page names and fails when the
 # page is absent.
 COPY docs/source/running_in_parallel.rst ./docs/source/
+# tests/small/test_docs_autosummary_outline.py reads the Graphs page of
+# the task graph chapter and fails, not skips, when the page is absent.
+COPY docs/source/development/task_graph/ ./docs/source/development/task_graph/
 # The repo-root scripts/ belongs to no project; the core CI stage lints
 # it (#1327), so this image is the one that has to carry it.
 COPY scripts/ ./scripts/

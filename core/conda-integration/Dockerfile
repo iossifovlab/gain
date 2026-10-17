@@ -84,6 +84,10 @@ COPY --chown=mambauser:mambauser docs/source/development/resources \
 # page is absent.
 COPY --chown=mambauser:mambauser docs/source/running_in_parallel.rst \
     /testbed/docs/source/
+# tests/small/test_docs_autosummary_outline.py reads the Graphs page of
+# the task graph chapter and fails, not skips, when the page is absent.
+COPY --chown=mambauser:mambauser docs/source/development/task_graph \
+    /testbed/docs/source/development/task_graph
 RUN chmod -R a+rwX /testbed
 COPY --chown=mambauser:mambauser core/conda-integration/run.sh \
     core/conda-integration/assert_installed.py /opt/conda-integration/

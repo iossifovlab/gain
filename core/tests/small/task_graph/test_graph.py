@@ -11,6 +11,31 @@ def test_creating_two_tasks_with_the_same_id() -> None:
         graph.create_task("ID", lambda: None, args=[], deps=[])
 
 
+def test_add_tasks_with_an_id_already_in_graph_leaves_graph_unchanged(
+) -> None:
+    graph = TaskGraph()
+    graph.create_task("a", print, args=[], deps=[])
+    descs = [
+        graph.make_task("b", print, args=[]),
+        graph.make_task("a", print, args=[]),
+    ]
+
+    with pytest.raises(ValueError, match="already in graph"):
+        graph.add_tasks(descs)
+
+    assert [t.task_id for t in graph.tasks] == ["a"]
+
+
+def test_add_tasks_with_a_duplicate_id_in_the_list_raises() -> None:
+    graph = TaskGraph()
+    desc = graph.make_task("a", print, args=[])
+
+    with pytest.raises(ValueError, match="already in graph"):
+        graph.add_tasks([desc, desc])
+
+    assert [t.task_id for t in graph.tasks] == ["a"]
+
+
 def task_a_fn() -> str:
     return "result A"
 
