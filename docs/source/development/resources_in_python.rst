@@ -1,7 +1,7 @@
 Genomic resources
 =================
 
-This chapter is the in-depth description of the *resource* half of GAIn's
+This chapter is the in-depth description of the *resource* part of GAIn's
 declared API: the objects you get back when you open a repository and ask it
 for something, and the objects those hand you in turn.
 
@@ -91,7 +91,8 @@ closing the objects built through it.
 
 The annotation side of the declared API — pipelines, annotators, and the
 ``gain.annotation.annotators`` entry-point group — is the subject of its own
-chapter, :doc:`annotators`. ``gain.genomic_resources.testing``, the task graph, and the
+chapter, :doc:`annotators`. The task graph is the subject of
+:doc:`task_graph`. ``gain.genomic_resources.testing`` and the
 effect-annotation engine are outside the declared API and are documented, to
 the extent they are, by the generated
 :doc:`module_index <module_index>`.

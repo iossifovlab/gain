@@ -1,7 +1,7 @@
 Annotators
 ==========
 
-This chapter is the in-depth description of the *annotation* half of GAIn's
+This chapter is the in-depth description of the *annotation* part of GAIn's
 declared API: the pipeline you load from YAML, the annotators it drives, the
 objects an annotator receives and the attributes it declares — and the seam
 through which a package of your own becomes an annotator a pipeline can name.
