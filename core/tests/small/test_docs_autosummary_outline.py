@@ -35,6 +35,7 @@ RESOURCES_DIR = DEVELOPMENT_DIR / "resources"
 PAGE_DIRS = ("resources", "task_graph")
 GENE_MODELS_PAGE = RESOURCES_DIR / "gene_models.rst"
 GRAPHS_PAGE = DEVELOPMENT_DIR / "task_graph/graphs.rst"
+TASK_EXECUTORS_PAGE = DEVELOPMENT_DIR / "task_graph/task_executors.rst"
 
 # Pages whose API section is not rolled out yet, as paths relative to
 # DEVELOPMENT_DIR, for example "resources/<page>.rst". The slice of a page
@@ -106,8 +107,13 @@ def inherited_entries(page: str, base: str) -> list[str]:
 def _documented_attributes(cls: type) -> set[str]:
     """Return the names in the Attributes section of a class docstring."""
     doc = inspect.getdoc(cls) or ""
-    _, _, section = doc.partition("Attributes:\n")
-    return set(re.findall(r"^[ ]{4}(\w+) \(", section, re.MULTILINE))
+    _, _, google = doc.partition("Attributes:\n")
+    names = set(re.findall(r"^[ ]{4}(\w+) \(", google, re.MULTILINE))
+    _, _, numpy = doc.partition("Attributes\n----------\n")
+    numpy = re.split(r"^\w[^\n]*\n-{3,}$", numpy, maxsplit=1,
+                     flags=re.MULTILINE)[0]
+    names |= set(re.findall(r"^(\w+) :", numpy, re.MULTILINE))
+    return names
 
 
 def public_members(cls: type) -> set[str]:
@@ -339,6 +345,20 @@ def test_graphs_page_outline_matches_classes_and_functions() -> None:
     assert _page_key(GRAPHS_PAGE) not in NOT_ROLLED_OUT
 
 
+def test_task_executors_page_outline_matches_classes_and_functions() -> None:
+    """The Task executors outline lists the task executors and caches."""
+    page = read_docs_page(TASK_EXECUTORS_PAGE)
+
+    assert [cls.__name__ for cls in page_classes(page)] == [
+        "TaskGraphExecutor", "TaskGraphExecutorBase", "SequentialExecutor",
+        "ProcessPoolTaskExecutor", "DaskExecutor", "TaskCache",
+        "FileTaskCache", "NoTaskCache", "CacheRecord", "CacheRecordType"]
+    assert [f.__name__ for f in page_functions(page)] == [
+        "task_graph_run", "task_graph_run_with_results"]
+    assert not page_problems(page)
+    assert _page_key(TASK_EXECUTORS_PAGE) not in NOT_ROLLED_OUT
+
+
 def test_every_page_with_an_autoclass_is_rolled_out_or_skipped() -> None:
     """Each page with an autoclass or autofunction passes, or is skipped."""
     read_docs_page(GENE_MODELS_PAGE)
@@ -446,6 +466,28 @@ def test_meta_private_member_is_not_required(
 
     assert not outline_problems(_page_for([Exon]), [Exon])
     assert "hook" not in public_members(Exon)
+
+
+class _NumpyAttributes:
+    """A class that documents its attributes in numpy style.
+
+    Attributes
+    ----------
+    LIMIT : int
+        A limit.
+    """
+
+    LIMIT = 3
+
+    def run(self) -> None:
+        """Run."""
+
+
+def test_numpy_style_attribute_is_not_a_public_member() -> None:
+    """A name in a numpy-style Attributes section is not in the outline."""
+    members = public_members(_NumpyAttributes)
+
+    assert members == {"run"}
 
 
 class _Base:

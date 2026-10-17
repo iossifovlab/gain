@@ -5,18 +5,10 @@ example code from this module with ``literalinclude``. The task functions
 and the graph builder are module-level, so a task executor can pickle them
 and other tests can import the builder and run its graph.
 """
-import pathlib
-import textwrap
-
-import pytest
 from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_resource,
 )
 from gain.genomic_resources.repository import GenomicResource
-from gain.genomic_resources.testing import (
-    build_filesystem_test_resource,
-    setup_genome,
-)
 from gain.task_graph.graph import Task, TaskGraph
 
 
@@ -55,21 +47,6 @@ def build_n_count_graph(
     summary = graph.create_task("sum_n", sum_counts, args=chrom_tasks)
     return graph, summary
 # The docs example of the graph builder ends here.
-
-
-@pytest.fixture(name="genome_resource")
-def fixture_genome_resource(tmp_path: pathlib.Path) -> GenomicResource:
-    """Return a genome resource with three chromosomes."""
-    setup_genome(tmp_path / "genome.fa", textwrap.dedent("""
-        >chr1
-        NNACGTACGT
-        ACGTNNNACG
-        >chr2
-        ACGTACGTAC
-        >chr3
-        NACGTACGTN
-    """))
-    return build_filesystem_test_resource(tmp_path)
 
 
 def test_graph_has_one_task_for_each_chromosome_and_a_summary(

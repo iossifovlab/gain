@@ -18,6 +18,18 @@ logger = logging.getLogger(__name__)
 
 
 class CacheRecordType(Enum):
+    """The state of a task in a task cache.
+
+    Attributes
+    ----------
+    NEEDS_COMPUTE : CacheRecordType
+        The task must run.
+    COMPUTED : CacheRecordType
+        The task ran without an error, and its record is still valid.
+    ERROR : CacheRecordType
+        The task ran and failed.
+    """
+
     NEEDS_COMPUTE = 0
     COMPUTED = 1
     ERROR = 2
@@ -25,41 +37,83 @@ class CacheRecordType(Enum):
 
 @dataclass(frozen=True)
 class CacheRecord:
-    """Encapsulate information about a task in the cache."""
+    """The record of one task in a task cache.
+
+    Attributes
+    ----------
+    type : CacheRecordType
+        The state of the task.
+    result_or_error : Any
+        The result of the task, the exception of a failed task, or
+        ``None`` when the task cache holds no outcome.
+    """
 
     type: CacheRecordType
     result_or_error: Any = None
 
     @property
     def result(self) -> Any:
+        """The result of a task whose record type is ``COMPUTED``."""
         assert self.type == CacheRecordType.COMPUTED
         return self.result_or_error
 
     @property
     def error(self) -> Any:
+        """The exception of a task whose record type is ``ERROR``."""
         assert self.type == CacheRecordType.ERROR
         return self.result_or_error
 
     def invalidate(self) -> CacheRecord:
-        """Return a new instance that needs to be recomputed."""
+        """Return a copy of the record whose type is ``NEEDS_COMPUTE``.
+
+        :meta private:
+        """
         return CacheRecord(CacheRecordType.NEEDS_COMPUTE, self.result_or_error)
 
 
 class TaskCache:
-    """Store the result of a task in a file and reuse it if possible."""
+    """The interface of a task cache.
+
+    A task executor asks the task cache whether a task must run, and
+    records the outcome of each task that runs in it.
+    """
 
     @abstractmethod
     def get_record(
         self, task_desc: TaskDesc,
     ) -> CacheRecord:
-        """For task in the `graph` load and yield the cache record."""
+        """Return the record of a task.
+
+        Parameters
+        ----------
+        task_desc : TaskDesc
+            The description of the task, from
+            :meth:`~gain.task_graph.graph.TaskGraph.get_task_desc`.
+
+        Returns
+        -------
+        CacheRecord
+            The record of the task. The task must run unless the record
+            type is ``COMPUTED``. ``NEEDS_COMPUTE`` means that the task
+            cache has no valid record of the task.
+        """
 
     @abstractmethod
     def cache(
         self, task: Task, *,
         is_error: bool, result: Any,
     ) -> None:
-        """Cache the result or exception of a task."""
+        """Record the outcome of a task.
+
+        Parameters
+        ----------
+        task : Task
+            The task that ran.
+        is_error : bool
+            True when the task failed.
+        result : Any
+            The result of the task, or its exception when it failed.
+        """
 
     @staticmethod
     def create(
@@ -68,7 +122,26 @@ class TaskCache:
         task_progress_mode: bool = True,
         cache_dir: str | None = None,
     ) -> TaskCache:
-        """Create the appropriate task cache."""
+        """Create the task cache for a set of options.
+
+        Parameters
+        ----------
+        force : bool
+            When true, the method returns a :class:`NoTaskCache`.
+        task_progress_mode : bool
+            The status mode. When false, the method returns a
+            :class:`NoTaskCache`.
+        cache_dir : str | None
+            The task status directory of a :class:`FileTaskCache`.
+            ``None`` means the current directory.
+
+        Returns
+        -------
+        TaskCache
+            A :class:`NoTaskCache` when ``force`` is true or the status
+            mode is off. Otherwise a :class:`FileTaskCache` over
+            ``cache_dir``.
+        """
         if force or not task_progress_mode:
             return NoTaskCache()
         if cache_dir is None:
@@ -77,28 +150,84 @@ class TaskCache:
 
 
 class NoTaskCache(dict[Any, Any], TaskCache):
-    """Don't check any conditions and just run any task."""
+    """A task cache that runs every task and records nothing."""
 
     def get_record(
         self, task_desc: TaskDesc,  # ruff: ignore[unused-method-argument]
     ) -> CacheRecord:
+        """Return a record whose type is ``NEEDS_COMPUTE``.
+
+        Parameters
+        ----------
+        task_desc : TaskDesc
+            The description of the task. The method does not read it.
+
+        Returns
+        -------
+        CacheRecord
+            A record whose type is ``NEEDS_COMPUTE`` and that holds no
+            result.
+        """
         return CacheRecord(CacheRecordType.NEEDS_COMPUTE)
 
     def cache(
         self, task: Task, *,
         is_error: bool, result: Any,
     ) -> None:
-        pass
+        """Do nothing: the task cache records no outcome.
+
+        Parameters
+        ----------
+        task : Task
+            The task that ran.
+        is_error : bool
+            True when the task failed.
+        result : Any
+            The result of the task, or its exception when it failed.
+        """
 
 
 class FileTaskCache(TaskCache):
-    """Use file modification timestamps to determine if a task needs to run."""
+    """A task cache that keeps one record file for each task.
+
+    The record file of a task is ``<task id>.flag`` in the task status
+    directory. It holds the record type and the result or the exception
+    of the task. The modification times of the files of a task decide
+    whether a computed record is still valid.
+
+    Parameters
+    ----------
+    cache_dir : str
+        The task status directory. The task cache creates it when it
+        writes the first record.
+    """
 
     def __init__(self, cache_dir: str):
         self.cache_dir = cache_dir
 
     def get_record(self, task_desc: TaskDesc) -> CacheRecord:
-        """Get the cache record for a task."""
+        """Return the record of a task from its record file.
+
+        A computed record stays valid while the output files of the task
+        exist and are not older than its input files. A missing input file
+        makes the record invalid. A missing intermediate output file does
+        not, because a later task can consume it. A task without output
+        files compares its input files with its record file. A missing or
+        unreadable record file means that the task must run.
+
+        Parameters
+        ----------
+        task_desc : TaskDesc
+            The description of the task, with its input and output files.
+
+        Returns
+        -------
+        CacheRecord
+            The record of the task. Its type is ``NEEDS_COMPUTE`` when the
+            record file is missing or unreadable, or when the record is
+            computed but no longer valid. Otherwise it is the record that
+            the file holds, ``COMPUTED`` or ``ERROR``.
+        """
         flag_filename = self._get_flag_filename(task_desc.task)
         try:
             with fsspec.open(flag_filename, "rb") as cache_file:
@@ -126,6 +255,21 @@ class FileTaskCache(TaskCache):
         return task_record
 
     def cache(self, task: Task, *, is_error: bool, result: Any) -> None:
+        """Write the record file of a task.
+
+        A failure to write the file is logged, and the run continues.
+
+        Parameters
+        ----------
+        task : Task
+            The task that ran.
+        is_error : bool
+            True when the task failed. The record type is then ``ERROR``,
+            otherwise ``COMPUTED``.
+        result : Any
+            The result of the task, or its exception when it failed. It
+            must be picklable.
+        """
         record_type = (
             CacheRecordType.ERROR if is_error else CacheRecordType.COMPUTED
         )

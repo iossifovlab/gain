@@ -24,7 +24,26 @@ logger = logging.getLogger(__name__)
 
 
 class ProcessPoolTaskExecutor(TaskGraphExecutorBase):
-    """Execute tasks in parallel using Dask to do the heavy lifting."""
+    """A task executor that runs the tasks in a pool of processes.
+
+    The constructor creates the pool. The pool starts its worker processes
+    when the task executor submits the first task. A task runs in a
+    worker process only after the tasks that it depends on. The task
+    executor pickles the function and the arguments of each task, so the
+    function must be importable, for example a module-level function.
+
+    Parameters
+    ----------
+    **kwargs
+        ``max_workers`` is the number of processes in the pool. Without
+        it, the pool has one process for each CPU. The other keyword
+        arguments are those of
+        :class:`~gain.task_graph.base_executor.TaskGraphExecutorBase`:
+        ``task_cache``, ``force`` and the options of the task executor.
+        The process pool ignores the options ``task_log_dir``, ``verbose``
+        and ``fork_tasks``: it creates the directory of the task logs, but
+        it writes no task log and it does not fork the tasks.
+    """
 
     def __init__(
         self, **kwargs: Any,
@@ -143,4 +162,5 @@ class ProcessPoolTaskExecutor(TaskGraphExecutorBase):
         assert len(graph) == 0
 
     def close(self) -> None:
+        """Shut the pool down and wait for its processes to exit."""
         self._executor.shutdown()
