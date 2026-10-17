@@ -80,3 +80,5 @@ the extent they are documented.
 
 .. toctree::
    :maxdepth: 2
+
+   task_graph/graphs

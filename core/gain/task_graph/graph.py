@@ -17,14 +17,56 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True, eq=True, unsafe_hash=True, order=True)
 class Task:
-    """Represent one node in a TaskGraph together with its dependencies."""
+    """Identify one task of a task graph.
+
+    A ``Task`` is the handle that `TaskGraph.create_task` and
+    `TaskGraph.add_task` return. Pass it in ``args``, ``kwargs`` or
+    ``deps`` of another task to make that task depend on it. Two handles
+    with the same id are equal.
+
+    Attributes
+    ----------
+    task_id : str
+        The id of the task, unique within its task graph.
+    """
 
     task_id: str
 
 
 @dataclass(frozen=True)
 class TaskDesc:
-    """Represent an immutable full task description with all its properties."""
+    """Describe one task, before or after it is added to a task graph.
+
+    `TaskGraph.make_task` builds a ``TaskDesc`` and `TaskGraph.add_task`
+    adds it to a graph. `TaskGraph.get_task_desc` returns the description
+    of a task that is in a graph.
+
+    Attributes
+    ----------
+    task : Task
+        The handle of the task.
+    func : Callable[..., Any]
+        The function that the task calls when it runs.
+    args : list[Any]
+        The positional arguments of ``func``. When the task runs, each
+        `Task` in the list is replaced by the result of that task.
+    kwargs : dict[str, Any]
+        The keyword arguments of ``func``. When the task runs, each `Task`
+        value is replaced by the result of that task.
+    deps : list[Task]
+        The tasks that must finish before this task runs. The list holds
+        each `Task` of ``args`` and ``kwargs`` too.
+    input_files : list[str]
+        The files that the task reads. A file task cache runs the task
+        again when one of them is newer than the outputs of the task.
+    output_files : list[str]
+        The final output files of the task. A file task cache runs the
+        task again when one of them is missing.
+    intermediate_output_files : list[str]
+        The output files that later tasks consume. A missing one does not
+        make a file task cache run the task again.
+    """
+
     task: Task
     func: Callable[..., Any]
     args: list[Any]
@@ -189,7 +231,31 @@ def _chain_2_tasks(task1: TaskDesc, task2: TaskDesc) -> TaskDesc:
 
 
 def chain_tasks(*tasks: TaskDesc) -> TaskDesc:
-    """Chain tasks together so that they execute sequentially."""
+    """Combine task descriptions into one task that runs them in order.
+
+    The combined task calls the function of each task in turn. When a task
+    depends on the task before it, it gets the result of that task in
+    place of the `Task` handle.
+
+    Parameters
+    ----------
+    *tasks : TaskDesc
+        The task descriptions, in the order to run them. Each task after
+        the first depends on no task, or only on the task before it.
+
+    Returns
+    -------
+    TaskDesc
+        One task description with the id of the last task, the deps of the
+        first task, and the files of all the tasks. Its result is the
+        result of the last task.
+
+    Raises
+    ------
+    ValueError
+        If ``tasks`` is empty, or a task depends on a task other than the
+        one before it.
+    """
     if not tasks:
         raise ValueError("At least one task should be provided")
 
@@ -200,7 +266,20 @@ def chain_tasks(*tasks: TaskDesc) -> TaskDesc:
 
 
 class TaskGraph:
-    """An object representing a graph of tasks."""
+    """A directed acyclic graph of tasks.
+
+    Build the graph with `create_task`, or with `make_task` and
+    `add_task`. Then give the graph to a task executor, which runs the
+    tasks and consumes the graph.
+
+    Attributes
+    ----------
+    input_files : list[str]
+        The files that were used to build the graph. `get_task_desc` adds
+        them to the input files of each task, so a file task cache runs
+        each task again when one of them changes. The list is empty in a new
+        graph.
+    """
 
     def __init__(self) -> None:
         self._lock = mp.RLock()
@@ -211,7 +290,7 @@ class TaskGraph:
 
     @property
     def tasks(self) -> Sequence[Task]:
-        """Return all tasks in the graph."""
+        """The tasks of the graph, in the order they were added."""
         with self._lock:
             return list(self._tasks.keys())
 
@@ -233,17 +312,51 @@ class TaskGraph:
         output_files: Sequence[str] | None = None,
         intermediate_output_files: Sequence[str] | None = None,
     ) -> Task:
-        """Create a new task and add it to the graph.
+        """Create a task and add it to the graph.
 
-        :param name: Name of the task (used for debugging purposes)
-        :param func: Function to execute
-        :param args: Arguments to that function
-        :param deps: List of TaskNodes on which the current task depends
-        :param input_files: Files that were used to build the graph itself
-        :param output_files: Final output files; if missing the task recomputes
-        :param intermediate_output_files: Pipeline-consumed outputs; if missing
-            falls through to the flag-file check instead of forcing recompute
-        :return Task: The newly created task node ID in the graph
+        The call is `make_task` followed by `add_task`.
+
+        Parameters
+        ----------
+        task_id : str
+            The id of the task, unique within the graph. An id longer than
+            200 characters is cut to 200.
+        func : Callable[..., Any]
+            The function that the task calls. A task executor can run it
+            in another process, so use a module-level function.
+        args : Sequence[Any]
+            The positional arguments of ``func``. When the task runs, each
+            `Task` in ``args`` is replaced by the result of that task.
+        kwargs : dict[str, Any] or None
+            The keyword arguments of ``func``. When the task runs, each
+            `Task` value is replaced by the result of that task. ``None``
+            means no keyword arguments.
+        deps : Sequence[Task] or None
+            The tasks that must finish before this task runs. The graph
+            adds each `Task` of ``args`` and ``kwargs`` to them. A task
+            that is only in ``deps`` passes no value. ``None`` means no
+            other deps.
+        input_files : Sequence[str] or None
+            The files that the task reads. A file task cache runs the task
+            again when one of them is newer than the outputs of the task.
+            ``None`` means none.
+        output_files : Sequence[str] or None
+            The final output files of the task. A file task cache runs the
+            task again when one of them is missing. ``None`` means none.
+        intermediate_output_files : Sequence[str] or None
+            The output files that later tasks consume. A missing one does
+            not make a file task cache run the task again. ``None`` means
+            none.
+
+        Returns
+        -------
+        Task
+            The handle of the new task.
+
+        Raises
+        ------
+        ValueError
+            If the graph already has a task with the same id.
         """
         task_desc = self.make_task(
             task_id, func, args=args, kwargs=kwargs,
@@ -263,7 +376,39 @@ class TaskGraph:
         output_files: Sequence[str] | None = None,
         intermediate_output_files: Sequence[str] | None = None,
     ) -> TaskDesc:
-        """Build a task with the given id and function."""
+        """Build a task description without adding it to a graph.
+
+        The parameters are the parameters of `create_task`. Add the
+        description to a graph with `add_task` or `add_tasks`, or
+        combine several with `chain_tasks`.
+
+        Parameters
+        ----------
+        task_id : str
+            The id of the task. An id longer than 200 characters is cut
+            to 200.
+        func : Callable[..., Any]
+            The function that the task calls.
+        args : Sequence[Any]
+            The positional arguments of ``func``.
+        kwargs : dict[str, Any] or None
+            The keyword arguments of ``func``. ``None`` means none.
+        deps : Sequence[Task] or None
+            The tasks that must finish first. ``None`` means none.
+        input_files : Sequence[str] or None
+            The files that the task reads. ``None`` means none.
+        output_files : Sequence[str] or None
+            The final output files. ``None`` means none.
+        intermediate_output_files : Sequence[str] or None
+            The output files that later tasks consume. ``None`` means
+            none.
+
+        Returns
+        -------
+        TaskDesc
+            The description. Its ``deps`` hold ``deps`` and each `Task`
+            of ``args`` and ``kwargs``.
+        """
         # Coupled to the 200 char threshold in
         # ``gain.task_graph.logging.safe_task_id``: this truncation is what
         # keeps that function's shortening branch unreachable for every id
@@ -298,7 +443,23 @@ class TaskGraph:
         )
 
     def add_task(self, task_desc: TaskDesc) -> Task:
-        """Add a task to the graph."""
+        """Add a task description to the graph.
+
+        Parameters
+        ----------
+        task_desc : TaskDesc
+            The description, usually from `make_task`.
+
+        Returns
+        -------
+        Task
+            The handle of the task.
+
+        Raises
+        ------
+        ValueError
+            If the graph already has a task with the same id.
+        """
         with self._lock:
             if task_desc.task in self._tasks:
                 raise ValueError(
@@ -317,7 +478,28 @@ class TaskGraph:
         return task_desc.task
 
     def add_tasks(self, task_descs: Sequence[TaskDesc]) -> list[Task]:
-        """Add multiple tasks to the graph."""
+        """Add several task descriptions to the graph.
+
+        Parameters
+        ----------
+        task_descs : Sequence[TaskDesc]
+            The descriptions, for example the result of a
+            ``create_statistics_build_tasks`` call.
+
+        Returns
+        -------
+        list[Task]
+            The handles of the tasks, in the order of ``task_descs``.
+
+        Raises
+        ------
+        ValueError
+            If the graph already has a task with the id of one of the
+            descriptions, or if two descriptions in ``task_descs`` have
+            the same id. In the first case, the graph is unchanged. In
+            the second case, the graph keeps the descriptions that come
+            before the second description with that id.
+        """
         with self._lock:
             for task_desc in task_descs:
                 if task_desc.task in self._tasks:
@@ -349,7 +531,10 @@ class TaskGraph:
                 self._collect_task_deps(dep_task, task_set)
 
     def ready_tasks(self, limit: int = 0) -> Sequence[Task]:
-        """Return tasks which have no dependencies."""
+        """Return tasks which have no dependencies.
+
+        :meta private:
+        """
         result = []
         with self._lock:
             for t in self._topological_order():
@@ -361,7 +546,24 @@ class TaskGraph:
         return result
 
     def get_task_desc(self, task: Task) -> TaskDesc:
-        """Get full task description for a given task."""
+        """Return the description of a task of the graph.
+
+        Parameters
+        ----------
+        task : Task
+            The handle of the task.
+
+        Returns
+        -------
+        TaskDesc
+            The description. Its ``input_files`` start with the
+            ``input_files`` of the graph.
+
+        Raises
+        ------
+        ValueError
+            If the graph has no such task.
+        """
         with self._lock:
             if task not in self._tasks:
                 raise ValueError(f"task {task} not in graph")
@@ -378,14 +580,28 @@ class TaskGraph:
             )
 
     def has_task(self, task: Task) -> bool:
-        """Check if the graph contains a task."""
+        """Check whether the graph has a task.
+
+        Parameters
+        ----------
+        task : Task
+            The handle of the task.
+
+        Returns
+        -------
+        bool
+            ``True`` when the graph has the task.
+        """
         with self._lock:
             return task in self._tasks
 
     def extract_tasks(
             self, selected_tasks: Sequence[Task],
     ) -> Sequence[TaskDesc]:
-        """Collects tasks from the task graph and and removes them."""
+        """Collects tasks from the task graph and and removes them.
+
+        :meta private:
+        """
         result = []
         with self._lock:
             for task in selected_tasks:
@@ -398,7 +614,10 @@ class TaskGraph:
         return result
 
     def as_directed_graph(self) -> networkx.DiGraph:
-        """Return the task graph as a networkx directed graph."""
+        """Return the task graph as a networkx directed graph.
+
+        :meta private:
+        """
         with self._lock:
             di_graph = networkx.DiGraph()
             nodes: list[Task] = list(self._tasks.keys())
@@ -422,7 +641,19 @@ class TaskGraph:
             yield self._tasks[task_id]
 
     def topological_order(self) -> Sequence[Task]:
-        """Return tasks in topological order."""
+        """Return the tasks so that each task comes after its deps.
+
+        Returns
+        -------
+        Sequence[Task]
+            The handles of all the tasks. An empty graph gives an empty
+            list.
+
+        Raises
+        ------
+        ValueError
+            If the deps of the tasks form a cycle.
+        """
         with self._lock:
             return [t.task for t in self._topological_order()]
 
@@ -440,7 +671,7 @@ class TaskGraph:
     ) -> None:
         """Process a completed task.
 
-        :param task: Completed task
+        :meta private:
         """
         with self._lock:
             for task_id, result in task_result:
@@ -470,7 +701,13 @@ class TaskGraph:
             return len(self._tasks)
 
     def empty(self) -> bool:
-        """Check if the graph is empty."""
+        """Check whether the graph has no tasks.
+
+        Returns
+        -------
+        bool
+            ``True`` when the graph has no tasks.
+        """
         with self._lock:
             return len(self._tasks) == 0
 
@@ -496,7 +733,10 @@ class TaskGraph:
         return new_graph
 
     def get_task_deps(self, task: Task) -> list[Task]:
-        """Get dependancies of a task suitable for dask executor."""
+        """Get dependancies of a task suitable for dask executor.
+
+        :meta private:
+        """
         with self._lock:
             if task not in self._tasks:
                 raise ValueError(f"task {task} not in graph")
@@ -517,7 +757,21 @@ class TaskGraph:
         return exc_type is None
 
     def prune(self, tasks_to_keep: Sequence[Task | str]) -> None:
-        """Prune to keep the specified tasks and their dependencies."""
+        """Keep only the named tasks and the tasks that they depend on.
+
+        The method removes every other task from the graph.
+
+        Parameters
+        ----------
+        tasks_to_keep : Sequence[Task | str]
+            The tasks to keep, as handles or as task ids.
+
+        Raises
+        ------
+        ValueError
+            If the graph has no task with one of the ids. The graph is
+            then unchanged.
+        """
         with self._lock:
             tasks_set: set[Task] = set()
             for task in tasks_to_keep:
