@@ -90,17 +90,35 @@ def held_futures(graph: TaskGraph, run_id: str) -> list[Future]:
 
 
 class DaskExecutor(TaskGraphExecutorBase):
-    """Dask-based task graph executor."""
+    """A task executor that runs the tasks on a dask cluster.
+
+    The task executor takes ownership of the dask client: :meth:`close`
+    shuts down the client and its cluster. A task runs on a worker of the
+    cluster only after the tasks that it depends on.
+
+    Parameters
+    ----------
+    dask_client : Client
+        The dask client of the cluster that runs the tasks.
+    task_cache : TaskCache
+        The task cache that decides which tasks must run. The default is a
+        :class:`~gain.task_graph.cache.NoTaskCache`, which runs every task.
+    **kwargs
+        The other keyword arguments of
+        :class:`~gain.task_graph.base_executor.TaskGraphExecutorBase`:
+        ``force`` and the options of the task executor.
+
+    Attributes
+    ----------
+    MAX_RUNNING_TASKS : int
+        The task executor takes new tasks from the graph only while fewer
+        than this number of its tasks are unfinished.
+    """
 
     def __init__(
         self, dask_client: Client,
         task_cache: TaskCache = NO_TASK_CACHE, **kwargs: Any,
     ) -> None:
-        """Initialize the Dask executor.
-
-        Args:
-            dask_client: Dask client to use for task execution.
-        """
         super().__init__(task_cache=task_cache, **kwargs)
         self._executing = False
         self._dask_client = dask_client
@@ -451,7 +469,7 @@ class DaskExecutor(TaskGraphExecutorBase):
             self._release_futures(held_futures(graph, state.run_id))
 
     def close(self) -> None:
-        """Close the Dask executor."""
+        """Shut down the dask client and its cluster."""
         logger.info("closing Dask executor")
         # shutdown() tears down workers and scheduler gracefully. Retiring /
         # closing workers first races the scheduler teardown and floods the

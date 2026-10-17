@@ -1,8 +1,15 @@
 # pylint: disable=W0621,C0114,C0115,C0116,W0212,W0613
+import pathlib
+import textwrap
 from collections.abc import Generator
 
 import pytest
 from dask.distributed import Client
+from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.testing import (
+    build_filesystem_test_resource,
+    setup_genome,
+)
 from gain.task_graph.dask_executor import DaskExecutor
 from gain.task_graph.executor import (
     TaskGraphExecutor,
@@ -61,3 +68,22 @@ def executor(
 
     yield executor
     executor.close()
+
+
+@pytest.fixture(name="genome_resource")
+def fixture_genome_resource(tmp_path: pathlib.Path) -> GenomicResource:
+    """Return a genome resource with three chromosomes.
+
+    The chromosomes have 5, 0 and 2 ``N`` bases. The docs examples of the
+    task graph chapter count them.
+    """
+    setup_genome(tmp_path / "genome.fa", textwrap.dedent("""
+        >chr1
+        NNACGTACGT
+        ACGTNNNACG
+        >chr2
+        ACGTACGTAC
+        >chr3
+        NACGTACGTN
+    """))
+    return build_filesystem_test_resource(tmp_path)

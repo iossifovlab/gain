@@ -203,7 +203,30 @@ def task_graph_run(
     *,
     keep_going: bool = False,
 ) -> bool:
-    """Execute (runs) the task_graph with the given executor."""
+    """Run a task graph with a task executor.
+
+    Parameters
+    ----------
+    task_graph : TaskGraph
+        The task graph to run. The run consumes it.
+    executor : TaskGraphExecutor | None
+        The task executor that runs the graph. ``None`` means a new
+        :class:`~gain.task_graph.sequential_executor.SequentialExecutor`.
+    keep_going : bool
+        When false, the first failed task raises its error and ends the
+        run. When true, the run prints the error of each failed task to
+        the standard error and continues.
+
+    Returns
+    -------
+    bool
+        True when no task failed.
+
+    Raises
+    ------
+    Exception
+        The error of the first failed task, when ``keep_going`` is false.
+    """
     no_errors = True
     for result_or_error in task_graph_run_with_results(
             task_graph, executor, keep_going=keep_going):
@@ -217,7 +240,34 @@ def task_graph_run_with_results(
     *,
     keep_going: bool = False,
 ) -> Generator[Any, None, None]:
-    """Run a task graph, yielding the results from each task."""
+    """Run a task graph and yield the result of each task.
+
+    The function yields the results without their tasks, in the order in
+    which the tasks complete. A task that the task cache reports as
+    computed does not run, and the function yields no result for it.
+
+    Parameters
+    ----------
+    task_graph : TaskGraph
+        The task graph to run. The run consumes it.
+    executor : TaskGraphExecutor | None
+        The task executor that runs the graph. ``None`` means a new
+        :class:`~gain.task_graph.sequential_executor.SequentialExecutor`.
+    keep_going : bool
+        When false, the first failed task raises its error and ends the
+        run. When true, the function prints the error of each failed task
+        to the standard error and yields the error as the result.
+
+    Yields
+    ------
+    Any
+        The result of each task, or the exception of a failed task.
+
+    Raises
+    ------
+    Exception
+        The error of the first failed task, when ``keep_going`` is false.
+    """
     if executor is None:
         executor = SequentialExecutor()
 

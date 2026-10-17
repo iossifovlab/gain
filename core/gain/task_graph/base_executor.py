@@ -65,7 +65,28 @@ def _descendants_of_all(
 
 
 class TaskGraphExecutorBase(TaskGraphExecutor):
-    """Executor that walks the graph in order that satisfies dependancies."""
+    """The base of the task executors of GAIn.
+
+    The base runs each task only after the tasks that it depends on, and
+    it asks a task cache which tasks must run. It records the result or
+    the error of each task that runs in the task cache.
+
+    Parameters
+    ----------
+    task_cache : TaskCache
+        The task cache that decides which tasks must run. The default is a
+        :class:`~gain.task_graph.cache.NoTaskCache`, which runs every task.
+    force : bool
+        When true, the task executor runs every task and does not read the
+        task cache. It still writes the outcome of each task to it.
+    **kwargs
+        The options of the task executor. ``task_log_dir`` names the
+        directory of the task logs. Without it, the task executor writes
+        them into ``.task-log`` in the current directory. ``verbose`` sets
+        the verbosity of the task logs. ``fork_tasks`` runs each task in a
+        new process, and ``task_status_dir`` names the directory of the
+        result files of those processes.
+    """
 
     def __init__(
         self, task_cache: TaskCache = NO_TASK_CACHE,
@@ -188,16 +209,14 @@ class TaskGraphExecutorBase(TaskGraphExecutor):
     def get_completed_tasks(
         self, graph: TaskGraph,
     ) -> Generator[tuple[Task, Any], None, None]:
-        """
-        Return cached tasks and their results.
+        """Yield the tasks that the task cache reports as computed.
 
-        All tasks that depend on uncomputed tasks are invalidated and
-        will not be returned, even if they have a cached result.
+        A task that depends on a task that must run is not yielded, even
+        when the task cache has a computed record for it. In force mode,
+        the method yields nothing. :meth:`execute` removes the yielded
+        tasks from the graph, so they do not run again.
 
-        All the tasks that are returned will be preprocessed and removed
-        by the graph internally, so that they are not executed again.
-
-        Will not do anything is the executor is in force mode.
+        :meta private:
         """
         if self._force:
             return
@@ -263,6 +282,28 @@ class TaskGraphExecutorBase(TaskGraphExecutor):
     def execute(
         self, graph: TaskGraph,
     ) -> Generator[tuple[Task, Any], None, None]:
+        """Run the tasks of a task graph that must run.
+
+        The method first asks the task cache which tasks are computed, and
+        removes them from the graph. It does not yield them. Then it runs
+        the other tasks, records the outcome of each one in the task cache
+        and yields it. When the task cache reports each task as computed,
+        the method yields nothing.
+
+        A task executor runs one graph at a time. Exhaust or close the
+        generator of a run before you start the next run.
+
+        Parameters
+        ----------
+        graph : TaskGraph
+            The task graph to run. The method consumes it.
+
+        Yields
+        ------
+        tuple[Task, Any]
+            Each task that ran and its result, when the task completes.
+            The result of a failed task is its exception.
+        """
         assert not self._executing, \
             "Cannot execute a new graph while an old one is still running."
 
