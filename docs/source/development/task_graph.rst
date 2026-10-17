@@ -84,3 +84,4 @@ the extent they are documented.
    task_graph/graphs
    task_graph/task_executors
    task_graph/running_from_a_cli
+   task_graph/named_clusters

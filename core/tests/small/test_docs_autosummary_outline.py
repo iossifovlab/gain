@@ -37,6 +37,7 @@ GENE_MODELS_PAGE = RESOURCES_DIR / "gene_models.rst"
 GRAPHS_PAGE = DEVELOPMENT_DIR / "task_graph/graphs.rst"
 TASK_EXECUTORS_PAGE = DEVELOPMENT_DIR / "task_graph/task_executors.rst"
 RUNNING_FROM_A_CLI_PAGE = DEVELOPMENT_DIR / "task_graph/running_from_a_cli.rst"
+NAMED_CLUSTERS_PAGE = DEVELOPMENT_DIR / "task_graph/named_clusters.rst"
 
 # Pages whose API section is not rolled out yet, as paths relative to
 # DEVELOPMENT_DIR, for example "resources/<page>.rst". The slice of a page
@@ -368,6 +369,17 @@ def test_running_from_a_cli_page_outline_matches_task_graph_cli() -> None:
     assert not page_functions(page)
     assert not page_problems(page)
     assert _page_key(RUNNING_FROM_A_CLI_PAGE) not in NOT_ROLLED_OUT
+
+
+def test_named_clusters_page_outline_matches_the_client_functions() -> None:
+    """The Named clusters outline lists the two client functions."""
+    page = read_docs_page(NAMED_CLUSTERS_PAGE)
+
+    assert not page_classes(page)
+    assert [f.__name__ for f in page_functions(page)] == [
+        "setup_client", "setup_client_from_config"]
+    assert not page_problems(page)
+    assert _page_key(NAMED_CLUSTERS_PAGE) not in NOT_ROLLED_OUT
 
 
 def test_every_page_with_an_autoclass_is_rolled_out_or_skipped() -> None:
