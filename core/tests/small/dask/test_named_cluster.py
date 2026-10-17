@@ -229,6 +229,54 @@ def test_setup_slurm_cluster(mocker: pytest_mock.MockerFixture) -> None:
     assert "number_of_workers" not in mocked_slurm.call_args.kwargs
 
 
+def test_local_params_get_the_call_argument_not_the_definition_count(
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    mocked_local = mocker.patch("dask.distributed.LocalCluster", new=DEFAULT)
+    mocker.patch("gain.dask.named_cluster.Client", autospec=True)
+    cluster_config: dict[str, Any] = {
+        "type": "local", "params": {}, "number_of_workers": 3}
+
+    setup_client_from_config(cluster_config)
+
+    assert cluster_config["params"] == {"number_of_workers": None}
+    assert mocked_local.return_value.scale.call_args.kwargs["n"] == 3
+
+
+@pytest.mark.parametrize("cluster_type, cluster_class", [
+    ("sge", "dask_jobqueue.SGECluster"),
+    ("slurm", "dask_jobqueue.SLURMCluster"),
+])
+def test_jobqueue_types_remove_number_of_workers_from_params(
+    mocker: pytest_mock.MockerFixture,
+    cluster_type: str,
+    cluster_class: str,
+) -> None:
+    mocker.patch(cluster_class, autospec=True)
+    mocker.patch("gain.dask.named_cluster.Client", autospec=True)
+    cluster_config: dict[str, Any] = {
+        "type": cluster_type, "params": {"cores": 4, "processes": 2}}
+
+    setup_client_from_config(cluster_config, number_of_workers=2)
+
+    assert cluster_config["params"] == {"cores": 4, "processes": 2}
+
+
+def test_local_warns_on_threads_per_worker_even_when_it_is_one(
+    mocker: pytest_mock.MockerFixture,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    mocked_local = mocker.patch("dask.distributed.LocalCluster", new=DEFAULT)
+    mocker.patch("gain.dask.named_cluster.Client", autospec=True)
+
+    with caplog.at_level(logging.WARNING, logger="gain.dask.named_cluster"):
+        setup_client_from_config({
+            "type": "local", "params": {"threads_per_worker": 1}})
+
+    assert "'threads_per_worker' key" in caplog.text
+    assert mocked_local.call_args.kwargs["threads_per_worker"] == 1
+
+
 @pytest.mark.parametrize("cluster_type", ["kubernetes", "kubgernetes"])
 def test_unknown_cluster_type_is_refused_by_name(
     mocker: pytest_mock.MockerFixture,

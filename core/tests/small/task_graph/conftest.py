@@ -5,6 +5,10 @@ from collections.abc import Generator
 
 import pytest
 from dask.distributed import Client
+from gain.genomic_resources.genomic_context import register_context_provider
+from gain.genomic_resources.genomic_context_cli import (
+    CLIGenomicContextProvider,
+)
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing import (
     build_filesystem_test_resource,
@@ -123,3 +127,15 @@ def fixture_process_pool_enabled(request: pytest.FixtureRequest) -> None:
     """Skip a process pool test unless pytest gets ``--pp``."""
     if not request.config.getoption("enable_pp"):
         pytest.skip("process_pool executor not enabled")
+
+
+@pytest.fixture(name="cli_context_provider")
+def fixture_cli_context_provider(
+    clean_genomic_context_providers: None,
+) -> None:
+    """Register only the CLI context provider, for the test alone.
+
+    ``clean_genomic_context_providers`` empties the registered providers,
+    so the providers of one test do not reach the next test.
+    """
+    register_context_provider(CLIGenomicContextProvider())

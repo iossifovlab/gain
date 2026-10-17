@@ -14,7 +14,10 @@ logger = logging.getLogger(__name__)
 
 
 def set_up_local_cluster(cluster_conf: dict[str, Any]) -> Cluster:
-    """Create a local cluster using the passed cluster configuration."""
+    """Create a local cluster using the passed cluster configuration.
+
+    :meta private:
+    """
     # pylint: disable=import-outside-toplevel
     from dask.distributed import LocalCluster
 
@@ -36,6 +39,10 @@ def set_up_local_cluster(cluster_conf: dict[str, Any]) -> Cluster:
 
 
 def set_up_sge_cluster(cluster_conf: dict[str, Any]) -> Cluster:
+    """Create an SGE cluster using the passed cluster configuration.
+
+    :meta private:
+    """
     # pylint: disable=import-outside-toplevel
     from dask_jobqueue import SGECluster  # pyright: ignore
     cluster_conf.pop("number_of_workers", None)
@@ -43,6 +50,10 @@ def set_up_sge_cluster(cluster_conf: dict[str, Any]) -> Cluster:
 
 
 def set_up_slurm_cluster(cluster_conf: dict[str, Any]) -> Cluster:
+    """Create a SLURM cluster using the passed cluster configuration.
+
+    :meta private:
+    """
     # pylint: disable=import-outside-toplevel
     from dask_jobqueue import SLURMCluster  # pyright: ignore
     cluster_conf.pop("number_of_workers", None)
@@ -55,7 +66,10 @@ _CLUSTER_TYPES["slurm"] = set_up_slurm_cluster
 
 
 def set_up_manual_client(cluster_conf: dict[str, Any]) -> Client:
-    """Create a dask client using the passed cluster configuration."""
+    """Create a dask client using the passed cluster configuration.
+
+    :meta private:
+    """
     # pylint: disable=import-outside-toplevel
     params = cluster_conf.get("params", {})
     scheduler_address = params.pop("address", None)
@@ -71,7 +85,53 @@ def setup_client_from_config(
     cluster_config: dict[str, Any], *,
     number_of_workers: int | None = None,
 ) -> tuple[Client, dict[str, Any]]:
-    """Create a dask client from the provided config."""
+    """Create a dask client from one cluster definition.
+
+    Parameters
+    ----------
+    cluster_config
+        A cluster definition: a mapping with the keys ``type``, ``params``
+        and, optionally, ``number_of_workers`` or ``adapt_params``.
+        ``type`` is ``local``, ``sge``, ``slurm`` or ``manual``. ``params``
+        holds the arguments of the dask cluster class. For ``manual``,
+        ``params`` holds the ``address`` of a running dask scheduler.
+    number_of_workers
+        The number of workers. A number here wins over the
+        ``number_of_workers`` of the cluster definition. ``None`` keeps the
+        number of the cluster definition. When the cluster definition has no
+        ``number_of_workers``, the deprecated ``number_of_threads`` key gives
+        the number. When no key gives a number, the cluster adapts by
+        ``adapt_params``, if the cluster definition has that key.
+
+    Returns
+    -------
+    tuple[Client, dict[str, Any]]
+        The dask client and the cluster definition that built it, the same
+        object as ``cluster_config``.
+
+    Raises
+    ------
+    ValueError
+        When ``type`` is not a known cluster type, or when a ``manual``
+        cluster definition has no ``address`` under ``params``.
+
+    Notes
+    -----
+    For the ``local`` type, each worker runs one thread. When ``params``
+    holds ``threads_per_worker``, the function logs a warning, also for the
+    value 1, and uses 1. For ``sge`` and ``slurm``, the jobqueue parameters
+    ``cores`` and ``processes`` in ``params`` set the threads of a worker.
+
+    The function changes the mapping that it gets. It writes the
+    ``number_of_workers`` argument of the call into ``params``, also when
+    the argument is ``None``. The ``local`` type keeps that key, and
+    ``sge`` and ``slurm`` remove it again. For the ``manual`` type, the
+    function removes ``address`` from ``params``.
+    ``setup_client`` passes the live cluster definition of the dask config,
+    not a copy. So a second call for the same ``manual`` named cluster in
+    one process fails with ``ValueError``. Pass a copy when the mapping
+    must stay unchanged.
+    """
     logger.info("CLUSTER CONFIG: %s", cluster_config)
     _resilence_distributed_logging()
     _adjust_default_distributed_config()
@@ -195,7 +255,15 @@ def setup_client(
     ValueError
         When ``gain_named_cluster.clusters`` is not a mapping from names to
         cluster definitions, when a cluster definition holds a ``name`` key,
-        or when no named cluster has the name ``cluster_name``.
+        or when no named cluster has the name ``cluster_name``. Also when
+        :func:`setup_client_from_config` refuses the cluster definition.
+
+    Notes
+    -----
+    The function gives the cluster definition of the dask config to
+    :func:`setup_client_from_config`, not a copy, and that function changes
+    it. So a second call for the same ``manual`` named cluster in one
+    process fails.
     """
     if cluster_name is None:
         cluster_name = dask.config.get(  # pyright: ignore

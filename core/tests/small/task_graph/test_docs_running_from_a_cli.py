@@ -13,10 +13,6 @@ import pytest
 from gain.genomic_resources.genomic_context import (
     build_cli_genomic_context,
     context_providers_add_argparser_arguments,
-    register_context_provider,
-)
-from gain.genomic_resources.genomic_context_cli import (
-    CLIGenomicContextProvider,
 )
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
@@ -57,18 +53,6 @@ def count_n() -> None:
     """Run ``main`` and exit with status 0 only when every task succeeds."""
     sys.exit(0 if main(sys.argv[1:]) else 1)
 # The docs example of a console script ends here.
-
-
-@pytest.fixture(name="cli_context_provider")
-def fixture_cli_context_provider(
-    clean_genomic_context_providers: None,
-) -> None:
-    """Register only the CLI context provider, for the test alone.
-
-    ``clean_genomic_context_providers`` empties the registered providers,
-    so the providers of one test do not reach the next test.
-    """
-    register_context_provider(CLIGenomicContextProvider())
 
 
 def grr_args(grr_dir: pathlib.Path) -> list[str]:
