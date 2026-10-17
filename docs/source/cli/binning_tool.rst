@@ -191,6 +191,8 @@ See also
   worked example.
 * :doc:`binning_tool_view`: print the tables of a ``binning_tool`` file as
   tab-separated text.
+* :doc:`/running_in_parallel`: the number of workers, the named clusters and
+  the reruns.
 
 
 .. _binning-tool-option-reference:

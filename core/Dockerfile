@@ -70,6 +70,10 @@ COPY core/ ./core/
 # source to compare its autosummary outline with the classes (#1895). The
 # test fails, not skips, when the page is absent.
 COPY docs/source/development/resources/ ./docs/source/development/resources/
+# tests/small/task_graph/test_running_in_parallel_page.py reads the
+# options that the "Running in parallel" page names and fails when the
+# page is absent.
+COPY docs/source/running_in_parallel.rst ./docs/source/
 # The repo-root scripts/ belongs to no project; the core CI stage lints
 # it (#1327), so this image is the one that has to carry it.
 COPY scripts/ ./scripts/

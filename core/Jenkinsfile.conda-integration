@@ -420,7 +420,8 @@ pipeline {
                 // Build from the repo root, like every other CI image. The
                 // image carries only micromamba + rattler-index and the
                 // test bed (core/tests, core/pytest.ini, core/pyproject.toml,
-                // test_fixtures/mini-GRR, docs/source/development/resources);
+                // test_fixtures/mini-GRR, docs/source/development/resources,
+                // docs/source/running_in_parallel.rst);
                 // the .conda, the GRR tree and the
                 // reports dir are mounted at run time, so this is cheap and
                 // the solve is always fresh.

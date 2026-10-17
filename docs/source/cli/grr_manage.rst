@@ -42,6 +42,8 @@ See also
   ``repo-*`` and ``resource-*`` forms write.
 * :ref:`grr-manage-force-dry-run`: when to force a rebuild of the statistics.
 * :ref:`getting-started-grr-create`: create a GRR and add resources to it.
+* :doc:`/running_in_parallel`: the number of workers, the named clusters,
+  and the rerun options ``-t``, ``--keep-going`` and ``--task-log-dir``.
 
 Option reference
 ----------------
