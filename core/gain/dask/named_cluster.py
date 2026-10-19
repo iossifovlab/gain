@@ -45,8 +45,10 @@ def set_up_sge_cluster(cluster_conf: dict[str, Any]) -> Cluster:
     """
     # pylint: disable=import-outside-toplevel
     from dask_jobqueue import SGECluster  # pyright: ignore
-    cluster_conf.pop("number_of_workers", None)
-    return SGECluster(**cluster_conf)
+    kwargs = {
+        key: value for key, value in cluster_conf.items()
+        if key != "number_of_workers"}
+    return SGECluster(**kwargs)
 
 
 def set_up_slurm_cluster(cluster_conf: dict[str, Any]) -> Cluster:
@@ -56,8 +58,10 @@ def set_up_slurm_cluster(cluster_conf: dict[str, Any]) -> Cluster:
     """
     # pylint: disable=import-outside-toplevel
     from dask_jobqueue import SLURMCluster  # pyright: ignore
-    cluster_conf.pop("number_of_workers", None)
-    return SLURMCluster(**cluster_conf)
+    kwargs = {
+        key: value for key, value in cluster_conf.items()
+        if key != "number_of_workers"}
+    return SLURMCluster(**kwargs)
 
 
 _CLUSTER_TYPES["local"] = set_up_local_cluster
@@ -71,7 +75,7 @@ def set_up_manual_client(cluster_conf: dict[str, Any]) -> Client:
     :meta private:
     """
     # pylint: disable=import-outside-toplevel
-    params = cluster_conf.get("params", {})
+    params = dict(cluster_conf.get("params", {}))
     scheduler_address = params.pop("address", None)
 
     if scheduler_address is None:
@@ -106,8 +110,8 @@ def setup_client_from_config(
     Returns
     -------
     tuple[Client, dict[str, Any]]
-        The dask client and the cluster definition that built it, the same
-        object as ``cluster_config``.
+        The dask client and a copy of ``cluster_config``. The copy is equal
+        to ``cluster_config``. It is not the same object.
 
     Raises
     ------
@@ -122,16 +126,11 @@ def setup_client_from_config(
     value 1, and uses 1. For ``sge`` and ``slurm``, the jobqueue parameters
     ``cores`` and ``processes`` in ``params`` set the threads of a worker.
 
-    The function changes the mapping that it gets. It writes the
-    ``number_of_workers`` argument of the call into ``params``, also when
-    the argument is ``None``. The ``local`` type keeps that key, and
-    ``sge`` and ``slurm`` remove it again. For the ``manual`` type, the
-    function removes ``address`` from ``params``.
-    ``setup_client`` passes the live cluster definition of the dask config,
-    not a copy. So a second call for the same ``manual`` named cluster in
-    one process fails with ``ValueError``. Pass a copy when the mapping
-    must stay unchanged.
+    The function works on its own copy of ``cluster_config`` and does not
+    change the mapping that it gets. Two calls with the same mapping build
+    two clients with the same settings.
     """
+    cluster_config = copy.deepcopy(cluster_config)
     logger.info("CLUSTER CONFIG: %s", cluster_config)
     _resilence_distributed_logging()
     _adjust_default_distributed_config()
@@ -144,7 +143,7 @@ def setup_client_from_config(
     if cluster_type == "manual":
         return set_up_manual_client(cluster_config), cluster_config
 
-    cluster_params = cluster_config.get("params", {})
+    cluster_params = copy.deepcopy(cluster_config.get("params", {}))
     cluster_params["number_of_workers"] = number_of_workers
 
     threads_per_worker = cluster_params.get("threads_per_worker")
@@ -248,7 +247,8 @@ def setup_client(
     Returns
     -------
     tuple[Client, dict[str, Any]]
-        The dask client and the cluster definition that built it.
+        The dask client and a copy of the cluster definition that built
+        it.
 
     Raises
     ------
@@ -260,10 +260,9 @@ def setup_client(
 
     Notes
     -----
-    The function gives the cluster definition of the dask config to
-    :func:`setup_client_from_config`, not a copy, and that function changes
-    it. So a second call for the same ``manual`` named cluster in one
-    process fails.
+    The function does not change the cluster definition in the dask config.
+    Two calls for the same named cluster build two clients with the same
+    settings.
     """
     if cluster_name is None:
         cluster_name = dask.config.get(  # pyright: ignore

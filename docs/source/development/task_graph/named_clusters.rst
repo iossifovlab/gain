@@ -41,8 +41,9 @@ that are threads of the current process, with no dashboard:
    :start-after: # The docs example of a client from a cluster definition starts here.
    :end-before: # The docs example of a client from a cluster definition ends here.
 
-``setup_client_from_config`` changes the mapping that it gets, so the
-example gives it a copy. The Notes of its docstring list the changes.
+``setup_client_from_config`` works on its own copy of the mapping that it
+gets. The mapping stays unchanged, so one cluster definition builds many
+clients.
 
 The lifecycle
 -------------

@@ -121,7 +121,7 @@ def test_dask_executor_runs_the_graph_and_closes_the_client(
 ) -> None:
     """The task executor runs the graph, then shuts down its client."""
     # The docs example of a client from a cluster definition starts here.
-    client, _ = setup_client_from_config(copy.deepcopy(LOW_COST_CLUSTER))
+    client, _ = setup_client_from_config(LOW_COST_CLUSTER)
     # The docs example of a client from a cluster definition ends here.
 
     total = run_on_a_dask_client(genome_resource, client)

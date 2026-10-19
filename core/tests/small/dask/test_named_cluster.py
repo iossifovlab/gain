@@ -245,7 +245,8 @@ def test_local_params_get_the_call_argument_not_the_definition_count(
 
     setup_client_from_config(cluster_config)
 
-    assert cluster_config["params"] == {"number_of_workers": None}
+    assert cluster_config == {
+        "type": "local", "params": {}, "number_of_workers": 3}
     assert mocked_local.return_value.scale.call_args.kwargs["n"] == 3
 
 
@@ -253,7 +254,7 @@ def test_local_params_get_the_call_argument_not_the_definition_count(
     ("sge", "dask_jobqueue.SGECluster"),
     ("slurm", "dask_jobqueue.SLURMCluster"),
 ])
-def test_jobqueue_types_remove_number_of_workers_from_params(
+def test_jobqueue_types_keep_the_cluster_definition_unchanged(
     mocker: pytest_mock.MockerFixture,
     cluster_type: str,
     cluster_class: str,
@@ -261,11 +262,14 @@ def test_jobqueue_types_remove_number_of_workers_from_params(
     mocker.patch(cluster_class, autospec=True)
     mocker.patch("gain.dask.named_cluster.Client", autospec=True)
     cluster_config: dict[str, Any] = {
-        "type": cluster_type, "params": {"cores": 4, "processes": 2}}
+        "type": cluster_type,
+        "params": {"cores": 4, "processes": 2, "number_of_workers": 5}}
 
     setup_client_from_config(cluster_config, number_of_workers=2)
 
-    assert cluster_config["params"] == {"cores": 4, "processes": 2}
+    assert cluster_config == {
+        "type": cluster_type,
+        "params": {"cores": 4, "processes": 2, "number_of_workers": 5}}
 
 
 def test_local_warns_on_threads_per_worker_even_when_it_is_one(
@@ -349,6 +353,89 @@ def test_setup_manual_client(mocker: pytest_mock.MockerFixture) -> None:
     assert mocked_client.call_args.kwargs == {
         "address": "tcp://localhost:8786",
     }
+
+
+def test_manual_named_cluster_sets_up_twice_with_the_same_address(
+    mocker: pytest_mock.MockerFixture,
+    named_cluster_config: dict[str, Any],
+) -> None:
+    mocked_client = mocker.patch(
+        "gain.dask.named_cluster.Client", autospec=True)
+    named_cluster_config["clusters"]["remote"] = {
+        "type": "manual",
+        "params": {"address": "tcp://localhost:8786"},
+    }
+
+    with config.set({"gain_named_cluster": named_cluster_config}):
+        setup_client("remote")
+        setup_client("remote")
+
+    assert [call.kwargs for call in mocked_client.call_args_list] == [
+        {"address": "tcp://localhost:8786"},
+        {"address": "tcp://localhost:8786"},
+    ]
+
+
+@pytest.fixture
+def mocked_cluster_classes(mocker: pytest_mock.MockerFixture) -> None:
+    mocker.patch("dask.distributed.LocalCluster", autospec=True)
+    mocker.patch("dask_jobqueue.SGECluster", autospec=True)
+    mocker.patch("dask_jobqueue.SLURMCluster", autospec=True)
+    mocker.patch("gain.dask.named_cluster.Client", autospec=True)
+
+
+CLUSTER_DEFINITIONS: dict[str, dict[str, Any]] = {
+    "local": {
+        "type": "local",
+        "number_of_workers": 3,
+        "params": {"memory_limit": "4GB", "threads_per_worker": 2},
+    },
+    "sge": {
+        "type": "sge",
+        "number_of_workers": 3,
+        "params": {"cores": 4, "processes": 2, "number_of_workers": 5},
+    },
+    "slurm": {
+        "type": "slurm",
+        "adapt_params": {"minimum": 1, "maximum": 5},
+        "params": {"cores": 4, "processes": 2, "number_of_workers": 5},
+    },
+    "manual": {
+        "type": "manual",
+        "params": {"address": "tcp://localhost:8786", "timeout": 5},
+    },
+}
+
+
+@pytest.mark.parametrize("cluster_type", sorted(CLUSTER_DEFINITIONS))
+def test_setup_client_from_config_keeps_the_mapping_unchanged(
+    mocked_cluster_classes: None,
+    cluster_type: str,
+) -> None:
+    cluster_config = copy.deepcopy(CLUSTER_DEFINITIONS[cluster_type])
+
+    _, returned = setup_client_from_config(
+        cluster_config, number_of_workers=2)
+
+    assert cluster_config == CLUSTER_DEFINITIONS[cluster_type]
+    assert returned == CLUSTER_DEFINITIONS[cluster_type]
+    assert returned is not cluster_config
+
+
+@pytest.mark.parametrize("cluster_type", sorted(CLUSTER_DEFINITIONS))
+def test_setup_client_keeps_the_dask_config_unchanged(
+    mocked_cluster_classes: None,
+    named_cluster_config: dict[str, Any],
+    cluster_type: str,
+) -> None:
+    named_cluster_config["clusters"] = copy.deepcopy(CLUSTER_DEFINITIONS)
+
+    with config.set({"gain_named_cluster": named_cluster_config}):
+        before = copy.deepcopy(config.get("gain_named_cluster"))
+        setup_client(cluster_type, number_of_workers=2)
+        after = config.get("gain_named_cluster")
+
+    assert after == before
 
 
 def test_adjust_default_distributed_config(
