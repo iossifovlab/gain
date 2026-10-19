@@ -85,7 +85,7 @@ What to assert
   builds its dependency graph from this tuple, and a plain annotation run
   does not notice a missing name.
 
-The last test of the module checks the declared attributes and the
+Another test of the module checks the declared attributes and the
 declared reads of the built annotator:
 
 .. literalinclude:: ../../../../core/tests/small/annotation/test_docs_testing_an_annotator.py
