@@ -314,6 +314,18 @@ def test_bundled_config_names_only_supported_cluster_types() -> None:
     } == {}
 
 
+def test_bundled_config_uses_no_deprecated_number_of_threads() -> None:
+    bundled = pathlib.Path(gain.dask.__file__).parent / "named_cluster.yaml"
+    clusters = yaml.safe_load(bundled.read_text())["gain_named_cluster"][
+        "clusters"]
+
+    assert [
+        name for name, conf in clusters.items()
+        if "number_of_threads" in conf
+    ] == []
+    assert clusters["slurm"]["number_of_workers"] == 10
+
+
 def test_setup_manual_client(mocker: pytest_mock.MockerFixture) -> None:
     mocked_client = mocker.patch(
         "gain.dask.named_cluster.Client",
