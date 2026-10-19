@@ -2395,6 +2395,7 @@ describe('AnnotationPipelineComponent', () => {
     const firstReload = startSaveAsWithPendingReload('4', 'first save-as');
     notifications.next(new PipelineNotification('4', 'failed', 'first error'));
     firstReload.error(new Error('backend restarting'));
+    expect(component.pipelines.find(p => p.id === '4').status).toBe('failed');
     startOnLoadedList('id3');
     notifications.next(new PipelineNotification('4', 'loaded'));
     const secondReload = startSaveAsWithPendingReload('4', 'second save-as');
