@@ -86,11 +86,12 @@ implementer:
 **The name is read at answer time, never cached.** A pipeline that allows
 repeated attributes renames every attribute whose name collides with
 another, the first one included, to ``<name>_<annotator_id>``, and it does
-so *after* every annotator has been constructed. An annotator that captured ``attr.name``
-while building its queries would answer under names the pipeline has since
-moved away from. Whatever a query list caches, it must not cache names —
-walk ``self.attributes`` again when you answer. The helpers on
-:class:`~gain.annotation.annotator_base.AnnotatorBase` all do this for you.
+so *after* every annotator has been constructed. An annotator that captured
+``attr.name`` while building its queries would answer under names the
+pipeline has since moved away from. Whatever a query list caches, it must
+not cache names — walk ``self.attributes`` again when you answer. The
+helpers on :class:`~gain.annotation.annotator_base.AnnotatorBase` all do
+this for you.
 
 **Parameters are usage-monitored.** An attribute's ``parameters`` (and the
 annotator's own, on its :class:`~gain.annotation.annotation_config.AnnotatorInfo`)
@@ -106,7 +107,8 @@ An annotator that takes an ``input_gene_list`` parameter reads the genes
 from an earlier annotator's attribute.
 :meth:`AnnotatorBase.resolve_input_gene_list <gain.annotation.annotator_base.AnnotatorBase.resolve_input_gene_list>`
 resolves the parameter to the name of that attribute. It raises
-``ValueError`` for a name that no earlier annotator produces, and an attribute whose ``attribute_type`` is
+``ValueError`` when the parameter is absent, when no earlier annotator
+produces the named attribute, or when the attribute's ``attribute_type`` is
 not ``"gene_list"``. A ``value_type`` of ``object`` alone is not enough. The
 method is static, so an annotator factory calls it before the annotator's
 constructor runs:

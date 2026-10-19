@@ -62,18 +62,30 @@ column set it finds, in this order:
   gives a ``CNVAllele``);
 * ``chrom`` and ``pos`` — a ``Position``.
 
-The converter's ``build`` method then turns each row, as a mapping from
-column name to value, into an annotatable. The first argument renames the
-columns: the key ``col_<column>`` maps one of the names above to the column
-that holds it, and the value ``"-"`` excludes that column.
-:func:`~gain.annotation.record_to_annotatable.build_annotatable_from_dict`
-does both steps for one dictionary, with no renaming:
+Its full signature is ``build_record_to_annotatable(renamed_columns,
+available_columns, ref_genome=None)``. The first argument, a mapping, renames
+the columns: the key ``col_<column>`` maps one of the names above to the
+column that holds it, and the value ``"-"`` excludes that column. The second
+argument is the set of column names the source has. The converter's
+``build`` method takes only the row, as a mapping from column name to value,
+and turns it into an annotatable. Here the ``CHROM`` column stands in for
+``chrom``:
 
 .. code-block:: python
 
     from gain.annotation.record_to_annotatable import (
         build_annotatable_from_dict,
+        build_record_to_annotatable,
     )
+
+    converter = build_record_to_annotatable(
+        {"col_chrom": "CHROM"}, {"CHROM", "pos"})
+    position = converter.build({"CHROM": "chr1", "pos": "5"})
+
+:func:`~gain.annotation.record_to_annotatable.build_annotatable_from_dict`
+does both steps for one dictionary, with no renaming:
+
+.. code-block:: python
 
     allele = build_annotatable_from_dict(
         {"chrom": "chr1", "pos": "11796321", "ref": "G", "alt": "A"})
