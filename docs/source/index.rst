@@ -43,4 +43,5 @@ A preprint describing GAIn is available on `bioRxiv <https://doi.org/10.64898/20
     named_clusters
     web_interface
     python_interface
+    python_interface_new
     changes
