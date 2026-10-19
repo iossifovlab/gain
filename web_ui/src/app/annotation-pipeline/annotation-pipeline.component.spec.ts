@@ -2408,6 +2408,17 @@ describe('AnnotationPipelineComponent', () => {
     expect(patched.error).toBeUndefined();
   });
 
+  it('forgets the remembered status frames when the component is destroyed during a save-as reload (#2000)', () => {
+    startWithNotifications();
+    startOnLoadedList('id3');
+    startSaveAsWithPendingReload('4', 'saved as new');
+    expect(component['saveAsFrames']).not.toBeNull();
+
+    component.ngOnDestroy();
+
+    expect(component['saveAsFrames']).toBeNull();
+  });
+
   it('replaces the patched entries with the server copies on the next successful reload (#1783)', () => {
     const reconnect = armReconnect();
     component.ngOnInit();

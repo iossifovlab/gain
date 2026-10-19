@@ -72,6 +72,10 @@ interface PipelineListPatch {
  * `pipeline_status` frames that arrive after the save update that list.
  * When the list has no entry with the id, `frameFor` gives the last frame
  * for the id, if any; without one the patch keeps the status of `saved`.
+ *
+ * With no frame, the status shown is the last one known and may be stale
+ * until the next `pipeline_status` frame. A later successful reload
+ * replaces it with the server copy.
  */
 function savedPipelinePatch(
   saved: Pipeline,
@@ -1014,6 +1018,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     this.pipelineValidationSubscription.unsubscribe();
     this.configChangedSubscription.unsubscribe();
     this.reconnectionSubscription.unsubscribe();
+    this.saveAsFrames = null;
   }
 
   private updateDownloadLink(): void {
