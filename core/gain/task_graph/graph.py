@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import multiprocessing as mp
 from collections import defaultdict
 from collections.abc import Callable, Generator, Sequence
@@ -181,21 +182,16 @@ def _reconfigure_task_deps(
     return args, kwargs, deps
 
 
-def _chain_func(*args: Any, **kwargs: Any) -> Any:
-    # The executor calls this function with the args and kwargs of the
-    # combined task, and replaces each `Task` in them with its result. The
-    # args and the kwargs other than ``task1`` and ``task2`` are the
-    # resolved arguments of the first task.
-    task1 = kwargs.pop("task1")
-    task2 = kwargs.pop("task2")
-
-    # The ``task1`` and ``task2`` of the combined task hide the kwargs of
-    # the same names of the first task, for example when the first task is
-    # a chain itself. The first task gets the stored values of those.
-    for key in ("task1", "task2"):
-        if key in task1.kwargs:
-            kwargs[key] = task1.kwargs[key]
-
+def _chain_func(
+    task1: TaskDesc, task2: TaskDesc, /, *args: Any, **kwargs: Any,
+) -> Any:
+    # The combined task binds ``task1`` and ``task2`` with
+    # `functools.partial`, apart from the arguments of the first task. They
+    # are positional-only, so a kwarg of the first task with the same name
+    # goes into ``kwargs``. The
+    # executor calls this function with the args and kwargs of the combined
+    # task, and replaces each `Task` in them with its result. Thus ``args``
+    # and ``kwargs`` are the resolved arguments of the first task.
     res = task1.func(*args, **kwargs)
 
     if task2.deps:
@@ -223,15 +219,11 @@ def _chain_2_tasks(task1: TaskDesc, task2: TaskDesc) -> TaskDesc:
         if len(task2.deps) == 1 and task2.deps[0] != task1.task:
             raise ValueError("task2 should depend on task1")
 
-    kwargs = task1.kwargs.copy()
-    kwargs["task1"] = task1
-    kwargs["task2"] = task2
-
     return TaskDesc(
         task=task2.task,
-        func=_chain_func,
+        func=functools.partial(_chain_func, task1, task2),
         args=task1.args,
-        kwargs=kwargs,
+        kwargs=task1.kwargs.copy(),
         deps=task1.deps,
         input_files=task1.input_files + task2.input_files,
         output_files=task1.output_files + task2.output_files,

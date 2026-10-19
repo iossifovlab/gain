@@ -177,3 +177,19 @@ def test_executor_chain_first_task_gets_the_result_of_a_task(
     results = dict(executor.execute(graph))
 
     assert results[Task("d")] == ("got", 5)
+
+
+@pytest.mark.parametrize("name", ["task1", "task2"])
+def test_chain_first_task_gets_a_task_result_in_its_kwarg_named(
+    name: str,
+) -> None:
+    graph = TaskGraph()
+    task_a = graph.create_task("a", lambda: 5, args=[])
+    first = graph.make_task(
+        "b", lambda **kw: ("got", kw[name]), args=[], kwargs={name: task_a})
+    second = graph.make_task("c", lambda y: y, args=[first.task])
+    graph.add_task(chain_tasks(first, second))
+
+    results = dict(SequentialExecutor().execute(graph))
+
+    assert results[Task("c")] == ("got", 5)
