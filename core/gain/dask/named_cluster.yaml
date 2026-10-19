@@ -87,7 +87,7 @@ gain_named_cluster:
         # - "-l h_vmem=8G"
     slurm:
       type: slurm
-      number_of_threads: 10
+      number_of_workers: 10
       params:
         walltime: "48:00:00"
         cores: 1

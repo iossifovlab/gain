@@ -130,6 +130,7 @@ def test_default_with_number_of_workers_config(
     named_cluster_config: dict[str, Any],
     config_update: dict[str, Any],
     expected_n: int,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     mocked_local = mocker.patch(
         "dask.distributed.LocalCluster", new=DEFAULT)
@@ -140,7 +141,8 @@ def test_default_with_number_of_workers_config(
 
     named_cluster_config["clusters"]["local"].update(config_update)
 
-    with config.set({"gain_named_cluster": named_cluster_config}):
+    with config.set({"gain_named_cluster": named_cluster_config}), \
+            caplog.at_level(logging.WARNING, logger="gain.dask.named_cluster"):
         client, _ = setup_client()
         assert client
 
@@ -150,6 +152,10 @@ def test_default_with_number_of_workers_config(
 
     assert mocked_local.return_value.scale.call_count == 1
     assert mocked_local.return_value.scale.call_args.kwargs["n"] == expected_n
+    deprecation_warned = any(
+        "'number_of_threads' key" in record.getMessage()
+        for record in caplog.records)
+    assert deprecation_warned == ("number_of_threads" in config_update)
 
 
 def test_config_access(
@@ -314,6 +320,18 @@ def test_bundled_config_names_only_supported_cluster_types() -> None:
     } == {}
 
 
+def test_bundled_config_uses_no_deprecated_number_of_threads() -> None:
+    bundled = pathlib.Path(gain.dask.__file__).parent / "named_cluster.yaml"
+    clusters = yaml.safe_load(bundled.read_text())["gain_named_cluster"][
+        "clusters"]
+
+    assert [
+        name for name, conf in clusters.items()
+        if "number_of_threads" in conf
+    ] == []
+    assert clusters["slurm"]["number_of_workers"] == 10
+
+
 def test_setup_manual_client(mocker: pytest_mock.MockerFixture) -> None:
     mocked_client = mocker.patch(
         "gain.dask.named_cluster.Client",
@@ -472,6 +490,116 @@ def test_reconfigure_translates_the_old_key(
     assert len([
         record for record in caplog.records
         if "dae_named_cluster" in record.getMessage()]) == 1
+
+
+def _import_user_config(
+    monkeypatch: pytest.MonkeyPatch,
+    config_dir: pathlib.Path,
+    content: str,
+) -> None:
+    """Load a user file in the order of an import of gain.dask.
+
+    dask collects the user files, then reconfigure() merges the bundled
+    defaults under them. config.refresh() would merge the bundled defaults
+    first.
+    """
+    monkeypatch.setattr(config, "PATH", str(config_dir))
+    monkeypatch.setattr(config, "defaults", [])
+    (config_dir / "named_cluster.yaml").write_text(textwrap.dedent(content))
+    config.config.clear()
+    config.config.update(config.collect(paths=[str(config_dir)], env={}))
+    gain.dask.config.reconfigure()
+
+
+def test_user_number_of_threads_wins_over_the_bundled_number_of_workers(
+    mocker: pytest_mock.MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    restored_dask_config: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    mocked_slurm = mocker.patch("dask_jobqueue.SLURMCluster", autospec=True)
+    mocker.patch("gain.dask.named_cluster.Client", autospec=True)
+    _import_user_config(monkeypatch, tmp_path, """\
+        gain_named_cluster:
+          clusters:
+            slurm:
+              number_of_threads: 50
+        """)
+
+    with caplog.at_level(logging.WARNING, logger="gain.dask.named_cluster"):
+        setup_client("slurm")
+
+    assert mocked_slurm.return_value.scale.call_args.kwargs["n"] == 50
+    assert any(
+        "'number_of_threads' key" in record.getMessage()
+        for record in caplog.records)
+
+
+def test_user_null_number_of_threads_clears_the_bundled_number_of_workers(
+    mocker: pytest_mock.MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    restored_dask_config: None,
+) -> None:
+    mocked_slurm = mocker.patch("dask_jobqueue.SLURMCluster", autospec=True)
+    mocker.patch("gain.dask.named_cluster.Client", autospec=True)
+    _import_user_config(monkeypatch, tmp_path, """\
+        gain_named_cluster:
+          clusters:
+            slurm:
+              number_of_threads: null
+              adapt_params:
+                minimum: 1
+                maximum: 20
+        """)
+
+    setup_client("slurm")
+
+    assert mocked_slurm.return_value.scale.call_count == 0
+    assert mocked_slurm.return_value.adapt.call_args.kwargs == {
+        "minimum": 1, "maximum": 20}
+
+
+def test_user_number_of_workers_wins_over_the_user_number_of_threads(
+    mocker: pytest_mock.MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    restored_dask_config: None,
+) -> None:
+    mocked_slurm = mocker.patch("dask_jobqueue.SLURMCluster", autospec=True)
+    mocker.patch("gain.dask.named_cluster.Client", autospec=True)
+    _import_user_config(monkeypatch, tmp_path, """\
+        gain_named_cluster:
+          clusters:
+            slurm:
+              number_of_threads: 50
+              number_of_workers: 3
+        """)
+
+    setup_client("slurm")
+
+    assert mocked_slurm.return_value.scale.call_args.kwargs["n"] == 3
+
+
+def test_user_number_of_threads_under_the_hyphenated_key_wins(
+    mocker: pytest_mock.MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    restored_dask_config: None,
+) -> None:
+    mocked_slurm = mocker.patch("dask_jobqueue.SLURMCluster", autospec=True)
+    mocker.patch("gain.dask.named_cluster.Client", autospec=True)
+    _import_user_config(monkeypatch, tmp_path, """\
+        gain-named-cluster:
+          clusters:
+            slurm:
+              number_of_threads: 50
+        """)
+
+    setup_client("slurm")
+
+    assert mocked_slurm.return_value.scale.call_args.kwargs["n"] == 50
 
 
 def test_old_key_value_wins_over_the_bundled_value(
