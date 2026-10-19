@@ -81,7 +81,11 @@ def test_followup_answers_from_the_context(tmp_path: pathlib.Path) -> None:
         not_selected = pipeline.annotate(allele, {})
         no_annotatable = pipeline.annotate(None, {})
 
-    assert selected["followup"] == "yes"
+    assert selected == {
+        "phyloP7way": 1.5,
+        "clinical_significance": "Pathogenic",
+        "followup": "yes",
+    }
     assert not_selected == {"followup": "no"}
     assert no_annotatable == {"followup": None}
 # The docs example of the unit test ends here.
