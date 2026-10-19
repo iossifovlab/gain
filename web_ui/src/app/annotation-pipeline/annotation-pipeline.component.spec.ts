@@ -2344,6 +2344,20 @@ describe('AnnotationPipelineComponent', () => {
     expect(component.currentTemporaryPipelineId).toBe('');
   });
 
+  it('takes the last of several status frames for the new id when a save-as reload fails (#2000)', () => {
+    const notifications = startWithNotifications();
+    startOnLoadedList('id3');
+    const reload = startSaveAsWithPendingReload('4', 'saved as new');
+
+    notifications.next(new PipelineNotification('4', 'loading', undefined));
+    notifications.next(new PipelineNotification('4', 'failed', 'bad annotator'));
+    reload.error(new Error('backend restarting'));
+
+    const patched = component.pipelines.find(p => p.id === '4');
+    expect(patched.status).toBe('failed');
+    expect(patched.error).toBe('bad annotator');
+  });
+
   it('keeps the copied status after a save whose reload fails with no status frame (#2000)', () => {
     startWithNotifications();
     const failed = new Pipeline('id3', 'name3', 'content3', 'user', 'failed', 'bad config');
