@@ -11,6 +11,18 @@ every in-tree plugin, is built on ``AnnotatorBase``; the interface class is
 documented so you can read the contract the base keeps, not so you can
 implement it yourself.
 
+The lifecycle
+-------------
+
+An annotator factory builds the annotator closed. The pipeline opens it with
+:meth:`~gain.annotation.annotator_base.AnnotatorBase.open` before the first
+annotation, and closes it with
+:meth:`~gain.annotation.annotation_pipeline.Annotator.close` once at the
+end. An annotator never opens itself: it may assume it is open when the
+pipeline asks it to annotate. The base ``open`` creates the annotator's
+``work_dir``, so the directory exists from the moment the annotator is open
+and not before.
+
 What the base does for you
 --------------------------
 
@@ -22,9 +34,10 @@ YAML. It checks each configured attribute against
 resolves its name, aggregator and parameters (consulting
 :meth:`~gain.annotation.annotator_base.AnnotatorBase.get_attribute_defaults`),
 and requires a ``work_dir`` parameter — a directory of the annotator's own,
-which the pipeline injects into every annotator's parameters before the
-factory runs and which
-:meth:`~gain.annotation.annotator_base.AnnotatorBase.open` creates.
+which :meth:`~gain.annotation.annotator_base.AnnotatorBase.open` creates.
+The pipeline injects ``work_dir`` into the annotator's parameters before the
+annotator factory runs, but only when the YAML entry sets none: a
+``work_dir`` written in the YAML is kept as it is.
 
 Because ``get_attribute_specs`` is called from the base constructor, a
 subclass that computes its specs from something — a resource's score list,
@@ -35,7 +48,44 @@ annotator, and a subclass never sees them: ``input_annotatable``, which
 substitutes an annotatable produced earlier in the pipeline for the input
 row's own, and an attribute's ``value_transform``, which rewrites the answer
 on its way into the context. Both are applied by wrapping the built
-annotator, so the contract below is stated for the annotator alone.
+annotator, so the contract below is stated for the annotator alone. A
+wrapped annotator keeps its batched path and its declared context reads:
+the wrapper hands a whole batch to the annotator's ``batch_annotate``, and
+its ``used_context_attributes`` include the annotator's own.
+
+Reading parameters
+------------------
+
+The annotator's parameters are on ``info.parameters``, a
+:class:`~gain.annotation.annotation_config.ParamsUsageMonitor`. It is a
+mapping that records every key read, and the pipeline refuses a
+parameter that nothing read (:doc:`attributes`). Read every parameter the
+annotator accepts in the constructor or in the annotator factory:
+
+* Item access and ``get`` read a value as written in the YAML.
+* :meth:`~gain.annotation.annotation_config.ParamsUsageMonitor.get_number`
+  reads a value that has to be a number, and
+  :meth:`~gain.annotation.annotation_config.ParamsUsageMonitor.get_integer`
+  one that has to be a whole number. Both take a ``default`` and optional
+  ``minimum`` and ``maximum`` bounds, and raise
+  :class:`~gain.annotation.annotation_config.AnnotationConfigurationError`
+  naming the key for a value they refuse.
+* :meth:`~gain.annotation.annotation_config.ParamsUsageMonitor.inject` adds
+  a key and marks it as read. The pipeline injects ``work_dir`` this way; an
+  annotator factory can use it for a value it computes for the annotator.
+
+.. code-block:: python
+
+    class WindowAnnotator(AnnotatorBase):
+        def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo):
+            self.window = info.parameters.get_integer(
+                "window", default=100, minimum=0)
+            self.threshold = info.parameters.get_number("threshold")
+            super().__init__(pipeline, info)
+
+A parameter that is absent, or written with no value, reads as the
+``default``. Without a ``default``, ``get_number`` and ``get_integer``
+answer ``None``.
 
 The contract
 ------------
@@ -178,8 +228,8 @@ downloadable there:
     ) -> Annotator:
         return FollowupAnnotator(pipeline, info)
 
-The module-level function at the end is the *factory*: the callable a
-pipeline resolves the annotator's type to, taking the pipeline and the
+The module-level function at the end is the *annotator factory*: the
+callable a pipeline resolves the annotator's type to, taking the pipeline and the
 ``AnnotatorInfo`` and returning a built annotator. :doc:`plugins` says how
 it is registered under a name.
 
@@ -226,6 +276,11 @@ API
 .. autoclass:: AnnotatedValues
 
 .. autofunction:: fold_own_values
+
+.. currentmodule:: gain.annotation.annotation_config
+
+.. autoclass:: ParamsUsageMonitor
+   :members: get_number, get_integer, inject, get_used_keys, get_unused_keys, as_dict
 
 .. currentmodule:: gain.annotation.docker_annotator
 

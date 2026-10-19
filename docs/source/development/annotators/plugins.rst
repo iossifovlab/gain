@@ -1,9 +1,10 @@
 Annotator plugins
 =================
 
-The annotator types a pipeline can name are not a fixed list. Each one is a
-*factory* — a callable that takes the pipeline and an annotator's
-configuration and returns a built annotator — and factories are discovered
+The annotator types a pipeline can name are not a fixed list. Each one is an
+*annotator factory* — a callable that takes the pipeline and an annotator's
+configuration and returns a built annotator — and annotator factories are
+discovered
 through a Python entry-point group. A package installed alongside GAIn adds
 a type without any change to GAIn itself, and GAIn's own annotators are
 registered the same way.
@@ -17,8 +18,8 @@ Declaring
 
 The entry-point group is ``gain.annotation.annotators``. Its keys are
 annotator *type* names — the key of a list entry in pipeline YAML — and its
-values point at the factory for that type. A factory is any callable with
-the signature
+values point at the annotator factory for that type. An annotator factory
+is any callable with the signature
 
 .. code-block:: python
 
@@ -42,23 +43,26 @@ A third-party package declares its own type the same way, in its own
     [project.entry-points."gain.annotation.annotators"]
     followup = "my_package.followup:build_followup_annotator"
 
-with ``build_followup_annotator`` the factory from
+with ``build_followup_annotator`` the annotator factory from
 :doc:`writing_an_annotator`. The package has to be *installed* — an entry
 point is metadata, written when the package is built, and a module on the
 path without a distribution behind it declares nothing. An editable install
 is enough.
 
-Two keys may point at the same factory. GAIn does this for spellings it
-keeps accepting — ``position_score`` and ``position_score_annotator`` are
-both registered, and ``cnv_collection_annotator`` is a deprecated alias of
-``fragment_score_annotator`` that warns when a pipeline names it. Nothing
+Two keys may point at the same annotator factory. GAIn does this for
+spellings it keeps accepting — ``position_score`` and
+``position_score_annotator`` are both registered. ``fragment_score`` and
+``fragment_score_annotator`` are the canonical spellings of the fragment
+score annotator, and ``cnv_collection`` and ``cnv_collection_annotator`` are
+their deprecated aliases. A pipeline that names an alias logs a warning,
+and GAIn removes both aliases in release 2027.1.0. Nothing
 prevents a third-party package from registering a type name GAIn already
 uses; the group is flat, so prefer a name qualified by your project.
 
 Discovering
 -----------
 
-Factories are loaded on the first lookup in a process, and the registry is
+Annotator factories are loaded on the first lookup in a process, and the registry is
 kept for the life of the process: every entry in the group is loaded, keyed
 by its name. A name registered by two distributions logs a warning and keeps
 the one met last — an order you do not control, which is the other reason to
@@ -79,7 +83,7 @@ installed plugin was picked up:
     assert "followup" in get_available_annotator_types()
 
 :func:`~gain.annotation.annotation_factory.register_annotator_factory`
-adds a factory to the in-process registry directly, without an entry point.
+adds an annotator factory to the in-process registry directly, without an entry point.
 That is the right tool for a test, or for an annotator defined in the same
 script that runs it; it is not a substitute for the entry point in a package
 meant to be installed, because it only takes effect once the registering
@@ -110,8 +114,8 @@ annotator's parameters and, optionally, its ``attributes``:
 The loader parses each entry into an
 :class:`~gain.annotation.annotation_config.AnnotatorInfo` — the type, the
 configured attributes, the parameters with ``work_dir`` injected, the
-resources the parser resolved — looks the type up, and calls the factory
-with the pipeline and that info. Everything after that is the annotator's
+resources the parser resolved — looks the type up, and calls the annotator
+factory with the pipeline and that info. Everything after that is the annotator's
 constructor, described in :doc:`writing_an_annotator`. The empty mapping
 after ``followup`` is what an annotator with no parameters and default
 attributes needs; ``annotate_tabular`` then emits its ``followup`` column
@@ -141,8 +145,11 @@ the worked examples for this chapter, cited here rather than paraphrased:
     Two annotators, ``vep_full_annotator`` and ``vep_effect_annotator``,
     over Ensembl VEP in a container.
 
-Each declares its group in the same three-line form as the examples above,
-so its ``pyproject.toml`` is the thing to open when you set up your own.
+Each declares its annotators in a
+``[project.entry-points."gain.annotation.annotators"]`` table like the
+examples above: ``spliceai_annotator`` with one entry, ``vep_annotator`` with
+two and ``demo_annotator`` with four. Its ``pyproject.toml`` is the thing to
+open when you set up your own.
 
 API
 ---

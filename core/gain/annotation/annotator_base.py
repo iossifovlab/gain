@@ -41,8 +41,9 @@ class AnnotatedValues(dict[str, Any]):  # ruff: ignore[subclass-builtin]
 
     **Read the names when you ANSWER, never in ``__init__``.**  The one
     statement of the rule every annotator building one of these has to
-    follow, kept here rather than in each of them.  A pipeline naming one
-    attribute twice renames the later ones --
+    follow, kept here rather than in each of them.  A pipeline that
+    allows repeated attributes renames every attribute whose name
+    collides, the first one included, to ``<name>_<annotator_id>`` --
     ``annotation_factory.resolve_repeated_attributes`` -- and it does so
     AFTER every annotator has been constructed.  So an annotator that
     captured ``attr.name`` while building its queries would key its
