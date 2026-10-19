@@ -262,12 +262,14 @@ def test_jobqueue_types_keep_the_cluster_definition_unchanged(
     mocker.patch(cluster_class, autospec=True)
     mocker.patch("gain.dask.named_cluster.Client", autospec=True)
     cluster_config: dict[str, Any] = {
-        "type": cluster_type, "params": {"cores": 4, "processes": 2}}
+        "type": cluster_type,
+        "params": {"cores": 4, "processes": 2, "number_of_workers": 5}}
 
     setup_client_from_config(cluster_config, number_of_workers=2)
 
     assert cluster_config == {
-        "type": cluster_type, "params": {"cores": 4, "processes": 2}}
+        "type": cluster_type,
+        "params": {"cores": 4, "processes": 2, "number_of_workers": 5}}
 
 
 def test_local_warns_on_threads_per_worker_even_when_it_is_one(
