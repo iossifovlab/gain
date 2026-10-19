@@ -26,12 +26,14 @@ object those examples touch, and the contract a plugin has to keep.
 
 .. rubric:: The shape of the API
 
-One builder function is the entry point. It takes the YAML text of a
-pipeline and a repository, and returns a pipeline whose annotators have
-already been resolved — by type, to a factory registered in the entry-point
-group — and configured:
+One loader function is the entry point. It takes the YAML text of a
+pipeline, a repository and a working directory, and returns a pipeline whose
+annotators have already been resolved — by type, to an annotator factory
+registered in the entry-point group — and configured:
 
 .. code-block:: python
+
+    import pathlib
 
     import gain.grr as grr
     from gain.annotation.annotation_factory import load_pipeline_from_yaml
@@ -42,10 +44,13 @@ group — and configured:
     pipeline = load_pipeline_from_yaml("""
     - effect_annotator:
         gene_models: hg38/gene_models/MANE/1.5
-    """, repo)
+    """, repo, work_dir=pathlib.Path("annotation_work"))
 
     with pipeline.open() as pipeline:
         result = pipeline.annotate(VCFAllele("chr1", 11796321, "G", "A"))
+
+``work_dir`` is a :class:`pathlib.Path`; :doc:`annotators/pipelines` says
+what the loader does with it.
 
 Three conventions run through everything below.
 
@@ -74,10 +79,19 @@ says so, which is what lets a reannotation know what to rerun.
 
 How to *test* an annotator. GAIn's own test fixtures live in
 ``gain.genomic_resources.testing``, which is outside the declared API and is
-not documented on this site. The annotators GAIn ships — the score,
-effect, liftover and gene-set annotators, SpliceAI and VEP — are described
-from the user side on :doc:`/annotation_infrastructure`; their Python
-classes appear in the generated :doc:`module index <module_index>`.
+not documented on this site.
+
+The annotators GAIn ships are described from the user side on
+:doc:`/annotation_infrastructure`, and their Python classes appear in the
+generated :doc:`module index <module_index>`. They are:
+
+* the position score, allele score, fragment score and gene score
+  annotators;
+* the effect and simple effect annotators;
+* the gene set annotator;
+* the liftover, normalize allele and chrom mapping annotators;
+* the debug annotator;
+* SpliceAI and VEP, from their own plugin packages.
 
 .. toctree::
    :maxdepth: 2

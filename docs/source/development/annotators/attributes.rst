@@ -39,14 +39,22 @@ the generated pipeline documentation, and four flags:
   says otherwise: computed and available to later annotators through the
   context, but not written to the output.
 * ``supports_aggregation`` — whether an aggregator may be configured for it.
-* ``attribute_type`` — ``"attribute"`` for a value, or ``"annotatable"`` for
-  an attribute that is itself an annotatable and can be named as another
-  annotator's ``input_annotatable``. An annotatable attribute never
-  supports aggregation.
+* ``attribute_type`` — what kind of attribute it is, one of three values:
+
+  * ``"attribute"``, the default, for a value.
+  * ``"annotatable"`` for an attribute that is itself an annotatable and can
+    be named as another annotator's ``input_annotatable``. An annotatable
+    attribute never supports aggregation.
+  * ``"gene_list"`` for a list of gene symbols that can be named as another
+    annotator's ``input_gene_list``. The effect and simple effect annotators
+    mark their gene lists this way; the gene score and gene set annotators
+    read them.
 
 The ``value_type`` is a string naming the type of a single value: ``int``,
 ``float``, ``str``, ``object`` (a value that is not one of the scalar
-types), ``list`` and ``annotatable`` are the spellings in use. It is what an
+types), ``list`` and ``annotatable`` are the spellings in use. The score
+annotators copy the ``value_type`` of the score definition they read, which
+is where ``int`` and ``float`` come from. It is what an
 aggregator is validated against — a numeric aggregator over a ``str``
 attribute is refused when the pipeline is built — and what the web
 annotation interface reads to present a value; the tabular and VCF writers
@@ -75,9 +83,10 @@ resolved ``internal`` flag and ``aggregator``, its parameters, and the
 ``spec`` it was resolved against. Two things about it matter to an
 implementer:
 
-**The name is read at answer time, never cached.** A pipeline that names
-one attribute twice renames the later ones, and it does so *after* every
-annotator has been constructed. An annotator that captured ``attr.name``
+**The name is read at answer time, never cached.** A pipeline that allows
+repeated attributes renames every attribute whose name collides with
+another, the first one included, to ``<name>_<annotator_id>``, and it does
+so *after* every annotator has been constructed. An annotator that captured ``attr.name``
 while building its queries would answer under names the pipeline has since
 moved away from. Whatever a query list caches, it must not cache names —
 walk ``self.attributes`` again when you answer. The helpers on
@@ -89,6 +98,27 @@ are a mapping that records every key read. After an annotator is built, the
 pipeline refuses any key that was configured but never read, on the grounds
 that a parameter nothing consulted is a typo. So an annotator reads every
 parameter it accepts in its constructor, not lazily on the first annotate.
+
+Reading a gene list
+-------------------
+
+An annotator that takes an ``input_gene_list`` parameter reads the genes
+from an earlier annotator's attribute.
+:meth:`AnnotatorBase.resolve_input_gene_list <gain.annotation.annotator_base.AnnotatorBase.resolve_input_gene_list>`
+resolves the parameter to the name of that attribute. It raises
+``ValueError`` for a name that no earlier annotator produces, and an attribute whose ``attribute_type`` is
+not ``"gene_list"``. A ``value_type`` of ``object`` alone is not enough. The
+method is static, so an annotator factory calls it before the annotator's
+constructor runs:
+
+.. code-block:: python
+
+    def build_my_gene_annotator(
+        pipeline: AnnotationPipeline, info: AnnotatorInfo,
+    ) -> Annotator:
+        gene_list_name = AnnotatorBase.resolve_input_gene_list(
+            pipeline, info)
+        return MyGeneAnnotator(pipeline, info, gene_list_name)
 
 Aggregation
 -----------

@@ -14,11 +14,17 @@ class Annotatable:
     ``len(annotatable)`` is ``pos_end - pos + 1``.  :class:`VCFAllele`
     says how it derives ``pos_end`` from its alleles.
 
-    The canonical spellings are ``chrom``, ``pos`` and ``pos_end`` --
-    the constructor's names and the keys :meth:`to_dict` writes.
-    ``chromosome``, ``position`` and ``end_position`` are aliases kept
-    for the callers that use them; each reads the same value as its
-    twin.  Equality compares the type, the chromosome and both ends.
+    The canonical spellings of the attributes are ``chrom``, ``pos`` and
+    ``pos_end``.  ``chromosome``, ``position`` and ``end_position`` are
+    aliases kept for the callers that use them; each reads the same
+    value as its twin.  Equality compares the type, the chromosome and
+    both ends.
+
+    :meth:`to_dict` writes ``type`` and a set of keys that depends on
+    the class: ``chrom`` and ``pos`` for a :class:`Position`; ``chrom``,
+    ``pos_begin`` and ``pos_end`` for a :class:`Region` and a
+    :class:`CNVAllele`; ``chrom``, ``pos``, ``ref`` and ``alt`` for a
+    :class:`VCFAllele`.
     """
 
     class Type(enum.Enum):

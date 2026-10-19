@@ -19,15 +19,90 @@ annotator that only makes sense for some of them checks the annotatable's
 ``type`` — an :class:`~gain.annotation.annotatable.Annotatable.Type` — and
 answers the empty result for the rest.
 
+Creating an annotatable
+-----------------------
+
+Each of the four classes has a constructor that takes the chromosome and the
+coordinates directly:
+
+.. code-block:: python
+
+    from gain.annotation.annotatable import (
+        Annotatable,
+        CNVAllele,
+        Position,
+        Region,
+        VCFAllele,
+    )
+
+    position = Position("chr1", 11796321)
+    region = Region("chr1", 11796321, 11796400)
+    allele = VCFAllele("chr1", 11796321, "G", "A")
+    deletion = CNVAllele(
+        "chr1", 11796321, 11896400, Annotatable.Type.LARGE_DELETION)
+
+A :class:`~gain.annotation.annotatable.CNVAllele` takes its type as the
+fourth argument, and accepts only ``LARGE_DELETION`` and
+``LARGE_DUPLICATION``. The other three classes set their type themselves.
+
+A tabular input row becomes an annotatable through
+:mod:`gain.annotation.record_to_annotatable`, the module that
+``annotate_tabular`` uses.
+:func:`~gain.annotation.record_to_annotatable.build_record_to_annotatable`
+takes the column names a source has, and returns a converter for the first
+column set it finds, in this order:
+
+* ``chrom``, ``pos_beg``, ``pos_end`` and ``cnv_type`` — a ``CNVAllele``;
+* ``chrom``, ``pos_beg`` and ``pos_end`` — a ``Region``;
+* ``chrom``, ``pos``, ``ref`` and ``alt`` — a ``VCFAllele``;
+* ``vcf_like`` — a ``VCFAllele`` from one ``chrom:pos:ref:alt`` column;
+* ``chrom``, ``pos`` and ``variant``, or ``location`` and ``variant`` — a
+  ``VCFAllele`` from a DAE or CSHL variant description, read against the
+  reference genome passed as ``ref_genome`` (a CSHL copy-number description
+  gives a ``CNVAllele``);
+* ``chrom`` and ``pos`` — a ``Position``.
+
+The converter's ``build`` method then turns each row, as a mapping from
+column name to value, into an annotatable. The first argument renames the
+columns: the key ``col_<column>`` maps one of the names above to the column
+that holds it, and the value ``"-"`` excludes that column.
+:func:`~gain.annotation.record_to_annotatable.build_annotatable_from_dict`
+does both steps for one dictionary, with no renaming:
+
+.. code-block:: python
+
+    from gain.annotation.record_to_annotatable import (
+        build_annotatable_from_dict,
+    )
+
+    allele = build_annotatable_from_dict(
+        {"chrom": "chr1", "pos": "11796321", "ref": "G", "alt": "A"})
+
+Both raise ``MalformedRecordError``, a ``ValueError``, when no column set
+matches or when a row has a field that cannot be read.
+
+An annotatable holds nothing to open or close, so this page has no lifecycle
+section.
+
 The interval
 ------------
 
 Every annotatable spans a closed, 1-based interval ``[pos, pos_end]``, both
 ends inclusive: a position has ``pos_end == pos``, and ``len(annotatable)``
 is ``pos_end - pos + 1``. An annotator that queries a score or gene models
-queries exactly this span. The canonical spellings are ``chrom``, ``pos`` and
-``pos_end`` — the constructor's arguments and the keys ``to_dict`` writes —
-with ``chromosome``, ``position`` and ``end_position`` as aliases.
+queries exactly this span. The canonical spellings of the attributes are
+``chrom``, ``pos`` and ``pos_end``, with ``chromosome``, ``position`` and
+``end_position`` as aliases.
+
+``to_dict`` writes a different set of keys for each class, and every class
+writes ``type``, the name of its
+:class:`~gain.annotation.annotatable.Annotatable.Type`:
+
+* ``Position``: ``type``, ``chrom`` and ``pos``.
+* ``Region`` and ``CNVAllele``: ``type``, ``chrom``, ``pos_begin`` and
+  ``pos_end``.
+* ``VCFAllele``: ``type``, ``chrom``, ``pos``, ``ref`` and ``alt``. It does
+  not write ``pos_end``, because the alleles determine it.
 
 A :class:`~gain.annotation.annotatable.VCFAllele` derives both its
 :class:`~gain.annotation.annotatable.Annotatable.Type` and its interval from
@@ -76,3 +151,9 @@ API
 
 .. autoclass:: CNVAllele
    :members:
+
+.. currentmodule:: gain.annotation.record_to_annotatable
+
+.. autofunction:: build_record_to_annotatable
+
+.. autofunction:: build_annotatable_from_dict
