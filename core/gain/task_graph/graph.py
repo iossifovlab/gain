@@ -181,11 +181,22 @@ def _reconfigure_task_deps(
     return args, kwargs, deps
 
 
-def _chain_func(*args: Any, **kwargs: Any) -> Any:  # ruff: ignore[unused-function-argument]
+def _chain_func(*args: Any, **kwargs: Any) -> Any:
+    # The executor calls this function with the args and kwargs of the
+    # combined task, and replaces each `Task` in them with its result. The
+    # args and the kwargs other than ``task1`` and ``task2`` are the
+    # resolved arguments of the first task.
     task1 = kwargs.pop("task1")
     task2 = kwargs.pop("task2")
 
-    res = task1.func(*task1.args, **task1.kwargs)
+    # The ``task1`` and ``task2`` of the combined task hide the kwargs of
+    # the same names of the first task, for example when the first task is
+    # a chain itself. The first task gets the stored values of those.
+    for key in ("task1", "task2"):
+        if key in task1.kwargs:
+            kwargs[key] = task1.kwargs[key]
+
+    res = task1.func(*args, **kwargs)
 
     if task2.deps:
         t2args, t2kwargs, t2deps = _reconfigure_task_deps(
