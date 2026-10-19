@@ -11,7 +11,15 @@ logger = logging.getLogger(__name__)
 
 
 class SequentialExecutor(TaskGraphExecutorBase):
-    """A Task Graph Executor that executes task in sequential order."""
+    """A task executor that runs the tasks one at a time.
+
+    A task runs only after the tasks that it depends on. The tasks run in
+    the current process, unless the ``fork_tasks`` option is true: then
+    each task runs in a new process. The constructor takes the keyword
+    arguments of
+    :class:`~gain.task_graph.base_executor.TaskGraphExecutorBase`:
+    ``task_cache``, ``force`` and the options of the task executor.
+    """
 
     def _execute(
         self, graph: TaskGraph,
@@ -41,4 +49,4 @@ class SequentialExecutor(TaskGraphExecutorBase):
         assert len(graph) == 0
 
     def close(self) -> None:
-        """Close the executor and release resources."""
+        """Do nothing: a sequential task executor holds no workers."""

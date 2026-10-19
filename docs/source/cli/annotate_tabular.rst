@@ -47,6 +47,8 @@ See also
   annotation.
 * :ref:`annotation-cli-annotate-tabular`: the column options and the common
   options.
+* :doc:`/running_in_parallel`: the number of workers, the named clusters and
+  the reruns.
 
 Option reference
 ----------------

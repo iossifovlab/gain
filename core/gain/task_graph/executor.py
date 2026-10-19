@@ -12,39 +12,58 @@ logger = logging.getLogger(__name__)
 
 
 class TaskGraphExecutor:
-    """Class that executes a task graph."""
+    """The interface of a task executor.
 
+    A task executor runs a task graph. It is a context manager: the
+    ``with`` block closes the task executor when it ends, and so releases
+    its workers. A failure in :meth:`close` is logged and does not hide an
+    error of the ``with`` block.
+
+    The task executors of GAIn are
+    :class:`~gain.task_graph.sequential_executor.SequentialExecutor`,
+    :class:`~gain.task_graph.process_pool_executor.ProcessPoolTaskExecutor`
+    and :class:`~gain.task_graph.dask_executor.DaskExecutor`.
+    """
+
+    # execute returns a generator, not merely an iterator, because
+    # abandoning a run is a supported way to end it --
+    # ``task_graph_run_with_results`` does it on the first failing task
+    # unless ``--keep-going`` -- and closing the generator is how the run
+    # is told to tear itself down. An implementation that holds resources
+    # for the run's lifetime must release them from that path too, or an
+    # abandoned run leaks them for the life of the process (gain#480).
     @abstractmethod
     def execute(
         self, graph: TaskGraph,
     ) -> Generator[tuple[Task, Any], None, None]:
-        """Start executing the graph.
+        """Run the tasks of a task graph.
 
-        Return a generator that yields the task in the graph
-        after they are executed.
+        The task executor consumes the graph: the graph has no tasks left
+        when the run ends. Build a new graph for each run.
 
-        This is not necessarily in DFS or BFS order.
-        This is not even the order in which these tasks are executed.
+        Parameters
+        ----------
+        graph : TaskGraph
+            The task graph to run.
 
-        The only guarantee is that when a task is returned its execution
-        is already finished.
-
-        A generator, not merely an iterator, because abandoning a run is a
-        supported way to end it -- ``task_graph_run_with_results`` does it on
-        the first failing task unless ``--keep-going`` -- and closing the
-        generator is how the run is told to tear itself down. An
-        implementation that holds resources for the run's lifetime must
-        release them from that path too, or an abandoned run leaks them for
-        the life of the process (gain#480).
+        Yields
+        ------
+        tuple[Task, Any]
+            Each task and its result, when the task completes. The result
+            of a failed task is its exception. The order is not the order
+            of the graph, and not the order in which the tasks run. A task
+            is yielded only after it has finished.
         """
 
     @abstractmethod
     def get_completed_tasks(
         self, graph: TaskGraph,
     ) -> Generator[tuple[Task, Any], None, None]:
-        """Return an iterator that yields already completed tasks in the graph.
+        """Yield the tasks of the graph that are already completed.
 
-        This is not necessarily in DFS or BFS order.
+        The order is not the order of the graph.
+
+        :meta private:
         """
 
     def __enter__(self) -> TaskGraphExecutor:
@@ -69,4 +88,8 @@ class TaskGraphExecutor:
 
     @abstractmethod
     def close(self) -> None:
-        """Clean-up any resources used by the executor."""
+        """Release the workers and the other resources of the task executor.
+
+        The ``with`` block of a task executor calls this method when it
+        ends.
+        """

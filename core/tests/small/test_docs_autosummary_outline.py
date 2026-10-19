@@ -5,12 +5,12 @@ block. These tests compare that list with the class, so a new public member
 cannot stay out of the outline without a failure. The test finds each
 ``autoclass`` directive on the pages under
 ``docs/source/development/resources`` and
-``docs/source/development/task_graph``. A page of functions, such as the
-Data frames and AnnData page, has no class. The test then finds each
-``autofunction`` directive, and the outline must list each function. A page
-that is not rolled out yet sits on ``NOT_ROLLED_OUT``, as a path relative to
-``docs/source/development``. The page source is
-read as text. No Sphinx build runs.
+``docs/source/development/task_graph``. It also finds each
+``autofunction`` directive, and the outline must list each function, on a
+page with classes and on a page of functions alone, such as the Data frames
+and AnnData page. A page that is not rolled out yet sits on
+``NOT_ROLLED_OUT``, as a path relative to ``docs/source/development``. The
+page source is read as text. No Sphinx build runs.
 """
 import importlib
 import inspect
@@ -34,6 +34,10 @@ RESOURCES_DIR = DEVELOPMENT_DIR / "resources"
 # DEVELOPMENT_DIR.
 PAGE_DIRS = ("resources", "task_graph")
 GENE_MODELS_PAGE = RESOURCES_DIR / "gene_models.rst"
+GRAPHS_PAGE = DEVELOPMENT_DIR / "task_graph/graphs.rst"
+TASK_EXECUTORS_PAGE = DEVELOPMENT_DIR / "task_graph/task_executors.rst"
+RUNNING_FROM_A_CLI_PAGE = DEVELOPMENT_DIR / "task_graph/running_from_a_cli.rst"
+NAMED_CLUSTERS_PAGE = DEVELOPMENT_DIR / "task_graph/named_clusters.rst"
 
 # Pages whose API section is not rolled out yet, as paths relative to
 # DEVELOPMENT_DIR, for example "resources/<page>.rst". The slice of a page
@@ -105,8 +109,13 @@ def inherited_entries(page: str, base: str) -> list[str]:
 def _documented_attributes(cls: type) -> set[str]:
     """Return the names in the Attributes section of a class docstring."""
     doc = inspect.getdoc(cls) or ""
-    _, _, section = doc.partition("Attributes:\n")
-    return set(re.findall(r"^[ ]{4}(\w+) \(", section, re.MULTILINE))
+    _, _, google = doc.partition("Attributes:\n")
+    names = set(re.findall(r"^[ ]{4}(\w+) \(", google, re.MULTILINE))
+    _, _, numpy = doc.partition("Attributes\n----------\n")
+    numpy = re.split(r"^\w[^\n]*\n-{3,}$", numpy, maxsplit=1,
+                     flags=re.MULTILINE)[0]
+    names |= set(re.findall(r"^(\w+) :", numpy, re.MULTILINE))
+    return names
 
 
 def public_members(cls: type) -> set[str]:
@@ -281,16 +290,19 @@ def _page_without(name: str) -> str:
 
 
 def page_problems(page: str) -> list[str]:
-    """Return all outline problems of a page with an autoclass or function."""
+    """Return all outline problems of a page with an autoclass or function.
+
+    The problems cover the classes and the functions of the page, so a
+    page with both directives reports a function that its outline lacks.
+    """
     classes = page_classes(page)
     if not autosummary_blocks(page):
         return ["the page has an autoclass but no autosummary outline"]
-    if classes:
-        return outline_problems(page, classes) + exported_name_problems(
-            page, classes)
     functions = page_functions(page)
-    return function_outline_problems(
-        page, functions) + exported_name_problems(page, functions)
+    return (
+        outline_problems(page, classes)
+        + function_outline_problems(page, functions)
+        + exported_name_problems(page, [*classes, *functions]))
 
 
 def _has_api(page: str) -> bool:
@@ -322,6 +334,52 @@ def test_gene_models_page_outline_matches_classes() -> None:
 
     assert not page_problems(page)
     assert _page_key(GENE_MODELS_PAGE) not in NOT_ROLLED_OUT
+
+
+def test_graphs_page_outline_matches_classes_and_functions() -> None:
+    """The Graphs outline lists the graph classes and ``chain_tasks``."""
+    page = read_docs_page(GRAPHS_PAGE)
+
+    assert [cls.__name__ for cls in page_classes(page)] == [
+        "TaskGraph", "TaskDesc", "Task"]
+    assert [f.__name__ for f in page_functions(page)] == ["chain_tasks"]
+    assert not page_problems(page)
+    assert _page_key(GRAPHS_PAGE) not in NOT_ROLLED_OUT
+
+
+def test_task_executors_page_outline_matches_classes_and_functions() -> None:
+    """The Task executors outline lists the task executors and caches."""
+    page = read_docs_page(TASK_EXECUTORS_PAGE)
+
+    assert [cls.__name__ for cls in page_classes(page)] == [
+        "TaskGraphExecutor", "TaskGraphExecutorBase", "SequentialExecutor",
+        "ProcessPoolTaskExecutor", "DaskExecutor", "TaskCache",
+        "FileTaskCache", "NoTaskCache", "CacheRecord", "CacheRecordType"]
+    assert [f.__name__ for f in page_functions(page)] == [
+        "task_graph_run", "task_graph_run_with_results"]
+    assert not page_problems(page)
+    assert _page_key(TASK_EXECUTORS_PAGE) not in NOT_ROLLED_OUT
+
+
+def test_running_from_a_cli_page_outline_matches_task_graph_cli() -> None:
+    """The Running from a CLI outline lists ``TaskGraphCli`` alone."""
+    page = read_docs_page(RUNNING_FROM_A_CLI_PAGE)
+
+    assert [cls.__name__ for cls in page_classes(page)] == ["TaskGraphCli"]
+    assert not page_functions(page)
+    assert not page_problems(page)
+    assert _page_key(RUNNING_FROM_A_CLI_PAGE) not in NOT_ROLLED_OUT
+
+
+def test_named_clusters_page_outline_matches_the_client_functions() -> None:
+    """The Named clusters outline lists the two client functions."""
+    page = read_docs_page(NAMED_CLUSTERS_PAGE)
+
+    assert not page_classes(page)
+    assert [f.__name__ for f in page_functions(page)] == [
+        "setup_client", "setup_client_from_config"]
+    assert not page_problems(page)
+    assert _page_key(NAMED_CLUSTERS_PAGE) not in NOT_ROLLED_OUT
 
 
 def test_every_page_with_an_autoclass_is_rolled_out_or_skipped() -> None:
@@ -365,6 +423,23 @@ def test_function_missing_from_outline_is_reported() -> None:
 
     assert problems == [(
         "load_data_frame_from_resource_id is documented "
+        "but missing from the outline"
+    )]
+
+
+def test_function_missing_from_outline_of_class_page_is_reported() -> None:
+    """A page with classes still reports a function that the outline lacks."""
+    page = (
+        "It is ``grr.build_gene_models_from_resource``.\n\n"
+        ".. currentmodule:: gain.genomic_resources.gene_models\n\n"
+        ".. autosummary::\n\n   Exon\n   Exon.contains\n\n"
+        ".. autofunction:: build_gene_models_from_resource\n\n"
+        ".. autoclass:: Exon\n   :members:\n")
+
+    problems = page_problems(page)
+
+    assert problems == [(
+        "build_gene_models_from_resource is documented "
         "but missing from the outline"
     )]
 
@@ -414,6 +489,28 @@ def test_meta_private_member_is_not_required(
 
     assert not outline_problems(_page_for([Exon]), [Exon])
     assert "hook" not in public_members(Exon)
+
+
+class _NumpyAttributes:
+    """A class that documents its attributes in numpy style.
+
+    Attributes
+    ----------
+    LIMIT : int
+        A limit.
+    """
+
+    LIMIT = 3
+
+    def run(self) -> None:
+        """Run."""
+
+
+def test_numpy_style_attribute_is_not_a_public_member() -> None:
+    """A name in a numpy-style Attributes section is not in the outline."""
+    members = public_members(_NumpyAttributes)
+
+    assert members == {"run"}
 
 
 class _Base:
