@@ -67,12 +67,28 @@ interface PipelineListPatch {
 /**
  * The patch a save makes: `saved` in place of the entry with its id, or
  * added, and selected.
+ *
+ * The status and error come from the list the patch applies to, because
+ * `pipeline_status` frames that arrive after the save update that list.
+ * When the list has no entry with the id, `frameFor` gives the last frame
+ * for the id, if any; without one the patch keeps the status of `saved`.
  */
-function savedPipelinePatch(saved: Pipeline): PipelineListPatch {
+function savedPipelinePatch(
+  saved: Pipeline,
+  frameFor: (id: string) => PipelineNotification | undefined = () => undefined,
+): PipelineListPatch {
+  const withStatus = (status: PipelineStatus, error?: string): Pipeline => new Pipeline(
+    saved.id, saved.name, saved.content, saved.type, status, error,
+  );
   return {
-    apply: pipelines => pipelines.some(p => p.id === saved.id)
-      ? pipelines.map(p => p.id === saved.id ? saved : p)
-      : [...pipelines, saved],
+    apply: (pipelines: Pipeline[]): Pipeline[] => {
+      const live = pipelines.find(p => p.id === saved.id);
+      if (live) {
+        return pipelines.map(p => p === live ? withStatus(live.status, live.error) : p);
+      }
+      const frame = frameFor(saved.id);
+      return [...pipelines, frame ? withStatus(frame.status, frame.error) : saved];
+    },
     selectId: saved.id,
   };
 }
@@ -136,6 +152,10 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   // Set once a pipeline list has been loaded (from the server or the cache).
   // Until then a refetch is still the initial load and selects as one.
   private pipelineListEverLoaded = false;
+  // Set while the GET after a save-as is in flight: the last
+  // pipeline_status frame for each id that has no list entry. The save-as
+  // patch reads it if that GET fails.
+  private saveAsFrames: Map<string, PipelineNotification> | null = null;
   public editorInstance: Monaco.editor.IStandaloneCodeEditor;
   public editorWidth: number;
   public downloadDocLink: string;
@@ -270,6 +290,8 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
         if (pipeline) {
           pipeline.status = notification.status;
           pipeline.error = notification.error;
+        } else {
+          this.saveAsFrames?.set(notification.pipelineId, notification);
         }
       },
       error: err => {
@@ -374,11 +396,17 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     this.pipelinesLoaded = false;
     this.jobsService.getAnnotationPipelines().pipe(take(1)).subscribe({
       next: pipelines => {
+        if (patchOnFailure) {
+          this.saveAsFrames = null;
+        }
         this.pipelineStateService.loadedWhileLoggedIn.set(this.isUserLoggedIn);
         this.applyPipelineList(pipelines, defaultPipelineId, isRefresh);
       },
       error: () => {
         this.disableActions = false;
+        if (patchOnFailure) {
+          this.saveAsFrames = null;
+        }
         if (this.pipelineListEverLoaded) {
           if (patchOnFailure) {
             this.applyPipelineList(
@@ -843,7 +871,9 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
         return;
       }
       const saved = new Pipeline(pipelineId, savedName, savedContent, 'user', 'loading');
-      this.getPipelines(pipelineId, false, savedPipelinePatch(saved));
+      const frames = new Map<string, PipelineNotification>();
+      this.saveAsFrames = frames;
+      this.getPipelines(pipelineId, false, savedPipelinePatch(saved, id => frames.get(id)));
     });
   }
 
