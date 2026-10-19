@@ -108,6 +108,8 @@ Read the definitions from ``score_definitions``, or one of them with
 Each score can have a histogram. Read it with ``get_score_histogram``, as for
 a genomic score. The result is a number, a categorical or a null histogram,
 and :doc:`histograms` describes them. A gene score counts genes in each bin.
+A gene score with one score needs no score id: ``get_score_histogram()``,
+``get_histogram_config()`` and ``get_score_range()`` read that only score.
 
 API
 ---

@@ -193,8 +193,20 @@ class ScoreResource[ScoreDefT: ScoreDef](ResourceConfigValidationMixin):
                 self.resource.resource_id, unknown, self.score_definitions))
 
     def get_score_range(
-            self, score_id: str) -> tuple[float, float] | None:
-        """Return the value range for a numeric score."""
+            self, score_id: str | None = None,
+    ) -> tuple[float, float] | None:
+        """Return the value range for a numeric score.
+
+        Parameters
+        ----------
+        score_id : str or None
+            The id of the score. ``None``, the default, names the only
+            score: the one score of a resource that defines exactly one.
+            A resource with several scores, or none, has no only score,
+            and the call raises ``ValueError`` with the ids it does
+            define.
+        """
+        score_id = self._resolve_score_id(score_id)
         self._guard_score_id(score_id)
         hist = self.get_score_histogram(score_id)
         if isinstance(hist, NumberHistogram):
@@ -321,7 +333,9 @@ class ScoreResource[ScoreDefT: ScoreDef](ResourceConfigValidationMixin):
                 )
         return load_histogram(self.resource, hist_filename)
 
-    def get_histogram_config(self, score_id: str) -> HistogramConfig:
+    def get_histogram_config(
+        self, score_id: str | None = None,
+    ) -> HistogramConfig:
         """The histogram config the score's DEFINITION resolves to.
 
         The stated ``histogram:`` block when there is one, else the default
@@ -330,7 +344,17 @@ class ScoreResource[ScoreDefT: ScoreDef](ResourceConfigValidationMixin):
         the histogram is annulled *by design*, decided from the config
         alone: no statistics are read, and a checkout whose statistics
         were never built answers the same as the published one.
+
+        Parameters
+        ----------
+        score_id : str or None
+            The id of the score. ``None``, the default, names the only
+            score: the one score of a resource that defines exactly one.
+            A resource with several scores, or none, has no only score,
+            and the call raises ``ValueError`` with the ids it does
+            define.
         """
+        score_id = self._resolve_score_id(score_id)
         self._guard_score_id(score_id)
         score_def = self.score_definitions[score_id]
         if score_def.hist_conf is not None:
@@ -356,7 +380,9 @@ class ScoreResource[ScoreDefT: ScoreDef](ResourceConfigValidationMixin):
             return None
         return f"{repo_url}/{quote(image_filename)}"
 
-    def get_histogram_image_url(self, score_id: str) -> str | None:
+    def get_histogram_image_url(
+        self, score_id: str | None = None,
+    ) -> str | None:
         """Return the histogram image URL on the repository's own url.
 
         ``None`` when the score's histogram is annulled by definition
@@ -366,20 +392,41 @@ class ScoreResource[ScoreDefT: ScoreDef](ResourceConfigValidationMixin):
         draw, and the statistics build can decline it, or not have run.
         A resource with no stored manifest is addressed by its definition
         alone; the manifest is never built here.
+
+        Parameters
+        ----------
+        score_id : str or None
+            The id of the score. ``None``, the default, names the only
+            score: the one score of a resource that defines exactly one.
+            A resource with several scores, or none, has no only score,
+            and the call raises ``ValueError`` with the ids it does
+            define.
         """
         return self._histogram_image_url(
-            score_id, self.resource.get_url())
+            self._resolve_score_id(score_id), self.resource.get_url())
 
-    def get_histogram_image_public_url(self, score_id: str) -> str | None:
+    def get_histogram_image_public_url(
+        self, score_id: str | None = None,
+    ) -> str | None:
         """Return the histogram image URL on the resource's public mirror.
 
         Unlike :meth:`get_histogram_image_url`, this is built from the
         resource's public URL so it is reachable from a browser even when
         the GRR is a local directory repository.  ``None`` under exactly
         the conditions of the other.
+
+        Parameters
+        ----------
+        score_id : str or None
+            The id of the score. ``None``, the default, names the only
+            score: the one score of a resource that defines exactly one.
+            A resource with several scores, or none, has no only score,
+            and the call raises ``ValueError`` with the ids it does
+            define.
         """
         return self._histogram_image_url(
-            score_id, self.resource.get_public_url())
+            self._resolve_score_id(score_id),
+            self.resource.get_public_url())
 
     @staticmethod
     def histogram_schema() -> dict[str, Any]:

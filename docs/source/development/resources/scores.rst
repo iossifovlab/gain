@@ -107,6 +107,10 @@ histogram:
 
     hist = score.get_score_histogram("phastCons100way")
 
+A resource with one score needs no score id: ``get_score_histogram()``,
+``get_histogram_config()``, ``get_score_range()`` and the two histogram image
+URL methods read that only score when the id is left out.
+
 Check the kind of the result before you use it. The attributes of each kind
 are described in :ref:`histograms-reading-number`,
 :ref:`histograms-reading-categorical` and :ref:`histograms-reading-null`.
