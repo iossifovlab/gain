@@ -32,7 +32,8 @@ and two keyword arguments:
   subdirectory of its own, ``A<index>_<type>``. The loader injects that
   subdirectory into the annotator's parameters as ``work_dir``, unless the
   YAML entry sets one. Pass a ``Path``: the loader joins the subdirectory
-  name with ``/``, and a ``str`` raises ``TypeError``. Left unset, a
+  name with ``/`` for each annotator, so a ``str`` raises ``TypeError`` as
+  soon as the configuration has an annotator. Left unset, a
   temporary directory is minted with a warning; pass one.
 * ``allow_repeated_attributes`` — what to do when two annotators emit the
   same attribute name. Off, the pipeline refuses to build and names the
@@ -61,15 +62,19 @@ for ``input_annotatable`` and ``value_transform`` if the entry uses them,
 and refuses any parameter the annotator never read. A fault in the
 configuration is reported as an
 :class:`~gain.annotation.annotation_config.AnnotationConfigurationError` in
-three ways:
+four ways:
 
 * The configuration parser raises it for most faults in the shape of the
   configuration.
 * The loader catches a ``ValueError`` or a ``FileNotFoundError`` that any of
   the steps above raises, and raises an ``AnnotationConfigurationError``
   that names the annotator and carries the original error.
-* An annotator that reads a parameter with ``get_number`` or ``get_integer``
-  raises it directly (:doc:`writing_an_annotator`).
+* An annotator raises it directly for a parameter value it refuses: one
+  read with ``get_number`` or ``get_integer`` (:doc:`writing_an_annotator`),
+  or, in the allele and fragment score annotators, a filter expression that
+  does not parse or a value they do not accept.
+* After the last entry, the loader raises it when two annotators emit the
+  same attribute name and ``allow_repeated_attributes`` is off.
 
 The loader wraps no other exception: a ``TypeError`` or a ``KeyError`` from
 an annotator factory passes through unchanged.
