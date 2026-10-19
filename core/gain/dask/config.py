@@ -112,7 +112,8 @@ def reconfigure() -> None:
 
     _deferred_error = _check_user_clusters_shape(
         dask.config.config)  # pyright: ignore
-    _keep_user_number_of_threads(dask.config.config)  # pyright: ignore
+    _keep_user_number_of_threads(
+        dask.config.config)  # pyright: ignore[reportPrivateImportUsage]
     dask.config.update_defaults(defaults)  # pyright: ignore
 
     distributed_config = {}
