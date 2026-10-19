@@ -77,9 +77,10 @@ says so, which is what lets a reannotation know what to rerun.
 
 .. rubric:: Not covered here
 
-How to *test* an annotator. GAIn's own test fixtures live in
-``gain.genomic_resources.testing``, which is outside the declared API and is
-not documented on this site.
+GAIn's own test fixtures. They live in ``gain.genomic_resources.testing``,
+which is outside the declared API and is not documented on this site.
+:doc:`annotators/testing_an_annotator` tests an annotator with the declared
+API only.
 
 The annotators GAIn ships are described from the user side on
 :doc:`/annotation_infrastructure`, and their Python classes appear in the
@@ -99,5 +100,6 @@ generated :doc:`module index <module_index>`. They are:
    annotators/annotatables
    annotators/attributes
    annotators/writing_an_annotator
+   annotators/testing_an_annotator
    annotators/pipelines
    annotators/plugins

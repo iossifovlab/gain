@@ -88,6 +88,10 @@ COPY --chown=mambauser:mambauser docs/source/running_in_parallel.rst \
 # the task graph chapter and fails, not skips, when the page is absent.
 COPY --chown=mambauser:mambauser docs/source/development/task_graph \
     /testbed/docs/source/development/task_graph
+# tests/small/annotation/test_docs_testing_an_annotator.py reads the
+# "Writing an annotator" page and fails, not skips, when it is absent.
+COPY --chown=mambauser:mambauser docs/source/development/annotators \
+    /testbed/docs/source/development/annotators
 RUN chmod -R a+rwX /testbed
 COPY --chown=mambauser:mambauser core/conda-integration/run.sh \
     core/conda-integration/assert_installed.py /opt/conda-integration/
