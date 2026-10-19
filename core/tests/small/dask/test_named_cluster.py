@@ -486,6 +486,39 @@ def test_reconfigure_translates_the_old_key(
         if "dae_named_cluster" in record.getMessage()]) == 1
 
 
+def test_user_number_of_threads_wins_over_the_bundled_number_of_workers(
+    mocker: pytest_mock.MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    restored_dask_config: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The order of an import of gain.dask: dask collects the user files,
+    # then reconfigure() merges the bundled defaults under them.
+    # config.refresh() would merge the bundled defaults first.
+    monkeypatch.setattr(config, "PATH", str(tmp_path))
+    monkeypatch.setattr(config, "defaults", [])
+    mocked_slurm = mocker.patch("dask_jobqueue.SLURMCluster", autospec=True)
+    mocker.patch("gain.dask.named_cluster.Client", autospec=True)
+    (tmp_path / "named_cluster.yaml").write_text(textwrap.dedent("""\
+        gain_named_cluster:
+          clusters:
+            slurm:
+              number_of_threads: 50
+        """))
+    config.config.clear()
+    config.config.update(config.collect(paths=[str(tmp_path)], env={}))
+    gain.dask.config.reconfigure()
+
+    with caplog.at_level(logging.WARNING, logger="gain.dask.named_cluster"):
+        setup_client("slurm")
+
+    assert mocked_slurm.return_value.scale.call_args.kwargs["n"] == 50
+    assert any(
+        "'number_of_threads' key" in record.getMessage()
+        for record in caplog.records)
+
+
 def test_old_key_value_wins_over_the_bundled_value(
     mocker: pytest_mock.MockerFixture,
     tmp_path: pathlib.Path,

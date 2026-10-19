@@ -76,6 +76,31 @@ def _check_user_clusters_shape(config: dict[str, Any]) -> ValueError | None:
     return None
 
 
+def _keep_user_number_of_threads(config: dict[str, Any]) -> None:
+    """Copy a user ``number_of_threads`` value to ``number_of_workers``.
+
+    The function changes each user cluster definition that holds
+    ``number_of_threads`` but no ``number_of_workers``. It must run before
+    the bundled defaults are merged: a bundled ``number_of_workers`` would
+    otherwise win over the user value of the deprecated key. The function
+    keeps ``number_of_threads``, so the deprecation warning stays.
+    """
+    for key in _spellings(config, NAMED_CLUSTER_KEY):
+        named_clusters = config[key]
+        if not isinstance(named_clusters, Mapping):
+            continue
+        clusters = named_clusters.get("clusters")
+        if not isinstance(clusters, Mapping):
+            continue
+        for cluster_config in clusters.values():
+            if not isinstance(cluster_config, dict):
+                continue
+            threads = cluster_config.get("number_of_threads")
+            if threads is not None \
+                    and "number_of_workers" not in cluster_config:
+                cluster_config["number_of_workers"] = threads
+
+
 def reconfigure() -> None:
     """Load default config into dask."""
     global _deferred_error  # pylint: disable=global-statement
@@ -87,6 +112,7 @@ def reconfigure() -> None:
 
     _deferred_error = _check_user_clusters_shape(
         dask.config.config)  # pyright: ignore
+    _keep_user_number_of_threads(dask.config.config)  # pyright: ignore
     dask.config.update_defaults(defaults)  # pyright: ignore
 
     distributed_config = {}
