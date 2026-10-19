@@ -2288,6 +2288,137 @@ describe('AnnotationPipelineComponent', () => {
     expect(component.dropdownControl.value).toBe('new name *');
   });
 
+  /** Deliver pipeline_status frames through the returned subject after ngOnInit. */
+  function startWithNotifications(): Subject<PipelineNotification> {
+    const notifications = new Subject<PipelineNotification>();
+    jest.spyOn(socketNotificationsServiceMock, 'getPipelineNotifications')
+      .mockReturnValue(notifications.asObservable());
+    component.ngOnInit();
+    return notifications;
+  }
+
+  it('keeps a status frame that arrives during a save reload that then fails (#2000)', () => {
+    const notifications = startWithNotifications();
+    const failed = new Pipeline('id3', 'name3', 'content3', 'user', 'failed', 'bad config');
+    component.pipelines = [failed];
+    pipelineStateService.pipelines.set([failed]);
+    component.onPipelineClick(failed);
+    component.currentPipelineText = 'fixed config';
+    jest.spyOn(annotationPipelineServiceMock, 'savePipeline').mockReturnValueOnce(of('id3'));
+    const reload = new Subject<Pipeline[]>();
+    jest.spyOn(jobsServiceMock, 'getAnnotationPipelines').mockReturnValueOnce(reload.asObservable());
+    component.save();
+
+    notifications.next(new PipelineNotification('id3', 'loaded', undefined));
+    reload.error(new Error('backend restarting'));
+
+    const patched = component.pipelines.find(p => p.id === 'id3');
+    expect(patched.status).toBe('loaded');
+    expect(patched.error).toBeUndefined();
+    expect(patched.content).toBe('fixed config');
+  });
+
+  /** Start a save-as of `content` to id `newId` whose reload stays pending. */
+  function startSaveAsWithPendingReload(newId: string, content: string): Subject<Pipeline[]> {
+    component.currentPipelineText = content;
+    jest.spyOn(mockMatDialogRef, 'afterClosed').mockReturnValueOnce(of('new name'));
+    jest.spyOn(annotationPipelineServiceMock, 'savePipeline').mockReturnValueOnce(of(newId));
+    const reload = new Subject<Pipeline[]>();
+    jest.spyOn(jobsServiceMock, 'getAnnotationPipelines').mockReturnValueOnce(reload.asObservable());
+    component.saveAs();
+    return reload;
+  }
+
+  it('keeps a status frame for the new id that arrives during a save-as reload that then fails (#2000)', () => {
+    const notifications = startWithNotifications();
+    startOnLoadedList('id3');
+    const reload = startSaveAsWithPendingReload('4', 'saved as new');
+
+    notifications.next(new PipelineNotification('4', 'failed', 'bad annotator'));
+    reload.error(new Error('backend restarting'));
+
+    const patched = component.pipelines.find(p => p.id === '4');
+    expect(patched.status).toBe('failed');
+    expect(patched.error).toBe('bad annotator');
+    expect(patched.content).toBe('saved as new');
+    expect(component.currentTemporaryPipelineId).toBe('');
+  });
+
+  it('takes the last of several status frames for the new id when a save-as reload fails (#2000)', () => {
+    const notifications = startWithNotifications();
+    startOnLoadedList('id3');
+    const reload = startSaveAsWithPendingReload('4', 'saved as new');
+
+    notifications.next(new PipelineNotification('4', 'loading', undefined));
+    notifications.next(new PipelineNotification('4', 'failed', 'bad annotator'));
+    reload.error(new Error('backend restarting'));
+
+    const patched = component.pipelines.find(p => p.id === '4');
+    expect(patched.status).toBe('failed');
+    expect(patched.error).toBe('bad annotator');
+  });
+
+  it('keeps the copied status after a save whose reload fails with no status frame (#2000)', () => {
+    startWithNotifications();
+    const failed = new Pipeline('id3', 'name3', 'content3', 'user', 'failed', 'bad config');
+    component.pipelines = [failed];
+    pipelineStateService.pipelines.set([failed]);
+    component.onPipelineClick(failed);
+    component.currentPipelineText = 'still bad config';
+    jest.spyOn(annotationPipelineServiceMock, 'savePipeline').mockReturnValueOnce(of('id3'));
+    jest.spyOn(jobsServiceMock, 'getAnnotationPipelines')
+      .mockReturnValueOnce(throwError(() => new Error('backend restarting')));
+
+    component.save();
+
+    const patched = component.pipelines.find(p => p.id === 'id3');
+    expect(patched.status).toBe('failed');
+    expect(patched.error).toBe('bad config');
+  });
+
+  it('shows the new pipeline as loading after a save-as whose reload fails with no status frame (#2000)', () => {
+    const notifications = startWithNotifications();
+    startOnLoadedList('id3');
+    const reload = startSaveAsWithPendingReload('4', 'saved as new');
+
+    notifications.next(new PipelineNotification('99', 'failed', 'other pipeline'));
+    reload.error(new Error('backend restarting'));
+
+    const patched = component.pipelines.find(p => p.id === '4');
+    expect(patched.status).toBe('loading');
+    expect(patched.error).toBeUndefined();
+  });
+
+  it('does not apply a status frame from an earlier failed save-as reload to a later one (#2000)', () => {
+    const notifications = startWithNotifications();
+    startOnLoadedList('id3');
+    const firstReload = startSaveAsWithPendingReload('4', 'first save-as');
+    notifications.next(new PipelineNotification('4', 'failed', 'first error'));
+    firstReload.error(new Error('backend restarting'));
+    expect(component.pipelines.find(p => p.id === '4').status).toBe('failed');
+    startOnLoadedList('id3');
+    notifications.next(new PipelineNotification('4', 'loaded'));
+    const secondReload = startSaveAsWithPendingReload('4', 'second save-as');
+
+    secondReload.error(new Error('backend restarting'));
+
+    const patched = component.pipelines.find(p => p.id === '4');
+    expect(patched.content).toBe('second save-as');
+    expect(patched.status).toBe('loading');
+    expect(patched.error).toBeUndefined();
+  });
+
+  it('forgets the remembered status frames when the component is destroyed during a save-as reload (#2000)', () => {
+    startWithNotifications();
+    startOnLoadedList('id3');
+    startSaveAsWithPendingReload('4', 'saved as new');
+    expect(component['saveAsFrames']).not.toBeNull();
+
+    component.ngOnDestroy();
+
+    expect(component['saveAsFrames']).toBeNull();
+  });
+
   it('replaces the patched entries with the server copies on the next successful reload (#1783)', () => {
     const reconnect = armReconnect();
     component.ngOnInit();
