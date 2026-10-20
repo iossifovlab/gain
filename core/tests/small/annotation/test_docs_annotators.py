@@ -35,11 +35,7 @@ from gain.annotation.annotation_factory import (
     build_annotation_pipeline,
     register_annotator_factory,
 )
-from gain.annotation.annotation_pipeline import (
-    AnnotationPipeline,
-    Annotator,
-    AttributeSpec,
-)
+from gain.annotation.annotation_pipeline import AttributeSpec
 from gain.annotation.annotator_base import AnnotatedValues, AnnotatorBase
 from gain.annotation.record_to_annotatable import (
     MalformedRecordError,
@@ -87,20 +83,8 @@ class _ObjectStub(_GenesStub):
     attribute_type = "object"
 
 
-def _build_gene_list_stub(
-    pipeline: AnnotationPipeline, info: AnnotatorInfo,
-) -> Annotator:
-    return _GeneListStub(pipeline, info)
-
-
-def _build_object_stub(
-    pipeline: AnnotationPipeline, info: AnnotatorInfo,
-) -> Annotator:
-    return _ObjectStub(pipeline, info)
-
-
-register_annotator_factory(GENE_LIST_STUB, _build_gene_list_stub)
-register_annotator_factory(OBJECT_STUB, _build_object_stub)
+register_annotator_factory(GENE_LIST_STUB, _GeneListStub)
+register_annotator_factory(OBJECT_STUB, _ObjectStub)
 
 
 @pytest.fixture(name="repo")
