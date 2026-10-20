@@ -22,6 +22,7 @@ import base64
 import time
 import urllib.request
 from collections.abc import Callable
+from dataclasses import dataclass
 from urllib.parse import urlencode
 
 from gain import logging
@@ -65,6 +66,15 @@ class ZulipFilter(logging.Filter):
         )
 
 
+@dataclass
+class _TopicWindow:
+    """The throttle state of one topic."""
+
+    start: float | None = None
+    posts: int = 0
+    suppressed: int = 0
+
+
 class ZulipHandler(logging.Handler):
     """Post log records as messages to a Zulip stream.
 
@@ -85,16 +95,22 @@ class ZulipHandler(logging.Handler):
     topic
         The default topic of the messages. A record that carries a
         ``zulip_topic`` attribute, set through ``extra=``, posts to that
-        topic instead.
+        topic instead. The handler keeps one throttle window for each
+        topic, so a flood in one topic does not suppress the records of
+        another topic.
     max_posts
-        The number of records that the handler posts in one window. The
-        handler counts the other records of the window as suppressed.
+        The number of records that the handler posts in one window of
+        each topic. The handler counts the other records of the window
+        as suppressed.
     window_seconds
-        The length of a window. A window is fixed and starts at the first
-        post after the previous window ends. On the first record after a
-        window with suppressed records, the handler posts one summary
-        before the record. The summary does not count against the new
-        window.
+        The length of a window of each topic. A window is fixed and
+        starts at the first post after the previous window of the topic
+        ends. On the first record after a window with suppressed
+        records, the handler posts one summary to the topic before the
+        record. The summary does not count against the new window.
+        ``flush()`` and ``close()`` also post one summary for each topic
+        with suppressed records. They keep the window, so later records
+        of the window stay suppressed and count toward the next summary.
     clock
         The monotonic time source of the window, in seconds.
     max_chars
@@ -134,9 +150,7 @@ class ZulipHandler(logging.Handler):
         self.window_seconds = window_seconds
         self._clock = clock
         self.max_chars = max_chars
-        self._window_start: float | None = None
-        self._posts_in_window = 0
-        self._suppressed = 0
+        self._windows: dict[str, _TopicWindow] = {}
 
     def _content(self, record: logging.LogRecord, topic: str) -> str:
         first_line = (record.getMessage().splitlines() or [""])[0]
@@ -207,59 +221,95 @@ class ZulipHandler(logging.Handler):
                 request, timeout=_TIMEOUT_SECONDS):
             pass
 
-    def _admit(self) -> int | None:
-        """Admit a record into the current window, or start a new window.
+    def _admit(self, window: _TopicWindow) -> int | None:
+        """Admit a record into the current window of its topic.
 
-        Return ``None`` when the current window is full: the record is
+        Start a new window when the current one has ended. Return
+        ``None`` when the current window is full: the record is
         suppressed. Otherwise return the suppressed count of the window
         that ends here, or zero when no window ends.
         """
         now = self._clock()
-        if (self._window_start is None
-                or now - self._window_start >= self.window_seconds):
-            ended_suppressed = self._suppressed
-            self._window_start = now
-            self._posts_in_window = 1
-            self._suppressed = 0
+        if (window.start is None
+                or now - window.start >= self.window_seconds):
+            ended_suppressed = window.suppressed
+            window.start = now
+            window.posts = 1
+            window.suppressed = 0
             return ended_suppressed
-        if self._posts_in_window >= self.max_posts:
-            self._suppressed += 1
+        if window.posts >= self.max_posts:
+            window.suppressed += 1
             return None
-        self._posts_in_window += 1
+        window.posts += 1
         return 0
 
     def _post_summary(
-        self, suppressed: int, record: logging.LogRecord,
+        self, topic: str, window: _TopicWindow, suppressed: int,
+        record: logging.LogRecord,
     ) -> None:
-        """Post the summary of an ended window.
+        """Post the summary of ``suppressed`` records to ``topic``.
 
         When the post fails, report the failure through ``handleError``
-        and carry the count into the current window, so that the next
-        summary includes it. The record that ended the window still posts.
+        with ``record`` and add the count back to ``window``, so that the
+        next summary of the topic includes it. In ``emit``, the record
+        that ended the window still posts.
         """
         minutes = self.window_seconds // 60
         try:
             self._post(
-                self.topic,
-                f"**{self.topic}: suppressed {suppressed} messages "
+                topic,
+                f"**{topic}: suppressed {suppressed} messages "
                 f"in the last {minutes} min**")
         except Exception:  # ruff: ignore[blind-except] -- see emit
-            self._suppressed += suppressed
+            window.suppressed += suppressed
             self.handleError(record)
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
             # ``Handler.handle`` holds ``self.lock`` around ``emit``, so
             # the window state needs no lock of its own.
-            suppressed = self._admit()
+            topic = str(getattr(record, "zulip_topic", self.topic))
+            window = self._windows.setdefault(topic, _TopicWindow())
+            suppressed = self._admit(window)
             if suppressed is None:
                 return
             if suppressed > 0:
-                self._post_summary(suppressed, record)
-            topic = str(getattr(record, "zulip_topic", self.topic))
+                self._post_summary(topic, window, suppressed, record)
             self._post(topic, self._content(record, topic))
         # A logging handler must never raise into the caller. The
         # ``logging.Handler`` contract is to catch every error in ``emit``
         # and report it through ``handleError``.
         except Exception:  # ruff: ignore[blind-except]
             self.handleError(record)
+
+    def flush(self) -> None:
+        """Post one summary for each topic with suppressed records.
+
+        A posted summary resets the suppressed count of its topic. The
+        window of the topic stays, so later records of that window stay
+        suppressed. When a post fails, report the failure through
+        ``handleError`` and keep the count for the next summary.
+        """
+        self.acquire()
+        try:
+            for topic, window in self._windows.items():
+                if window.suppressed == 0:
+                    continue
+                suppressed = window.suppressed
+                window.suppressed = 0
+                record = logging.makeLogRecord({
+                    "name": ZULIP_LOGGER_NAME,
+                    "msg": f"{topic}: suppressed {suppressed} messages",
+                })
+                self._post_summary(topic, window, suppressed, record)
+        finally:
+            self.release()
+
+    def close(self) -> None:
+        """Post the pending summaries as ``flush`` does, then close."""
+        self.acquire()
+        try:
+            self.flush()
+            super().close()
+        finally:
+            self.release()
