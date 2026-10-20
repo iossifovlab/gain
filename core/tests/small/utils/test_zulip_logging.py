@@ -723,6 +723,25 @@ def _topic_titles(server: _CaptureServer) -> list[tuple[str, str]]:
     ]
 
 
+@pytest.fixture
+def throttled_handler(throttled_logger: logging.Logger) -> ZulipHandler:
+    handler = throttled_logger.handlers[0]
+    assert isinstance(handler, ZulipHandler)
+    return handler
+
+
+def _summaries(server: _CaptureServer) -> list[tuple[str, str]]:
+    return [
+        (topic, title) for topic, title in _topic_titles(server)
+        if " suppressed " in title
+    ]
+
+
+def _summary(topic: str, count: int) -> tuple[str, str]:
+    return (
+        topic, f"**{topic}: suppressed {count} messages in the last 10 min**")
+
+
 def test_flood_in_one_topic_does_not_suppress_another_topic(
     zulip_server: _CaptureServer, throttled_logger: logging.Logger,
 ) -> None:
@@ -747,33 +766,7 @@ def test_summary_posts_to_the_topic_of_the_suppressed_records(
 
     _log_in(throttled_logger, TOPIC_A, "after the window")
 
-    summaries = [
-        (topic, title) for topic, title in _topic_titles(zulip_server)
-        if "suppressed" in title
-    ]
-    assert summaries == [
-        (TOPIC_A,
-         f"**{TOPIC_A}: suppressed 3 messages in the last 10 min**"),
-    ]
-
-
-@pytest.fixture
-def throttled_handler(throttled_logger: logging.Logger) -> ZulipHandler:
-    handler = throttled_logger.handlers[0]
-    assert isinstance(handler, ZulipHandler)
-    return handler
-
-
-def _summaries(server: _CaptureServer) -> list[tuple[str, str]]:
-    return [
-        (topic, title) for topic, title in _topic_titles(server)
-        if " suppressed " in title
-    ]
-
-
-def _summary(topic: str, count: int) -> tuple[str, str]:
-    return (
-        topic, f"**{topic}: suppressed {count} messages in the last 10 min**")
+    assert _summaries(zulip_server) == [_summary(TOPIC_A, 3)]
 
 
 def test_flush_posts_one_summary_to_each_flooded_topic(
