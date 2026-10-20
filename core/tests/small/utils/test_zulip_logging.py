@@ -706,3 +706,148 @@ def test_last_line_over_the_limit_keeps_its_end(
     assert re.fullmatch(r"\.\.\. \(cut \d+ characters\)", lines[3])
     assert lines[4].startswith("yyy")
     assert lines[-2].endswith("y end of message")
+
+
+TOPIC_A = "topic-a"
+TOPIC_B = "topic-b"
+
+
+def _log_in(logger: logging.Logger, topic: str, message: str) -> None:
+    logger.info(message, extra={"zulip_topic": topic})
+
+
+def _topic_titles(server: _CaptureServer) -> list[tuple[str, str]]:
+    return [
+        (p.form["topic"], p.form["content"].split("\n", 1)[0])
+        for p in server.posts
+    ]
+
+
+def test_flood_in_one_topic_does_not_suppress_another_topic(
+    zulip_server: _CaptureServer, throttled_logger: logging.Logger,
+) -> None:
+    for i in range(13):
+        _log_in(throttled_logger, TOPIC_A, f"a {i}")
+
+    _log_in(throttled_logger, TOPIC_B, "b")
+
+    assert len(zulip_server.posts) == 11
+    assert _topic_titles(zulip_server)[-1] == (
+        TOPIC_B, f"**INFO {TOPIC_B} gain.zulip.throttle_test: b**")
+
+
+def test_summary_posts_to_the_topic_of_the_suppressed_records(
+    zulip_server: _CaptureServer,
+    throttled_logger: logging.Logger,
+    clock: _FakeClock,
+) -> None:
+    for i in range(13):
+        _log_in(throttled_logger, TOPIC_A, f"a {i}")
+    clock.advance(600)
+
+    _log_in(throttled_logger, TOPIC_A, "after the window")
+
+    summaries = [
+        (topic, title) for topic, title in _topic_titles(zulip_server)
+        if "suppressed" in title
+    ]
+    assert summaries == [
+        (TOPIC_A,
+         f"**{TOPIC_A}: suppressed 3 messages in the last 10 min**"),
+    ]
+
+
+@pytest.fixture
+def throttled_handler(throttled_logger: logging.Logger) -> ZulipHandler:
+    handler = throttled_logger.handlers[0]
+    assert isinstance(handler, ZulipHandler)
+    return handler
+
+
+def _summaries(server: _CaptureServer) -> list[tuple[str, str]]:
+    return [
+        (topic, title) for topic, title in _topic_titles(server)
+        if " suppressed " in title
+    ]
+
+
+def _summary(topic: str, count: int) -> tuple[str, str]:
+    return (
+        topic, f"**{topic}: suppressed {count} messages in the last 10 min**")
+
+
+def test_flush_posts_one_summary_to_each_flooded_topic(
+    zulip_server: _CaptureServer,
+    throttled_logger: logging.Logger,
+    throttled_handler: ZulipHandler,
+) -> None:
+    for i in range(13):
+        _log_in(throttled_logger, TOPIC_A, f"a {i}")
+    for i in range(15):
+        _log_in(throttled_logger, TOPIC_B, f"b {i}")
+
+    throttled_handler.flush()
+
+    assert _summaries(zulip_server) == [
+        _summary(TOPIC_A, 3), _summary(TOPIC_B, 5)]
+
+
+def test_close_posts_the_pending_summary_once(
+    zulip_server: _CaptureServer,
+    throttled_logger: logging.Logger,
+    throttled_handler: ZulipHandler,
+) -> None:
+    for i in range(13):
+        _log_in(throttled_logger, TOPIC_A, f"a {i}")
+
+    throttled_handler.close()
+    throttled_handler.close()
+
+    assert _summaries(zulip_server) == [_summary(TOPIC_A, 3)]
+
+
+def test_flush_without_suppressed_records_posts_nothing(
+    zulip_server: _CaptureServer,
+    throttled_logger: logging.Logger,
+    throttled_handler: ZulipHandler,
+) -> None:
+    for i in range(10):
+        _log_in(throttled_logger, TOPIC_A, f"a {i}")
+    posted = len(zulip_server.posts)
+
+    throttled_handler.flush()
+
+    assert len(zulip_server.posts) == posted
+
+
+def test_records_after_flush_stay_suppressed_in_the_same_window(
+    zulip_server: _CaptureServer,
+    throttled_logger: logging.Logger,
+    throttled_handler: ZulipHandler,
+) -> None:
+    for i in range(13):
+        _log_in(throttled_logger, TOPIC_A, f"a {i}")
+    throttled_handler.flush()
+    posted = len(zulip_server.posts)
+
+    for i in range(2):
+        _log_in(throttled_logger, TOPIC_A, f"later {i}")
+    assert len(zulip_server.posts) == posted
+    throttled_handler.flush()
+
+    assert _summaries(zulip_server) == [
+        _summary(TOPIC_A, 3), _summary(TOPIC_A, 2)]
+
+
+def test_failed_summary_in_close_calls_handle_error_and_does_not_raise(
+    zulip_server: _CaptureServer, clock: _FakeClock,
+) -> None:
+    handler = _CountingZulipHandler(zulip_server.site, clock=clock)
+    _log_exception_through(handler)
+    _log_exception_through(handler)
+    zulip_server.failing_prefix = f"**{TOPIC}: suppressed"
+
+    handler.close()
+
+    assert _summaries(zulip_server) == [_summary(TOPIC, 1)]
+    assert len(handler.errors) == 1
