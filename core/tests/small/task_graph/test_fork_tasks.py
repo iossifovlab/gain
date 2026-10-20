@@ -34,6 +34,33 @@ def test_executor_fork_tasks(
     assert (tmp_path / "0.result").exists()
 
 
+def test_fork_tasks_without_task_status_dir_uses_current_dir(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A parser made with ``default_task_status_dir=None`` and no ``-d``
+    # parses ``task_status_dir=None``; the forked run must write its
+    # ``.result`` files to the current directory (gain#2030).
+    monkeypatch.chdir(tmp_path)
+    parser = argparse.ArgumentParser(description="test_no_status_dir")
+    TaskGraphCli.add_arguments(parser, default_task_status_dir=None)
+    args = parser.parse_args(["--fork-tasks", "-j", "1", "-f"])
+    assert args.task_status_dir is None
+    graph = TaskGraph()
+    first = graph.create_task("first", add_to_list, args=[1, []], deps=[])
+    graph.create_task(
+        "second", add_to_list, args=[2, first], deps=[first])
+
+    result = TaskGraphCli.process_graph(graph, **vars(args))
+
+    assert result is True
+    assert (tmp_path / "first.result").exists()
+    assert (tmp_path / "second.result").exists()
+    with (tmp_path / "second.result").open("rb") as infile:
+        second_result = pickle.load(infile)
+    assert second_result == [1, 2]
+
+
 def sample_func(value: int) -> int:
     return value * 2
 

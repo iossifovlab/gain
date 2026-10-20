@@ -173,7 +173,7 @@ class TaskGraphExecutorBase(TaskGraphExecutor):
 
     @staticmethod
     def _result_fn(task_id: str, params: dict[str, Any]) -> str:
-        status_dir = params.get("task_status_dir", ".")
+        status_dir = params.get("task_status_dir") or "."
         return os.path.join(status_dir, f"{task_id}.result")
 
     @staticmethod
