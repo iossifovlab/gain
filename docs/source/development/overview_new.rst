@@ -1,6 +1,11 @@
 Overview and examples
 =====================================
 
+.. note::
+
+   Draft for review: this page is a revision of :doc:`overview`. Both are
+   published while the revision is discussed; one replaces the other.
+
 The command-line workflow is designed for specific GAIn tasks, such as annotating variants, positions, or regions 
 and inspecting resources in a GRR. This covers many common annotation 
 use cases. However, users may also want to ask more open-ended questions, such as summarizing 

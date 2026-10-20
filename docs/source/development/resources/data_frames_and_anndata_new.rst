@@ -1,6 +1,11 @@
 Data frames and AnnData
 =======================
 
+.. note::
+
+   Draft for review: this page is a revision of :doc:`data_frames_and_anndata`. Both are
+   published while the revision is discussed; one replaces the other.
+
 Two resource types hold plain tables rather than genomic data with a type of
 its own. A ``data_frame`` resource holds one table. An ``ann_data`` resource
 holds an annotated data matrix, typically single-cell expression data. Each
@@ -169,8 +174,10 @@ Data frame loaders
    load_data_frame_from_resource_id
 
 .. autofunction:: load_data_frame_from_resource
+   :no-index:
 
 .. autofunction:: load_data_frame_from_resource_id
+   :no-index:
 
 AnnData loaders
 ~~~~~~~~~~~~~~~
@@ -183,5 +190,7 @@ AnnData loaders
    load_ann_data_from_resource_id
 
 .. autofunction:: load_ann_data_from_resource
+   :no-index:
 
 .. autofunction:: load_ann_data_from_resource_id
+   :no-index:

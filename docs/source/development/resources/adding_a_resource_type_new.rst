@@ -1,6 +1,11 @@
 Adding a resource type
 ======================
 
+.. note::
+
+   Draft for review: this page is a revision of :doc:`adding_a_resource_type`. Both are
+   published while the revision is discussed; one replaces the other.
+
 The resource types GAIn understands are not a fixed list. Each one is a
 *resource implementation* — a class that knows how to describe a resource of
 that type, compute its statistics, and render its HTML summary page — and
@@ -174,6 +179,7 @@ in the package ``gain.genomic_resources``. ``gain.grr`` exports none of them.
    GenomicResourceImplementation.resource_id
 
 .. autoclass:: GenomicResourceImplementation
+   :no-index:
    :members:
 
 .. currentmodule:: gain.genomic_resources
@@ -184,5 +190,7 @@ in the package ``gain.genomic_resources``. ``gain.grr`` exports none of them.
    get_resource_implementation_builder
 
 .. autofunction:: register_implementation
+   :no-index:
 
 .. autofunction:: get_resource_implementation_builder
+   :no-index:

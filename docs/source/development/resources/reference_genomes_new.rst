@@ -2,6 +2,11 @@
 Genomes
 =======
 
+.. note::
+
+   Draft for review: this page is a revision of :doc:`reference_genomes`. Both are
+   published while the revision is discussed; one replaces the other.
+
 Genome resources provide the DNA sequences of reference genome assemblies, together with the names and lengths of their chromosomes and other contigs. In a GRR, a genome is a resource of type ``genome`` backed by a FASTA file (plain or bgzipped) and its index files. GAIn provides the :class:`~gain.genomic_resources.reference_genome.ReferenceGenome` Python object for accessing this information. Unlike a generic ``GenomicResource``, a ``ReferenceGenome`` provides methods for retrieving sequences and working with genomic coordinates.
 
 Accessing a genome
@@ -128,8 +133,11 @@ and ``grr.build_reference_genome_from_resource``.
    ReferenceGenome.split_into_regions
 
 .. autofunction:: build_reference_genome_from_resource
+   :no-index:
 
 .. autofunction:: build_reference_genome_from_resource_id
+   :no-index:
 
 .. autoclass:: ReferenceGenome
+   :no-index:
    :members:

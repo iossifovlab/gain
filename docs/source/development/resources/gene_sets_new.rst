@@ -1,6 +1,11 @@
 Gene set collections
 ====================
 
+.. note::
+
+   Draft for review: this page is a revision of :doc:`gene_sets`. Both are
+   published while the revision is discussed; one replaces the other.
+
 A gene set collection is a named group of gene sets. Each gene set has a
 name, a description and a list of gene symbols, for example the candidate
 genes of a disorder. The class that reads a resource is
@@ -113,11 +118,15 @@ They are also exported by ``gain.grr``, as
    GeneSet
 
 .. autofunction:: build_gene_set_collection_from_resource
+   :no-index:
 
 .. autofunction:: build_gene_set_collection_from_resource_id
+   :no-index:
 
 .. autoclass:: GeneSetCollection
+   :no-index:
    :members:
 
 .. autoclass:: GeneSet
+   :no-index:
    :members:

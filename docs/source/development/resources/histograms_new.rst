@@ -1,6 +1,11 @@
 Histograms
 ==========
 
+.. note::
+
+   Draft for review: this page is a revision of :doc:`histograms`. Both are
+   published while the revision is discussed; one replaces the other.
+
 A histogram summarises how one score is distributed. GAIn computes histograms
 as part of a resource's *statistics* build, stores them in the resource, and
 renders them on the resource's HTML summary page. In Python they are the
@@ -44,7 +49,7 @@ Because they are aliases there is nothing to ``autoclass`` and no page anchor
 to link to — check ``type`` on the object, or match on the class, to find out
 which one you have.
 
-.. _histograms-reading-number:
+.. _histograms-new-reading-number:
 
 Reading a number histogram
 --------------------------
@@ -119,7 +124,7 @@ formatted for the resource summary page: ``n``, ``mean`` and ``sd``. It
 returns ``None`` when the summary numbers are unknown or the build folded
 no value.
 
-.. _histograms-reading-categorical:
+.. _histograms-new-reading-categorical:
 
 Reading a categorical histogram
 -------------------------------
@@ -188,7 +193,7 @@ the sidecar kept. Use ``truncated=True`` when you need the summary and not
 every value. When a score has no sidecar, the call returns the full histogram
 with or without the argument.
 
-.. _histograms-reading-null:
+.. _histograms-new-reading-null:
 
 Reading a null histogram
 ------------------------
@@ -407,21 +412,28 @@ them.
    NullHistogramConfig.to_dict
 
 .. autofunction:: load_histogram
+   :no-index:
 
 .. autoclass:: NumberHistogram
+   :no-index:
    :members:
 
 .. autoclass:: CategoricalHistogram
+   :no-index:
    :members:
 
 .. autoclass:: NullHistogram
+   :no-index:
    :members:
 
 .. autoclass:: NumberHistogramConfig
+   :no-index:
    :members:
 
 .. autoclass:: CategoricalHistogramConfig
+   :no-index:
    :members:
 
 .. autoclass:: NullHistogramConfig
+   :no-index:
    :members:
