@@ -725,9 +725,11 @@ def _topic_titles(server: _CaptureServer) -> list[tuple[str, str]]:
 
 @pytest.fixture
 def throttled_handler(throttled_logger: logging.Logger) -> ZulipHandler:
-    handler = throttled_logger.handlers[0]
-    assert isinstance(handler, ZulipHandler)
-    return handler
+    # pytest 9.1 also attaches its ``LogCaptureHandler`` to each logger
+    # that does not propagate, so the ``ZulipHandler`` is not always first.
+    return next(
+        handler for handler in throttled_logger.handlers
+        if isinstance(handler, ZulipHandler))
 
 
 def _summaries(server: _CaptureServer) -> list[tuple[str, str]]:
