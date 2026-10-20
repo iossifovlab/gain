@@ -2,6 +2,11 @@
 Accessing genomic resources
 ===========================
 
+.. note::
+
+   Draft for review: this page is a revision of :doc:`resources_in_python`. Both are
+   published while the revision is discussed; one replaces the other.
+
 GAIn provides a Python interface for accessing and working with genomic resources stored in Genomic Resource Repositories (GRRs). Through this interface, users can retrieve genomic sequences, inspect gene models, query genomic scores, and load datasets for further analysis using Python.
 
 Each resource in a GRR is identified by a resource ID and has a definition describing its type, associated files, and other properties. GAIn provides Python functions for locating these resources and creating objects with methods appropriate to each resource type. For example, a reference genome object provides methods for retrieving DNA sequences, while a genomic score object allows users to retrieve scores for genomic positions, alleles, or intervals.

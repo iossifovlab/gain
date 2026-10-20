@@ -2,6 +2,11 @@
 Genomic scores
 ==============
 
+.. note::
+
+   Draft for review: this page is a revision of :doc:`scores`. Both are
+   published while the revision is discussed; one replaces the other.
+
 Genomic scores associate values with genomic positions, alleles, or intervals. GAIn distinguishes three types of genomic scores according to what each record describes:
 
 .. list-table::
@@ -148,7 +153,7 @@ A genomic score may have a histogram describing the distribution of its values. 
 
     hist = score.get_score_histogram("phastCons100way")
 
-The result may be a numeric, categorical, or null histogram. These types are described in :ref:`Reading a number histogram <histograms-reading-number>`, :ref:`Reading a categorical histogram <histograms-reading-categorical>`, and :ref:`Reading a null histogram <histograms-reading-null>`. Check the histogram type before using attributes specific to that type.
+The result may be a numeric, categorical, or null histogram. These types are described in :ref:`Reading a number histogram <histograms-new-reading-number>`, :ref:`Reading a categorical histogram <histograms-new-reading-categorical>`, and :ref:`Reading a null histogram <histograms-new-reading-null>`. Check the histogram type before using attributes specific to that type.
 
 When a resource defines only one score, the score ID can be omitted from ``get_score_histogram()``, ``get_histogram_config()``, ``get_score_range()``, and the two methods that retrieve histogram image URLs. These methods then use that resource's single score automatically. The dedicated :doc:`Histograms <histograms>` chapter explains histogram configurations, contents, and retrieval in more detail.
 
@@ -212,18 +217,23 @@ They are also exported by ``gain.grr``, as
 .. currentmodule:: gain.genomic_resources.genomic_scores
 
 .. autofunction:: build_score_from_resource
+   :no-index:
 
 .. autofunction:: build_score_from_resource_id
+   :no-index:
 
 .. autoclass:: GenomicScore
+   :no-index:
    :members:
 
 .. currentmodule:: gain.genomic_resources.score_def
 
 .. autoclass:: GenomicScoreDef
+   :no-index:
    :members:
 
 .. currentmodule:: gain.genomic_resources.score_filter
 
 .. autoclass:: ScoreFilter
+   :no-index:
    :members:

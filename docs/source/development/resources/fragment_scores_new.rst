@@ -1,6 +1,11 @@
 Fragment scores
 ===============
 
+.. note::
+
+   Draft for review: this page is a revision of :doc:`fragment_scores`. Both are
+   published while the revision is discussed; one replaces the other.
+
 :class:`~gain.genomic_resources.genomic_scores.FragmentScore` is the kind whose records are
 intervals. A fragment is a span of the genome carrying attributes:
 copy-number variants, ATAC fragments and region annotations are the typical
@@ -152,11 +157,15 @@ Inherited from ``GenomicScore``. The entries link to the page :doc:`scores`.
    GenomicScore.supports_region_value_arrays
 
 .. autofunction:: build_fragment_score_from_resource
+   :no-index:
 
 .. autofunction:: build_fragment_score_from_resource_id
+   :no-index:
 
 .. autoclass:: FragmentScore
+   :no-index:
    :members:
 
 .. autoclass:: FragmentAggregate
+   :no-index:
    :members:

@@ -2,6 +2,11 @@
 Position scores
 ===============
 
+.. note::
+
+   Draft for review: this page is a revision of :doc:`position_scores`. Both are
+   published while the revision is discussed; one replaces the other.
+
 Position score resources associate values with genomic positions. A record can describe a single position or a genomic interval, and the values depend only on the genomic location rather than on a particular allele. Examples include conservation scores such as ``phastCons100way`` and ``phyloP100way``, GC content, and recombination rates. These resources can be stored in tabix-indexed files, bigWig files, or in-memory tables. Their configuration is described in the :ref:`Position scores <grr-position-scores>` section of the GRR documentation.
 
 GAIn provides the :class:`~gain.genomic_resources.genomic_scores.PositionScore` Python class for retrieving and processing these values. ``PositionScore`` inherits the functionality described in :doc:`Genomic scores <scores>` and adds methods for querying individual positions, intervals, and bins.
@@ -46,7 +51,7 @@ The opening and closing behavior is described in more detail in :doc:`Genomic sc
 
 
 Retrieving position scores
--------------------------
+--------------------------
 
 Position scores provide several methods for retrieving values at individual genomic positions or across intervals. Each query specifies a chromosome and either a position (``pos``) or interval boundaries (``start`` and ``end``).
 
@@ -168,8 +173,11 @@ Inherited from ``GenomicScore``, which :doc:`scores` describes:
    GenomicScore.supports_region_value_arrays
 
 .. autofunction:: build_position_score_from_resource
+   :no-index:
 
 .. autofunction:: build_position_score_from_resource_id
+   :no-index:
 
 .. autoclass:: PositionScore
+   :no-index:
    :members:

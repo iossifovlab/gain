@@ -2,6 +2,11 @@
 Gene models
 ===========
 
+.. note::
+
+   Draft for review: this page is a revision of :doc:`gene_models`. Both are
+   published while the revision is discussed; one replaces the other.
+
 Gene models resources describe genes, their transcripts, and the exons that make up each transcript. GAIn provides the :class:`~gain.genomic_resources.gene_models.GeneModels` Python object for accessing these annotations. It reads the resource's data and represents individual transcripts as :class:`~gain.genomic_resources.gene_models.TranscriptModel` objects, making it possible to find transcripts by gene name or genomic location and examine their coding regions, untranslated regions, and exons.
 
 Gene models can be stored in several formats, including GTF, refFlat, refSeq, and CCDS. GAIn interprets these formats using the ``format`` setting in the resource definition, as described in :doc:`Genomic resources and repositories </grr>`.
@@ -139,14 +144,19 @@ The classes below are defined in the module
    Exon.contains
 
 .. autofunction:: build_gene_models_from_resource
+   :no-index:
 
 .. autofunction:: build_gene_models_from_resource_id
+   :no-index:
 
 .. autoclass:: GeneModels
+   :no-index:
    :members:
 
 .. autoclass:: TranscriptModel
+   :no-index:
    :members:
 
 .. autoclass:: Exon
+   :no-index:
    :members:

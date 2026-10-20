@@ -1,6 +1,11 @@
 Liftover chains
 ===============
 
+.. note::
+
+   Draft for review: this page is a revision of :doc:`liftover_chains`. Both are
+   published while the revision is discussed; one replaces the other.
+
 A liftover chain converts a coordinate from one genome assembly to another,
 for example from ``hg19`` to ``hg38``. The resource holds a UCSC chain file.
 The class that reads it is
@@ -99,8 +104,11 @@ and ``grr.build_liftover_chain_from_resource``.
    LiftoverChain.open
 
 .. autofunction:: build_liftover_chain_from_resource
+   :no-index:
 
 .. autofunction:: build_liftover_chain_from_resource_id
+   :no-index:
 
 .. autoclass:: LiftoverChain
+   :no-index:
    :members:

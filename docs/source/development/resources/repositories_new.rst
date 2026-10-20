@@ -2,6 +2,11 @@
 Repositories and resources
 ==========================
 
+.. note::
+
+   Draft for review: this page is a revision of :doc:`repositories`. Both are
+   published while the revision is discussed; one replaces the other.
+
 A Genomic Resource Repository (GRR) organizes genomic resources in a directory hierarchy. Each resource is defined by a ``genomic_resource.yaml`` file and may have associated data files. As described in :doc:`/grr`, a repository can be stored locally or accessed remotely.
 
 In Python, GAIn represents a repository with a :class:`~gain.genomic_resources.repository.GenomicResourceRepo` object and an individual resource with a :class:`~gain.genomic_resources.repository.GenomicResource` object. A repository object lets you find resources. A resource object provides access to its definition, metadata, and files.
@@ -165,12 +170,15 @@ The classes below are defined in the module
    Manifest.names
 
 .. autoclass:: GenomicResourceRepo
+   :no-index:
    :members:
 
 .. autoclass:: GenomicResource
+   :no-index:
    :members:
 
 .. autoclass:: Manifest
+   :no-index:
    :members:
 
 The repository builders below are defined in the module
@@ -190,12 +198,16 @@ The repository builders below are defined in the module
    get_default_grr_definition_path
 
 .. autofunction:: build_genomic_resource_repository
+   :no-index:
 
 .. autofunction:: build_genomic_resource_group_repository
+   :no-index:
 
 .. autofunction:: get_default_grr_definition
+   :no-index:
 
 .. autofunction:: get_default_grr_definition_path
+   :no-index:
 
 The genomic-context functions below are defined in the module
 ``gain.genomic_resources.genomic_context``. They are also exported by
@@ -210,5 +222,7 @@ The genomic-context functions below are defined in the module
    get_grr_from_context
 
 .. autofunction:: get_genomic_context
+   :no-index:
 
 .. autofunction:: get_grr_from_context
+   :no-index:

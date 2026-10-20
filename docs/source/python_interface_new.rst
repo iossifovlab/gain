@@ -1,6 +1,11 @@
 GAIn Python interface new
 =========================
 
+.. note::
+
+   Draft for review: this page is a revision of :doc:`python_interface`. Both are
+   published while the revision is discussed; one replaces the other.
+
 This section describes GAIn as a Python library. Use it to work with GRR
 resources directly from your own scripts, to embed GAIn in your own code, to
 add a resource implementation, or to write an annotator plugin.

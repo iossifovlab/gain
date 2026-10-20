@@ -1,6 +1,11 @@
 Allele scores
 =============
 
+.. note::
+
+   Draft for review: this page is a revision of :doc:`allele_scores`. Both are
+   published while the revision is discussed; one replaces the other.
+
 :class:`~gain.genomic_resources.genomic_scores.AlleleScore` is the kind whose records are
 alleles: each record gives scores for one substitution or allele, identified
 by chromosome, position, reference and alternative. Variant-level scores such
@@ -284,19 +289,26 @@ Inherited from ``GenomicScore``, which has its own page,
    GenomicScore.supports_region_value_arrays
 
 .. autofunction:: build_allele_score_from_resource
+   :no-index:
 
 .. autofunction:: build_allele_score_from_resource_id
+   :no-index:
 
 .. autoclass:: AlleleScore
+   :no-index:
    :members:
 
 .. autoclass:: AlleleAggregate
+   :no-index:
    :members:
 
 .. autoclass:: AlleleEntry
+   :no-index:
    :members:
 
 .. autoclass:: AlleleMultiplicityError
+   :no-index:
    :members:
 
 .. autofunction:: allele_key
+   :no-index:

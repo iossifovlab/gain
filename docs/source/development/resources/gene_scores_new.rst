@@ -1,6 +1,11 @@
 Gene scores
 ===========
 
+.. note::
+
+   Draft for review: this page is a revision of :doc:`gene_scores`. Both are
+   published while the revision is discussed; one replaces the other.
+
 A gene score attaches values to genes. A resource holds a table with one row
 for each gene and one column for each score, such as a constraint measure or
 a rank. The class that reads it is
@@ -146,11 +151,15 @@ and ``grr.build_gene_score_from_resource``.
    GeneScoreDef
 
 .. autofunction:: build_gene_score_from_resource
+   :no-index:
 
 .. autofunction:: build_gene_score_from_resource_id
+   :no-index:
 
 .. autoclass:: GeneScore
+   :no-index:
    :members:
 
 .. autoclass:: GeneScoreDef
+   :no-index:
    :members:
