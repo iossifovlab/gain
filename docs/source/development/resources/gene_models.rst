@@ -1,59 +1,57 @@
+
 Gene models
 ===========
 
-A :class:`~gain.genomic_resources.gene_models.GeneModels` object holds a gene
-annotation — genes, their transcripts, and the exons of each transcript —
-parsed out of whatever format the resource stores it in (GTF, refFlat,
-refSeq, CCDS and several others; :doc:`/grr` lists the formats and the
-``format`` key that selects one).
+Gene models resources describe genes, their transcripts, and the exons that make up each transcript. GAIn provides the :class:`~gain.genomic_resources.gene_models.GeneModels` Python object for accessing these annotations. It reads the resource's data and represents individual transcripts as :class:`~gain.genomic_resources.gene_models.TranscriptModel` objects, making it possible to find transcripts by gene name or genomic location and examine their coding regions, untranslated regions, and exons.
 
-Creating gene models
---------------------
+Gene models can be stored in several formats, including GTF, refFlat, refSeq, and CCDS. GAIn interprets these formats using the ``format`` setting in the resource definition, as described in :doc:`Genomic resources and repositories </grr>`.
 
-Build them from a resource id and a repository with
-:func:`~gain.genomic_resources.gene_models.build_gene_models_from_resource_id`,
-or from a resource you already hold with
-:func:`~gain.genomic_resources.gene_models.build_gene_models_from_resource`.
-Both are exported by ``gain.grr``:
+Accessing gene models
+---------------------
+
+A ``GeneModels`` object can be built from a resource ID and a repository using :func:`~gain.genomic_resources.gene_models.build_gene_models_from_resource_id`:
 
 .. code-block:: python
 
     import gain.grr as grr
 
     repo = grr.build_genomic_resource_repository()
-    genes = grr.build_gene_models_from_resource_id("hg38/gene_models/MANE/1.5", repo)
+    genes = grr.build_gene_models_from_resource_id(
+        "hg38/gene_models/MANE/1.5", repo
+    )
 
-Calls that find the same resource return the same object, so an earlier
-caller may have loaded it already.
-
-The lifecycle
--------------
-
-Unlike the other resource types, gene models are loaded wholly into memory
-rather than read from an open file. The consequence is that
-:meth:`~gain.genomic_resources.gene_models.GeneModels.load` is expensive and
-:meth:`~gain.genomic_resources.gene_models.GeneModels.close` does nothing.
-``load`` returns the object, so the call chains onto the builder:
+If you already have a ``GenomicResource`` object, you can use :func:`~gain.genomic_resources.gene_models.build_gene_models_from_resource` instead:
 
 .. code-block:: python
 
-    genes = grr.build_gene_models_from_resource_id("hg38/gene_models/MANE/1.5", repo).load()
+    resource = repo.get_resource("hg38/gene_models/MANE/1.5")
+    genes = grr.build_gene_models_from_resource(resource)
 
-:meth:`~gain.genomic_resources.gene_models.GeneModels.is_loaded` distinguishes
-a built-but-empty object from a loaded one, which library code that accepts
-either should check rather than calling ``load`` a second time.
+Both builder functions are available through ``gain.grr``. Calls that resolve to the same resource return the same ``GeneModels`` object, which may already have been loaded by another part of the program.
 
-Two lookups
------------
+Loading gene models
+-------------------
 
-:meth:`~gain.genomic_resources.gene_models.GeneModels.gene_models_by_gene_name`
-goes from a gene symbol to its transcripts, and returns ``None`` when the
-symbol is unknown — not an empty list, so a missing gene and a gene with no
-transcripts stay distinguishable.
+Unlike a reference genome, which retrieves sequences from an open FASTA file, a ``GeneModels`` object loads its annotation data into memory. Call :meth:`~gain.genomic_resources.gene_models.GeneModels.load` before querying genes or transcripts:
 
-:meth:`~gain.genomic_resources.gene_models.GeneModels.gene_models_by_location`
-goes the other way, from a position or an interval to the transcripts that
-overlap it, and returns a list:
+.. code-block:: python
+
+    genes = grr.build_gene_models_from_resource_id(
+        "hg38/gene_models/MANE/1.5", repo
+    ).load()
+
+The ``load()`` method returns the ``GeneModels`` object itself, allowing it to be chained to the builder as shown above. Use :meth:`~gain.genomic_resources.gene_models.GeneModels.is_loaded` to check whether an object has already been loaded, particularly in code that may receive either a newly built or an already-loaded object.
+
+Because the annotation is kept in memory rather than accessed through an open file handle, :meth:`~gain.genomic_resources.gene_models.GeneModels.close` does nothing. Gene models do not require the ``open()`` and ``close()`` operations used for some other resource types.
+
+Finding transcripts
+-------------------
+
+Once gene models are loaded, you can look up transcripts by gene name or genomic location.
+
+:meth:`~gain.genomic_resources.gene_models.GeneModels.gene_models_by_gene_name` returns the transcripts associated with a gene symbol. If the gene name is not found, it returns ``None`` rather than an empty list. This distinguishes an unknown gene from one that has no transcripts.
+
+:meth:`~gain.genomic_resources.gene_models.GeneModels.gene_models_by_location` returns a list of transcripts overlapping a specified genomic position or interval.
 
 .. code-block:: python
 
@@ -61,26 +59,18 @@ overlap it, and returns a list:
     for tm in transcripts or []:
         print(tm.tr_id, tm.chrom, tm.tx, tm.is_coding())
 
-    overlapping = genes.gene_models_by_location("chr17", 7_676_000, 7_690_000)
+    overlapping = genes.gene_models_by_location(
+        "chr17", 7_676_000, 7_690_000
+    )
 
-:meth:`~gain.genomic_resources.gene_models.GeneModels.join_gene_models`
-merges several loaded objects into one — the way to query a primary
-annotation and a supplementary one as a single set. The result is itself
-loaded, so it goes anywhere a loaded object goes, the effect annotators
-included; an input nobody loaded is refused rather than merged as empty.
-:meth:`~gain.genomic_resources.gene_models.GeneModels.from_transcript_models`
-is the constructor underneath: hand it a resource and a
-``dict[str, TranscriptModel]`` and it returns a loaded, indexed object
-holding exactly those transcripts — the way to build gene models out of
-transcripts assembled in code.
+The first lookup finds transcripts of ``TP53`` and prints each transcript's identifier, chromosome, transcribed interval, and coding status. The expression ``transcripts or []`` allows the loop to run safely even if the gene name is not found. The second lookup finds transcripts overlapping the specified interval on chromosome 17.
 
-Transcripts and exons
----------------------
+Working with transcripts and exons
+----------------------------------
 
-A :class:`~gain.genomic_resources.gene_models.TranscriptModel` is the unit
-most analyses work with. Its coordinates are plain attributes (``chrom``,
-``strand``, ``tx`` for the transcribed interval, ``cds`` for the coding one,
-``exons``), and its methods derive the parts you usually want:
+A :class:`~gain.genomic_resources.gene_models.TranscriptModel` represents an individual transcript. Its attributes include ``chrom`` (chromosome), ``strand`` (transcription orientation), ``tx`` (transcribed interval), ``cds`` (coding interval), and ``exons`` (the transcript's exons). Its methods can identify the coding and untranslated portions of a transcript and calculate their lengths.
+
+For example, after finding the transcripts of a gene, you can inspect the coding regions of one transcript:
 
 .. code-block:: python
 
@@ -91,22 +81,17 @@ most analyses work with. Its coordinates are plain attributes (``chrom``,
         print("5' UTR:", tm.utr5_regions())
         print("coding length:", tm.cds_len())
 
-:meth:`~gain.genomic_resources.gene_models.TranscriptModel.cds_regions`,
-:meth:`~gain.genomic_resources.gene_models.TranscriptModel.utr5_regions`,
-:meth:`~gain.genomic_resources.gene_models.TranscriptModel.utr3_regions` and
-:meth:`~gain.genomic_resources.gene_models.TranscriptModel.all_regions`
-each return a list of ``BedRegion``. Note that ``utr5``/``utr3`` are named
-for the *transcript's* orientation, so which end of the interval they fall on
-depends on ``strand``.
+The methods :meth:`~gain.genomic_resources.gene_models.TranscriptModel.cds_regions`, :meth:`~gain.genomic_resources.gene_models.TranscriptModel.utr5_regions`, :meth:`~gain.genomic_resources.gene_models.TranscriptModel.utr3_regions`, and :meth:`~gain.genomic_resources.gene_models.TranscriptModel.all_regions` each return a list of ``BedRegion`` objects. The 5' and 3' untranslated regions are defined relative to the direction of transcription, so their positions along the chromosome depend on the transcript's ``strand``.
 
-The exon list is :class:`~gain.genomic_resources.gene_models.Exon` objects.
-An exon's ``frame`` is the reading frame the effect-annotation engine needs,
-and it is not populated by parsing alone: ``None`` means "not computed yet",
-*not* "non-coding" (a non-coding exon has ``-1``). A resource whose source
-format carries no frames holds ``None`` until
-:meth:`~gain.genomic_resources.gene_models.TranscriptModel.update_frames`
-fills them in. ``Exon``'s three coordinates are described in its class
-documentation below rather than as separate entries.
+The ``exons`` attribute contains :class:`~gain.genomic_resources.gene_models.Exon` objects. Each exon has a ``frame`` value used by the effect-annotation machinery to determine its coding reading frame. An exon with ``frame = None`` has not had its frame computed, while ``frame = -1`` identifies a non-coding exon. These values should not be confused. If the source annotation does not provide reading frames, they remain ``None`` until :meth:`~gain.genomic_resources.gene_models.TranscriptModel.update_frames` calculates them. The ``Exon`` class documentation in the API reference describes its three coordinate attributes.
+
+Combining and constructing gene models
+--------------------------------------
+
+:meth:`~gain.genomic_resources.gene_models.GeneModels.join_gene_models` combines several loaded ``GeneModels`` objects into one. For example, a primary gene annotation and a supplementary annotation can be merged so that their transcripts can be queried together. The resulting object is already loaded and can be used wherever a loaded ``GeneModels`` object is expected, including by effect annotators. Each input must be loaded before it can be joined. An unloaded object is rejected rather than treated as an empty annotation.
+
+:meth:`~gain.genomic_resources.gene_models.GeneModels.from_transcript_models` constructs a loaded, indexed ``GeneModels`` object from a resource and a dictionary of transcript models (``dict[str, TranscriptModel]``). This is useful when transcript annotations have been assembled or modified programmatically and need to be used through the same interface as gene models loaded from a GRR.
+
 
 API
 ---

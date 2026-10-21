@@ -1,153 +1,117 @@
+
 Repositories and resources
 ==========================
 
-A Genomic Resource Repository (GRR) is a tree of directories, each of which
-may be a *resource*: a ``genomic_resource.yaml`` config plus the data files
-it names. In Python that tree is a
-:class:`~gain.genomic_resources.repository.GenomicResourceRepo`, and each
-directory it serves is a
-:class:`~gain.genomic_resources.repository.GenomicResource`.
+A Genomic Resource Repository (GRR) organizes genomic resources in a directory hierarchy. Each resource is defined by a ``genomic_resource.yaml`` file and may have associated data files. As described in :doc:`/grr`, a repository can be stored locally or accessed remotely.
 
-A ``GenomicResource`` is deliberately *generic*: it can tell you the
-resource's declared type through
-:meth:`~gain.genomic_resources.repository.GenomicResource.get_type`, but it
-has no behaviour specific to any of them — it reads config and files and
-stops there. Turning one into a reference genome or a score is the job of the
-typed builders described in the following pages, which is why every one of
-them takes a repository and an id rather than a bare path.
+In Python, GAIn represents a repository with a :class:`~gain.genomic_resources.repository.GenomicResourceRepo` object and an individual resource with a :class:`~gain.genomic_resources.repository.GenomicResource` object. A repository object lets you find resources. A resource object provides access to its definition, metadata, and files.
 
-Creating a repository
----------------------
+A ``GenomicResource`` is not the same as an object that interprets a specific kind of genomic data. For example, it can identify a resource as a reference genome or a position score, but it does not itself retrieve DNA sequences or score values. Those operations belong to specialized Python objects, such as ``ReferenceGenome`` and score objects, which are introduced in the following chapters. This chapter covers the repository and generic resource objects used to locate and inspect the underlying resources.
 
-Build a repository with
-:func:`~gain.genomic_resources.repository_factory.build_genomic_resource_repository`.
-It is exported by ``gain.grr``. Called with no arguments, it builds the repository named by the user's
-environment — in a standard installation, the public IossifovLab GRR. Passing
-a definition dictionary instead builds exactly the repository it describes:
+Accessing a repository
+----------------------
+
+The usual way to access a GRR from Python is with :func:`~gain.genomic_resources.repository_factory.build_genomic_resource_repository`, available through ``gain.grr``:
 
 .. code-block:: python
 
     import gain.grr as grr
 
-    # the environment's default repository
     repo = grr.build_genomic_resource_repository()
 
-    # one specific directory, as a repository of its own
+With no arguments, this function uses the default GRR configuration for the user's environment. If no custom configuration is available, a standard GAIn installation uses the public IossifovLab GRR.
+
+You can also provide a repository definition to access a particular GRR. For example, the following code accesses a local directory:
+
+.. code-block:: python
+
     local = grr.build_genomic_resource_repository({
         "id": "local_grr",
         "type": "directory",
         "directory": "/data/my-grr",
     })
 
-The definition dictionary is the same structure the ``.grr_definition.yaml``
-file holds. :doc:`/grr` documents its keys, the repository types available,
-and the ``cache_dir`` key — caching is a key any type can carry, not a type
-of its own.
+The dictionary uses the same structure as the ``.grr_definition.yaml`` file. The :doc:`Genomic resources and repositories </grr>` chapter explains the configuration fields and supported repository types, including ``cache_dir``. Caching can be configured for any repository type.
 
-:func:`~gain.genomic_resources.repository_factory.build_genomic_resource_group_repository`
-puts several repositories together as one group. Code that runs inside a
-genomic context gets the repository of that context with
-:func:`~gain.genomic_resources.genomic_context.get_grr_from_context`.
-
-The lifecycle
--------------
-
-A repository is built open: the builder returns it ready for lookups, and
-there is no ``open`` to call.
-:meth:`~gain.genomic_resources.repository.GenomicResourceRepo.close`
-releases what the repository holds. After the call, its ``definition`` is
-``None``.
-:meth:`~gain.genomic_resources.repository.GenomicResourceRepo.invalidate`
-drops the cached state instead, and the next access loads the resource list,
-the metadata and the file contents again.
-
-Closing the repository does not close the objects built through it. A
-reference genome or a score reads its own resource's files and has its own
-``close``.
+The ``build_genomic_resource_repository()`` function creates a Python object that provides access to a repository's resources. Multiple repositories can be combined into a group using :func:`~gain.genomic_resources.repository_factory.build_genomic_resource_group_repository`. Within a genomic context, the associated repository can be retrieved using :func:`~gain.genomic_resources.genomic_context.get_grr_from_context`.
 
 Finding a resource
 ------------------
 
-Two lookups differ only in what they do when nothing matches:
-:meth:`~gain.genomic_resources.repository.GenomicResourceRepo.get_resource`
-raises, and
-:meth:`~gain.genomic_resources.repository.GenomicResourceRepo.find_resource`
-returns ``None``. Use ``get_resource`` when the id is a constant in your
-program and its absence is a bug; use ``find_resource`` when the id came from
-outside and absence is an ordinary outcome.
-
-Both accept a ``version_constraint`` in the same spelling the annotation
-configuration uses, so a script can pin the resource it was written against:
+Resources are identified by path-like resource IDs. Once you have a repository object, you can retrieve a resource by its ID using :meth:`~gain.genomic_resources.repository.GenomicResourceRepo.get_resource`:
 
 .. code-block:: python
 
-    res = repo.get_resource("hg38/scores/phastCons100way", version_constraint=">=0")
-    print(res.get_full_id(), res.get_type())
+    resource = repo.get_resource("hg38/scores/phastCons100way")
+    print(resource.get_full_id(), resource.get_type())
 
-A constraint nothing satisfies is a lookup failure, not a silently older
-resource — ``get_resource`` raises and ``find_resource`` returns ``None``,
-the same way they treat an unknown id. Check the resource's actual version
-before pinning: many published resources are still at ``0``, so a plausible
-looking ``>=1.0`` will simply fail to resolve.
+Two methods are available for looking up a specific resource:
 
-To go the other way — from a property to the resources that have it — use
-:meth:`~gain.genomic_resources.repository.GenomicResourceRepo.search_resources`,
-which takes a full-text term, a resource type, or a wildcard query over
-resource ids and labels, and yields matches lazily:
+* :meth:`~gain.genomic_resources.repository.GenomicResourceRepo.get_resource` raises an exception if the resource cannot be found.
+* :meth:`~gain.genomic_resources.repository.GenomicResourceRepo.find_resource` returns ``None`` if no resource matches.
+
+Use ``get_resource()`` when a missing resource should stop the program, and ``find_resource()`` when a resource may legitimately be absent.
+
+Both methods accept an optional ``version_constraint``, using the same syntax as version constraints in annotation configuration files. For example:
 
 .. code-block:: python
 
-    for res in repo.search_resources(resource_type="position_score"):
-        print(res.get_id())
+    resource = repo.get_resource(
+        "hg38/scores/phastCons100way", version_constraint=">=0"
+    )
 
-:meth:`~gain.genomic_resources.repository.GenomicResourceRepo.get_all_resources`
-is the unfiltered form. Both are generators over a potentially large
-repository, so prefer to consume them lazily rather than materialising a
-list.
+If no resource satisfies the version constraint, the lookup fails just as it would for an unknown ID: ``get_resource()`` raises, while ``find_resource()`` returns ``None``. Many published resources have version ``0``, so check the available version before requiring a higher one, such as ``>=1.0``.
 
-Reading a resource
-------------------
-
-A resource exposes its metadata through small accessors —
-:meth:`~gain.genomic_resources.repository.GenomicResource.get_config`,
-:meth:`~gain.genomic_resources.repository.GenomicResource.get_type`,
-:meth:`~gain.genomic_resources.repository.GenomicResource.get_labels`,
-:meth:`~gain.genomic_resources.repository.GenomicResource.get_description` —
-and its files through a family of ``open_*`` methods that hide where the
-resource actually lives. The same call works whether the repository is a
-local directory, an HTTP mirror or an S3 bucket:
+If you do not know the resource ID, use :meth:`~gain.genomic_resources.repository.GenomicResourceRepo.search_resources`. It supports full-text search terms, resource types, and wildcard queries over resource IDs and labels. For example, to find position-score resources:
 
 .. code-block:: python
 
-    with res.open_raw_file("statistics/histogram_phastCons100way.json") as infile:
+    for resource in repo.search_resources(resource_type="position_score"):
+        print(resource.get_id())
+
+:meth:`~gain.genomic_resources.repository.GenomicResourceRepo.get_all_resources` iterates over all resources without filtering. Both methods return generators, which produce resources as you iterate; for a large repository, this avoids loading the entire result set into a list at once.
+
+Inspecting and reading a resource
+---------------------------------
+
+A ``GenomicResource`` provides information about a resource and access to its files without requiring you to know whether the GRR is stored in a local directory, an HTTP mirror, or an S3 bucket.
+
+Its metadata can be inspected through methods such as :meth:`~gain.genomic_resources.repository.GenomicResource.get_config`, :meth:`~gain.genomic_resources.repository.GenomicResource.get_type`, :meth:`~gain.genomic_resources.repository.GenomicResource.get_labels`, and :meth:`~gain.genomic_resources.repository.GenomicResource.get_description`. These describe the resource; they do not interpret the genomic data in its files.
+
+To read a file, specify its path within the resource. For example:
+
+.. code-block:: python
+
+    with resource.open_raw_file("statistics/histogram_phastCons100way.json") as infile:
         print(infile.read())
 
-:meth:`~gain.genomic_resources.repository.GenomicResource.open_raw_file` is
-the general one; the typed openers
-(:meth:`~gain.genomic_resources.repository.GenomicResource.open_tabix_file`,
-:meth:`~gain.genomic_resources.repository.GenomicResource.open_vcf_file`,
-:meth:`~gain.genomic_resources.repository.GenomicResource.open_fasta_file`,
-:meth:`~gain.genomic_resources.repository.GenomicResource.open_bigwig_file`)
-return the corresponding ``pysam`` or ``pyBigWig`` object, fetching the index
-alongside the data file where the format needs one.
+:meth:`~gain.genomic_resources.repository.GenomicResource.open_raw_file` provides general file access. Format-specific methods are also available: :meth:`~gain.genomic_resources.repository.GenomicResource.open_tabix_file`, :meth:`~gain.genomic_resources.repository.GenomicResource.open_vcf_file`, :meth:`~gain.genomic_resources.repository.GenomicResource.open_fasta_file`, and :meth:`~gain.genomic_resources.repository.GenomicResource.open_bigwig_file`. These return the appropriate ``pysam`` or ``pyBigWig`` objects and retrieve index files along with the data when the format requires them.
 
-The manifest
-------------
+For routine analyses, you will often use a specialized resource object rather than read files directly. For example, the reference-genome and genomic-score chapters explain how to create objects that provide methods for retrieving sequences or scores. The generic resource object is useful when you need to inspect resource metadata or work directly with its files.
 
-Every resource carries a :class:`~gain.genomic_resources.repository.Manifest`
-— the list of its files with their sizes and checksums. It is what lets a
-repository detect that a file has changed without reading it, and what a
-cached or mirrored repository compares against when it decides whether its
-copy is stale.
+Closing and refreshing a repository
+-----------------------------------
 
-:meth:`~gain.genomic_resources.repository.GenomicResource.get_manifest`
-returns it, *building* one if the resource has none. The build reads every
-file, so where it is possible at all it is expensive — and it needs a
-read-write protocol, so on a read-only mount a resource with no stored
-manifest fails here rather than building one.
-:meth:`~gain.genomic_resources.repository.GenomicResource.get_loaded_manifest`
-is the cheap counterpart — it returns the stored manifest or ``None``, and
-never builds one.
+A repository object is ready to use as soon as it is built. Unlike many specialized resource objects, it does not require a separate ``open()`` call.
+
+:meth:`~gain.genomic_resources.repository.GenomicResourceRepo.close` releases resources held by the repository. After ``close()`` is called, the repository's ``definition`` attribute is ``None``.
+
+:meth:`~gain.genomic_resources.repository.GenomicResourceRepo.invalidate` serves a different purpose: it clears the repository's cached state so that subsequent access reloads the resource list, metadata, and file contents. This can be useful if the underlying repository has changed.
+
+Closing a repository does not automatically close specialized Python objects created from its resources. For example, a reference genome or score object may hold its own open file handles and has its own ``close()`` method. The following chapters explain the opening and closing requirements for each resource type.
+
+The resource manifest
+---------------------
+
+Each resource can have a :class:`~gain.genomic_resources.repository.Manifest`, which records its files, sizes, and checksums. GAIn uses this information to detect changed files and to determine whether a cached or mirrored copy is out of date, without having to read the full contents of each file during that comparison.
+
+Two methods provide access to a resource's manifest:
+
+* :meth:`~gain.genomic_resources.repository.GenomicResource.get_loaded_manifest` returns an existing, loaded manifest, or ``None`` if there is none. It does not attempt to construct a manifest.
+* :meth:`~gain.genomic_resources.repository.GenomicResource.get_manifest` returns the manifest, constructing one if necessary. Constructing a manifest requires reading every file and can therefore be expensive.
+
+Building a missing manifest also requires a read-write protocol. If the repository is available only through a read-only mount, ``get_manifest()`` may fail when no stored manifest is available. Use ``get_loaded_manifest()`` when you only need to check an existing manifest without triggering that work.
+
 
 API
 ---

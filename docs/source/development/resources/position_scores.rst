@@ -1,24 +1,15 @@
+
 Position scores
 ===============
 
-:class:`~gain.genomic_resources.genomic_scores.PositionScore` is the kind whose records are
-per-base: each record gives one or more scores for a position or a run of
-positions. Typical resources are conservation tracks such as
-``phastCons100way`` and ``phyloP100way``, GC content and recombination rates:
-anything that depends only on the genomic position. The data lives in a
-tabix-indexed file, a bigWig or an in-memory table. The YAML side of the
-resource is documented in :ref:`grr-position-scores`.
+Position score resources associate values with genomic positions. A record can describe a single position or a genomic interval, and the values depend only on the genomic location rather than on a particular allele. Examples include conservation scores such as ``phastCons100way`` and ``phyloP100way``, GC content, and recombination rates. These resources can be stored in tabix-indexed files, bigWig files, or in-memory tables. Their configuration is described in the :ref:`Position scores <grr-position-scores>` section of the GRR documentation.
 
-Creating a position score
--------------------------
+GAIn provides the :class:`~gain.genomic_resources.genomic_scores.PositionScore` Python class for retrieving and processing these values. ``PositionScore`` inherits the functionality described in :doc:`Genomic scores <scores>` and adds methods for querying individual positions, intervals, and bins.
 
-Build it from a resource id and a repository with
-:func:`~gain.genomic_resources.genomic_scores.build_position_score_from_resource_id`, or from a
-resource you already hold with
-:func:`~gain.genomic_resources.genomic_scores.build_position_score_from_resource`. Both are
-exported by ``gain.grr``. The generic
-:func:`~gain.genomic_resources.genomic_scores.build_score_from_resource_id` returns the same
-object when the resource is a position score:
+Accessing a position score
+--------------------------
+
+A ``PositionScore`` object can be built from a resource ID and a repository using :func:`~gain.genomic_resources.genomic_scores.build_position_score_from_resource_id`:
 
 .. code-block:: python
 
@@ -26,93 +17,100 @@ object when the resource is a position score:
 
     repo = grr.build_genomic_resource_repository()
     score = grr.build_position_score_from_resource_id(
-        "hg38/scores/phastCons100way", repo)
+        "hg38/scores/phastCons100way", repo
+    )
 
-The lifecycle
--------------
+If you already have a ``GenomicResource`` object, use :func:`~gain.genomic_resources.genomic_scores.build_position_score_from_resource` instead:
 
-The score is built closed. Call ``open()`` before the first read and let a
-``with`` block close it; the rule is described on :doc:`scores`:
+.. code-block:: python
+
+    resource = repo.get_resource("hg38/scores/phastCons100way")
+    score = grr.build_position_score_from_resource(resource)
+
+Both functions are available through ``gain.grr``. The generic :func:`~gain.genomic_resources.genomic_scores.build_score_from_resource_id` function also returns a ``PositionScore`` object when the specified resource is a position score.
+
+Opening and closing a position score
+------------------------------------
+
+Position scores are initially closed and must be opened before reading their values. As with other genomic scores, call ``open()`` explicitly and use a ``with`` block to ensure that the object is closed afterward:
 
 .. code-block:: python
 
     with grr.build_position_score_from_resource_id(
-            "hg38/scores/phastCons100way", repo).open() as score:
+        "hg38/scores/phastCons100way", repo
+    ).open() as score:
         print(score.get_scores_at_position("chr21", 5_030_000))
 
-Groups of methods
------------------
+The opening and closing behavior is described in more detail in :doc:`Genomic scores <scores>`.
 
-Every read takes the locus first (``chrom`` and either ``pos`` or
-``start`` and ``end``). The reads come in a plural form and a singular form,
-named without the ``s``. The plural point and region reads take a list of
-score ids and answer a tuple of values parallel to it, or every score the
-resource defines when the list is omitted. The reduced and binned reads take
-a list of aggregation queries instead, one for each score and aggregator. The
-singular form takes one ``score`` (and, for the reduced and binned reads, an
-``aggregator``) and answers one value.
+
+
+Retrieving position scores
+--------------------------
+
+Position scores provide several methods for retrieving values at individual genomic positions or across intervals. Each query specifies a chromosome and either a position (``pos``) or interval boundaries (``start`` and ``end``).
+
+Most operations have both plural and singular forms. Plural methods, named ``get_scores_...``, retrieve multiple scores. For position and region queries, they accept a list of score IDs and return tuples with values in the corresponding order. If the list is omitted, they retrieve all scores defined by the resource. Singular methods, named ``get_score_...``, retrieve one specified score and return individual values rather than tuples.
+
+Aggregation and binning methods follow a similar distinction, but their plural forms accept a list of aggregation queries, each specifying a score and an aggregator. Their singular forms take a single score and aggregator.
 
 .. list-table::
    :header-rows: 1
-   :widths: 25 45 30
+   :widths: 24 48 28
 
-   * - Group
+   * - Query
      - Methods
-     - Answers
-   * - A position
-     - :meth:`~gain.genomic_resources.genomic_scores.PositionScore.get_scores_at_position`,
-       :meth:`~gain.genomic_resources.genomic_scores.PositionScore.get_score_at_position`
-     - the values at one position
-   * - A region, per position
-     - :meth:`~gain.genomic_resources.genomic_scores.PositionScore.get_scores_in_region`,
-       :meth:`~gain.genomic_resources.genomic_scores.PositionScore.get_score_in_region`
-     - one entry for every position of the interval
-   * - A region, reduced
-     - :meth:`~gain.genomic_resources.genomic_scores.PositionScore.get_scores_in_region_agg`,
-       :meth:`~gain.genomic_resources.genomic_scores.PositionScore.get_score_in_region_agg`
-     - one value for each query
-   * - A region, binned
-     - :meth:`~gain.genomic_resources.genomic_scores.PositionScore.get_scores_in_bins`,
-       :meth:`~gain.genomic_resources.genomic_scores.PositionScore.get_score_in_bins`
-     - one reduced value for each fixed-width bin
+     - Result
+   * - Single position
+     - :meth:`~gain.genomic_resources.genomic_scores.PositionScore.get_scores_at_position`, :meth:`~gain.genomic_resources.genomic_scores.PositionScore.get_score_at_position`
+     - Score values at one position
+   * - Positions across a region
+     - :meth:`~gain.genomic_resources.genomic_scores.PositionScore.get_scores_in_region`, :meth:`~gain.genomic_resources.genomic_scores.PositionScore.get_score_in_region`
+     - Values for each position in the region
+   * - Aggregated region
+     - :meth:`~gain.genomic_resources.genomic_scores.PositionScore.get_scores_in_region_agg`, :meth:`~gain.genomic_resources.genomic_scores.PositionScore.get_score_in_region_agg`
+     - One aggregated value per query
+   * - Binned region
+     - :meth:`~gain.genomic_resources.genomic_scores.PositionScore.get_scores_in_bins`, :meth:`~gain.genomic_resources.genomic_scores.PositionScore.get_score_in_bins`
+     - Aggregated values for each bin
    * - Raw records
-     - :meth:`~gain.genomic_resources.genomic_scores.GenomicScore.fetch_records`,
-       :meth:`~gain.genomic_resources.genomic_scores.GenomicScore.fetch_region_segments_scores`
-     - the table's records, at their own extent
+     - :meth:`~gain.genomic_resources.genomic_scores.GenomicScore.fetch_records`, :meth:`~gain.genomic_resources.genomic_scores.GenomicScore.fetch_region_segments_scores`
+     - Records at their original genomic extents
 
-The last group belongs to the base class and is described on
-:doc:`scores`, together with the lifecycle, filtering, histograms and the
-chromosome reads that all kinds share.
-
-Reading positions and regions
------------------------------
-
-:meth:`~gain.genomic_resources.genomic_scores.PositionScore.get_scores_at_position`
-returns one tuple for one position;
-:meth:`~gain.genomic_resources.genomic_scores.PositionScore.get_scores_in_region`
-yields one tuple per position of an interval. Both return ``None`` in the
-slot of a score that has no value there, which is how "uncovered" is
-distinguished from a genuine zero:
+For example, ``get_scores_at_position()`` returns a tuple containing the requested score values at a single genomic position, while ``get_scores_in_region()`` yields one tuple for each position in an interval:
 
 .. code-block:: python
 
-    for values in score.get_scores_in_region("chr21", 5_030_000, 5_030_010):
-        print(values)
+    with score.open() as opened_score:
+        print(opened_score.get_scores_at_position("chr21", 5_030_000))
 
-Aggregating a region
---------------------
+        for values in opened_score.get_scores_in_region(
+            "chr21", 5_030_000, 5_030_010
+        ):
+            print(values)
 
-Where you want an interval reduced to a single number rather than a value per
-base, use the aggregating forms —
-:meth:`~gain.genomic_resources.genomic_scores.PositionScore.get_score_in_region_agg`
-for one score, or
-:meth:`~gain.genomic_resources.genomic_scores.PositionScore.get_scores_in_region_agg`
-for several queries at once. Each score's default aggregator comes from its
-configuration; ``DEFAULT_AGGREGATORS`` on each class gives the fallback per
-value type when the configuration names none.
-:meth:`~gain.genomic_resources.genomic_scores.PositionScore.get_scores_in_bins`
-is the same reduction applied to a grid of fixed-width bins, which is what a
-genome-browser-style plot wants.
+Use the corresponding singular methods, ``get_score_at_position()`` and ``get_score_in_region()``, when you need only one score. If a score has no value at a position, the result contains ``None`` for that score. This distinguishes positions without data from positions whose score is genuinely zero.
+
+The raw-record methods in the table are inherited from ``GenomicScore``. The shared interfaces for filtering, histograms, chromosome information, and reading data arrays are documented in :doc:`Genomic scores <scores>`. Aggregation and binning are described in the following subsections.
+
+
+
+
+
+Aggregating scores across regions
+---------------------------------
+
+When you need one summary value for a genomic interval rather than a value at each position, use :meth:`~gain.genomic_resources.genomic_scores.PositionScore.get_score_in_region_agg` for a single score or :meth:`~gain.genomic_resources.genomic_scores.PositionScore.get_scores_in_region_agg` for multiple aggregation queries.
+
+An aggregator determines how values are combined across a region. Each score can specify a default aggregator in its resource configuration. If none is specified, GAIn uses the fallback for that value type defined in ``DEFAULT_AGGREGATORS``. For multiple queries, the returned values follow the order of the queries, including when the same score is requested with different aggregators.
+
+Retrieving scores in bins
+-------------------------
+
+:meth:`~gain.genomic_resources.genomic_scores.PositionScore.get_score_in_bins` and :meth:`~gain.genomic_resources.genomic_scores.PositionScore.get_scores_in_bins` aggregate scores within a series of fixed-width bins across a genomic region. Instead of producing a single result for the entire region, they produce a summary for each bin.
+
+This is useful for displaying position scores at different genomic resolutions, such as in a genome-browser-style plot. As with region aggregation, the singular method takes one score and aggregator, while the plural method accepts multiple aggregation queries.
+
 
 API
 ---
