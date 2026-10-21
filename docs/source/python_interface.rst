@@ -1,5 +1,5 @@
-GAIn Python interface
-=====================
+GAIn Python interface new
+=========================
 
 This section describes GAIn as a Python library. Use it to work with GRR
 resources directly from your own scripts, to embed GAIn in your own code, to

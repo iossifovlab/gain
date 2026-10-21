@@ -1,4 +1,4 @@
-Overview of the GAIn Python interface
+Overview and examples
 =====================================
 
 The command-line workflow is designed for specific GAIn tasks, such as annotating variants, positions, or regions 
