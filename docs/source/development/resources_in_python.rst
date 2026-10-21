@@ -8,7 +8,7 @@ Each resource in a GRR is identified by a resource ID and has a definition descr
 
 This section focuses on accessing and using existing genomic resources through Python. Defining new resources, configuring their properties in ``genomic_resource.yaml``, and managing them with ``grr_manage`` are covered separately in the :doc:`Genomic resources and repositories <../grr>` documentation.
 
-The following chapters describe the Python interfaces for different types of genomic resources, beginning with repositories and resources themselves. Readers unfamiliar with the Python interface may first consult the :doc:`Overview of the GAIn Python interface <overview>`, which provides practical examples.
+The following chapters describe the Python interfaces for different types of genomic resources, beginning with repositories and resources themselves. Readers unfamiliar with the Python interface may first consult the :doc:`overview` page, which provides practical examples.
 
 .. toctree::
    :maxdepth: 2
