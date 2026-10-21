@@ -277,11 +277,25 @@ def test_region_aggregation_without_an_overlapping_record(
     assert not no_rows
 
 
+@pytest.fixture
+def before_enforcement(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the reads to the warning answer, whatever ``gain`` is installed."""
+    monkeypatch.setattr(
+        resource_types, "allele_multiplicity_enforced", lambda: False)
+
+
+@pytest.fixture
+def after_enforcement(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the reads to the error answer of the enforcement release."""
+    monkeypatch.setattr(
+        resource_types, "allele_multiplicity_enforced", lambda: True)
+
+
+@pytest.mark.usefixtures("before_enforcement")
 def test_several_records_on_a_one_resource_warn_and_give_the_first(
     tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Before the enforcement release, the read warns and reads row one."""
-    assert not resource_types.allele_multiplicity_enforced()
     score = _built_score(tmp_path)
 
     with caplog.at_level(logging.WARNING):
@@ -293,6 +307,7 @@ def test_several_records_on_a_one_resource_warn_and_give_the_first(
         "chr1", 20, "A", "G") == [(0.2,), (0.3,)]
 
 
+@pytest.mark.usefixtures("before_enforcement")
 def test_filter_applies_only_to_the_first_record(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -302,6 +317,17 @@ def test_filter_applies_only_to_the_first_record(
 
     assert score.get_allele_scores_for_allele(
         "chr1", 20, "A", "G", score_filter=keep_second) is None
+
+
+@pytest.mark.usefixtures("after_enforcement")
+def test_several_records_on_a_one_resource_raise_after_enforcement(
+    tmp_path: pathlib.Path,
+) -> None:
+    """From the enforcement release on, the single-record read refuses."""
+    score = _built_score(tmp_path)
+
+    with pytest.raises(AlleleMultiplicityError):
+        score.get_allele_scores_for_allele("chr1", 20, "A", "G")
 
 
 def test_many_resource_refuses_every_single_record_read(
