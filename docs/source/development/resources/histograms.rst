@@ -278,8 +278,10 @@ For example:
     number_histogram [0, 1]
 
 The ``get_histogram_filename()`` method determines the appropriate
-histogram filename. It returns the ``.yaml`` filename when one is listed
-in the resource manifest, or the ``.json`` filename otherwise. This is
+histogram filename. It returns the gzipped ``.json.gz`` filename when the
+resource manifest lists it together with a truncated sidecar. Otherwise, it
+returns the ``.yaml`` filename when one is listed in the resource manifest,
+or the ``.json`` filename. This is
 preferable to specifying the filename manually.
 
 When ``load_histogram()`` encounters a missing file, an unrecognized

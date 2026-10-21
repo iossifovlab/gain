@@ -159,7 +159,8 @@ There is no singular region aggregation method.
 These methods return an
 :class:`~gain.genomic_resources.genomic_scores.AlleleAggregate` object,
 which contains the aggregated ``values`` and the allele keys matched by the
-query. The values are ordered according to the aggregation queries, not
+query. The allele keys are present only when the call asks for them with the
+``allele_keys`` argument; otherwise ``allele_keys`` is ``None``. The values are ordered according to the aggregation queries, not
 indexed by score ID. Thus, asking for the same score with two different
 aggregators produces two results. Region aggregation processes the matching
 records in a single traversal, keeping the aggregate values and matched
