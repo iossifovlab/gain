@@ -1,6 +1,6 @@
 
-Genomes
-=======
+Reference genomes
+=================
 
 .. note::
 

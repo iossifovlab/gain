@@ -1,6 +1,6 @@
 
-Accessing genomic resources
-===========================
+Genomic resources
+=================
 
 .. note::
 

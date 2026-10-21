@@ -1,25 +1,13 @@
+
 Gene set collections
 ====================
 
-.. note::
+Gene set collections organize related groups of genes. Each gene set has a name, a description, and a list of gene symbols. For example, the Gene Ontology (GO) collection contains gene sets associated with biological processes, molecular functions, and cellular components. GAIn provides the :class:`~gain.gene_sets.gene_set.GeneSetCollection` Python class for accessing these resources. Individual gene sets are represented by :class:`~gain.gene_sets.gene_set.GeneSet` objects.
 
-   Draft for review: this page is a revision of :doc:`gene_sets`. Both are
-   published while the revision is discussed; one replaces the other.
+Accessing a gene set collection
+-------------------------------
 
-A gene set collection is a named group of gene sets. Each gene set has a
-name, a description and a list of gene symbols, for example the candidate
-genes of a disorder. The class that reads a resource is
-:class:`~gain.gene_sets.gene_set.GeneSetCollection`, and each of its sets is
-a :class:`~gain.gene_sets.gene_set.GeneSet`.
-
-Creating a gene set collection
-------------------------------
-
-Build it from a resource id and a repository with
-:func:`~gain.gene_sets.gene_set.build_gene_set_collection_from_resource_id`,
-or from a resource you already hold with
-:func:`~gain.gene_sets.gene_set.build_gene_set_collection_from_resource`.
-Both are exported by ``gain.grr``. Call ``load`` before the first read:
+A ``GeneSetCollection`` object can be built from a resource ID and a repository using :func:`~gain.gene_sets.gene_set.build_gene_set_collection_from_resource_id`:
 
 .. code-block:: python
 
@@ -27,65 +15,84 @@ Both are exported by ``gain.grr``. Call ``load`` before the first read:
 
     repo = grr.build_genomic_resource_repository()
     collection = grr.build_gene_set_collection_from_resource_id(
-        "gene_properties/gene_sets/main", repo).load()
+        "gene_properties/gene_sets/GO_2025-07-22_release", repo
+    )
 
-    for gene_set in collection.get_all_gene_sets():
-        print(gene_set.name, gene_set.count, gene_set.desc)
-    print(collection.get_gene_set("epilepsy").syms)
+If you already have a ``GenomicResource`` object, use :func:`~gain.gene_sets.gene_set.build_gene_set_collection_from_resource` instead:
 
-For a collection with two gene sets, the example prints:
+.. code-block:: python
+
+    resource = repo.get_resource(
+        "gene_properties/gene_sets/GO_2025-07-22_release"
+    )
+    collection = grr.build_gene_set_collection_from_resource(resource)
+
+Both builder functions are available through ``gain.grr``.
+
+Loading a gene set collection
+-----------------------------
+
+A newly built collection must be loaded before its gene sets can be accessed. Call :meth:`~gain.gene_sets.gene_set.GeneSetCollection.load` to read the gene sets from the resource into memory:
+
+.. code-block:: python
+
+    collection.load()
+
+The ``load()`` method returns the collection itself, so it can also be chained to a builder function. GAIn reuses the same ``GeneSetCollection`` object when the same resource is requested again, and that object may already be loaded. Calling ``load()`` on an already-loaded collection has no effect. Use :meth:`~gain.gene_sets.gene_set.GeneSetCollection.is_loaded` to check its state. The collection does not maintain an open file handle and has no ``close()`` method.
+
+Retrieving gene sets
+--------------------
+
+:meth:`~gain.gene_sets.gene_set.GeneSetCollection.get_all_gene_sets` returns a list of all gene sets in the collection. :meth:`~gain.gene_sets.gene_set.GeneSetCollection.get_gene_set` retrieves one gene set by name and returns ``None`` if the name is not found.
+
+A ``GeneSet`` object has four attributes: ``name``, ``desc`` (description), ``syms`` (gene symbols), and ``count`` (number of gene symbols).
+
+For example, the following code retrieves the number of gene sets in the GO collection and examines one of them:
+
+.. code-block:: python
+
+    gene_sets = collection.get_all_gene_sets()
+    print("Number of gene sets:", len(gene_sets))
+
+    selected = collection.get_gene_set(
+        "GO:0000009-alpha-1,6-mannosyltransferase_activity"
+    )
+    print(selected.name, selected.count)
+    print(selected.syms)
 
 .. code-block:: text
 
-    autism_candidates 3 Autism candidates
-    epilepsy 2 Epilepsy genes
-    ['SCN2A', 'CHD8']
+    Number of gene sets: 21608
+    GO:0000009-alpha-1,6-mannosyltransferase_activity 3
+    ['ALG12', 'ALG2', 'PIGV']
 
-The lifecycle
--------------
-
-The builder memoizes collections for each resource. A second build of the
-same resource returns the same collection, and that collection may already be
-loaded. Call
-:meth:`~gain.gene_sets.gene_set.GeneSetCollection.load` before the first read.
-It reads the gene sets from the resource and returns the collection, so the
-call chains. A call to ``load`` on a loaded collection does nothing.
-:meth:`~gain.gene_sets.gene_set.GeneSetCollection.is_loaded` reports the
-state. A collection holds no file handle, so it has no ``close``.
-
-Reading gene sets
------------------
-
-:meth:`~gain.gene_sets.gene_set.GeneSetCollection.get_gene_set` returns one
-gene set by its name, or ``None`` when the name is unknown.
-:meth:`~gain.gene_sets.gene_set.GeneSetCollection.get_all_gene_sets` returns
-all of them as a list.
-
-A :class:`~gain.gene_sets.gene_set.GeneSet` has four attributes: ``name``,
-``desc``, ``syms`` (the gene symbols) and ``count`` (the number of symbols).
-
-The collection also carries its ``collection_id``, taken from the ``id:`` key
-of the resource, and the ``web_label`` and ``web_format_str`` that a web
-interface uses to show the sets.
+The collection also has a ``collection_id``, taken from the resource's ``id:`` setting. Its ``web_label`` and ``web_format_str`` attributes provide formatting information used when displaying gene sets in a web interface.
 
 Resource formats
 ----------------
 
-The ``format:`` key of the resource chooses how the sets are stored: one file
-for each set in a directory (``directory``), a GMT file (``gmt``), or a
-mapping file from gene to set (``map``). The three formats give the same
-objects. The keys of each format are described on :doc:`/grr`.
+The ``format:`` setting in the resource definition determines how gene sets are stored. GAIn supports three formats:
 
-Statistics
-----------
+* ``directory`` stores each gene set in a separate file within a directory.
+* ``gmt`` stores the gene sets in a GMT file.
+* ``map`` stores mappings from genes to gene sets.
 
-A statistics build stores two histograms for a collection: the number of
-genes in each gene set, and the number of gene sets that contain each gene.
-:meth:`~gain.gene_sets.gene_set.GeneSetCollection.get_genes_per_gene_set_hist`
-and
-:meth:`~gain.gene_sets.gene_set.GeneSetCollection.get_gene_sets_per_gene_hist`
-read them, and each returns ``None`` when the resource has no stored
-histogram. :doc:`histograms` describes the result.
+All three formats are loaded into the same ``GeneSetCollection`` and ``GeneSet`` Python objects. The resource configuration options are described in :doc:`Genomic resources and repositories </grr>`.
+
+Gene set statistics
+-------------------
+
+A statistics build stores two histograms for a gene set collection. One describes the number of genes in each gene set. The other describes the number of gene sets containing each gene.
+
+The methods :meth:`~gain.gene_sets.gene_set.GeneSetCollection.get_genes_per_gene_set_hist` and :meth:`~gain.gene_sets.gene_set.GeneSetCollection.get_gene_sets_per_gene_hist` retrieve these histograms:
+
+.. code-block:: python
+
+    genes_per_set = collection.get_genes_per_gene_set_hist()
+    sets_per_gene = collection.get_gene_sets_per_gene_hist()
+
+Each method returns ``None`` if the corresponding histogram is not stored in the resource. Histogram objects and their contents are explained in :doc:`Histograms <histograms>`.
+
 
 API
 ---

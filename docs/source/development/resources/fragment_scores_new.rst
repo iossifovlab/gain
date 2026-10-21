@@ -1,6 +1,8 @@
+
 Fragment scores
 ===============
 
+<<<<<<< HEAD
 .. note::
 
    Draft for review: this page is a revision of :doc:`fragment_scores`. Both are
@@ -12,17 +14,16 @@ copy-number variants, ATAC fragments and region annotations are the typical
 examples. Unlike a position score, a fragment keeps its own extent, and
 fragments may overlap one another. The YAML side of the resource is
 documented in :ref:`grr-fragment-scores`.
+=======
+Fragment score resources associate values with genomic intervals. Each record describes a fragment with its own start and end coordinates and one or more attributes. Examples include copy-number variants, ATAC fragments, and other region annotations. Unlike position scores, which describe values at genomic positions, fragment scores preserve the extent of each interval. Different fragments may also overlap one another.
+>>>>>>> 8ca1c3e02 (python interface new, all Genomic resources sections revised)
 
-Creating a fragment score
--------------------------
+GAIn provides the :class:`~gain.genomic_resources.genomic_scores.FragmentScore` Python class for retrieving and processing these records. ``FragmentScore`` inherits the functionality described in :doc:`Genomic scores <scores>` and adds methods for querying fragments according to their positions relative to a genomic interval or position. The resource configuration is described in the :ref:`Fragment scores <grr-fragment-scores>` section of the GRR documentation.
 
-Build it with :func:`~gain.genomic_resources.genomic_scores.build_fragment_score_from_resource_id`
-or, from a resource you already hold,
-:func:`~gain.genomic_resources.genomic_scores.build_fragment_score_from_resource`. The resource
-declares ``type: fragment_score``; the older name ``cnv_collection`` is
-still accepted, with a deprecation warning. The generic
-:func:`~gain.genomic_resources.genomic_scores.build_score_from_resource_id` returns the same
-object. Both typed builders are exported by ``gain.grr``:
+Accessing a fragment score
+--------------------------
+
+A ``FragmentScore`` object can be built from a resource ID and a repository using :func:`~gain.genomic_resources.genomic_scores.build_fragment_score_from_resource_id`:
 
 .. code-block:: python
 
@@ -30,74 +31,87 @@ object. Both typed builders are exported by ``gain.grr``:
 
     repo = grr.build_genomic_resource_repository()
     score = grr.build_fragment_score_from_resource_id(
-        "hg38/scores/my_CNVcollection", repo)
+        "hg38/scores/my_CNVcollection", repo
+    )
 
-The lifecycle
--------------
+If you already have a ``GenomicResource`` object, use :func:`~gain.genomic_resources.genomic_scores.build_fragment_score_from_resource` instead:
 
-As with every score, the object is built closed. Call ``open()`` before the
-first read and let a ``with`` block close it; the rule is described on
-:doc:`scores`:
+.. code-block:: python
+
+    resource = repo.get_resource("hg38/scores/my_CNVcollection")
+    score = grr.build_fragment_score_from_resource(resource)
+
+Both builder functions are available through ``gain.grr``. The generic :func:`~gain.genomic_resources.genomic_scores.build_score_from_resource_id` function also returns a ``FragmentScore`` object when the specified resource is a fragment score.
+
+Fragment score resources use ``type: fragment_score`` in their resource definitions. The older type name ``cnv_collection`` is still accepted, but produces a deprecation warning.
+
+Opening and closing a fragment score
+------------------------------------
+
+A ``FragmentScore`` object is initially closed and must be opened before reading its values. As with other genomic scores, call ``open()`` explicitly and use a ``with`` block to close the object afterward:
 
 .. code-block:: python
 
     with grr.build_fragment_score_from_resource_id(
-            "hg38/scores/my_CNVcollection", repo).open() as score:
+        "hg38/scores/my_CNVcollection", repo
+    ).open() as score:
         for begin, end, values in score.get_fragment_scores_overlapping_region(
-                "chr1", 1_000_000, 2_000_000):
+            "chr1", 1_000_000, 2_000_000
+        ):
             print(begin, end, values)
 
-Groups of methods
------------------
+This example retrieves fragments that overlap the specified region, reporting each fragment's start and end coordinates and its associated score values. The opening and closing behavior is described in more detail in :doc:`Genomic scores <scores>`.
 
-Each read exists in a plural form, which takes a ``scores`` list and returns
-values parallel to it, and a singular form that takes one ``score``. The
-locus is positional; every other argument is keyword-only. The method name
-says which relation to the query it uses:
+Retrieving fragment scores
+-------------------------
 
-.. list-table::
+Fragment scores provide three ways to select records according to their genomic locations:
+
+* Overlapping a region: retrieve fragments that intersect the query interval, including fragments that extend beyond its boundaries.
+* Covering a position: retrieve fragments that contain the specified genomic position.
+* Starting in a region: retrieve fragments whose starting coordinates fall within the query interval, even if they extend beyond it.
+
+Most query methods have plural and singular forms. Plural methods, named ``get_fragment_scores_...``, take a list of score IDs (``scores``) and return values in the corresponding order for each matching fragment. Singular methods, named ``get_fragment_score_...``, take one score ID (``score``) and return its value for each matching fragment. The genomic location is supplied through positional arguments, while the remaining arguments are supplied by keyword.
+
+.. list-table:: Fragment score query methods
    :header-rows: 1
    :widths: 25 45 30
 
-   * - Relation
+   * - Query
      - Methods
-     - Answers
+     - Result
    * - Overlapping a region
-     - :meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_fragment_scores_overlapping_region`,
-       :meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_fragment_score_overlapping_region`
-     - ``(begin, end, values)`` for each fragment that intersects the region
+     - :meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_fragment_scores_overlapping_region`, :meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_fragment_score_overlapping_region`
+     - ``(begin, end, values)`` for each overlapping fragment
    * - Covering a position
-     - :meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_fragment_scores_at_position`,
-       :meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_fragment_score_at_position`
-     - the fragments that contain one point
+     - :meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_fragment_scores_at_position`, :meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_fragment_score_at_position`
+     - Fragments containing the specified position
    * - Starting in a region
-     - :meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_fragment_scores_starting_in_region`,
-       :meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_fragment_score_starting_in_region`
-     - the fragments that begin inside the region, so that adjacent windows
-       partition the fragments
-   * - Reduced
-     - :meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_fragment_scores_overlapping_region_agg`,
-       :meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_fragment_score_overlapping_region_agg`
-     - a :class:`~gain.genomic_resources.genomic_scores.FragmentAggregate`: one value for each query
-       and the number of fragments seen
-   * - Binned
+     - :meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_fragment_scores_starting_in_region`, :meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_fragment_score_starting_in_region`
+     - Fragments whose starts fall within the region
+   * - Aggregated region
+     - :meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_fragment_scores_overlapping_region_agg`, :meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_fragment_score_overlapping_region_agg`
+     - Aggregated values and the number of matching fragments
+   * - Binned region
      - :meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_scores_in_bins`
-     - one reduced value for each fixed-width bin
+     - Aggregated values for fixed-width bins
 
-The reads that return fragments accept a ``score_filter``, compiled by
-:meth:`~gain.genomic_resources.genomic_scores.GenomicScore.compile_filter`; the overlapping reads
-also accept the two overlap-fraction thresholds
-``min_region_overlap_fraction`` and ``min_fragment_overlap_fraction``.
+The distinction between overlapping and starting in a region matters when analyzing adjacent genomic windows. A fragment extending across the boundary of two windows appears in the results of both overlapping-region queries. Counting or summing these results across windows can therefore count the same fragment more than once. With ``starting_in_region`` queries, each fragment belongs to the window containing its starting coordinate, so adjacent nonoverlapping windows can divide the fragments without duplication.
 
-Which relation to use
----------------------
+Methods that return individual fragments accept an optional ``score_filter``, created using :meth:`~gain.genomic_resources.genomic_scores.GenomicScore.compile_filter`. Overlapping-region reads also accept ``min_region_overlap_fraction`` and ``min_fragment_overlap_fraction`` to restrict results according to how much a fragment overlaps the query region. The general filtering interface is explained in :doc:`Genomic scores <scores>`.
 
-The method names of :class:`~gain.genomic_resources.genomic_scores.FragmentScore` say exactly which relation to the query region they use:
-``overlapping_region`` for fragments that intersect it,
-``starting_in_region`` for fragments that begin inside it, ``at_position``
-for those covering one point. The distinction matters: summing a score over
-overlapping fragments double-counts a fragment that straddles two adjacent
-query windows, and the ``starting_in`` form is the one that tiles.
+Aggregating fragment scores
+---------------------------
+
+When you need a summary of the fragments overlapping a genomic region rather than the individual records, use :meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_fragment_scores_overlapping_region_agg` or its singular counterpart, :meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_fragment_score_overlapping_region_agg`.
+
+These methods combine the matching score values using the requested aggregators and return a :class:`~gain.genomic_resources.genomic_scores.FragmentAggregate` object. The result contains an aggregated value for each query and the number of fragments seen. The shared aggregation interface is described in :doc:`Genomic scores <scores>`.
+
+Retrieving scores in bins
+-------------------------
+
+:meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_scores_in_bins` divides a query region into fixed-width bins and calculates aggregated scores for each bin. Instead of returning the individual fragments or a single aggregate for the entire region, it provides a series of summaries across the interval. This is useful when displaying or analyzing fragment scores at a chosen genomic resolution.
+
 
 API
 ---

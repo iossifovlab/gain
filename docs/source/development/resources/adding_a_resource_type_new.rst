@@ -1,82 +1,62 @@
-Adding a resource type
-======================
 
-.. note::
+Adding new resource types
+=========================
 
-   Draft for review: this page is a revision of :doc:`adding_a_resource_type`. Both are
-   published while the revision is discussed; one replaces the other.
+GAIn supports different types of genomic resources, such as reference genomes, genomic scores, and gene set collections. New resource types can also be added without modifying GAIn itself. This allows external Python packages to extend the kinds of data that a Genomic Resource Repository (GRR) can manage.
 
-The resource types GAIn understands are not a fixed list. Each one is a
-*resource implementation* — a class that knows how to describe a resource of
-that type, compute its statistics, and render its HTML summary page — and
-implementations are discovered through a Python entry-point group. A package
-installed alongside GAIn can add a type without any change to GAIn itself.
+Each resource type is handled by a *resource implementation*, a Python class that defines how GAIn works with resources of that type. In particular, the implementation describes the resource, generates its HTML summary pages, and defines how its statistics are computed.
 
-This is the extension seam for a new *kind of resource*; adding a new
-annotator is a different seam, with its own entry-point group, described in
-:doc:`../annotators/plugins`.
+New resource types are made available to GAIn through Python entry points. This is different from adding a new annotator, which uses a separate extension mechanism described in :doc:`../annotators/plugins`.
 
-The interface
--------------
 
-An implementation subclasses
-:class:`~gain.genomic_resources.resource_implementation.GenomicResourceImplementation`,
-whose constructor takes the
-:class:`~gain.genomic_resources.repository.GenomicResource` it wraps. Five
-members are abstract, and they divide into two jobs:
+Implementing a resource type
+----------------------------
 
-**Describing the resource.**
-:meth:`~gain.genomic_resources.resource_implementation.GenomicResourceImplementation.get_info`
-and
-:meth:`~gain.genomic_resources.resource_implementation.GenomicResourceImplementation.get_statistics_info`
-return the HTML for the resource's summary and statistics pages.
-:meth:`~gain.genomic_resources.resource_implementation.GenomicResourceImplementation.calc_info_hash`
-returns a digest of everything ``get_info`` depends on, so a page is only
-re-rendered when its inputs changed.
+A resource implementation subclasses :class:`~gain.genomic_resources.resource_implementation.GenomicResourceImplementation`. Its constructor receives the :class:`~gain.genomic_resources.repository.GenomicResource` object representing the resource.
 
-**Computing statistics.**
-:meth:`~gain.genomic_resources.resource_implementation.GenomicResourceImplementation.create_statistics_build_tasks`
-returns the task-graph tasks that compute this resource's statistics, and
-:meth:`~gain.genomic_resources.resource_implementation.GenomicResourceImplementation.calc_statistics_hash`
-digests the inputs those tasks read — it is what lets ``grr_manage`` skip a
-resource whose statistics are already current. ``grr_manage`` calls every
-kind's ``create_statistics_build_tasks`` with the same two keyword-only
-arguments, ``region_size`` and ``grr``, so an implementation declares both
-even when it ignores them — and declares nothing else, so a misspelled
-keyword is a ``TypeError`` rather than a silently applied default.
+The subclass must implement five abstract methods, covering two aspects of resource management.
 
-The concrete
-:attr:`~gain.genomic_resources.resource_implementation.GenomicResourceImplementation.files`
-property should report every file the implementation reads. A caching or
-mirroring repository builds its fetch list from it, so a file left out is a
-file that may be missing from a cached copy. (Publishing works off the
-resource's manifest instead, so it is unaffected.)
+1. **Describing the resource.** These methods provide the information displayed in the repository browser and determine when it needs to be updated:
 
-Registering
------------
+   * :meth:`~gain.genomic_resources.resource_implementation.GenomicResourceImplementation.get_info` generates the HTML describing the resource.
+   * :meth:`~gain.genomic_resources.resource_implementation.GenomicResourceImplementation.get_statistics_info` generates the HTML presenting its statistics.
+   * :meth:`~gain.genomic_resources.resource_implementation.GenomicResourceImplementation.calc_info_hash` calculates a hash of the inputs used to generate the resource information. GAIn uses this hash to determine whether the information needs to be regenerated.
 
-The entry-point group is ``gain.genomic_resources.implementations``. Its keys
-are resource *type* names — the ``type`` field in a resource's
-``genomic_resource.yaml`` — and its values point at the builder for that
-type. A builder is any callable taking a ``GenomicResource`` and returning an
-implementation, so an implementation class whose constructor takes exactly
-that is its own builder.
+2. **Computing statistics.** These methods define how resource statistics are calculated and determine when they need to be updated:
 
-GAIn's own types are registered this way in ``core/pyproject.toml``. The
-``genome`` type is the smallest complete example:
+   * :meth:`~gain.genomic_resources.resource_implementation.GenomicResourceImplementation.create_statistics_build_tasks` defines the tasks needed to calculate statistics for the resource.
+   * :meth:`~gain.genomic_resources.resource_implementation.GenomicResourceImplementation.calc_statistics_hash` calculates a hash of the inputs used to compute statistics. This allows ``grr_manage`` to skip recalculation when the statistics are already up to date.
+
+The ``create_statistics_build_tasks()`` method must accept two keyword-only arguments, ``region_size`` and ``grr``, even if the implementation does not use them. These arguments are passed consistently by ``grr_manage`` to different resource implementations. The method should not accept arbitrary additional keyword arguments, so unexpected arguments produce an error rather than being silently ignored.
+
+A resource implementation must also provide the :attr:`~gain.genomic_resources.resource_implementation.GenomicResourceImplementation.files` property, which identifies the files it uses. GAIn relies on this information when retrieving files for caching or mirroring repositories. Omitting a file may cause it to be unavailable in a cached copy. Resource publishing uses the resource manifest instead.
+
+
+
+Registering a resource type
+---------------------------
+
+GAIn discovers resource implementations through the Python entry-point group ``gain.genomic_resources.implementations``. Each registration associates a resource type name with a builder that creates its implementation.
+
+The resource type name corresponds to the ``type:`` field in a resource's ``genomic_resource.yaml`` file. A builder is a callable that takes a ``GenomicResource`` object and returns the corresponding resource implementation. Since an implementation class can be instantiated directly from a resource, the class itself can serve as its builder.
+
+GAIn registers its built-in resource types in ``core/pyproject.toml``. For example, the ``genome`` resource type is registered as follows:
 
 .. code-block:: toml
 
     [project.entry-points."gain.genomic_resources.implementations"]
     genome = "gain.genomic_resources.implementations.reference_genome_impl:ReferenceGenomeImplementation"
 
-A third-party package declares its own type the same way, in its own
-``pyproject.toml``:
+An external package can register a new resource type in its own ``pyproject.toml``:
 
 .. code-block:: toml
 
     [project.entry-points."gain.genomic_resources.implementations"]
     my_resource_type = "my_package.my_impl:MyResourceImplementation"
+
+This registration tells GAIn to use the ``MyResourceImplementation`` class from ``my_package.my_impl`` for resources whose type is ``my_resource_type``.
+
+The following example illustrates the structure of a resource implementation:
 
 .. code-block:: python
 
@@ -118,22 +98,20 @@ A third-party package declares its own type the same way, in its own
         ) -> list[TaskDesc]:
             ...
 
-Once the package is installed, ``grr_manage`` and the repository browser
-handle resources of that type with no further configuration.
+The example shows the required interface rather than a complete implementation. The methods must be filled in with the logic appropriate for the new resource type.
 
-Looking a builder up
---------------------
+Once the package is installed, GAIn can discover the registered implementation. Resources using the new type can then be handled by ``grr_manage`` and the repository browser without additional configuration.
 
-:func:`~gain.genomic_resources.get_resource_implementation_builder` is the
-lookup GAIn itself uses. It consults the in-process registry first and falls
-back to the entry points, loading and caching whatever it finds; it returns
-``None`` for a type nothing has registered.
+Looking up and registering builders
+-----------------------------------
 
-:func:`~gain.genomic_resources.register_implementation` adds a builder to the
-in-process registry directly, without an entry point. That is the right tool
-for a test, or for a type defined in the same script that uses it; it is not
-a substitute for the entry point in a package meant to be installed, because
-it only takes effect once the registering module has been imported.
+GAIn also provides functions for accessing and registering resource implementations directly in Python.
+
+:func:`~gain.genomic_resources.get_resource_implementation_builder` looks up the builder associated with a resource type. It first checks the in-process registry and then searches the installed entry points. Discovered builders are cached for subsequent use. The function returns ``None`` if the resource type is not registered.
+
+:func:`~gain.genomic_resources.register_implementation` registers a builder directly in the current Python process, without requiring a package entry point. This is useful for testing or for implementations defined and used within the same script.
+
+For example:
 
 .. code-block:: python
 
@@ -147,13 +125,14 @@ it only takes effect once the registering module has been imported.
     builder = get_resource_implementation_builder("my_resource_type")
     impl = builder(repo.get_resource("my/resource/id"))
 
-A note on the shipped registrations: two keys may point at the same class.
-``cnv_collection`` and ``fragment_score`` both map to
-``FragmentScoreImplementation`` because the first is a deprecated spelling
-kept registered for repositories outside our control — opening one warns.
-Nothing prevents a third-party package from registering a type name GAIn
-already uses; the entry-point group is flat, so prefer a name qualified by
-your project.
+Here, ``register_implementation()`` associates the resource type name with its implementation class. The lookup function retrieves that class as a builder, which is then used to create an implementation object for a resource.
+
+Direct registration applies only to the current Python process and requires the registration code to have been executed. For resource types distributed as installable Python packages, entry-point registration is therefore preferred.
+
+Multiple resource type names can also refer to the same implementation. For example, GAIn registers both ``fragment_score`` and the deprecated ``cnv_collection`` type with ``FragmentScoreImplementation``. The deprecated name remains supported for compatibility with existing repositories, although using it produces a warning.
+
+Because resource type names share a common registry, external packages should choose distinctive names to avoid conflicts with built-in or other third-party resource types.
+
 
 API
 ---
