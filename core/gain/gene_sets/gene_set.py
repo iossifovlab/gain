@@ -399,8 +399,8 @@ class GeneSetCollection(
             The histogram, or ``None`` when the resource has no stored
             histogram because no statistics build ran.
         """
-        hist_filename = self.get_genes_per_gene_set_hist_filename()
-        return load_histogram(self.resource, hist_filename)
+        return self._load_stored_histogram(
+            self.get_genes_per_gene_set_hist_filename())
 
     def get_gene_sets_per_gene_hist_image_filename(self) -> str:
         """Return the resource path of the gene sets per gene plot.
@@ -425,8 +425,13 @@ class GeneSetCollection(
             The histogram, or ``None`` when the resource has no stored
             histogram because no statistics build ran.
         """
-        hist_filename = self.get_gene_sets_per_gene_hist_filename()
-        return load_histogram(self.resource, hist_filename)
+        return self._load_stored_histogram(
+            self.get_gene_sets_per_gene_hist_filename())
+
+    def _load_stored_histogram(self, filename: str) -> Histogram | None:
+        if not self.resource.file_exists(filename):
+            return None
+        return load_histogram(self.resource, filename)
 
     def get_gene_sets_list_statistics(self) -> list[dict] | None:
         """Read the stored list of gene sets with their sizes.
