@@ -194,7 +194,7 @@
   "max_value": 0.9,
   "count": 3,
   "sum": 1.6,
-  "sum_of_squares": 1.1800000000000002
+  "sum_of_squares": 1.18
 }
 
 # vcf_score/statistics/histogram_vcf_af.json

@@ -745,10 +745,10 @@ class NumberHistogram(Statistic):
         self.min_value = min(value, self.min_value)
         self.max_value = max(value, self.max_value)
 
-        # Costs this arm ~10% (1.65 -> 1.82 us/value over 100k values),
-        # the same as the three updates inlined -- the call is not what
-        # is paid for.  Worn here because this arm is the fallback; the
-        # scan's hot path is :meth:`add_batch`.
+        # Costs this arm ~60% (1.65 -> 2.6 us/value over 100k values):
+        # the exact sums take two big-int additions per value.  Worn here
+        # because this arm is the fallback; the scan's hot path is
+        # :meth:`add_batch`.
         if self._moments is not None:
             self._moments.add(value, count)
 
@@ -768,7 +768,7 @@ class NumberHistogram(Statistic):
         """Add a batch of ``(value, weight)`` pairs, vectorized.
 
         The result is the same as calling ``add_value`` for each pair in
-        order. The sums behind ``mean`` and ``std`` agree only to rounding.
+        order, the sums behind ``mean`` and ``std`` included.
 
         Parameters
         ----------
@@ -786,9 +786,10 @@ class NumberHistogram(Statistic):
         # nan-skip.  This is the hot path for the statistics scan, where a
         # per-value Python call dominates the cost.
         #
-        # The one thing NOT bit-for-bit is the accumulators behind
-        # ``count`` / ``mean`` / ``std``: ``count`` is, and the
-        # two sums agree to rounding -- see ``Moments.add_batch``.
+        # The accumulators behind ``count`` / ``mean`` / ``std`` are
+        # bit-for-bit too: ``Moments`` adds the same per-term products
+        # exactly and rounds once, so the order of the additions does not
+        # matter -- see ``Moments.add_batch``.
         #
         # The equivalence covers dtype as well as arithmetic: the ``float64``
         # coercion below is what ``add_value`` reproduces by normalizing a
