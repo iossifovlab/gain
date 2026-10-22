@@ -21,20 +21,6 @@ MINI_GRR_SOURCE = (
     pathlib.Path(__file__).parents[4] / "test_fixtures" / "mini-GRR"
 )
 
-#: Config keys that GAIn has retired but mini-GRR still sets. A retired key
-#: logs a deprecation notice that fails a test which does not own it, so
-#: the copy drops them.
-_RETIRED_CONFIG_KEYS = ("chrom_prefix",)
-
-
-def _drop_retired_config_keys(repo_dir: pathlib.Path) -> None:
-    prefixes = tuple(f"{key}:" for key in _RETIRED_CONFIG_KEYS)
-    for config in repo_dir.rglob(GR_CONF_FILE_NAME):
-        lines = config.read_text().splitlines(keepends=True)
-        kept = [line for line in lines if not line.startswith(prefixes)]
-        if kept != lines:
-            config.write_text("".join(kept))
-
 
 @pytest.fixture(scope="session", name="mini_grr_dir")
 def fixture_mini_grr_dir(
@@ -48,7 +34,6 @@ def fixture_mini_grr_dir(
     repo_dir = tmp_path_factory.mktemp("python_interface") / "mini-GRR"
     shutil.copytree(
         MINI_GRR_SOURCE, repo_dir, ignore=shutil.ignore_patterns(".git"))
-    _drop_retired_config_keys(repo_dir)
     return repo_dir
 
 
