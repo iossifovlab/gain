@@ -91,9 +91,6 @@ The methods :meth:`~gain.gene_sets.gene_set.GeneSetCollection.get_genes_per_gene
     genes_per_set = collection.get_genes_per_gene_set_hist()
     sets_per_gene = collection.get_gene_sets_per_gene_hist()
 
-.. TODO(#2042): both methods return a NullHistogram, not None, when the
-   histogram is not stored.
-
 Each method returns ``None`` if the corresponding histogram is not stored in the resource. Histogram objects and their contents are explained in :doc:`Histograms <histograms>`.
 
 

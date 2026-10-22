@@ -20,10 +20,9 @@ counts; the tests use the mini-GRR collections ``mini_geneset_map`` and
 - The ``directory``, ``gmt`` and ``map`` formats load into the same
   classes.
 - The two statistics histograms are read from the resource, and are
-  ``None`` when the resource does not store them. The code gives a
-  ``NullHistogram`` instead, gain#2042, and its test is a strict
-  ``xfail``.
+  ``None`` when the resource does not store them.
 """
+import logging
 import pathlib
 
 import pytest
@@ -168,9 +167,6 @@ def test_statistics_histograms_are_read_from_the_resource(
         collection.get_gene_sets_per_gene_hist(), CategoricalHistogram)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="gain#2042: a missing histogram gives a NullHistogram")
 def test_missing_statistics_histograms_give_none(
     tmp_path: pathlib.Path,
 ) -> None:
@@ -179,3 +175,17 @@ def test_missing_statistics_histograms_give_none(
 
     assert collection.get_genes_per_gene_set_hist() is None
     assert collection.get_gene_sets_per_gene_hist() is None
+
+
+def test_missing_statistics_histograms_log_no_warning(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A missing histogram is an expected state, not a load failure."""
+    collection = _directory_collection(tmp_path)
+
+    with caplog.at_level(logging.WARNING):
+        collection.get_genes_per_gene_set_hist()
+        collection.get_gene_sets_per_gene_hist()
+
+    assert "unable to load histogram file" not in caplog.text
