@@ -77,7 +77,7 @@ Retrieving DNA sequences
 
     print(genome.get_sequence("chr21", 5_030_000, 5_030_060))
 
-For large intervals, :meth:`~gain.genomic_resources.reference_genome.ReferenceGenome.fetch` provides the sequence in buffered chunks rather than returning one large string. This can be useful when processing long genomic intervals without holding the entire sequence in memory.
+For large intervals, :meth:`~gain.genomic_resources.reference_genome.ReferenceGenome.fetch` yields the sequence one nucleotide at a time, reading the file in buffered chunks, rather than returning one large string. This can be useful when processing long genomic intervals without holding the entire sequence in memory.
 
 Dividing a genome into regions
 ------------------------------
