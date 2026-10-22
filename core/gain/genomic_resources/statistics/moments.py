@@ -3,7 +3,6 @@ bars, and the mean and standard deviation read off them (gain#1589)."""
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
 from typing import Any, Final
 
 import numpy as np
@@ -23,7 +22,103 @@ MOMENT_KEYS: Final = ("count", "sum", "sum_of_squares")
 MomentsSummary = tuple[tuple[str, str], ...]
 
 
-@dataclass(slots=True)
+#: Every finite double is an integer multiple of ``2**-1074``, the
+#: smallest subnormal; :class:`_ExactSum` counts in those units.
+_UNIT_EXPONENT: Final = 1074
+
+#: The mantissas of a batch are split into a high and a low half of this
+#: many bits, so that ``np.bincount`` adds each half exactly in float64.
+_HALF_BITS: Final = 26
+
+#: The most terms one ``np.bincount`` call adds.  A half is below
+#: ``2**27`` in magnitude, so a sum of this many halves stays below
+#: ``2**53`` and every float64 addition in it is exact.
+_EXACT_CHUNK: Final = 1 << 25
+
+
+class _ExactSum:
+    """The exact sum of a stream of doubles, rounded once on read.
+
+    The finite terms are held as one Python integer in units of
+    ``2**-1074``, so the order of the additions cannot change the total.
+    Infinities and nans are added as plain doubles beside it, so that they
+    propagate as they would through a plain sum.
+    """
+
+    __slots__ = ("_nonfinite", "_units")
+
+    def __init__(self, value: float = 0.0) -> None:
+        self._units = 0
+        self._nonfinite = 0.0
+        self.add(value)
+
+    def add(self, value: float) -> None:
+        """Add one double exactly."""
+        value = float(value)
+        if not math.isfinite(value):
+            self._nonfinite += value
+            return
+        numerator, denominator = value.as_integer_ratio()
+        # ``denominator`` is a power of two no larger than ``2**1074``.
+        self._units += numerator * ((1 << _UNIT_EXPONENT) // denominator)
+
+    def add_array(self, terms: np.ndarray) -> None:
+        """Add a float64 array exactly, vectorized.
+
+        Each finite term is an integer mantissa below ``2**53`` times a
+        power of two.  The mantissas are added per exponent with
+        ``np.bincount``, in two halves that it adds without rounding, and
+        the per-exponent totals are shifted into place as integers.
+        """
+        terms = np.asarray(terms, dtype=np.float64)
+        finite = np.isfinite(terms)
+        if not finite.all():
+            self._nonfinite += float(terms[~finite].sum())
+            terms = terms[finite]
+        for start in range(0, len(terms), _EXACT_CHUNK):
+            self._add_finite(terms[start:start + _EXACT_CHUNK])
+
+    def _add_finite(self, terms: np.ndarray) -> None:
+        if terms.size == 0:
+            return
+        # The IEEE 754 fields: a finite double with exponent field ``e``
+        # and fraction ``f`` is ``(2**52 + f) * 2**(e - 1075)`` when
+        # ``e > 0`` and ``f * 2**-1074`` when ``e == 0`` (a subnormal).
+        # In units of ``2**-1074`` that is the mantissa shifted left by
+        # ``e - 1`` or by 0, never right.
+        bits = terms.view(np.int64)
+        fields = (bits >> 52) & 0x7FF
+        normal = fields > 0
+        mantissas = (bits & ((1 << 52) - 1)) | (normal.astype(np.int64) << 52)
+        np.negative(mantissas, out=mantissas, where=bits < 0)
+        high = mantissas >> _HALF_BITS
+        low = mantissas - (high << _HALF_BITS)
+        high_sums = np.bincount(fields, weights=high).tolist()
+        low_sums = np.bincount(fields, weights=low).tolist()
+        for field, (high_sum, low_sum) in enumerate(
+                zip(high_sums, low_sums, strict=True)):
+            if not high_sum and not low_sum:
+                continue
+            total = (int(high_sum) << _HALF_BITS) + int(low_sum)
+            self._units += total << max(field - 1, 0)
+
+    def merge(self, other: _ExactSum) -> None:
+        """Add ``other``'s exact sum to this one."""
+        self._units += other._units
+        self._nonfinite += other._nonfinite
+
+    def value(self) -> float:
+        """The sum, correctly rounded to a double."""
+        try:
+            # Integer true division rounds correctly.
+            exact = self._units / (1 << _UNIT_EXPONENT)
+        except OverflowError:
+            exact = math.copysign(math.inf, self._units)
+        if not self._nonfinite:
+            return exact
+        return self._nonfinite + exact
+
+
 class Moments:
     """Running count, sum and sum of squares of a weighted value stream.
 
@@ -34,55 +129,98 @@ class Moments:
     accumulators are stored; :attr:`mean` and :attr:`std` are derived on
     read.
 
-    Plain doubles, no compensated summation: over a whole chromosome of
-    a real score the cancellation in ``sum_of_squares / count - mean**2``
-    costs about one digit of the sd.
+    The two sums are exact: each per-term product rounds once, as a
+    double, and the additions of those products do not round at all.
+    :attr:`sum` and :attr:`sum_of_squares` are the exact totals rounded
+    once, so they depend only on the multiset of folded terms, never on
+    the order of :meth:`add`, :meth:`add_batch` and :meth:`merge`, the
+    batch boundaries or the numpy build.  Two hosts that fold the same
+    values store the same sums, to the bit.
 
     A stream nobody has folded into is a ``Moments`` at zero; a histogram
     whose stored file predates these keys has NO moments, which its
     owner spells ``None`` rather than a zero here.
     """
 
-    count: int = 0
-    sum: float = 0.0
-    sum_of_squares: float = 0.0
+    __slots__ = ("_sum", "_sum_of_squares", "count")
+
+    def __init__(  # pylint: disable=redefined-builtin
+        self,
+        count: int = 0,
+        sum: float = 0.0,  # ruff: ignore[builtin-argument-shadowing]
+        sum_of_squares: float = 0.0,
+    ) -> None:
+        self.count = count
+        self._sum = _ExactSum(sum)
+        self._sum_of_squares = _ExactSum(sum_of_squares)
+
+    @property
+    def sum(self) -> float:
+        """The weighted sum of the values, correctly rounded."""
+        return self._sum.value()
+
+    @sum.setter  # ruff: ignore[builtin-attribute-shadowing]
+    def sum(self, value: float) -> None:
+        self._sum = _ExactSum(value)
+
+    @property
+    def sum_of_squares(self) -> float:
+        """The weighted sum of the squared values, correctly rounded."""
+        return self._sum_of_squares.value()
+
+    @sum_of_squares.setter
+    def sum_of_squares(self, value: float) -> None:
+        self._sum_of_squares = _ExactSum(value)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Moments):
+            return NotImplemented
+        return (self.count, self.sum, self.sum_of_squares) == (
+            other.count, other.sum, other.sum_of_squares)
+
+    __hash__ = None  # type: ignore[assignment]
+
+    def __repr__(self) -> str:
+        return (
+            f"Moments(count={self.count!r}, sum={self.sum!r}, "
+            f"sum_of_squares={self.sum_of_squares!r})")
 
     def add(self, value: float, count: int) -> None:
         """Fold one value, ``count`` times.
 
         The per-value twin of :meth:`add_batch`: the products are
         ``value * count`` and ``value * value * count``, in that order, so
-        each term rounds exactly as the batch arm rounds it.
+        each term rounds exactly as the batch arm rounds it, and the exact
+        sums make the two arms agree to the bit.
         """
         self.count += count
-        self.sum += value * count
-        self.sum_of_squares += value * value * count
+        self._sum.add(value * count)
+        self._sum_of_squares.add(value * value * count)
 
     def add_batch(self, values: np.ndarray, weights: np.ndarray) -> None:
         """Fold ``(value, weight)`` pairs, vectorized.
 
         ``values`` are float64 and already free of nan.  The per-term
         products are the ones :meth:`add` folds -- ``value * weight``,
-        then ``value * value * weight`` -- so the two arms round each
-        term identically and differ only by the order of the additions:
-        pairwise here (numpy's ``sum``), sequentially there.  They agree
-        to rounding, not to the bit.
+        then ``value * value * weight`` -- and they are added exactly, so
+        the result is the same, to the bit, as an :meth:`add` per pair in
+        any order.
 
         One temporary, reused in place: a fresh 800 KB array per product
         of a 100k batch costs more than the reductions themselves.
         """
         products = values * weights
-        self.sum += float(products.sum())
+        self._sum.add_array(products)
         np.multiply(values, values, out=products)
         np.multiply(products, weights, out=products)
-        self.sum_of_squares += float(products.sum())
+        self._sum_of_squares.add_array(products)
         self.count += int(weights.sum())
 
     def merge(self, other: Moments) -> None:
-        """Add ``other``'s accumulators to this one's."""
+        """Add ``other``'s accumulators to this one's, exactly."""
         self.count += other.count
-        self.sum += other.sum
-        self.sum_of_squares += other.sum_of_squares
+        self._sum.merge(other._sum)
+        self._sum_of_squares.merge(other._sum_of_squares)
 
     @property
     def mean(self) -> float | None:
@@ -162,6 +300,8 @@ class Moments:
         """
         if data.get("count") is None:
             return None
+        # The stored sums seed the exact state, so a loaded histogram
+        # merged with a new one adds to exactly the stored values.
         return Moments(
             count=data["count"],
             sum=data["sum"],
