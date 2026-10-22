@@ -115,8 +115,7 @@ class _ExactSum:
         except OverflowError:
             # ``float(self._units)`` would overflow too: use the sign.
             exact = math.inf if self._units > 0 else -math.inf
-        if not self._nonfinite:
-            return exact
+        # ``exact`` is never ``-0.0``, so adding a zero leaves it as is.
         return self._nonfinite + exact
 
 
