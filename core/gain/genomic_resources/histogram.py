@@ -745,10 +745,10 @@ class NumberHistogram(Statistic):
         self.min_value = min(value, self.min_value)
         self.max_value = max(value, self.max_value)
 
-        # Costs this arm ~10% (1.65 -> 1.82 us/value over 100k values),
-        # the same as the three updates inlined -- the call is not what
-        # is paid for.  Worn here because this arm is the fallback; the
-        # scan's hot path is :meth:`add_batch`.
+        # Costs this arm ~60% (1.65 -> 2.6 us/value over 100k values):
+        # the exact sums take two big-int additions per value.  Worn here
+        # because this arm is the fallback; the scan's hot path is
+        # :meth:`add_batch`.
         if self._moments is not None:
             self._moments.add(value, count)
 

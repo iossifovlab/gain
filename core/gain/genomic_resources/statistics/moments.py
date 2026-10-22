@@ -59,8 +59,10 @@ class _ExactSum:
             self._nonfinite += value
             return
         numerator, denominator = value.as_integer_ratio()
-        # ``denominator`` is a power of two no larger than ``2**1074``.
-        self._units += numerator * ((1 << _UNIT_EXPONENT) // denominator)
+        # ``denominator`` is a power of two no larger than ``2**1074``, so
+        # a shift scales to units exactly, without a big-int division.
+        self._units += numerator << (
+            _UNIT_EXPONENT + 1 - denominator.bit_length())
 
     def add_array(self, terms: np.ndarray) -> None:
         """Add a float64 array exactly, vectorized.
@@ -177,8 +179,15 @@ class Moments:
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Moments):
             return NotImplemented
-        return (self.count, self.sum, self.sum_of_squares) == (
-            other.count, other.sum, other.sum_of_squares)
+        # The rounded sums, as stored, so a loaded histogram equals the
+        # one it was saved from; a nan sum (``inf`` plus ``-inf``) equals
+        # a nan, so such moments still equal themselves.
+        return self.count == other.count and all(
+            mine == theirs or (math.isnan(mine) and math.isnan(theirs))
+            for mine, theirs in (
+                (self.sum, other.sum),
+                (self.sum_of_squares, other.sum_of_squares),
+            ))
 
     # Mutable, so unhashable, as the former ``@dataclass`` was.  typeshed
     # types ``__hash__`` as a method, so mypy rejects the ``None``.

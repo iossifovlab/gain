@@ -12,6 +12,7 @@ from gain.genomic_resources.histogram import (
     NumberHistogram,
     NumberHistogramConfig,
 )
+from gain.genomic_resources.statistics import moments as moments_module
 from gain.genomic_resources.statistics.moments import Moments
 
 _RNG_SEED = 2047
@@ -229,3 +230,43 @@ def test_an_integer_value_folds_as_its_float64_twin_in_the_batch() -> None:
 
     assert histogram.moments is not None
     assert _sums(histogram.moments) == _sums(batch)
+
+
+def test_moments_with_a_nan_sum_equal_themselves() -> None:
+    moments = Moments()
+    moments.add(math.inf, 1)
+    moments.add(-math.inf, 1)
+    twin = Moments()
+    twin.add(-math.inf, 1)
+    twin.add(math.inf, 1)
+
+    assert math.isnan(moments.sum)
+    assert moments == moments  # pylint: disable=R0124  # reflexivity
+    assert moments == twin
+    assert moments != Moments()
+
+
+def test_a_batch_over_several_exact_chunks_stores_the_exact_sums(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    values, weights = _values_and_weights()
+    whole = _one_batch(values, weights)
+    # A chunk of 7 terms sends the 3000-term batch through 429 chunks.
+    monkeypatch.setattr(moments_module, "_EXACT_CHUNK", 7)
+
+    chunked = _one_batch(values, weights)
+
+    assert _sums(chunked) == _sums(whole)
+    assert chunked.sum == math.fsum((values * weights).tolist())
+
+
+def test_setting_the_sums_replaces_the_accumulators() -> None:
+    values, weights = _values_and_weights()
+    moments = _one_batch(values, weights)
+
+    moments.sum = 1.5
+    moments.sum_of_squares = 2.5
+    moments.add(1.0, 1)
+
+    assert moments.sum == 2.5
+    assert moments.sum_of_squares == 3.5
