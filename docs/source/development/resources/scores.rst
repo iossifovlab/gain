@@ -58,9 +58,6 @@ A ``with`` block closes the score automatically, including when an error occurs 
     ).open() as score:
         print(score.get_scores_at_position("chr21", 5_030_000))
 
-.. TODO(#2041): fetch_records on a closed score raises "genomic table not
-   open" instead of the message below.
-
 The ``with`` statement does not open the score automatically, so the ``.open()`` call is necessary. Attempting to read a closed score raises ``ValueError: genomic score <id> is not open``. Requiring an explicit ``open()`` call makes the cost of initializing a score clear and helps prevent file handles from being left open. You can check whether a score is open using :meth:`~gain.genomic_resources.genomic_scores.GenomicScore.is_open`. This behavior applies to all three genomic score types.
 
 Score definitions

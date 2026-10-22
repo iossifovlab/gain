@@ -583,6 +583,7 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         ScoreFilterError
             If ``score_filter`` was compiled by another score.
         """
+        self._require_open()
         records = self.table.get_records_in_region(chrom, pos_begin, pos_end)
         yield from select_records(self, records, score_filter)
 
