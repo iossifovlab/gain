@@ -197,3 +197,19 @@ def test_a_loaded_histogram_merges_from_the_stored_sums() -> None:
     )
     expected.merge(second.moments)
     assert _sums(loaded.moments) == _sums(expected)
+
+
+@pytest.mark.parametrize("sign", [1.0, -1.0])
+def test_a_finite_sum_past_the_largest_double_rounds_to_infinity(
+    sign: float,
+) -> None:
+    moments = Moments()
+    moments.add(sign * 1e154, 1)
+    moments.add(sign * 1e154, 1)
+
+    assert moments.sum_of_squares == math.inf
+    assert moments.sum == sign * 2e154
+
+    moments.add(sign * 1.5e308, 1)
+    moments.add(sign * 1.5e308, 1)
+    assert moments.sum == sign * math.inf

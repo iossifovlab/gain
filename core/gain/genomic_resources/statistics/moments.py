@@ -113,7 +113,8 @@ class _ExactSum:
             # Integer true division rounds correctly.
             exact = self._units / (1 << _UNIT_EXPONENT)
         except OverflowError:
-            exact = math.copysign(math.inf, self._units)
+            # ``float(self._units)`` would overflow too: use the sign.
+            exact = math.inf if self._units > 0 else -math.inf
         if not self._nonfinite:
             return exact
         return self._nonfinite + exact
