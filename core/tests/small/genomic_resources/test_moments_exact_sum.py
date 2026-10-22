@@ -1,4 +1,4 @@
-# pylint: disable=C0114,C0116
+# pylint: disable=C0114,C0116  # test names say it, as in sibling files
 """``Moments`` stores the correctly rounded sums, whatever the order of
 the additions (gain#2047): one batch, many batches, shuffled batches, the
 per-value path and merges all store the same ``sum`` and
@@ -213,3 +213,19 @@ def test_a_finite_sum_past_the_largest_double_rounds_to_infinity(
     moments.add(sign * 1.5e308, 1)
     moments.add(sign * 1.5e308, 1)
     assert moments.sum == sign * math.inf
+
+
+def test_an_integer_value_folds_as_its_float64_twin_in_the_batch() -> None:
+    # The per-record scan hands ``add_value`` a Python int for an integer
+    # score, while the bulk path hands ``add_batch`` float64.  Here
+    # ``v * v`` exceeds ``2**53``, so the int square is exact and the
+    # float64 square rounds: the two arms must still store the same sums.
+    value, weight = 424600668109, 778
+    batch = _one_batch(np.array([float(value)]), np.array([weight]))
+    config = NumberHistogramConfig((0.0, 1e12), number_of_bins=10)
+    histogram = NumberHistogram(config)
+
+    histogram.add_value(value, count=weight)
+
+    assert histogram.moments is not None
+    assert _sums(histogram.moments) == _sums(batch)

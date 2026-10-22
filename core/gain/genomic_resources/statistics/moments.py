@@ -145,10 +145,12 @@ class Moments:
 
     __slots__ = ("_sum", "_sum_of_squares", "count")
 
-    def __init__(  # pylint: disable=redefined-builtin
+    def __init__(  # pylint: disable=redefined-builtin  # see ``sum`` below
         self,
         count: int = 0,
-        sum: float = 0.0,  # ruff: ignore[builtin-argument-shadowing]
+        sum: float = 0.0,  # ruff: ignore[builtin-argument-shadowing] -- the
+        # ``sum=`` keyword and attribute of the former dataclass, which
+        # ``from_stored`` and the tests pass and read by that name.
         sum_of_squares: float = 0.0,
     ) -> None:
         self.count = count
@@ -160,7 +162,7 @@ class Moments:
         """The weighted sum of the values, correctly rounded."""
         return self._sum.value()
 
-    @sum.setter  # ruff: ignore[builtin-attribute-shadowing]
+    @sum.setter  # ruff: ignore[builtin-attribute-shadowing] -- as above
     def sum(self, value: float) -> None:
         self._sum = _ExactSum(value)
 
@@ -179,6 +181,8 @@ class Moments:
         return (self.count, self.sum, self.sum_of_squares) == (
             other.count, other.sum, other.sum_of_squares)
 
+    # Mutable, so unhashable, as the former ``@dataclass`` was.  typeshed
+    # types ``__hash__`` as a method, so mypy rejects the ``None``.
     __hash__ = None  # type: ignore[assignment]
 
     def __repr__(self) -> str:
@@ -194,6 +198,9 @@ class Moments:
         each term rounds exactly as the batch arm rounds it, and the exact
         sums make the two arms agree to the bit.
         """
+        # A Python int value would square exactly, where the float64
+        # batch arm rounds ``v * v``: fold it as its float64 twin.
+        value = float(value)
         self.count += count
         self._sum.add(value * count)
         self._sum_of_squares.add(value * value * count)
