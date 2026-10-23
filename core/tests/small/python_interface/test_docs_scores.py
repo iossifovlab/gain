@@ -11,8 +11,8 @@ claims:
   ``FragmentScore``, by the type of the resource.
 - A score is initially closed, ``open()`` returns the score, a ``with``
   block closes it, and a read of a closed score raises ``ValueError:
-  genomic score <id> is not open``. ``fetch_records`` raises another
-  message, gain#2041, and its test is a strict ``xfail``.
+  genomic score <id> is not open``. ``fetch_records`` raises the same
+  message at the first ``next()``, not at the call.
 - ``score_definitions`` and ``get_score_definition`` give
   ``GenomicScoreDef`` objects, which convert one value or an array.
 - ``get_all_chromosomes`` and ``has_chromosome`` report the contigs.
@@ -132,9 +132,6 @@ def test_read_of_a_closed_score_raises(
         getattr(score, method)(*args)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="gain#2041: fetch_records raises 'genomic table not open'")
 def test_fetch_records_of_a_closed_score_raises_the_same_message(
     repo: GenomicResourceRepo,
 ) -> None:
@@ -145,6 +142,19 @@ def test_fetch_records_of_a_closed_score_raises_the_same_message(
             ValueError,
             match=f"genomic score <{TABIX_SCORE}> is not open"):
         list(score.fetch_records("chr1", 1, 3))
+
+
+def test_fetch_records_of_a_closed_score_refuses_at_the_first_next(
+    repo: GenomicResourceRepo,
+) -> None:
+    """The call returns a generator, and the first ``next()`` refuses."""
+    score = grr.build_score_from_resource_id(TABIX_SCORE, repo)
+    records = score.fetch_records("chr1", 1, 3)
+
+    with pytest.raises(
+            ValueError,
+            match=f"genomic score <{TABIX_SCORE}> is not open"):
+        next(records)
 
 
 def test_score_definitions(repo: GenomicResourceRepo) -> None:
