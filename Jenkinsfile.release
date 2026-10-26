@@ -822,6 +822,13 @@ pipeline {
                 // completes it. gain_core goes last: a 200 from
                 // `Pre-flight: PyPI` then means this step completed.
                 //
+                // A resume rebuilds every file, and the build
+                // backends are not pinned. A new hatchling or
+                // hatch-vcs release can change the bytes of a file
+                // that PyPI already has. uv publish then fails with a
+                // hash mismatch on every re-run, because a PyPI file
+                // name is permanent. On that error, cut a new tag.
+                //
                 // Run in ${CONDA_BUILDER}, which carries uv. The
                 // single-quoted `sh -c` script expands the globs
                 // inside the container, where /dist exists.

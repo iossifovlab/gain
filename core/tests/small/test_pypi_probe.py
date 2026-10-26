@@ -20,15 +20,21 @@ SCRIPT = REPO_ROOT / "scripts" / "pypi_probe.sh"
 TAG = "2026.10.2"
 WHEELS_HOST = "wheels.example.org"
 
+PYPI_URL = f"https://pypi.org/pypi/gain-core/{TAG}/json"
+WHEEL_URL = f"https://{WHEELS_HOST}/gain/gain_core-{TAG}-py3-none-any.whl"
+
 # The stub prints the HTTP code that the test assigns to the probed index,
 # the way `curl -o /dev/null -w '%{http_code}'` does. The code "error"
-# imitates a network failure: curl prints 000 and exits non-zero.
-STUB_CURL = textwrap.dedent("""\
+# imitates a network failure: curl prints 000 and exits non-zero. Any URL
+# other than PYPI_URL and WHEEL_URL gets 000 too, so a probe of a wrong URL
+# never sees a 200 and the exit-1 and dry-run tests fail.
+STUB_CURL = textwrap.dedent(f"""\
     #!/bin/sh
     for arg in "$@"; do url="$arg"; done
     case "$url" in
-        https://pypi.org/*) code="$STUB_PYPI_CODE" ;;
-        *) code="$STUB_WHEEL_CODE" ;;
+        "{PYPI_URL}") code="$STUB_PYPI_CODE" ;;
+        "{WHEEL_URL}") code="$STUB_WHEEL_CODE" ;;
+        *) printf '000'; echo "stub curl: unexpected URL $url" >&2; exit 99 ;;
     esac
     if [ "$code" = "error" ]; then
         printf '000'

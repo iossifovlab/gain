@@ -35,8 +35,10 @@ fi
 published="gain-core ${TAG_NAME} is already published on PyPI"
 published="$published and at https://${WHEELS_HOST}/gain/"
 if [ "${DRY_RUN:-false}" = "true" ]; then
-    echo "DRY RUN: $published; a real release would be rejected here" \
-         "as tag mutation. Continuing."
+    # The `Pre-flight: PyPI` stage copies the `DRY RUN:` line, less
+    # the prefix, into the Notify message: keep it a bare finding.
+    echo "DRY RUN: $published"
+    echo "A real release would be rejected here as tag mutation. Continuing."
     exit 0
 fi
 echo "$published"
