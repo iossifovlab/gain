@@ -190,5 +190,11 @@ include = [
     "/README.md",
 ]
 
+# The repository LICENSE sits one level up. The sdist copies it to its
+# top level as a regular file, and the wheel, which uv builds from the
+# unpacked sdist, picks it up there as a PEP 639 license file (#1961).
+[tool.hatch.build.targets.sdist.force-include]
+"../LICENSE" = "LICENSE"
+
 [tool.coverage.run]
 omit = ["*/_version.py"]
