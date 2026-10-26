@@ -61,6 +61,7 @@ def run_probe(
     wheel_code: str,
     *,
     dry_run: str = "false",
+    unset: tuple[str, ...] = (),
 ) -> subprocess.CompletedProcess[str]:
     if not SCRIPT.exists():
         pytest.fail(f"{SCRIPT} is missing; the CI image must copy scripts/")
@@ -72,6 +73,8 @@ def run_probe(
         "STUB_PYPI_CODE": pypi_code,
         "STUB_WHEEL_CODE": wheel_code,
     }
+    for name in unset:
+        del env[name]
     return subprocess.run(
         [shutil.which("bash") or "bash", str(SCRIPT)],
         env=env, capture_output=True, text=True, check=False)
@@ -117,3 +120,13 @@ def test_dry_run_reports_a_published_release(stub_bin: pathlib.Path) -> None:
         if line.startswith("DRY RUN:")]
     assert len(report) == 1
     assert f"gain-core {TAG} is already published" in report[0]
+
+
+@pytest.mark.parametrize("missing", ["TAG_NAME", "WHEELS_HOST"])
+def test_missing_input_is_not_reported_as_published(
+    stub_bin: pathlib.Path, missing: str,
+) -> None:
+    result = run_probe(stub_bin, "200", "200", unset=(missing,))
+
+    assert result.returncode not in (0, 1)
+    assert missing in result.stderr

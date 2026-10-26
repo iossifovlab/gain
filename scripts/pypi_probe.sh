@@ -4,9 +4,17 @@
 #
 # Inputs (environment): TAG_NAME, WHEELS_HOST, DRY_RUN.
 #
-# Exit 1 means "gain-core TAG_NAME is already published, abort". Every
-# other outcome exits 0.
+# Exit 1 means "gain-core TAG_NAME is already published, abort". A
+# missing input exits 2: the stage reports it as a probe failure, not
+# as a published release. Every other outcome exits 0.
 set -u
+
+for name in TAG_NAME WHEELS_HOST; do
+    if [ -z "${!name:-}" ]; then
+        echo "pypi_probe.sh: $name is not set" >&2
+        exit 2
+    fi
+done
 
 code() {
     # curl prints 000 and exits non-zero on a network failure.

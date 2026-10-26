@@ -277,9 +277,23 @@ pipeline {
             // `Publish`, and this run resumes it. A PyPI failure is
             // "not there yet", as in `Pre-flight: tag freshness`. A
             // dry run gets exit 0 and a `DRY RUN:` line instead of
-            // exit 1.
+            // exit 1. Any other non-zero exit, for example 2 for a
+            // missing input, is a probe failure and aborts as one.
+            //
+            // This file comes from master, but the workspace is the
+            // tag checkout. A tag cut before #1960 has no
+            // scripts/pypi_probe.sh, so the stage skips the probe for
+            // that tag. `uv publish --check-url` still skips the
+            // files PyPI already has.
             steps {
                 script {
+                    if (!fileExists('scripts/pypi_probe.sh')) {
+                        echo(
+                            "Tag ${params.TAG_NAME} has no " +
+                            'scripts/pypi_probe.sh: PyPI probe skipped.'
+                        )
+                        return
+                    }
                     int published = sh(
                         returnStatus: true,
                         script: '''
@@ -298,12 +312,19 @@ pipeline {
                                 line.substring(prefix.length()).trim()
                         }
                     }
-                    if (published != 0) {
+                    if (published == 1) {
                         error(
                             "gain-core ${params.TAG_NAME} is " +
                             'already published (see above). ' +
                             'Tag mutation is rejected. Cut a ' +
                             'new tag instead.'
+                        )
+                    }
+                    if (published != 0) {
+                        error(
+                            'scripts/pypi_probe.sh failed with exit ' +
+                            "${published} (see above). This is a " +
+                            'probe failure, not a published release.'
                         )
                     }
                 }
@@ -819,8 +840,12 @@ pipeline {
                 // 0) Sdists + wheels → PyPI. gain-web-api stays off
                 // PyPI. --check-url skips the files that PyPI
                 // already has, so a re-run after a partial upload
-                // completes it. gain_core goes last: a 200 from
-                // `Pre-flight: PyPI` then means this step completed.
+                // completes it. gain_core goes last. A PyPI 200 alone
+                // does not mean that this step completed: PyPI answers
+                // 200 once any file of the release is there. The wheel
+                // index gets the wheels only after this step, so the
+                // PyPI 200 together with the wheel-index 200 in
+                // `Pre-flight: PyPI` means this step completed.
                 //
                 // A resume rebuilds every file, and the build
                 // backends are not pinned. A new hatchling or
