@@ -26,6 +26,8 @@ def runProject(Map args) {
     String distName       = name.replace('_', '-')
     String distPkg        = args.distPkg ?: "gain-${distName}" // PyPI-style name, e.g. "gain-demo-annotator"
     String imageTag       = "gain-${distName}-ci:${env.CI_TAG}"
+    // gain-web-api is BSD-3-Clause and ships no repository LICENSE (#1961).
+    boolean shipsLicense  = distPkg != 'gain-web-api'
 
     sh label: "Build ${name} image", script: """
         docker build -f ${name}/Dockerfile -t ${imageTag} .
@@ -106,6 +108,15 @@ def runProject(Map args) {
                 # Build wheel + sdist for this project. hatch-vcs reads the
                 # mounted .git to produce a proper PEP 440 version.
                 uv build --package ${distPkg} --out-dir /dist
+                # The sdist must hold LICENSE as a regular file and the
+                # wheel must hold it under dist-info/licenses (#1961).
+                # A missing LICENSE fails the build.
+                if [ "${shipsLicense}" = "true" ]; then
+                    tar tvzf /dist/*.tar.gz | grep -qE "^-.* [^/]+/LICENSE\$" \\
+                        && python -m zipfile -l /dist/*.whl \\
+                            | grep -q "[.]dist-info/licenses/LICENSE " \\
+                        || { echo "LICENSE is missing from the sdist or the wheel"; pytest_exit=1; }
+                fi
                 chmod -R a+rw /reports /dist
                 # Propagate the pytest exit code so test failures fail the
                 # build (FAILURE) instead of just being logged via JUnit
