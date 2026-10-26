@@ -296,7 +296,11 @@ pipeline {
                     }
                     int published = sh(
                         returnStatus: true,
+                        // The step runs `sh -xe`: without `set +e`
+                        // a probe exit of 1 or 2 ends the step before
+                        // `cat` prints the probe log.
                         script: '''
+                            set +e
                             bash scripts/pypi_probe.sh \
                                 > pypi-probe.log 2>&1
                             rc=$?

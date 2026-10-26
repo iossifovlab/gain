@@ -130,3 +130,36 @@ def test_missing_input_is_not_reported_as_published(
 
     assert result.returncode not in (0, 1)
     assert missing in result.stderr
+
+
+JENKINSFILE = REPO_ROOT / "Jenkinsfile.release"
+
+
+def stage_shell_script(stage: str) -> str:
+    """Return the first ``script: '''...'''`` body after ``stage``."""
+    text = JENKINSFILE.read_text()
+    start = text.index(f"stage('{stage}')")
+    body_start = text.index("script: '''", start) + len("script: '''")
+    return text[body_start:text.index("'''", body_start)]
+
+
+@pytest.mark.parametrize("probe_rc", [1, 2])
+def test_stage_prints_the_probe_log_when_the_probe_fails(
+    tmp_path: pathlib.Path, probe_rc: int,
+) -> None:
+    # The CI image has no Jenkinsfile.release: only a checkout runs this.
+    if not JENKINSFILE.exists():
+        pytest.skip(f"{JENKINSFILE} is not in this checkout")
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "pypi_probe.sh").write_text(
+        f"echo 'probe says hello'\nexit {probe_rc}\n")
+
+    # A Jenkins `sh` step without a shebang runs `sh -xe`.
+    result = subprocess.run(
+        [shutil.which("sh") or "/bin/sh", "-xe", "-c",
+         stage_shell_script("Pre-flight: PyPI")],
+        cwd=tmp_path, capture_output=True, text=True, check=False)
+
+    assert result.returncode == probe_rc
+    assert "probe says hello" in result.stdout
