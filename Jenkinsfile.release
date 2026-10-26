@@ -10,7 +10,10 @@
 //   - The root Jenkinsfile's `Dispatch release` stage when a CalVer
 //     tag (^\d{4}\.\d+\.\d+$) lands on the multibranch (fire and
 //     forget; the dispatcher does not block).
-//   - Manual UI trigger (re-runs after transient publish failures).
+//   - Manual UI trigger (re-runs after transient publish failures:
+//     `Pre-flight: PyPI` lets a tag through that is on PyPI but not
+//     on the wheel index, and `uv publish --check-url` skips the
+//     files PyPI already has).
 //
 // Inputs (mirrored in jenkins-jobs/release.groovy for the UI form):
 //   - TAG_NAME        — the CalVer tag (e.g. 2026.4.27).
@@ -33,8 +36,10 @@
 // before the conda-builder image is built, so an abort has built and
 // uploaded nothing.
 //
-// Output: wheels published to nemo:/data/wheels/gain, conda
-// packages to anaconda.org/iossifovlab, and Docker images to
+// Output: the sdists and wheels of gain-core and the three annotator
+// plugins published to PyPI (gain-web-api stays off PyPI), wheels
+// published to nemo:/data/wheels/gain, conda packages to
+// anaconda.org/iossifovlab, and Docker images to
 // registry.seqpipe.org tagged :${TAG_NAME} + :stable. After the
 // upload, `Post-publish: install smoke` installs gain-core==TAG_NAME
 // from anaconda.org the way the docs say and walks its entry points
@@ -257,6 +262,51 @@ pipeline {
                     echo "git describe: $described"
                     test "$described" = "${TAG_NAME}"
                 '''
+            }
+        }
+
+        stage('Pre-flight: PyPI') {
+            // A file name on PyPI is permanent, so tag mutation there
+            // cannot be undone. scripts/pypi_probe.sh needs only
+            // curl, so the probe runs before `Setup` builds the
+            // conda-builder image.
+            //
+            // The script exits 1 for exactly one reason: gain-core
+            // ${TAG_NAME} is both on PyPI and on the wheel index. On
+            // PyPI only, an earlier run failed after step 0 of
+            // `Publish`, and this run resumes it. A PyPI failure is
+            // "not there yet", as in `Pre-flight: tag freshness`. A
+            // dry run gets exit 0 and a `DRY RUN:` line instead of
+            // exit 1.
+            steps {
+                script {
+                    int published = sh(
+                        returnStatus: true,
+                        script: '''
+                            bash scripts/pypi_probe.sh \
+                                > pypi-probe.log 2>&1
+                            rc=$?
+                            cat pypi-probe.log
+                            exit $rc
+                        ''',
+                    )
+                    // A plain loop: no CPS closure, no String minus.
+                    String prefix = 'DRY RUN: '
+                    for (line in readFile('pypi-probe.log').split('\n')) {
+                        if (line.startsWith(prefix)) {
+                            env.PYPI_NOTE =
+                                line.substring(prefix.length()).trim()
+                        }
+                    }
+                    if (published != 0) {
+                        error(
+                            "gain-core ${params.TAG_NAME} is " +
+                            'already published (see above). ' +
+                            'Tag mutation is rejected. Cut a ' +
+                            'new tag instead.'
+                        )
+                    }
+                }
             }
         }
 
@@ -558,6 +608,11 @@ pipeline {
             // Touch each destination before any state mutates.
             // Catches expired tokens, network failures, missing
             // ssh keys before the publish phase begins. D10.
+            //
+            // PyPI gets no touch here: PyPI has no endpoint that
+            // validates a token without an upload. A bad
+            // pypi-token-iossifovlab fails step 0 of `Publish`,
+            // before any other destination changes.
             steps {
                 sshagent(credentials: ['wheels-seqpipe-ssh-key']) {
                     sh '''
@@ -761,6 +816,43 @@ pipeline {
                 lock(resource: 'gain-release-publish')
             }
             steps {
+                // 0) Sdists + wheels → PyPI. gain-web-api stays off
+                // PyPI. --check-url skips the files that PyPI
+                // already has, so a re-run after a partial upload
+                // completes it. gain_core goes last: a 200 from
+                // `Pre-flight: PyPI` then means this step completed.
+                //
+                // Run in ${CONDA_BUILDER}, which carries uv. The
+                // single-quoted `sh -c` script expands the globs
+                // inside the container, where /dist exists.
+                withCredentials([string(
+                    credentialsId: 'pypi-token-iossifovlab',
+                    variable: 'UV_PUBLISH_TOKEN',
+                )]) {
+                    sh '''
+                        DOCKER_USER="$(id -u):$(id -g)"
+                        docker run --rm \
+                            --user "$DOCKER_USER" \
+                            -e HOME=/tmp \
+                            -e UV_PUBLISH_TOKEN \
+                            -v "$PWD/dist:/dist:ro" \
+                            "${CONDA_BUILDER}" \
+                            sh -c '
+                                set -e
+                                for dist in \
+                                    vep_annotator/gain_vep_annotator \
+                                    spliceai_annotator/gain_spliceai_annotator \
+                                    demo_annotator/gain_demo_annotator \
+                                    core/gain_core; do
+                                    uv publish \
+                                        --check-url https://pypi.org/simple/ \
+                                        /dist/$dist-*.tar.gz \
+                                        /dist/$dist-*.whl
+                                done
+                            '
+                    '''
+                }
+
                 // 1) Wheels + sdists → wheels.seqpipe.org
                 sshagent(credentials: ['wheels-seqpipe-ssh-key']) {
                     sh '''
@@ -1021,8 +1113,13 @@ EOF
                         if (env.TAG_FRESHNESS_NOTE) {
                             message += " (${env.TAG_FRESHNESS_NOTE})"
                         }
+                        if (env.PYPI_NOTE) {
+                            message += " (${env.PYPI_NOTE})"
+                        }
                     } else {
-                        message = "Released ${env.TAG_NAME} — wheels: " +
+                        message = "Released ${env.TAG_NAME} — PyPI: " +
+                            'https://pypi.org/project/gain-core/' +
+                                "${env.TAG_NAME}/, wheels: " +
                             "https://${env.WHEELS_HOST}/gain/, " +
                             "conda: https://anaconda.org/" +
                                 "${env.ANACONDA_USER}, " +
