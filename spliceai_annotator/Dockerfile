@@ -26,6 +26,9 @@ ENV UV_LINK_MODE=copy \
 WORKDIR /workspace
 
 COPY pyproject.toml uv.lock ruff.toml mypy.ini pylintrc ./
+# The sdist of each member copies the repository LICENSE from one level
+# up (`force-include` of `../LICENSE`), so `uv build` needs it here.
+COPY LICENSE ./
 COPY core/pyproject.toml core/README.md ./core/
 COPY demo_annotator/pyproject.toml ./demo_annotator/
 COPY vep_annotator/pyproject.toml ./vep_annotator/
