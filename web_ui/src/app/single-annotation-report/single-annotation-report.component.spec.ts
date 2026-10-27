@@ -88,8 +88,8 @@ describe('SingleAnnotationReportComponent', () => {
           new Attribute('attrTrue', 'desc', 'AF', 'max',
             {value: 0.5, histogramLink: 'histograms/res?score_id=a'} as Result, true),
           // false: aggregated output is not a score in the domain -> hidden.
-          new Attribute('attrFalse', 'desc', 'AF', 'list',
-            {value: 'A', histogramLink: 'histograms/res?score_id=c'} as Result, false),
+          new Attribute('attrFalse', 'desc', 'AF', 'count',
+            {value: 3, histogramLink: 'histograms/res?score_id=c'} as Result, false),
         ])
       ],
     );

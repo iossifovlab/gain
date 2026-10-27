@@ -71,7 +71,12 @@ class Aggregator(abc.ABC):
     def preserves_domain(
         cls, *, value_type: str | None = None,  # ruff: ignore[unused-class-method-argument]
     ) -> bool:
-        """Return True if output stays within the source value domain."""
+        """Return True if the output stays in the source value domain.
+
+        The rule is element-wise: the output, or each element of a list
+        output, is a value of the source domain.  ``list`` and
+        ``most_common`` return original values, so they preserve it.
+        """
         return False
 
     def __call__(self) -> Any:
@@ -626,6 +631,12 @@ class ListAggregator(Aggregator):
 
     output_value_type: ClassVar[str | None] = "list"
 
+    @classmethod
+    def preserves_domain(
+        cls, *, value_type: str | None = None,  # ruff: ignore[unused-class-method-argument]
+    ) -> bool:
+        return True
+
     def __init__(self) -> None:
         super().__init__()
         self.values: list[tuple[Any, int]] = []
@@ -710,6 +721,12 @@ class MostCommonAggregator(Aggregator):
     parametrized: ClassVar[bool] = True
     default_parameter: ClassVar[str | None] = "3"
     output_value_type: ClassVar[str | None] = "list"
+
+    @classmethod
+    def preserves_domain(
+        cls, *, value_type: str | None = None,  # ruff: ignore[unused-class-method-argument]
+    ) -> bool:
+        return True
 
     def __init__(self, k: str | int) -> None:
         super().__init__()

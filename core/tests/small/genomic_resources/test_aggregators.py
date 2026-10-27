@@ -524,3 +524,15 @@ def test_most_common_refuses_a_dict_form_k_that_is_not_a_positive_int(
     with pytest.raises((ValueError, TypeError)):
         Aggregator.build(
             {"aggregator_type": "most_common", "parameters": [k]})
+
+
+@pytest.mark.parametrize("name, expected", [
+    ("list", True),
+    ("most_common", True),
+    ("count", False),
+    ("join", False),
+])
+def test_preserves_domain_holds_element_wise(
+    name: str, expected: bool,
+) -> None:
+    assert AGGREGATOR_CLASS_DICT[name].preserves_domain() is expected

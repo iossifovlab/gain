@@ -242,6 +242,28 @@ def test_preserves_domain_is_false_with_non_preserving_aggregator(
     assert result["preserves_domain"] is False
 
 
+@pytest.mark.parametrize("aggregator", ["list", "most_common(3)"])
+def test_preserves_domain_is_true_with_list_aggregator(
+    mocker: MockerFixture, aggregator: str,
+) -> None:
+    view = SingleAnnotation()
+    view._grr = cast(GenomicResourceRepo, DummyRepo(DummyResource("dummy")))
+    mocker.patch(
+        "web_annotation.single_allele_annotation.views.has_histogram",
+        return_value=False,
+    )
+    mocker.patch.object(view, "generate_annotator_help", return_value=None)
+
+    attr = _make_attribute_info(aggregator=aggregator)
+    annotator = SimpleNamespace(resource_ids=set())
+
+    result = view._build_attribute_description(
+        {"score": ["a", "b"]},
+        cast(Annotator, annotator), cast(Attribute, attr),
+    )
+    assert result["preserves_domain"] is True
+
+
 def test_build_attribute_description_stringifies_non_mapping_objects(
     mocker: MockerFixture,
 ) -> None:
