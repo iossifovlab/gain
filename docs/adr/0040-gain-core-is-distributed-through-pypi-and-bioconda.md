@@ -45,7 +45,8 @@ so hatch-vcs resolves the version without git. The 2026.10.2 sdist carries no
    the tag version is on PyPI only, the run resumes a partial publish. A
    `DRY_RUN` never aborts. `gain-web-api` stays off PyPI.
 3. The anaconda.org channel `iossifovlab` keeps `gain-core` until bioconda has
-   carried two monthly releases. Then the upload to the channel stops.
+   carried two monthly releases and gpf#1071 has landed. Only when both
+   conditions hold does the upload to the channel stop.
 4. The BiocondaBot opens the bump PR after each release. Jenkins does not open
    bioconda PRs. The recipe maintainers are `lchorbadjiev` and `iossifov`.
 5. The recipe test is a copy of the entry-point walk of
@@ -107,9 +108,9 @@ before the old channel goes away.
 - The retirement of the anaconda.org channel (gain#1967) waits for the change
   to the probe of `gpf-release` (gpf#1071). Until then, `gain-release` uploads
   `gain-core` to two conda channels.
-- The PyPI organization `iossifovlab` owns the projects. The move of
-  `gain-core` into the organization is gain#2053. Until it is done, the
-  project belongs to a personal account.
+- The projects are to be owned by the PyPI organization `iossifovlab`. The
+  move of `gain-core` into the organization is gain#2053. Until gain#2053 is
+  done, `gain-core` belongs to a personal account.
 - A release now reaches bioconda days after the tag. A user who needs a
   release on the day of the tag installs it from PyPI or from the
   anaconda.org channel.
