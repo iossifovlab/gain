@@ -92,6 +92,9 @@ COPY --chown=mambauser:mambauser docs/source/development/task_graph \
 # "Writing an annotator" page and fails, not skips, when it is absent.
 COPY --chown=mambauser:mambauser docs/source/development/annotators \
     /testbed/docs/source/development/annotators
+# tests/small/test_pypi_probe.py runs scripts/pypi_probe.sh and fails,
+# not skips, when the script is absent (#1960).
+COPY --chown=mambauser:mambauser scripts/pypi_probe.sh /testbed/scripts/
 RUN chmod -R a+rwX /testbed
 COPY --chown=mambauser:mambauser core/conda-integration/run.sh \
     core/conda-integration/assert_installed.py /opt/conda-integration/
