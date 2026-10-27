@@ -101,6 +101,7 @@ of one decision will drift.
 | [0037](0037-a-fragment-can-be-binned-by-its-overlap-or-its-coverage.md) | A fragment can also be binned by its overlap or by its coverage, and an entry can name its tracks | accepted |
 | [0038](0038-the-position-binner-folds-value-arrays-with-numpy.md) | The position binner folds value arrays with numpy, bit for bit | accepted |
 | [0039](0039-the-task-graph-api-declares-the-graph-the-task-executors-and-the-task-caches.md) | The task graph API declares the graph, the task executors and the task caches | accepted |
+| [0040](0040-gain-core-is-distributed-through-pypi-and-bioconda.md) | `gain-core` is distributed through PyPI and bioconda | accepted |
 
 > **Note:** `0003` was allocated twice, by two changes that landed the same day.
 > "Numbers are never reused" is a rule about not re-issuing a *retired* number;
