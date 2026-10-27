@@ -40,8 +40,10 @@ so hatch-vcs resolves the version without git. The 2026.10.2 sdist carries no
 2. `gain-release` uploads `gain-core` and the three annotators
    (`gain-vep-annotator`, `gain-spliceai-annotator`, `gain-demo-annotator`) to
    PyPI with `uv publish`. The upload is step 0 of `Publish`. The stage
-   `Pre-flight: PyPI` runs `scripts/pypi_probe.sh` before `Setup` and aborts
-   when the tag version is already on PyPI. `gain-web-api` stays off PyPI.
+   `Pre-flight: PyPI` runs `scripts/pypi_probe.sh` before `Setup`. The stage
+   aborts when the tag version is on PyPI and also on the wheel index. When
+   the tag version is on PyPI only, the run resumes a partial publish. A
+   `DRY_RUN` never aborts. `gain-web-api` stays off PyPI.
 3. The anaconda.org channel `iossifovlab` keeps `gain-core` until bioconda has
    carried two monthly releases. Then the upload to the channel stops.
 4. The BiocondaBot opens the bump PR after each release. Jenkins does not open
