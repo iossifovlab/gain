@@ -42,10 +42,16 @@ STUB_PYTHON = textwrap.dedent("""\
     done
 """)
 
+# The stub mutator prints the lines of STUB_MUTATOR_REPORT, or one fixed
+# line when the variable is empty.
 STUB_MUTATOR = textwrap.dedent("""\
     #!/bin/sh
     printf '%s\\n' "$@" > "$STUB_LOG_DIR/mutator.argv"
-    echo "stub mutator report"
+    if [ -n "$STUB_MUTATOR_REPORT" ]; then
+        printf '%s\\n' "$STUB_MUTATOR_REPORT"
+    else
+        echo "stub mutator report"
+    fi
     exit "$STUB_MUTATOR_EXIT"
 """)
 
@@ -72,6 +78,7 @@ def run_script(
     mutator_exit: int = 0,
     python_exit: int = 0,
     write_lcov: bool = True,
+    report_lines: list[str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     if not SCRIPT.exists():
         pytest.fail(f"{SCRIPT} is missing; the CI image must copy scripts/")
@@ -82,6 +89,7 @@ def run_script(
         "MUTATOR_REPORT_DIR": str(sandbox / "reports"),
         "STUB_LOG_DIR": str(sandbox / "logs"),
         "STUB_MUTATOR_EXIT": str(mutator_exit),
+        "STUB_MUTATOR_REPORT": "\n".join(report_lines or []),
         "STUB_PYTHON_EXIT": str(python_exit),
         "STUB_PYTHON_WRITE_LCOV": "1" if write_lcov else "0",
     }
@@ -179,3 +187,45 @@ def test_coverage_without_lcov_skips_mutator(sandbox: pathlib.Path) -> None:
     assert result.returncode == 1
     assert not (sandbox / "logs" / "mutator.argv").exists()
     assert "wrote no" in result.stdout
+
+
+def summary_lines(result: subprocess.CompletedProcess[str]) -> list[str]:
+    return [
+        line for line in result.stdout.splitlines()
+        if line.startswith("mutator: exit ")]
+
+
+def test_summary_line_counts_the_report_lines(sandbox: pathlib.Path) -> None:
+    report = [
+        "WARNING: a mutant timed out",
+        "KILLED gain/utils/a.py:10 replace + with -",
+        "KILLED gain/utils/a.py:11 replace < with <=",
+        "SURVIVED gain/utils/a.py:12 replace == with !=",
+        "KILLED gain/utils/b.py:20 negate the condition",
+        "UNCOVERED gain/utils/b.py:30 replace 1 with 0",
+        "UNCOVERED gain/utils/b.py:31 delete the call",
+        "Total  286  68  81  435  80.8%",
+    ]
+
+    result = run_script(sandbox, mutator_exit=3, report_lines=report)
+
+    [summary] = summary_lines(result)
+    assert summary.startswith("mutator: exit 3, took ")
+    assert summary.endswith(
+        "killed 3, survived 1, uncovered 2, score 75.0%")
+    assert result.returncode == 0
+
+
+def test_summary_score_is_na_without_killed_or_survived(
+    sandbox: pathlib.Path,
+) -> None:
+    report = [
+        "UNCOVERED gain/utils/b.py:30 replace 1 with 0",
+        "UNCOVERED gain/utils/b.py:31 delete the call",
+    ]
+
+    result = run_script(sandbox, report_lines=report)
+
+    [summary] = summary_lines(result)
+    assert summary.endswith(
+        "killed 0, survived 0, uncovered 2, score n/a")

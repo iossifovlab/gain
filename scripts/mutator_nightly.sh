@@ -12,6 +12,8 @@
 #      other tests cover counts as uncovered.
 #   2. mutator runs on gain/utils with --use-existing-coverage. The
 #      snapshot in .metrics/mutate/ makes a later run differential.
+#   3. The summary line gives the exit code, the time and the counts of
+#      the KILLED, SURVIVED and UNCOVERED lines of the report.
 #
 # Environment:
 #   GAIN_PYTHON          the interpreter of the gain venv. mutator runs
@@ -70,7 +72,26 @@ mutator --use-existing-coverage \
     --test-command "$test_command" \
     "$PACKAGE" 2>&1 | tee "$MUTATOR_REPORT_DIR/mutator.txt"
 mutator_exit=${PIPESTATUS[0]}
-echo "mutator: exit $mutator_exit, took $(($(date +%s) - start)) s"
+took=$(($(date +%s) - start))
+# The counts are the report lines of this run, not the Total row of the
+# per-function table: a differential run lists fewer mutants (#2073).
+# The score is killed / (killed + survived), n/a without either.
+counts=$(LC_ALL=C awk '
+    /^KILLED/ { killed++ }
+    /^SURVIVED/ { survived++ }
+    /^UNCOVERED/ { uncovered++ }
+    END {
+        tested = killed + survived
+        if (tested > 0) {
+            score = sprintf("%.1f%%", 100 * killed / tested)
+        } else {
+            score = "n/a"
+        }
+        printf "killed %d, survived %d, uncovered %d, score %s",
+            killed, survived, uncovered, score
+    }' "$MUTATOR_REPORT_DIR/mutator.txt" 2>/dev/null \
+    || echo "killed 0, survived 0, uncovered 0, score n/a")
+echo "mutator: exit $mutator_exit, took $took s, $counts"
 
 case "$mutator_exit" in
     0|3) exit 0 ;;
