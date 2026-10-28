@@ -115,6 +115,18 @@ pipeline {
                 allowEmptyArchive: true,
                 fingerprint: false,
             )
+            // The link to the text report on the build page, as the
+            // root Jenkinsfile does for the CRAP report (#2073). A
+            // failed coverage step writes no report, and allowMissing
+            // keeps the publish step from failing the build.
+            publishHTML(target: [
+                reportDir: 'reports/mutator',
+                reportFiles: 'mutator.txt',
+                reportName: 'Mutator report',
+                allowMissing: true,
+                alwaysLinkToLastBuild: false,
+                keepAll: true,
+            ])
         }
         cleanup {
             // The chmod runs here and not at the end of the mutator run,
