@@ -42,13 +42,13 @@ STUB_PYTHON = textwrap.dedent("""\
     done
 """)
 
-# The stub mutator prints the file that STUB_MUTATOR_REPORT names, or
-# one fixed line when the variable is empty.
+# The stub mutator prints the lines of STUB_MUTATOR_REPORT, or one fixed
+# line when the variable is empty.
 STUB_MUTATOR = textwrap.dedent("""\
     #!/bin/sh
     printf '%s\\n' "$@" > "$STUB_LOG_DIR/mutator.argv"
     if [ -n "$STUB_MUTATOR_REPORT" ]; then
-        cat "$STUB_MUTATOR_REPORT"
+        printf '%s\\n' "$STUB_MUTATOR_REPORT"
     else
         echo "stub mutator report"
     fi
@@ -82,11 +82,6 @@ def run_script(
 ) -> subprocess.CompletedProcess[str]:
     if not SCRIPT.exists():
         pytest.fail(f"{SCRIPT} is missing; the CI image must copy scripts/")
-    stub_report = ""
-    if report_lines is not None:
-        report_path = sandbox / "stub-report.txt"
-        report_path.write_text("".join(f"{line}\n" for line in report_lines))
-        stub_report = str(report_path)
     env = {
         "PATH": f"{sandbox / 'bin'}{os.pathsep}{os.environ['PATH']}",
         "GAIN_PYTHON": str(sandbox / "bin" / "stub-python"),
@@ -94,7 +89,7 @@ def run_script(
         "MUTATOR_REPORT_DIR": str(sandbox / "reports"),
         "STUB_LOG_DIR": str(sandbox / "logs"),
         "STUB_MUTATOR_EXIT": str(mutator_exit),
-        "STUB_MUTATOR_REPORT": stub_report,
+        "STUB_MUTATOR_REPORT": "\n".join(report_lines or []),
         "STUB_PYTHON_EXIT": str(python_exit),
         "STUB_PYTHON_WRITE_LCOV": "1" if write_lcov else "0",
     }
@@ -214,13 +209,10 @@ def test_summary_line_counts_the_report_lines(sandbox: pathlib.Path) -> None:
 
     result = run_script(sandbox, mutator_exit=3, report_lines=report)
 
-    lines = [
-        line for line in result.stdout.splitlines()
-        if line.startswith("mutator: exit 3, took ")]
-    assert len(lines) == 1
-    assert lines[0].endswith(
+    [summary] = summary_lines(result)
+    assert summary.startswith("mutator: exit 3, took ")
+    assert summary.endswith(
         "killed 3, survived 1, uncovered 2, score 75.0%")
-    assert len(summary_lines(result)) == 1
     assert result.returncode == 0
 
 
