@@ -17,6 +17,14 @@
 // The post block archives on every result, so a build that died after
 // the restore still passes the restored snapshot on. A build that
 // archived nothing is skipped by the selector.
+//
+// To reset a bad snapshot, delete in Jenkins the first build that
+// archived it and every later build of this job, because each later
+// build archives a snapshot made from the one that it restored. The
+// next run then
+// restores the snapshot of an older build, or none, and makes a full
+// run. To force a full run, delete every build that archived a
+// snapshot.
 
 pipeline {
     // builder = general build agents; deploy targets don't carry it
