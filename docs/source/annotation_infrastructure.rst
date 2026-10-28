@@ -915,7 +915,7 @@ spliceai_annotator
 The spliceai_annotator plugin is a wrapper around `SpliceAI <https://www.cell.com/cell/fulltext/S0092-8674(18)31629-5>`_, which predicts the impact of variants on splicing. 
 It annotates variants with delta scores (DS) and delta positions (DP) for acceptor gain/loss and donor gain/loss, along with supporting fields such as affected gene symbol and transcript IDs.
 
-To install the plugin, run:
+To install the plugin, run the command below. Among conda channels, the annotator packages are published only on the ``iossifovlab`` channel, and bioconda carries only ``gain-core``.
 
 .. code:: bash
 
@@ -1134,6 +1134,7 @@ with the resources used elsewhere in the pipeline.
 
 Using the VEP annotators requires the gain-vep-annotator conda package and a working Docker
 installation.
+Among conda channels, the annotator packages are published only on the ``iossifovlab`` channel, and bioconda carries only ``gain-core``.
 
 .. code:: bash
 
