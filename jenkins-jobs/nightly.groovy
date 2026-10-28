@@ -32,8 +32,8 @@ pipelineJob('gain-nightly') {
         'on pooh / gain.seqpipe.org — so staging only ever moves ' +
         'to a verified master. Last, it runs gain-mutator, the ' +
         'report-only mutation report of gain.utils (#2062), which ' +
-        'never changes the result of this job. Sends a Zulip alert on failure ' +
-        '(topic: nightly).')
+        'never changes the result of this job. Sends a Zulip alert ' +
+        'on failure (topic: nightly).')
 
     logRotator {
         numToKeep(40)

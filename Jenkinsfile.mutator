@@ -44,9 +44,9 @@ pipeline {
             steps {
                 // The container writes as root into the bind mounts, and
                 // the chmod in post.cleanup makes them removable here. The
-                // agent user
-                // creates both mount sources before docker runs: dockerd
-                // creates a missing bind source as root:root (gain#921).
+                // agent user creates both mount sources before docker
+                // runs: dockerd creates a missing bind source as root:root
+                // (gain#921).
                 sh '''
                     rm -rf reports .metrics
                     mkdir -p reports/mutator .metrics/mutate
