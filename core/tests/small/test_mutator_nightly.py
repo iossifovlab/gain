@@ -209,7 +209,7 @@ def test_summary_line_counts_the_report_lines(sandbox: pathlib.Path) -> None:
         "KILLED gain/utils/b.py:20 negate the condition",
         "UNCOVERED gain/utils/b.py:30 replace 1 with 0",
         "UNCOVERED gain/utils/b.py:31 delete the call",
-        "gain/utils/a.py:func  3  1  2  6  75.0%",
+        "Total  286  68  81  435  80.8%",
     ]
 
     result = run_script(sandbox, mutator_exit=3, report_lines=report)
