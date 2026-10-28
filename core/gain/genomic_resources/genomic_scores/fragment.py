@@ -49,9 +49,11 @@ from .aggregation import (
     request_score_ids,
     resolve_aggregation_queries,
 )
-from .base import GenomicScore
+from .base import DEFAULT_VALUE_ARRAYS_BATCH_SIZE, GenomicScore
 from .records import (
+    RecordArrays,
     overlap_fractions_admit,
+    owned_records_mask,
     owns_record,
 )
 
@@ -107,6 +109,32 @@ def _tupled(
 ) -> Generator[tuple[int, int, tuple[ScoreValue, ...]], None, None]:
     """The public reads' face of a segment stream: ``values`` as a tuple."""
     return ((beg, end, tuple(values)) for beg, end, values in segments)
+
+
+def _owned_batches(
+    batches: Iterable[RecordArrays], start: int, end: int,
+) -> Generator[RecordArrays, None, None]:
+    """Keep the rows of each batch that begin in ``[start, end]``."""
+    for begins, ends, values in batches:
+        keep = owned_records_mask(begins, start, end)
+        yield begins[keep], ends[keep], {
+            score_id: column[keep] for score_id, column in values.items()
+        }
+
+
+def _nonempty_batches(
+    batches: Iterable[RecordArrays],
+) -> Generator[RecordArrays, None, None]:
+    """Drop the batches with zero rows.
+
+    A tabix table answers a region without records with one empty batch,
+    and an ownership mask can empty a batch.  The array readers of
+    :class:`FragmentScore` promise no zero-row batch, so an empty result
+    is an empty generator.
+    """
+    for batch in batches:
+        if len(batch[0]):
+            yield batch
 
 
 #: A query list resolved for the fold: the ``(score_id, aggregator)``
@@ -815,6 +843,136 @@ class FragmentScore(GenomicScore):
             scores=[self._resolve_single_score(score)],
             score_filter=score_filter)
         return ((beg, end_, values[0]) for beg, end_, values in rows)
+
+    # -- The array readers (gain#1844) -------------------------------------
+    #
+    # The column form of the two region reads above, over
+    # :meth:`~.base.GenomicScore.fetch_region_value_arrays`.  Each answers the
+    # fragments its record read answers, in the same order, at their own
+    # unclipped extent.  The guards run when the reader is CALLED, so a bad
+    # request raises where the record read raises it, and of the same type.
+    def get_fragment_arrays_starting_in_region(
+        self, chrom: str, start: int, end: int,
+        *,
+        scores: list[str] | None = None,
+        batch_size: int = DEFAULT_VALUE_ARRAYS_BATCH_SIZE,
+    ) -> Generator[RecordArrays, None, None]:
+        """Yield the fragments that begin in a region, as column arrays.
+
+        The array form of :meth:`get_fragment_scores_starting_in_region`.
+        The concatenated batches hold the same fragments, in the same order,
+        as that read. Each fragment keeps its own extent, also where it runs
+        past the region.
+
+        The values follow the parse of
+        :meth:`~GenomicScore.fetch_region_value_arrays`: a ``float`` or
+        ``int`` score gives ``float64`` with ``nan`` for no value, and a
+        ``str`` score gives an ``object`` array with ``None``. The reader
+        checks the request when you call it. The limit of one live read per
+        score applies, as for the record read.
+
+        Parameters
+        ----------
+        chrom : str
+            The contig name.
+        start : int
+            The first position of the region (1-based, inclusive).
+        end : int
+            The last position of the region (1-based, inclusive).
+        scores : list[str] | None, default None
+            The score ids to read. ``None`` reads every score of the resource.
+        batch_size : int, default 100000
+            The hint for the rows of a batch, passed on to
+            :meth:`~GenomicScore.fetch_region_value_arrays`.
+
+        Returns
+        -------
+        Generator[RecordArrays, None, None]
+            Batches of ``(begin, end, {score_id: values})``. ``begin`` and
+            ``end`` are 1-based position arrays. No batch has zero rows, so
+            the generator is empty when no fragment begins in the region.
+
+        Raises
+        ------
+        ValueError
+            If ``start`` is below 1, ``end`` is before ``start``, the score is
+            closed, or the contig or a score id is unknown.
+        TypeError
+            If :meth:`~GenomicScore.supports_region_value_arrays` is
+            ``False`` for the scores, for example on a table that is not
+            tabix or bigWig.
+        """
+        score_ids = self._array_read_request(chrom, start, end, scores)
+        return _nonempty_batches(_owned_batches(
+            self.fetch_region_value_arrays(
+                chrom, start, end, score_ids, batch_size=batch_size),
+            start, end))
+
+    def get_fragment_arrays_overlapping_region(
+        self, chrom: str, start: int, end: int,
+        *,
+        scores: list[str] | None = None,
+        batch_size: int = DEFAULT_VALUE_ARRAYS_BATCH_SIZE,
+    ) -> Generator[RecordArrays, None, None]:
+        """Yield the fragments that overlap a region, as column arrays.
+
+        The array form of :meth:`get_fragment_scores_overlapping_region`.
+        The concatenated batches hold the same fragments, in the same order,
+        as that read. Each fragment keeps its own extent, also where it runs
+        past the region.
+
+        The values follow the parse of
+        :meth:`~GenomicScore.fetch_region_value_arrays`: a ``float`` or
+        ``int`` score gives ``float64`` with ``nan`` for no value, and a
+        ``str`` score gives an ``object`` array with ``None``. The reader
+        checks the request when you call it. The limit of one live read per
+        score applies, as for the record read.
+
+        Parameters
+        ----------
+        chrom : str
+            The contig name.
+        start : int
+            The first position of the region (1-based, inclusive).
+        end : int
+            The last position of the region (1-based, inclusive).
+        scores : list[str] | None, default None
+            The score ids to read. ``None`` reads every score of the resource.
+        batch_size : int, default 100000
+            The hint for the rows of a batch, passed on to
+            :meth:`~GenomicScore.fetch_region_value_arrays`.
+
+        Returns
+        -------
+        Generator[RecordArrays, None, None]
+            Batches of ``(begin, end, {score_id: values})``. ``begin`` and
+            ``end`` are 1-based position arrays. No batch has zero rows, so
+            the generator is empty when no fragment overlaps the region.
+
+        Raises
+        ------
+        ValueError
+            If ``start`` is below 1, ``end`` is before ``start``, the score is
+            closed, or the contig or a score id is unknown.
+        TypeError
+            If :meth:`~GenomicScore.supports_region_value_arrays` is
+            ``False`` for the scores, for example on a table that is not
+            tabix or bigWig.
+        """
+        score_ids = self._array_read_request(chrom, start, end, scores)
+        return _nonempty_batches(self.fetch_region_value_arrays(
+            chrom, start, end, score_ids, batch_size=batch_size))
+
+    def _array_read_request(
+        self, chrom: str, start: int, end: int,
+        scores: list[str] | None,
+    ) -> list[str]:
+        """Check an array read like its record read, and resolve its ids."""
+        self._guard_region_span(start, end)
+        return [
+            score_def.score_id
+            for score_def in self._region_read_defs(chrom, scores)
+        ]
 
     # -- The folding read ---------------------------------------------------
     #
