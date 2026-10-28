@@ -20,8 +20,9 @@ from gain.binning.fragment_array_folds import (
     FragmentBatch,
     FragmentStartArrayFold,
     pooled_batches,
+    track_codes,
 )
-from gain.binning.fragment_binner import FragmentScoreBinding
+from gain.binning.fragment_binner import FragmentScoreBinding, _as_text
 from gain.binning.fragment_folds import (
     BinFragmentStartAggregator,
     FragmentValue,
@@ -40,6 +41,19 @@ from tests.small.binning.test_fragment_binner import (
 )
 
 AGGREGATORS = ["count", "sum", "mean", "max", "min", "median", "product"]
+
+
+def same_bits(block: np.ndarray, reference: np.ndarray) -> bool:
+    """Whether two blocks hold the same values, the sign of a zero too.
+
+    ``np.array_equal`` takes ``-0.0`` and ``0.0`` as equal, so the sign
+    bits of the values that are not ``nan`` are compared as well.
+    """
+    if not np.array_equal(block, reference, equal_nan=True):
+        return False
+    numbers = ~np.isnan(block)
+    return np.array_equal(
+        np.signbit(block[numbers]), np.signbit(reference[numbers]))
 
 
 @pytest.mark.parametrize("aggregator", AGGREGATORS)
@@ -105,7 +119,7 @@ def test_the_array_values_equal_the_streaming_fold(
     for block, reference in zip(arrays, expected, strict=True):
         assert block.dtype == reference.dtype == np.float64
         assert block.shape == reference.shape
-        assert np.array_equal(block, reference, equal_nan=True)
+        assert same_bits(block, reference)
 
 
 #: The values of the fuzz: zeros, values that make a product overflow
@@ -192,8 +206,61 @@ def test_random_fragments_fold_as_the_streaming_fold(
     for batch in pooled_batches([in_batches(rng, read) for read in reads]):
         fold.feed(batch)
 
-    assert np.array_equal(
-        fold.result(), streaming_block(reads, aggregator), equal_nan=True)
+    assert same_bits(fold.result(), streaming_block(reads, aggregator))
+
+
+@pytest.mark.parametrize("aggregator,values", [
+    ("product", [-1.0, 0.0]),
+    ("product", [0.0, -1.0]),
+    ("product", [-3.0, 0.0]),
+    ("product", [0.0, -0.0]),
+    ("product", [-0.0, 2.0, 0.0]),
+    # The product underflows to 0.0, and stays there.
+    ("product", [1e-200, -1e-200, -3.0]),
+    ("product", [1e-200, 1e-200, np.inf]),
+    # The product saturates to inf, and the -0.0 makes it -0.0.
+    ("product", [1e200, 1e200, -0.0]),
+    ("min", [0.0, -0.0]),
+    ("min", [-0.0, 0.0]),
+    ("max", [0.0, -0.0]),
+    ("max", [-0.0, 0.0]),
+    ("sum", [-0.0]),
+    ("sum", [-0.0, -0.0]),
+    ("mean", [-0.0]),
+    ("median", [-0.0, 0.0]),
+])
+def test_a_zero_keeps_the_sign_of_the_streaming_fold(
+    aggregator: str, values: list[float],
+) -> None:
+    reads = [[(11, 0, value) for value in values]]
+    start, end = FUZZ_REGION
+    fold = FragmentStartArrayFold(
+        start=start, end=end, bin_size=FUZZ_BIN_SIZE,
+        aggregators=[aggregator] * FUZZ_TRACKS)
+
+    fold.feed(in_batches(np.random.default_rng(0), reads[0])[0])
+
+    assert same_bits(fold.result(), streaming_block(reads, aggregator))
+
+
+LABELS = np.array(
+    ["AAA", None, "BBB", 2.0, np.nan, "ZZZ", 2.5, "AAA", None, 7],
+    dtype=object)
+
+
+@pytest.mark.parametrize("track_of", [
+    {"AAA": 0, "BBB": 1, "2": 2, "2.5": 0, "7": 1},
+    # A track keyed by the empty text takes each missing barcode.
+    {"AAA": 0, "": 1, "2": 2},
+], ids=["no-empty-key", "empty-key"])
+def test_track_codes_map_each_label_as_the_streaming_lookup(
+    track_of: dict[str, int],
+) -> None:
+    expected = [track_of.get(_as_text(label) or "", -1) for label in LABELS]
+
+    codes = track_codes(LABELS, track_of, _as_text)
+
+    assert codes.tolist() == expected
 
 
 #: An ``int`` score past 2**53.  Bin 1-10 holds 2**53, 1 and 1, and bin

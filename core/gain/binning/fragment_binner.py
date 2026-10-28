@@ -1279,10 +1279,19 @@ class FragmentScoreBinding:
         return scores
 
     def _reads_arrays(self, region: BedRegion) -> bool:
-        """Whether a ``fragment_start`` job reads ``region`` as arrays."""
+        """Whether a ``fragment_start`` job reads ``region`` as arrays.
+
+        An ``int`` grouping score reads with the records: the array read
+        gives it as ``float64``, and a barcode past ``2**53`` would round
+        to another text.
+        """
+        grouping = self.job.grouping
         return _fragment_def(self.job.tracks[0]).mode == FRAGMENT_START \
             and all(
                 score.supports_region_value_arrays(self._read_ids())
+                and (grouping is None
+                     or score.score_definitions[
+                         grouping.score_id].value_type != "int")
                 for score in self.scores
                 if score.has_chromosome(region.chrom))
 

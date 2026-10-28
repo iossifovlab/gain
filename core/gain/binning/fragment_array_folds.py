@@ -56,7 +56,8 @@ def pooled_batches(
 ) -> Iterator[FragmentBatch]:
     """Merge the batches of ``reads`` into batches in start order.
 
-    Each read yields its fragments in start order.  The merged order
+    Each read yields its fragments in start order.  A batch of zero rows
+    is skipped.  The merged order
     equals :func:`heapq.merge` by start: fragments with equal starts
     keep the order of their reads, and the order inside each read.
 
@@ -72,6 +73,8 @@ def pooled_batches(
     def pull(index: int) -> None:
         """Append the next batch of a read to its pending batch."""
         batch = next(sources[index], None)
+        while batch is not None and len(batch[0]) == 0:
+            batch = next(sources[index], None)
         if batch is None:
             done[index] = True
             return
@@ -138,9 +141,18 @@ class FragmentStartArrayFold:
     The fold covers the grid bins from the one holding ``start`` to the
     one holding ``end``, for one track per entry of ``aggregators``.
     Feed the batches in start order.  Each update adds in input order,
-    so the result equals the streaming fold bit for bit.  The one
-    difference: the fold reads an ``int`` score as ``float64``, so a
-    ``sum``, ``mean`` or ``product`` past ``2**53`` can round.
+    so the result equals the streaming fold bit for bit, the sign of a
+    zero included.  The fold runs only the reductions that its
+    aggregators read.
+
+    The fold has two known differences from the streaming fold:
+
+    - The fold reads an ``int`` score as ``float64``, so a ``sum``,
+      ``mean`` or ``product`` past ``2**53`` can round.
+    - A subnormal value, below ``sys.float_info.min``, can change the
+      last bit of a ``product``.  ``ProductAggregator`` multiplies by a
+      subnormal value through ``frexp`` and ``ldexp``, and rounds twice.
+      The fold rounds once.
     """
 
     def __init__(
@@ -151,12 +163,29 @@ class FragmentStartArrayFold:
         self.first_bin = (start - 1) // bin_size
         self.bins = (end - 1) // bin_size - self.first_bin + 1
         self.aggregators = list(aggregators)
+        used = set(self.aggregators)
+        self.needs_sum = bool(used & {"sum", "mean"})
+        self.needs_max = "max" in used
+        self.needs_min = "min" in used
+        self.needs_product = "product" in used
         size = self.bins * len(self.aggregators)
         self.count = np.zeros(size, dtype=np.int64)
-        self.sum = np.zeros(size, dtype=np.float64)
+        # ``-0.0 + x`` is ``x`` for each ``x``, ``-0.0`` too, so a sum
+        # that starts at ``-0.0`` equals ``SumAggregator``, which starts
+        # at the first value.
+        self.sum = np.full(size, -0.0)
         self.max = np.full(size, -np.inf)
         self.min = np.full(size, np.inf)
+        #: The first zero value of each cell, ``nan`` before one comes.
+        #: ``MinAggregator`` keeps the current value on a tie, so a min
+        #: of 0 has the sign of the first zero.
+        self.first_zero = np.full(size, np.nan)
+        #: The product of the values that are not 0.  A product that
+        #: underflows to 0 stays at that 0, as in ``ProductAggregator``.
         self.product = np.ones(size, dtype=np.float64)
+        #: The last zero value of each cell, ``nan`` before one comes.
+        #: ``ProductAggregator`` sets the product to each zero value.
+        self.last_zero = np.full(size, np.nan)
         self.median = np.full(size, np.nan)
         #: The ``(key, value, weight)`` rows of the bins whose median is
         #: still open: no fragment of a later batch can reach a closed bin.
@@ -181,13 +210,23 @@ class FragmentStartArrayFold:
         values = values[keep]
         size = len(self.count)
         self.count += np.bincount(keys, minlength=size)
-        # ``np.add.at`` adds each value to the running sum in input
-        # order, as the streaming fold does.  A sum of the batch first
-        # and then into the running sum rounds differently.
-        np.add.at(self.sum, keys, values)
-        np.maximum.at(self.max, keys, values)
-        np.minimum.at(self.min, keys, values)
-        np.multiply.at(self.product, keys, values)
+        if self.needs_sum:
+            # ``np.add.at`` adds each value to the running sum in input
+            # order, as the streaming fold does.  A sum of the batch
+            # first and then into the running sum rounds differently.
+            np.add.at(self.sum, keys, values)
+        if self.needs_max:
+            # On a tie, ``np.maximum`` takes the new value, as the
+            # ``max(value, current)`` of ``MaxAggregator`` does.
+            np.maximum.at(self.max, keys, values)
+        if self.needs_min:
+            np.minimum.at(self.min, keys, values)
+            zeros = values == 0
+            cells, firsts = np.unique(keys[zeros], return_index=True)
+            unset = np.isnan(self.first_zero[cells])
+            self.first_zero[cells[unset]] = values[zeros][firsts[unset]]
+        if self.needs_product:
+            self._multiply(keys, values)
         if "median" in self.aggregators:
             self.open_keys = np.concatenate([self.open_keys, keys])
             self.open_values = np.concatenate([self.open_values, values])
@@ -197,6 +236,34 @@ class FragmentStartArrayFold:
             # after it, so it reaches no bin before that start's bin.
             self._close_medians(
                 (int(starts[-1]) - 1) // self.bin_size - self.first_bin)
+
+    def _multiply(
+        self, keys: npt.NDArray[np.int64], values: npt.NDArray[np.float64],
+    ) -> None:
+        """Fold ``values`` into the products of the cells ``keys``."""
+        zeros = values == 0
+        if zeros.any():
+            # The last zero of each cell: the first one in reverse order.
+            cells, lasts = np.unique(keys[zeros][::-1], return_index=True)
+            self.last_zero[cells] = values[zeros][::-1][lasts]
+        # A cell whose product underflowed to 0 takes no more values.
+        live = ~zeros
+        live[live] = self.product[keys[live]] != 0
+        keys, values = keys[live], values[live]
+        before = self.product[keys]
+        np.multiply.at(self.product, keys, values)
+        # A product that underflows in this batch stops at that 0.  A
+        # later value of the batch flips its sign, and an ``inf`` makes
+        # it ``nan``.  Replay those few cells one value at a time.
+        stopped = self.product[keys]
+        for cell in np.unique(keys[(stopped == 0) | np.isnan(stopped)]):
+            rows = keys == cell
+            product = float(before[rows][0])
+            for value in values[rows]:
+                product *= float(value)
+                if product == 0:
+                    break
+            self.product[cell] = product
 
     def _close_medians(self, before: int) -> None:
         """Reduce the median of each open bin before the bin ``before``."""
@@ -231,13 +298,18 @@ class FragmentStartArrayFold:
         finals = {
             "count": self.count.astype(np.float64),
             "sum": self.sum,
+            # ``MeanAggregator`` starts its sum at ``0``, so its mean of
+            # ``-0.0`` values is ``0.0``.  Adding ``0.0`` changes only the
+            # sign of a zero.
             "mean": np.divide(
-                self.sum, self.count, out=np.zeros_like(self.sum),
+                self.sum + 0.0, self.count, out=np.zeros_like(self.sum),
                 where=~empty),
             "max": self.max,
-            "min": self.min,
-            # A product that holds a 0 is 0, where ``inf * 0`` is nan.
-            "product": np.where(np.isnan(self.product), 0.0, self.product),
+            "min": np.where(
+                self.min == 0, self.first_zero, self.min),
+            # A product that holds a 0 is its last 0, in any order.
+            "product": np.where(
+                np.isnan(self.last_zero), self.product, self.last_zero),
             "median": self.median,
         }
         block = np.empty((self.bins, len(self.aggregators)))
