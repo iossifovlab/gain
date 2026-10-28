@@ -56,8 +56,10 @@ ENV UV_LINK_MODE=copy \
 # every later build on that agent would archive an empty CRAP table.
 # The core stage ignores the crapper exit code at run time, but an
 # uncached failed install fails the image build. That build failure
-# reaches the core stage, Jenkinsfile.python-matrix and
-# core/Jenkinsfile.integration, which all build this Dockerfile. The
+# reaches every build of this Dockerfile: the core stage, the
+# "Core wheel (docs-only)" stage and the "Build docs" stage of the root
+# Jenkinsfile, Jenkinsfile.python-matrix and core/Jenkinsfile.integration.
+# A docs-only build then has no core wheel for gpf to fetch. The
 # report-only rule covers the run, not the image build: the same build
 # already needs the network for apt and PyPI.
 ARG CRAPPER_REV=6fd92c4c9bcc56efb64a2f8743d5a2993bcfd42d
