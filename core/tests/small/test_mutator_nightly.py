@@ -20,12 +20,16 @@ SCRIPT = REPO_ROOT / "scripts" / "mutator_nightly.sh"
 
 # The stub interpreter writes one line per argument. It exits with
 # STUB_PYTHON_EXIT. On success it writes the LCOV report that the
-# `--cov-report=lcov:<path>` argument names, as pytest-cov does.
+# `--cov-report=lcov:<path>` argument names, as pytest-cov does, unless
+# STUB_PYTHON_WRITE_LCOV is 0.
 STUB_PYTHON = textwrap.dedent("""\
     #!/bin/sh
     printf '%s\\n' "$@" > "$STUB_LOG_DIR/python.argv"
     if [ "$STUB_PYTHON_EXIT" -ne 0 ]; then
         exit "$STUB_PYTHON_EXIT"
+    fi
+    if [ "$STUB_PYTHON_WRITE_LCOV" = 0 ]; then
+        exit 0
     fi
     for arg in "$@"; do
         case "$arg" in
@@ -67,6 +71,7 @@ def run_script(
     *,
     mutator_exit: int = 0,
     python_exit: int = 0,
+    write_lcov: bool = True,
 ) -> subprocess.CompletedProcess[str]:
     if not SCRIPT.exists():
         pytest.fail(f"{SCRIPT} is missing; the CI image must copy scripts/")
@@ -78,6 +83,7 @@ def run_script(
         "STUB_LOG_DIR": str(sandbox / "logs"),
         "STUB_MUTATOR_EXIT": str(mutator_exit),
         "STUB_PYTHON_EXIT": str(python_exit),
+        "STUB_PYTHON_WRITE_LCOV": "1" if write_lcov else "0",
     }
     return subprocess.run(
         [shutil.which("bash") or "bash", str(SCRIPT)],
@@ -165,3 +171,11 @@ def test_coverage_failure_skips_mutator(sandbox: pathlib.Path) -> None:
     assert result.returncode != 0
     assert not (sandbox / "logs" / "mutator.argv").exists()
     assert "the coverage step failed" in result.stdout
+
+
+def test_coverage_without_lcov_skips_mutator(sandbox: pathlib.Path) -> None:
+    result = run_script(sandbox, write_lcov=False)
+
+    assert result.returncode == 1
+    assert not (sandbox / "logs" / "mutator.argv").exists()
+    assert "wrote no" in result.stdout

@@ -85,8 +85,11 @@ pipeline {
     options {
         // Generous: a cold master rebuild + e2e + VEP integration
         // can comfortably reach 90 minutes; 4 hours leaves headroom
-        // for a slow/contended night without false-alarming.
-        timeout(time: 4, unit: 'HOURS')
+        // for a slow/contended night without false-alarming. The last
+        // stage then waits for gain-mutator, and the 2 hours on top
+        // are its own timeout (#2062). A nightly abort would also
+        // abort gain-mutator and change the result of this job.
+        timeout(time: 6, unit: 'HOURS')
         // 40 keeps ~6 weeks of nightlies for trend analysis without
         // bloating the controller's disk.
         buildDiscarder(logRotator(numToKeepStr: '40'))
@@ -365,8 +368,10 @@ pipeline {
             // (for example before the seed job creates it) out too. The
             // stage comes last so that the mutator workers, one per core
             // of an agent, never run next to the other downstream jobs.
-            // No `when` gate: the report is worth having on a red night
-            // too.
+            // No `when` gate: a red validation stage still runs the
+            // report, because catchError holds those failures. A failed
+            // 'Deploy on pooh' is not caught, so declarative skips this
+            // stage on that night.
             steps {
                 catchError(buildResult: 'SUCCESS',
                            stageResult: 'UNSTABLE') {

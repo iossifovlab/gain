@@ -43,7 +43,8 @@ pipeline {
         stage('Prepare workspace') {
             steps {
                 // The container writes as root into the bind mounts, and
-                // its chmod makes them removable here. The agent user
+                // the chmod in post.cleanup makes them removable here. The
+                // agent user
                 // creates both mount sources before docker runs: dockerd
                 // creates a missing bind source as root:root (gain#921).
                 sh '''
@@ -85,12 +86,7 @@ pipeline {
                                 -v "$PWD/.metrics/mutate:/workspace/core/.metrics/mutate" \
                                 -v "$PWD/reports/mutator:/reports" \
                                 "$IMAGE_TAG" \
-                                sh -c '
-                                    bash /workspace/scripts/mutator_nightly.sh
-                                    script_exit=$?
-                                    chmod -R a+rw /reports /workspace/core/.metrics/mutate
-                                    exit $script_exit
-                                '
+                                bash /workspace/scripts/mutator_nightly.sh
                         ''',
                     )
                     if (status != 0) {
@@ -113,8 +109,21 @@ pipeline {
             )
         }
         cleanup {
+            // The chmod runs here and not at the end of the mutator run,
+            // so an abort or a timeout also leaves the root-owned files
+            // of the bind mounts removable for the next build. It runs
+            // only when the image exists: without the image, no
+            // container wrote into the mounts.
             sh '''
                 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+                if docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
+                    docker run --rm \
+                        -v "$PWD/.metrics/mutate:/workspace/core/.metrics/mutate" \
+                        -v "$PWD/reports/mutator:/reports" \
+                        "$IMAGE_TAG" \
+                        chmod -R a+rw /reports /workspace/core/.metrics/mutate \
+                        || true
+                fi
                 docker image rm "$IMAGE_TAG" >/dev/null 2>&1 || true
             '''
         }

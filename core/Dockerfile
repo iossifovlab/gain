@@ -55,6 +55,8 @@ ENV UV_LINK_MODE=copy \
 # grammar lives in the tool environment, so its Python fetches it.
 # CRAPPER_REV is the one place that pins crapper, and MUTATOR_REV is the
 # one place that pins mutator.
+# The `command -v` checks fail this RUN when the install puts no
+# `mutator` or no `crapper` on PATH.
 # A failed install or grammar fetch fails this RUN on purpose. Docker
 # caches no failed layer, so the next build retries the install. A
 # fallback such as `|| echo` would cache a layer without crapper, and
@@ -74,6 +76,7 @@ ENV UV_TOOL_DIR=/opt/uv-tools \
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv tool install "mutator @ git+https://github.com/unclebob/mutator@${MUTATOR_REV}" \
         --with-executables-from "crapper @ git+https://github.com/unclebob/crapper@${CRAPPER_REV}" \
+    && command -v mutator && command -v crapper \
     && /opt/uv-tools/mutator/bin/python -c \
         "from tree_sitter_language_pack import download; download(['python'])"
 
