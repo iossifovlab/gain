@@ -28,6 +28,36 @@ def runProject(Map args) {
     String imageTag       = "gain-${distName}-ci:${env.CI_TAG}"
     // gain-web-api is BSD-3-Clause and ships no repository LICENSE (#1961).
     boolean shipsLicense  = distPkg != 'gain-web-api'
+    // CRAP table of ${pkg} from crapper (#2061), report only. Off by
+    // default: only the core image carries crapper. The LCOV report comes
+    // from the same pytest run as the Cobertura one, at the path that
+    // crapper reads under its project root.
+    boolean crap          = args.crap ?: false
+    String crapRoot       = "/workspace/${name}"
+    String lcovReport     = crap ?
+        "--cov-report=lcov:${crapRoot}/target/coverage/python/lcov.info" : ''
+    // Keep this text free of apostrophes: it lands inside the
+    // single-quoted sh -c string below (#1403). The Python files of the
+    // package are named one by one, because crapper has no exclude
+    // option and a walk of the package reaches the vendored sqlite-wasm
+    // JavaScript. The list leaves out _version.py, which coverage omits
+    // too, so it would show as a row at 0%. The exit code of crapper
+    // never reaches pytest_exit. The echo also prints the line count of
+    // crap.txt. The count includes the header lines of crapper, so it is
+    // not the number of function rows: zero lines means no report.
+    // scripts/crap_report_html.py renders crap.txt as crap.html, which
+    // the top-level post block publishes as the CRAP report page.
+    String crapStep       = !crap ? '' : """
+                crap_start=\$(date +%s)
+                crapper --use-existing-coverage --root ${crapRoot} \\
+                    \$(find ${pkg} -name "*.py" ! -name _version.py | sort) \\
+                    > /reports/crap.txt
+                crap_exit=\$?
+                crap_lines=\$(wc -l < /reports/crap.txt)
+                echo "crapper: exit \$crap_exit, took \$((\$(date +%s) - crap_start)) s, \$crap_lines lines in crap.txt"
+                python /workspace/scripts/crap_report_html.py \\
+                    /reports/crap.txt /reports/crap.html
+"""
 
     sh label: "Build ${name} image", script: """
         docker build -f ${name}/Dockerfile -t ${imageTag} .
@@ -97,7 +127,7 @@ def runProject(Map args) {
                 pytest ${pytestArgs} \\
                     --junitxml=/reports/pytest.xml \\
                     --cov=${pkg} --cov-branch \\
-                    --cov-report=xml:/reports/coverage.xml \\
+                    --cov-report=xml:/reports/coverage.xml ${lcovReport} \\
                     ${tests}
                 pytest_exit=\$?
                 # Rewrite container-absolute <source>/workspace/...</source> to a
@@ -105,7 +135,7 @@ def runProject(Map args) {
                 # resolve source files.
                 sed -i "s#<source>/workspace/\\([^<]*\\)</source>#<source>\\1</source>#g" \\
                     /reports/coverage.xml 2>/dev/null || true
-                # Build wheel + sdist for this project. hatch-vcs reads the
+${crapStep}                # Build wheel + sdist for this project. hatch-vcs reads the
                 # mounted .git to produce a proper PEP 440 version.
                 uv build --package ${distPkg} --out-dir /dist
                 # The sdist must hold LICENSE as a regular file and the
@@ -518,6 +548,8 @@ pipeline {
                                             dockerRunExtra:
                                                 '--network "$COMPOSE_NETWORK" ' +
                                                 cell.dockerRunExtra,
+                                            // CRAP table of gain, report only (#2061).
+                                            crap: true,
                                         )
                                     }
                                 }
@@ -1764,6 +1796,17 @@ pipeline {
                         failOnError: false,
                     )
                 }
+                // The CRAP table of core (#2061) as a sidebar page of the
+                // build. allowMissing covers a docs-only build and a core
+                // stage that died before crapper ran.
+                publishHTML(target: [
+                    reportDir: 'reports/core',
+                    reportFiles: 'crap.html',
+                    reportName: 'CRAP report',
+                    allowMissing: true,
+                    alwaysLinkToLastBuild: false,
+                    keepAll: true,
+                ])
                 // The second pattern is Playwright's per-test artifacts
                 // (info_pages_e2e). `trace: 'retain-on-failure'` writes a
                 // trace.zip only for a test that failed, and without it
@@ -1771,7 +1814,8 @@ pipeline {
                 // unreachable from the build page and gone with the next
                 // workspace wipe.
                 archiveArtifacts(
-                    artifacts: 'reports/**/*.xml, reports/*/test-results/**',
+                    artifacts: 'reports/**/*.xml, reports/*/test-results/**, ' +
+                               'reports/*/crap.txt',
                     allowEmptyArchive: true,
                     fingerprint: false,
                 )

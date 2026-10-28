@@ -38,6 +38,38 @@ ENV UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never \
     PYTHONHASHSEED=0
 
+# crapper computes the CRAP table that the core stage of the root
+# Jenkinsfile archives (#2061). It is a CI tool, not a dependency of any
+# member: crapper is not on conda-forge, and a pyproject entry would
+# flow into the files that scripts/conda_env.py renders. `uv tool
+# install` puts it in its own environment, which no `uv sync` below
+# touches (each sync removes every package that uv.lock does not list).
+# The layer sits before every COPY of the workspace sources, so a source
+# change keeps it cached.
+# crapper downloads its tree-sitter grammar on first use, so the build
+# fetches the Python grammar here and the CI run needs no download.
+# CRAPPER_REV is the one place that pins crapper (#2062 adds mutator to
+# the same tool environment).
+# A failed install or grammar fetch fails this RUN on purpose. Docker
+# caches no failed layer, so the next build retries the install. A
+# fallback such as `|| echo` would cache a layer without crapper, and
+# every later build on that agent would archive an empty CRAP table.
+# The core stage ignores the crapper exit code at run time, but an
+# uncached failed install fails the image build. That build failure
+# reaches every build of this Dockerfile: the core stage, the
+# "Core wheel (docs-only)" stage and the "Build docs" stage of the root
+# Jenkinsfile, Jenkinsfile.python-matrix and core/Jenkinsfile.integration.
+# A docs-only build then has no core wheel for gpf to fetch. The
+# report-only rule covers the run, not the image build: the same build
+# already needs the network for apt and PyPI.
+ARG CRAPPER_REV=6fd92c4c9bcc56efb64a2f8743d5a2993bcfd42d
+ENV UV_TOOL_DIR=/opt/uv-tools \
+    UV_TOOL_BIN_DIR=/usr/local/bin
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv tool install "crapper @ git+https://github.com/unclebob/crapper@${CRAPPER_REV}" \
+    && /opt/uv-tools/crapper/bin/python -c \
+        "from tree_sitter_language_pack import download; download(['python'])"
+
 WORKDIR /workspace
 
 # Workspace manifests first — maximises layer cache hits when only source changes.
