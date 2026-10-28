@@ -42,8 +42,9 @@ def runProject(Map args) {
     // option and a walk of the package reaches the vendored sqlite-wasm
     // JavaScript. The list leaves out _version.py, which coverage omits
     // too, so it would show as a row at 0%. The exit code of crapper
-    // never reaches pytest_exit. The echo also prints the row count of
-    // the table: an empty table with exit 0 still means no report.
+    // never reaches pytest_exit. The echo also prints the line count of
+    // crap.txt. The count includes the header lines of crapper, so it is
+    // not the number of function rows: zero lines means no report.
     String crapStep       = !crap ? '' : """
                 crap_start=\$(date +%s)
                 crapper --use-existing-coverage --root ${crapRoot} \\

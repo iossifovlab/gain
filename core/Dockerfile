@@ -50,17 +50,18 @@ ENV UV_LINK_MODE=copy \
 # fetches the Python grammar here and the CI run needs no download.
 # CRAPPER_REV is the one place that pins crapper (#2062 adds mutator to
 # the same tool environment).
-# The CRAP report never changes a build result, so a failed install or
-# grammar fetch prints only a warning and does not fail the image build.
-# The core stage then logs the crapper exit code and the row count.
+# A failed install or grammar fetch fails this RUN on purpose. Docker
+# caches no failed layer, so the next build retries the install. A
+# fallback such as `|| echo` would cache a layer without crapper, and
+# every later build on that agent would archive an empty CRAP table.
+# The core stage ignores the crapper exit code at run time.
 ARG CRAPPER_REV=6fd92c4c9bcc56efb64a2f8743d5a2993bcfd42d
 ENV UV_TOOL_DIR=/opt/uv-tools \
     UV_TOOL_BIN_DIR=/usr/local/bin
 RUN --mount=type=cache,target=/root/.cache/uv \
-    { uv tool install "crapper @ git+https://github.com/unclebob/crapper@${CRAPPER_REV}" \
-      && /opt/uv-tools/crapper/bin/python -c \
-          "from tree_sitter_language_pack import download; download(['python'])" ; } \
-    || echo "WARNING: crapper install failed, the CRAP report of core can be empty (#2061)"
+    uv tool install "crapper @ git+https://github.com/unclebob/crapper@${CRAPPER_REV}" \
+    && /opt/uv-tools/crapper/bin/python -c \
+        "from tree_sitter_language_pack import download; download(['python'])"
 
 WORKDIR /workspace
 
