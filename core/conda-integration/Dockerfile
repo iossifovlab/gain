@@ -95,6 +95,10 @@ COPY --chown=mambauser:mambauser docs/source/development/annotators \
 # tests/small/test_pypi_probe.py runs scripts/pypi_probe.sh and fails,
 # not skips, when the script is absent (#1960).
 COPY --chown=mambauser:mambauser scripts/pypi_probe.sh /testbed/scripts/
+# tests/small/test_crap_report_html.py loads scripts/crap_report_html.py
+# and fails, not skips, when the script is absent (#2061).
+COPY --chown=mambauser:mambauser scripts/crap_report_html.py \
+    /testbed/scripts/
 RUN chmod -R a+rwX /testbed
 COPY --chown=mambauser:mambauser core/conda-integration/run.sh \
     core/conda-integration/assert_installed.py /opt/conda-integration/
