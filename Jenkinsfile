@@ -40,14 +40,18 @@ def runProject(Map args) {
     // single-quoted sh -c string below (#1403). The Python files of the
     // package are named one by one, because crapper has no exclude
     // option and a walk of the package reaches the vendored sqlite-wasm
-    // JavaScript. The exit code of crapper never reaches pytest_exit.
+    // JavaScript. The list leaves out _version.py, which coverage omits
+    // too, so it would show as a row at 0%. The exit code of crapper
+    // never reaches pytest_exit. The echo also prints the row count of
+    // the table: an empty table with exit 0 still means no report.
     String crapStep       = !crap ? '' : """
                 crap_start=\$(date +%s)
                 crapper --use-existing-coverage --root ${crapRoot} \\
-                    \$(find ${pkg} -name "*.py" | sort) \\
+                    \$(find ${pkg} -name "*.py" ! -name _version.py | sort) \\
                     > /reports/crap.txt
                 crap_exit=\$?
-                echo "crapper: exit \$crap_exit, took \$((\$(date +%s) - crap_start)) s"
+                crap_lines=\$(wc -l < /reports/crap.txt)
+                echo "crapper: exit \$crap_exit, took \$((\$(date +%s) - crap_start)) s, \$crap_lines lines in crap.txt"
 """
 
     sh label: "Build ${name} image", script: """
