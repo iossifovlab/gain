@@ -1,0 +1,139 @@
+// Nightly mutation report of the gain.utils package (#2062).
+//
+// Loaded by the gain-mutator job (jenkins-jobs/mutator.groovy), which
+// gain-nightly triggers in its last stage. The job is report only: it
+// archives the mutator report and never fails. A survivor is the
+// report, not a failure. A failed coverage step, a failed baseline or
+// any other mutator error marks the build UNSTABLE.
+//
+// scripts/mutator_nightly.sh holds the command line, and
+// core/tests/small/test_mutator_nightly.py tests it with a stub mutator.
+//
+// mutator keeps its snapshot in .metrics/mutate/, and a later run with
+// a snapshot is differential: it reruns survivors and the sites of
+// changed functions only. Builder agents change between runs, so the
+// workspace does not keep the snapshot. The job archives it, and the
+// next run restores it from the last build that archived artifacts.
+// The post block archives on every result, so a build that died after
+// the restore still passes the restored snapshot on. A build that
+// archived nothing is skipped by the selector.
+//
+// To reset a bad snapshot, delete in Jenkins the first build that
+// archived it and every later build of this job, because each later
+// build archives a snapshot made from the one that it restored. The
+// next run then
+// restores the snapshot of an older build, or none, and makes a full
+// run. To force a full run, delete every build that archived a
+// snapshot.
+
+pipeline {
+    // builder = general build agents; deploy targets don't carry it
+    agent { label 'builder' }
+
+    options {
+        // A first run executes every covered mutant of gain/utils. A
+        // differential run takes far less time.
+        timeout(time: 2, unit: 'HOURS')
+        buildDiscarder(logRotator(numToKeepStr: '40'))
+        // The restore below copies from this job. The job grants the
+        // Copy Artifact permission to itself, so the restore does not
+        // depend on the defaults of the plugin. The first run has no
+        // snapshot to copy, so the grant is in place before it matters.
+        copyArtifactPermission('gain-mutator')
+    }
+
+    environment {
+        IMAGE_TAG = "gain-core-mutator:${env.BUILD_NUMBER}"
+        CONTAINER = "gain-core-mutator-${env.BUILD_NUMBER}"
+    }
+
+    stages {
+        stage('Prepare workspace') {
+            steps {
+                // The container writes as root into the bind mounts, and
+                // the chmod in post.cleanup makes them removable here. The
+                // agent user creates both mount sources before docker
+                // runs: dockerd creates a missing bind source as root:root
+                // (gain#921).
+                sh '''
+                    rm -rf reports .metrics
+                    mkdir -p reports/mutator .metrics/mutate
+                '''
+                sh 'git submodule update --init test_fixtures/mini-GRR'
+                // The snapshot of the last build that archived one. The
+                // first run has none, so the copy is optional.
+                copyArtifacts(
+                    projectName: env.JOB_NAME,
+                    selector: lastWithArtifacts(),
+                    filter: '.metrics/mutate/**',
+                    optional: true,
+                    fingerprintArtifacts: false,
+                )
+                sh 'echo "restored snapshot files: $(find .metrics/mutate -type f | wc -l)"'
+            }
+        }
+
+        stage('Build core image') {
+            steps {
+                sh 'docker build -f core/Dockerfile -t "$IMAGE_TAG" .'
+            }
+        }
+
+        stage('Run mutator') {
+            steps {
+                script {
+                    // --name is what post.cleanup removes: an abort kills
+                    // the docker client, and dockerd keeps the container
+                    // running with all its mutator workers.
+                    int status = sh(
+                        label: 'mutator on gain/utils',
+                        returnStatus: true,
+                        script: '''
+                            docker run --rm \
+                                --name "$CONTAINER" \
+                                -v "$PWD/.metrics/mutate:/workspace/core/.metrics/mutate" \
+                                -v "$PWD/reports/mutator:/reports" \
+                                "$IMAGE_TAG" \
+                                bash /workspace/scripts/mutator_nightly.sh
+                        ''',
+                    )
+                    if (status != 0) {
+                        unstable(
+                            "scripts/mutator_nightly.sh exited ${status}: " +
+                            'the coverage step, the baseline or mutator failed',
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts(
+                artifacts: 'reports/mutator/**, .metrics/mutate/**',
+                allowEmptyArchive: true,
+                fingerprint: false,
+            )
+        }
+        cleanup {
+            // The chmod runs here and not at the end of the mutator run,
+            // so an abort or a timeout also leaves the root-owned files
+            // of the bind mounts removable for the next build. It runs
+            // only when the image exists: without the image, no
+            // container wrote into the mounts.
+            sh '''
+                docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+                if docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
+                    docker run --rm \
+                        -v "$PWD/.metrics/mutate:/workspace/core/.metrics/mutate" \
+                        -v "$PWD/reports/mutator:/reports" \
+                        "$IMAGE_TAG" \
+                        chmod -R a+rw /reports /workspace/core/.metrics/mutate \
+                        || true
+                fi
+                docker image rm "$IMAGE_TAG" >/dev/null 2>&1 || true
+            '''
+        }
+    }
+}

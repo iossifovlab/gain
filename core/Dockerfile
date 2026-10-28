@@ -39,17 +39,24 @@ ENV UV_LINK_MODE=copy \
     PYTHONHASHSEED=0
 
 # crapper computes the CRAP table that the core stage of the root
-# Jenkinsfile archives (#2061). It is a CI tool, not a dependency of any
-# member: crapper is not on conda-forge, and a pyproject entry would
-# flow into the files that scripts/conda_env.py renders. `uv tool
-# install` puts it in its own environment, which no `uv sync` below
-# touches (each sync removes every package that uv.lock does not list).
+# Jenkinsfile archives (#2061). mutator writes the mutation report of
+# the nightly gain-mutator job (#2062). They are CI tools, not
+# dependencies of any member: neither is on conda-forge, and a pyproject
+# entry would flow into the files that scripts/conda_env.py renders.
+# `uv tool install` puts both in one tool environment, `mutator`, which
+# no `uv sync` below touches (each sync removes every package that
+# uv.lock does not list). mutator imports crapper from that environment
+# for its namespace and function names, so the image holds one crapper.
+# `--with-executables-from` also puts the `crapper` command on PATH.
 # The layer sits before every COPY of the workspace sources, so a source
 # change keeps it cached.
 # crapper downloads its tree-sitter grammar on first use, so the build
-# fetches the Python grammar here and the CI run needs no download.
-# CRAPPER_REV is the one place that pins crapper (#2062 adds mutator to
-# the same tool environment).
+# fetches the Python grammar here and the CI run needs no download. The
+# grammar lives in the tool environment, so its Python fetches it.
+# CRAPPER_REV is the one place that pins crapper, and MUTATOR_REV is the
+# one place that pins mutator.
+# The `command -v` checks fail this RUN when the install puts no
+# `mutator` or no `crapper` on PATH.
 # A failed install or grammar fetch fails this RUN on purpose. Docker
 # caches no failed layer, so the next build retries the install. A
 # fallback such as `|| echo` would cache a layer without crapper, and
@@ -63,11 +70,14 @@ ENV UV_LINK_MODE=copy \
 # report-only rule covers the run, not the image build: the same build
 # already needs the network for apt and PyPI.
 ARG CRAPPER_REV=6fd92c4c9bcc56efb64a2f8743d5a2993bcfd42d
+ARG MUTATOR_REV=a5a0cb803b66e0cdb8bf471b3b08af701d424a41
 ENV UV_TOOL_DIR=/opt/uv-tools \
     UV_TOOL_BIN_DIR=/usr/local/bin
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv tool install "crapper @ git+https://github.com/unclebob/crapper@${CRAPPER_REV}" \
-    && /opt/uv-tools/crapper/bin/python -c \
+    uv tool install "mutator @ git+https://github.com/unclebob/mutator@${MUTATOR_REV}" \
+        --with-executables-from "crapper @ git+https://github.com/unclebob/crapper@${CRAPPER_REV}" \
+    && command -v mutator && command -v crapper \
+    && /opt/uv-tools/mutator/bin/python -c \
         "from tree_sitter_language_pack import download; download(['python'])"
 
 WORKDIR /workspace

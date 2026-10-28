@@ -30,8 +30,10 @@ pipelineJob('gain-nightly') {
         'triggers gain-staging-deploy to put the image this build ' +
         'validated (pinned to the master rebuild\'s BUILD_NUMBER) ' +
         'on pooh / gain.seqpipe.org — so staging only ever moves ' +
-        'to a verified master. Sends a Zulip alert on failure ' +
-        '(topic: nightly).')
+        'to a verified master. Last, it runs gain-mutator, the ' +
+        'report-only mutation report of gain.utils (#2062), which ' +
+        'never changes the result of this job. Sends a Zulip alert ' +
+        'on failure (topic: nightly).')
 
     logRotator {
         numToKeep(40)
