@@ -99,6 +99,10 @@ COPY --chown=mambauser:mambauser scripts/pypi_probe.sh /testbed/scripts/
 # and fails, not skips, when the script is absent (#2061).
 COPY --chown=mambauser:mambauser scripts/crap_report_html.py \
     /testbed/scripts/
+# tests/small/test_mutator_nightly.py runs scripts/mutator_nightly.sh
+# and fails, not skips, when the script is absent (#2062).
+COPY --chown=mambauser:mambauser scripts/mutator_nightly.sh \
+    /testbed/scripts/
 RUN chmod -R a+rwX /testbed
 COPY --chown=mambauser:mambauser core/conda-integration/run.sh \
     core/conda-integration/assert_installed.py /opt/conda-integration/

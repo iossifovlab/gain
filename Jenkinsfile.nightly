@@ -3,7 +3,7 @@
 // dependency drift / silently-stale caches on quiet days.
 //
 // Six validation downstreams are exercised, then the validated
-// image is deployed to staging:
+// image is deployed to staging, then one report-only job runs:
 //   - iossifovlab/gain/master        — full rebuild, lint+tests+
 //                                      wheels+conda+prod images
 //   - /gain-web-e2e                  — Playwright e2e against the
@@ -35,6 +35,10 @@
 //                                      the master rebuild's
 //                                      BUILD_NUMBER. Gated on all of
 //                                      the above being green.
+//   - /gain-mutator                  — nightly mutation report of
+//                                      gain.utils (#2062). Report
+//                                      only: it never changes the
+//                                      result of this job
 //
 // The validation stages (and each branch of the conda fan-out) are
 // wrapped in `catchError` so a failure in one doesn't mask the
@@ -351,6 +355,27 @@ pipeline {
                         ),
                     ],
                 )
+            }
+        }
+
+        stage('Run gain-mutator') {
+            // The mutation report of gain.utils (#2062). Report only:
+            // `propagate: false` keeps the result of gain-mutator out of
+            // this job, and the catchError keeps a failure to start it
+            // (for example before the seed job creates it) out too. The
+            // stage comes last so that the mutator workers, one per core
+            // of an agent, never run next to the other downstream jobs.
+            // No `when` gate: the report is worth having on a red night
+            // too.
+            steps {
+                catchError(buildResult: 'SUCCESS',
+                           stageResult: 'UNSTABLE') {
+                    build(
+                        job: '/gain-mutator',
+                        wait: true,
+                        propagate: false,
+                    )
+                }
             }
         }
     }

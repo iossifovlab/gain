@@ -22,7 +22,7 @@
 // definition hasn't changed get no-op updates. Manages every job
 // whose Job-DSL definition lives under `<project>/jenkins-jobs/
 // *.groovy` in this repo (currently: gain-release, gain-web-e2e,
-// gain-vep-integration, gain-nightly).
+// gain-vep-integration, gain-nightly, gain-mutator).
 
 pipeline {
     // builder = general build agents; deploy targets don't carry it
