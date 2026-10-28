@@ -38,6 +38,25 @@ ENV UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never \
     PYTHONHASHSEED=0
 
+# crapper computes the CRAP table that the core stage of the root
+# Jenkinsfile archives (#2061). It is a CI tool, not a dependency of any
+# member: crapper is not on conda-forge, and a pyproject entry would
+# flow into the files that scripts/conda_env.py renders. `uv tool
+# install` puts it in its own environment, which no `uv sync` below
+# touches (each sync removes every package that uv.lock does not list).
+# The layer sits before every COPY, so a source change keeps it cached.
+# crapper downloads its tree-sitter grammar on first use, so the build
+# fetches the Python grammar here and the CI run needs no download.
+# CRAPPER_REV is the one place that pins crapper (#2062 adds mutator to
+# the same tool environment).
+ARG CRAPPER_REV=6fd92c4c9bcc56efb64a2f8743d5a2993bcfd42d
+ENV UV_TOOL_DIR=/opt/uv-tools \
+    UV_TOOL_BIN_DIR=/usr/local/bin
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv tool install "crapper @ git+https://github.com/unclebob/crapper@${CRAPPER_REV}" \
+    && /opt/uv-tools/crapper/bin/python -c \
+        "from tree_sitter_language_pack import download; download(['python'])"
+
 WORKDIR /workspace
 
 # Workspace manifests first — maximises layer cache hits when only source changes.
