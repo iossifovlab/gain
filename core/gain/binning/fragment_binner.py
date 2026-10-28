@@ -80,6 +80,9 @@ the others -- and so does every bin of a contig a resource lacks; with
 an ``uncovered_value`` no bin is empty, and a contig a resource lacks is
 uncovered throughout.
 """
+# One module on purpose: the parse, the grouping and the binding of the
+# binner share its private helpers.
+# pylint: disable=too-many-lines
 from __future__ import annotations
 
 import gzip
@@ -110,6 +113,12 @@ from gain.binning.binners import (
     entry_name,
     match_resources,
     named_base,
+)
+from gain.binning.fragment_array_folds import (
+    FragmentBatch,
+    FragmentStartArrayFold,
+    pooled_batches,
+    track_codes,
 )
 from gain.binning.fragment_def import FragmentScoreDef
 from gain.binning.fragment_folds import (
@@ -1210,6 +1219,9 @@ class FragmentScoreBinding:
         answers goes to its row of the block.  A track that no fragment
         reaches still answers every bin, through its fold's ``flush``.
         A resource without the region's contig contributes nothing.
+        A ``fragment_start`` job over resources with an array read reads
+        column arrays instead, and folds them with
+        :class:`FragmentStartArrayFold` to the same block.
         Every read is drained, or closed on failure, before this returns,
         so no read outlives the call.  With a grouping, each resource's
         dropped fragments are counted into :attr:`dropped` and logged.
@@ -1229,21 +1241,24 @@ class FragmentScoreBinding:
                     column] = bin_value.value
 
         dropped = [0] * len(self.scores)
-        reads = [
-            self._records(index, score, region, dropped)
-            for index, score in enumerate(self.scores)
-            if score.has_chromosome(region.chrom)
-        ]
-        try:
-            for begin, end, track, value in heapq.merge(
-                    *reads, key=operator.itemgetter(0)):
-                place(track, folds[track].feed(
-                    FragmentValue(begin, end, value)))
-        finally:
-            for read in reads:
-                read.close()
-        for column, fold in enumerate(folds):
-            place(column, fold.flush())
+        if self._reads_arrays(region):
+            block[:] = self._fold_arrays(region, bin_size, dropped)
+        else:
+            reads = [
+                self._records(index, score, region, dropped)
+                for index, score in enumerate(self.scores)
+                if score.has_chromosome(region.chrom)
+            ]
+            try:
+                for begin, end, track, value in heapq.merge(
+                        *reads, key=operator.itemgetter(0)):
+                    place(track, folds[track].feed(
+                        FragmentValue(begin, end, value)))
+            finally:
+                for read in reads:
+                    read.close()
+            for column, fold in enumerate(folds):
+                place(column, fold.flush())
         if self.job.grouping is not None:
             where = f"{region.chrom}:{region.start}-{region.stop}"
             for resource_id, count in zip(
@@ -1254,6 +1269,73 @@ class FragmentScoreBinding:
                     resource_id, where, count,
                     self.job.grouping.dropped_reason)
         return block
+
+    def _read_ids(self) -> list[str]:
+        """The scores a read asks for: the value, then the grouping."""
+        job = self.job
+        scores = [] if job.score_id is None else [job.score_id]
+        if job.grouping is not None:
+            scores.append(job.grouping.score_id)
+        return scores
+
+    def _reads_arrays(self, region: BedRegion) -> bool:
+        """Whether a ``fragment_start`` job reads ``region`` as arrays."""
+        return _fragment_def(self.job.tracks[0]).mode == FRAGMENT_START \
+            and all(
+                score.supports_region_value_arrays(self._read_ids())
+                for score in self.scores
+                if score.has_chromosome(region.chrom))
+
+    def _fold_arrays(
+        self, region: BedRegion, bin_size: int, dropped: list[int],
+    ) -> npt.NDArray[np.float64]:
+        """The block of ``region``, folded from column arrays."""
+        fold = FragmentStartArrayFold(
+            start=region.start, end=region.stop, bin_size=bin_size,
+            aggregators=[
+                _fragment_def(track).aggregator
+                for track in self.job.tracks])
+        reads = [
+            self._arrays(index, score, region, dropped)
+            for index, score in enumerate(self.scores)
+            if score.has_chromosome(region.chrom)
+        ]
+        try:
+            for batch in pooled_batches(reads):
+                fold.feed(batch)
+        finally:
+            for read in reads:
+                read.close()
+        return fold.result()
+
+    def _arrays(
+        self, index: int, score: FragmentScore, region: BedRegion,
+        dropped: list[int],
+    ) -> Generator[FragmentBatch, None, None]:
+        """The batches of the fragments starting in ``region``.
+
+        A fragment whose barcode maps to no track gets the track ``-1``,
+        and is counted in ``dropped[index]``.
+        """
+        job = self.job
+        batches = score.get_fragment_arrays_starting_in_region(
+            region.chrom, region.start, region.stop,
+            scores=self._read_ids())
+        try:
+            for starts, _, values in batches:
+                tracks = np.zeros(len(starts), dtype=np.int64)
+                if self.track_maps is not None:
+                    assert job.grouping is not None
+                    tracks = track_codes(
+                        values[job.grouping.score_id],
+                        self.track_maps[index], _as_text)
+                    dropped[index] += int(np.count_nonzero(tracks < 0))
+                yield starts.astype(np.int64), tracks, (
+                    np.full(len(starts), job.value, dtype=np.float64)
+                    if job.score_id is None
+                    else values[job.score_id].astype(np.float64))
+        finally:
+            batches.close()
 
     def _records(
         self, index: int, score: FragmentScore, region: BedRegion,
@@ -1266,9 +1348,7 @@ class FragmentScoreBinding:
         no track is dropped, and counted in ``dropped[index]``.
         """
         job = self.job
-        scores = [] if job.score_id is None else [job.score_id]
-        if job.grouping is not None:
-            scores.append(job.grouping.score_id)
+        scores = self._read_ids()
         starting = _fragment_def(job.tracks[0]).mode == FRAGMENT_START
         read = score.get_fragment_scores_starting_in_region if starting \
             else score.get_fragment_scores_overlapping_region
