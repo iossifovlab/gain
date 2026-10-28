@@ -45,6 +45,8 @@ def runProject(Map args) {
     // never reaches pytest_exit. The echo also prints the line count of
     // crap.txt. The count includes the header lines of crapper, so it is
     // not the number of function rows: zero lines means no report.
+    // scripts/crap_report_html.py renders crap.txt as crap.html, which
+    // the top-level post block publishes as the CRAP report page.
     String crapStep       = !crap ? '' : """
                 crap_start=\$(date +%s)
                 crapper --use-existing-coverage --root ${crapRoot} \\
@@ -53,6 +55,8 @@ def runProject(Map args) {
                 crap_exit=\$?
                 crap_lines=\$(wc -l < /reports/crap.txt)
                 echo "crapper: exit \$crap_exit, took \$((\$(date +%s) - crap_start)) s, \$crap_lines lines in crap.txt"
+                python /workspace/scripts/crap_report_html.py \\
+                    /reports/crap.txt /reports/crap.html
 """
 
     sh label: "Build ${name} image", script: """
@@ -1792,6 +1796,17 @@ pipeline {
                         failOnError: false,
                     )
                 }
+                // The CRAP table of core (#2061) as a sidebar page of the
+                // build. allowMissing covers a docs-only build and a core
+                // stage that died before crapper ran.
+                publishHTML(target: [
+                    reportDir: 'reports/core',
+                    reportFiles: 'crap.html',
+                    reportName: 'CRAP report',
+                    allowMissing: true,
+                    alwaysLinkToLastBuild: false,
+                    keepAll: true,
+                ])
                 // The second pattern is Playwright's per-test artifacts
                 // (info_pages_e2e). `trace: 'retain-on-failure'` writes a
                 // trace.zip only for a test that failed, and without it
