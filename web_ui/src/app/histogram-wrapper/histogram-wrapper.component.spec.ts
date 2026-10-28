@@ -2,7 +2,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { HistogramWrapperComponent } from './histogram-wrapper.component';
 import { Observable, of } from 'rxjs';
-import { CategoricalHistogram, NumberHistogram } from '../single-annotation';
+import { CategoricalHistogram, NumberHistogram, ValueType } from '../single-annotation';
 import { SingleAnnotationService } from '../single-annotation.service';
 
 const mockCategoricalHistogram = new CategoricalHistogram(
@@ -120,9 +120,9 @@ describe('HistogramWrapperComponent', () => {
     expect(component.getValuesAsString(map)).toStrictEqual(['10', '20']);
   });
 
-  it('should return array as-is from getValuesAsString', () => {
+  it('should return string array elements from getValuesAsString', () => {
     const arr = ['alpha', 'beta', 'gamma'];
-    expect(component.getValuesAsString(arr)).toBe(arr);
+    expect(component.getValuesAsString(arr)).toStrictEqual(['alpha', 'beta', 'gamma']);
   });
 
   it('should return number array as-is from getValuesAsNumber', () => {
@@ -130,7 +130,12 @@ describe('HistogramWrapperComponent', () => {
     expect(component.getValuesAsNumber(arr)).toBe(arr);
   });
 
-  it('should stringify number array from getValuesAsString', () => {
-    expect(component.getValuesAsString([1, 2, 3])).toStrictEqual(['1,2,3']);
+  it('should stringify each element of a number array from getValuesAsString', () => {
+    expect(component.getValuesAsString([1, 2, 3])).toStrictEqual(['1', '2', '3']);
+  });
+
+  it('should stringify each element of a boolean list from getValuesAsString', () => {
+    const value = [true, false] as unknown as ValueType;
+    expect(component.getValuesAsString(value)).toStrictEqual(['true', 'false']);
   });
 });

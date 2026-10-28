@@ -55,8 +55,8 @@ export class HistogramWrapperComponent implements OnInit {
       return [...value.values()].map(v => String(v));
     }
 
-    if (Array.isArray(value) && value.every(v => typeof v === 'string')) {
-      return value;
+    if (Array.isArray(value)) {
+      return value.map(v => String(v));
     }
 
     return [value.toString()];

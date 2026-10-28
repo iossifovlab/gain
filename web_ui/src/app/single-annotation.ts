@@ -165,7 +165,9 @@ export class Attribute {
     public result: Result,
     // true: the value belongs on the score histogram (no aggregation, or a
     // domain-preserving aggregator); false: the aggregated output is not a
-    // score in that domain, so the histogram is hidden.
+    // score in that domain, so the histogram is hidden. The rule is
+    // element-wise: a list output (list, most_common) preserves the domain
+    // when each element is a value of the source domain.
     public preservesDomain: boolean,
   ) {}
 
