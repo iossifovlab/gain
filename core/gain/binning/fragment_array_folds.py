@@ -1,4 +1,4 @@
-"""Array bin folds: the ``fragment_start`` fold over column arrays.
+"""Array bin folds: the ``fragment_start`` and ``fragment_length`` folds.
 
 :func:`fold_fragment_starts` bins the fragments of one region from the
 batches of :meth:`FragmentScore.get_fragment_arrays_starting_in_region
@@ -21,13 +21,23 @@ the fragments that start before the frontier from each read, joins them
 in read order and sorts them by start with a stable sort, which is the
 order of ``heapq.merge``.  The fold then adds a window to dense state
 arrays with ``ufunc.at``, which applies the values in input order.
+
+:func:`fold_fragment_lengths` bins the fragments that overlap a region,
+from the batches of :meth:`FragmentScore.get_fragment_arrays_overlapping_region
+<gain.genomic_resources.genomic_scores.FragmentScore.get_fragment_arrays_overlapping_region>`.
+It clips each fragment to the region and splits it into one piece for
+each bin that it reaches, weighted by the overlap in base pairs.  The
+block equals the one that :class:`~.fragment_folds.BinFragmentLengthAggregator`
+gives, with the same two exceptions.  The pieces of a window, the pieces
+of the ``uncovered_value`` fill included, are in feed order, so each bin
+gets its values in the order of the streaming fold.
 """
 from __future__ import annotations
 
 import sys
 from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 import numpy.typing as npt
@@ -38,11 +48,15 @@ from gain.genomic_resources.genomic_scores.aggregation import (
     EMPTY_BIN_VALUES,
 )
 from gain.genomic_resources.genomic_scores.records import RecordArrays
-from gain.utils.regions import calc_bin_index
+from gain.utils.regions import calc_bin_begin, calc_bin_index
 
 #: The aggregators that the array fold answers.
 ARRAY_AGGREGATORS = (
     "count", "sum", "mean", "max", "min", "median", "product")
+#: The aggregators a length-weighted mode accepts: ``count`` would count
+#: base pairs, and ``product`` raise a value to the power of a length.
+#: The ``fragment_length`` array fold answers each of them.
+LENGTH_AGGREGATORS = ("max", "mean", "median", "min", "sum")
 
 _FloatArray = npt.NDArray[np.float64]
 _IntArray = npt.NDArray[np.int64]
@@ -67,8 +81,10 @@ class StartRead:
     track_of: Callable[[Any], int | None] | None = None
     dropped: int = field(default=0, init=False)
     exhausted: bool = field(default=False, init=False)
-    #: The pending fragments: their starts, tracks and values.
+    #: The pending fragments: their starts, ends, tracks and values.
     begins: _IntArray = field(
+        default_factory=lambda: np.empty(0, dtype=np.int64), init=False)
+    ends: _IntArray = field(
         default_factory=lambda: np.empty(0, dtype=np.int64), init=False)
     tracks: _IntArray = field(
         default_factory=lambda: np.empty(0, dtype=np.int64), init=False)
@@ -81,29 +97,31 @@ class StartRead:
         while not self.exhausted and (
                 len(self.begins) == 0 or self.begins[0] == self.begins[-1]):
             try:
-                begins, _ends, columns = next(self.batches)
+                begins, ends, columns = next(self.batches)
             except StopIteration:
                 self.exhausted = True
                 return
-            self._append(begins, columns)
+            self._append(begins, ends, columns)
 
-    def take_before(
-        self, frontier: int | None,
-    ) -> tuple[_IntArray, _IntArray, _FloatArray]:
+    def take_before(self, frontier: int | None) -> _Window:
         """Take the pending fragments that start before ``frontier``.
 
         ``None`` takes all of them.
         """
         cut = len(self.begins) if frontier is None else int(
             np.searchsorted(self.begins, frontier, side="left"))
-        taken = (self.begins[:cut], self.tracks[:cut], self.values[:cut])
+        taken = _Window(
+            self.begins[:cut], self.ends[:cut], self.tracks[:cut],
+            self.values[:cut])
         self.begins = self.begins[cut:]
+        self.ends = self.ends[cut:]
         self.tracks = self.tracks[cut:]
         self.values = self.values[cut:]
         return taken
 
     def _append(
-        self, begins: np.ndarray, columns: dict[str, np.ndarray],
+        self, begins: np.ndarray, ends: np.ndarray,
+        columns: dict[str, np.ndarray],
     ) -> None:
         tracks = self._tracks(columns, len(begins))
         if self.value_score is None:
@@ -112,13 +130,28 @@ class StartRead:
             values = np.asarray(columns[self.value_score], dtype=np.float64)
         reached = tracks >= 0
         self.dropped += int(len(tracks) - np.count_nonzero(reached))
-        # A NaN value is no value: the fragment adds nothing to its bin.
-        # The record read differs for a NaN that na_values does not cover.
-        kept = reached & ~np.isnan(values)
-        self.begins = np.concatenate(
-            [self.begins, np.asarray(begins, dtype=np.int64)[kept]])
+        kept = reached & self._kept(values)
+        begins, ends = self._extent(
+            np.asarray(begins, dtype=np.int64),
+            np.asarray(ends, dtype=np.int64))
+        self.begins = np.concatenate([self.begins, begins[kept]])
+        self.ends = np.concatenate([self.ends, ends[kept]])
         self.tracks = np.concatenate([self.tracks, tracks[kept]])
         self.values = np.concatenate([self.values, values[kept]])
+
+    def _kept(self, values: _FloatArray) -> npt.NDArray[np.bool_]:
+        """The fragments of a batch with a track that the fold keeps.
+
+        A NaN value is no value: the fragment adds nothing to its bin.
+        The record read differs for a NaN that na_values does not cover.
+        """
+        return ~np.isnan(values)
+
+    def _extent(
+        self, begins: _IntArray, ends: _IntArray,
+    ) -> tuple[_IntArray, _IntArray]:
+        """The extents that the fold reads: the fragments as they are."""
+        return begins, ends
 
     def _tracks(
         self, columns: dict[str, np.ndarray], size: int,
@@ -143,6 +176,65 @@ class StartRead:
         return track
 
 
+@dataclass
+class LengthRead(StartRead):
+    """The batches of one resource that overlap ``[start, end]``.
+
+    Each fragment is clipped to ``[start, end]``.  A fragment with a NaN
+    value stays: it adds no value, but it covers its bases, so no
+    ``uncovered_value`` goes under it.
+    """
+
+    start: int = 1
+    end: int = 1
+
+    def _kept(self, values: _FloatArray) -> npt.NDArray[np.bool_]:
+        return np.ones(len(values), dtype=bool)
+
+    def _extent(
+        self, begins: _IntArray, ends: _IntArray,
+    ) -> tuple[_IntArray, _IntArray]:
+        # A base pair belongs to one region: a fragment adds only the
+        # part of it inside the region.
+        return np.maximum(begins, self.start), np.minimum(ends, self.end)
+
+
+class _Window(NamedTuple):
+    """The fragments of one window, in feed order."""
+
+    begins: _IntArray
+    ends: _IntArray
+    tracks: _IntArray
+    scores: _FloatArray
+
+
+def _windows(
+    reads: Sequence[StartRead],
+) -> Generator[tuple[_Window, int | None], None, None]:
+    """Yield each window of ``reads`` and its frontier, the last ``None``.
+
+    No fragment of a later window starts before the frontier of a window.
+    """
+    while True:
+        for read in reads:
+            read.refill()
+        active = [read.begins[-1] for read in reads if not read.exhausted]
+        frontier = int(min(active)) if active else None
+        taken = [read.take_before(frontier) for read in reads] or [_Window(
+            np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64),
+            np.empty(0, dtype=np.int64), np.empty(0, dtype=np.float64))]
+        begins = np.concatenate([part.begins for part in taken])
+        order = np.argsort(begins, kind="stable")
+        yield _Window(
+            begins[order],
+            np.concatenate([part.ends for part in taken])[order],
+            np.concatenate([part.tracks for part in taken])[order],
+            np.concatenate([part.scores for part in taken])[order],
+        ), frontier
+        if frontier is None:
+            return
+
+
 def fold_fragment_starts(
     reads: Sequence[StartRead], *,
     start: int, end: int, bin_size: int, tracks: int, aggregator: str,
@@ -160,23 +252,139 @@ def fold_fragment_starts(
         first_bin=first_bin,
         bins=calc_bin_index(bin_size, end) - first_bin + 1,
         bin_size=bin_size, tracks=tracks, aggregator=aggregator)
-    while True:
-        for read in reads:
-            read.refill()
-        active = [read.begins[-1] for read in reads if not read.exhausted]
-        frontier = int(min(active)) if active else None
-        taken = [read.take_before(frontier) for read in reads] or [(
-            np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64),
-            np.empty(0, dtype=np.float64))]
-        begins = np.concatenate([part[0] for part in taken])
-        order = np.argsort(begins, kind="stable")
-        fold.add(
-            begins[order],
-            np.concatenate([part[1] for part in taken])[order],
-            np.concatenate([part[2] for part in taken])[order],
-            frontier)
-        if frontier is None:
-            return fold.result()
+    for window, frontier in _windows(reads):
+        fold.add(window.begins, window.tracks, window.scores, frontier)
+    return fold.result()
+
+
+def fold_fragment_lengths(
+    reads: Sequence[LengthRead], *,
+    start: int, end: int, bin_size: int, tracks: int, aggregator: str,
+    uncovered_value: float | None = None,
+) -> _FloatArray:
+    """Fold the fragments of ``reads`` into a ``(bins, tracks)`` block.
+
+    The rows are the grid bins from the one that holds ``start`` to the
+    one that holds ``end``.  A fragment adds its value to each bin that
+    it reaches, weighted by the base pairs that it shares with the bin.
+    With an ``uncovered_value``, each base of ``[start, end]`` that no
+    fragment of a track covers adds that value to the track with a
+    weight of 1 bp.  A bin that gets no value holds the value of
+    :data:`EMPTY_BIN_VALUES` for ``aggregator``.  The reads give the
+    fragments that overlap ``[start, end]``, each read in start order.
+    """
+    if aggregator not in LENGTH_AGGREGATORS:
+        raise ValueError(
+            f"the length array fold has no {aggregator!r} aggregator")
+    fold = _LengthFold(
+        start=start, end=end, bin_size=bin_size, tracks=tracks,
+        aggregator=aggregator, uncovered_value=uncovered_value)
+    for window, frontier in _windows(reads):
+        fold.add(window, frontier)
+    return fold.cells.result()
+
+
+class _LengthFold:
+    """Splits the fragments of each window into weighted bin pieces.
+
+    ``covered`` holds the last covered base of each track, ``start - 1``
+    before any fragment.  ``fill`` is the ``uncovered_value``, NaN for
+    none.
+    """
+
+    def __init__(
+        self, *, start: int, end: int, bin_size: int, tracks: int,
+        aggregator: str, uncovered_value: float | None,
+    ) -> None:
+        self.start = start
+        self.end = end
+        self.bin_size = bin_size
+        self.tracks = tracks
+        self.fill = np.nan if uncovered_value is None else uncovered_value
+        self.first_bin = calc_bin_index(bin_size, start)
+        self.cells = _StartFold(
+            first_bin=self.first_bin,
+            bins=calc_bin_index(bin_size, end) - self.first_bin + 1,
+            bin_size=bin_size, tracks=tracks, aggregator=aggregator)
+        self.covered = np.full(tracks, start - 1, dtype=np.int64)
+
+    def add(self, window: _Window, frontier: int | None) -> None:
+        """Add one window; no later fragment starts before ``frontier``.
+
+        Each fragment adds the fill of the gap before it, then its own
+        pieces.  The window then fills each track up to the bin before
+        the one of ``frontier``, or to ``end`` for the last window.  The
+        fill stops at a bin boundary: a fill split inside a bin adds
+        ``v*w1 + v*w2`` and not ``v*(w1+w2)``.
+        """
+        size = len(window.begins)
+        gaps = self._covered_before(window) + 1
+        starts = np.empty(2 * size, dtype=np.int64)
+        ends = np.empty(2 * size, dtype=np.int64)
+        values = np.empty(2 * size, dtype=np.float64)
+        starts[0::2], starts[1::2] = gaps, window.begins
+        ends[0::2], ends[1::2] = window.begins - 1, window.ends
+        values[0::2] = self.fill
+        values[1::2] = window.scores
+        tracks = np.repeat(window.tracks, 2)
+        np.maximum.at(self.covered, window.tracks, window.ends)
+
+        upto = self.end if frontier is None else calc_bin_begin(
+            self.bin_size, calc_bin_index(self.bin_size, frontier)) - 1
+        filled = np.flatnonzero(self.covered < upto)
+        starts = np.concatenate([starts, self.covered[filled] + 1])
+        ends = np.concatenate([ends, np.full(len(filled), upto)])
+        values = np.concatenate([values, np.full(len(filled), self.fill)])
+        tracks = np.concatenate([tracks, filled])
+        self.covered[filled] = upto
+
+        # A fragment with no value covers its bases and adds nothing.
+        kept = (starts <= ends) & ~np.isnan(values)
+        cells, weights, piece_values = self._pieces(
+            starts[kept], ends[kept], tracks[kept], values[kept])
+        self.cells.add_cells(cells, piece_values, weights, frontier)
+
+    def _covered_before(self, window: _Window) -> _IntArray:
+        """The last base that a track covers before each fragment.
+
+        A running maximum of the ends over the fragments of each track.
+        The ends of a track are shifted past those of the tracks before
+        it, so one running maximum serves all tracks.
+        """
+        if len(window.tracks) == 0:
+            return window.ends
+        order = np.argsort(window.tracks, kind="stable")
+        tracks = window.tracks[order]
+        span = self.end - self.start + 2
+        base = tracks * span - (self.start - 1)
+        shifted = base + window.ends[order]
+        previous = np.concatenate([[-1], shifted[:-1]])
+        before: _IntArray = np.maximum(
+            np.maximum.accumulate(previous),
+            base + self.covered[tracks]) - base
+        covered = np.empty_like(before)
+        covered[order] = before
+        return covered
+
+    def _pieces(
+        self, starts: _IntArray, ends: _IntArray, tracks: _IntArray,
+        values: _FloatArray,
+    ) -> tuple[_IntArray, _IntArray, _FloatArray]:
+        """Split each range into one piece for each bin that it reaches.
+
+        The pieces keep the order of the ranges, and the order of the
+        bins inside a range.
+        """
+        # calc_bin_index and calc_bin_begin, over arrays.
+        first = (starts - 1) // self.bin_size
+        counts = (ends - 1) // self.bin_size - first + 1
+        owner = np.repeat(np.arange(len(starts)), counts)
+        bins = first[owner] + np.arange(len(owner)) \
+            - np.repeat(np.cumsum(counts) - counts, counts)
+        piece_starts = np.maximum(starts[owner], bins * self.bin_size + 1)
+        piece_ends = np.minimum(ends[owner], (bins + 1) * self.bin_size)
+        cells = (bins - self.first_bin) * self.tracks + tracks[owner]
+        return cells, piece_ends - piece_starts + 1, values[owner]
 
 
 class _StartFold:
@@ -206,9 +414,10 @@ class _StartFold:
         #: ``product``, ``max``, ``min``: the zero value of each cell that
         #: the aggregator keeps, NaN for none.
         self.zeros = np.full(size, np.nan, dtype=np.float64)
-        #: ``median``: the cells and the values of the open bins.
+        #: ``median``: the cells, values and weights of the open bins.
         self.open_cells: _IntArray = np.empty(0, dtype=np.int64)
         self.open_values: _FloatArray = np.empty(0, dtype=np.float64)
+        self.open_weights: _IntArray = np.empty(0, dtype=np.int64)
 
     def add(
         self, begins: _IntArray, tracks: _IntArray, values: _FloatArray,
@@ -217,10 +426,24 @@ class _StartFold:
         """Add one window; no later fragment starts before ``frontier``."""
         cells = ((begins - 1) // self.bin_size - self.first_bin) \
             * self.tracks + tracks
-        np.add.at(self.counts, cells, 1)
+        self.add_cells(cells, values, None, frontier)
+
+    def add_cells(
+        self, cells: _IntArray, values: _FloatArray,
+        weights: _IntArray | None, frontier: int | None,
+    ) -> None:
+        """Add ``values`` to ``cells`` in input order, with ``weights``.
+
+        ``None`` weighs each value 1.  ``counts`` sums the weights.  A
+        ``count`` or a ``product`` takes no weights.  No later value goes
+        to a bin before the one of ``frontier``.
+        """
+        np.add.at(self.counts, cells, 1 if weights is None else weights)
         with np.errstate(over="ignore", invalid="ignore"):
             if self.aggregator in ("sum", "mean"):
-                np.add.at(self.state, cells, values)
+                np.add.at(
+                    self.state, cells,
+                    values if weights is None else values * weights)
             elif self.aggregator == "max":
                 np.maximum.at(self.state, cells, values)
                 self._keep_zero(cells, values, last=True)
@@ -230,7 +453,11 @@ class _StartFold:
             elif self.aggregator == "product":
                 self._multiply(cells, values)
             elif self.aggregator == "median":
-                self._median(cells, values, frontier)
+                self._median(
+                    cells, values,
+                    np.ones(len(cells), dtype=np.int64) if weights is None
+                    else weights,
+                    frontier)
 
     def result(self) -> _FloatArray:
         """The block: one row per bin, one column per track."""
@@ -318,16 +545,19 @@ class _StartFold:
         self.zeros[found] = zero_values[index]
 
     def _median(
-        self, cells: _IntArray, values: _FloatArray, frontier: int | None,
+        self, cells: _IntArray, values: _FloatArray, weights: _IntArray,
+        frontier: int | None,
     ) -> None:
         """Keep the window open, then reduce the bins before ``frontier``.
 
-        A bin's median is selected by rank, as ``MedianAggregator`` does:
-        the middle value for an odd count, the mean of the two middle
-        values for an even one.
+        A bin's median is selected by weighted rank, as
+        ``MedianAggregator`` does: the middle value for an odd total
+        weight, the mean of the two middle values for an even one.  A
+        stable sort keeps equal values in input order.
         """
         self.open_cells = np.concatenate([self.open_cells, cells])
         self.open_values = np.concatenate([self.open_values, values])
+        self.open_weights = np.concatenate([self.open_weights, weights])
         if frontier is None:
             closed = np.ones(len(self.open_cells), dtype=bool)
         else:
@@ -338,17 +568,23 @@ class _StartFold:
             return
         done_cells = self.open_cells[closed]
         done_values = self.open_values[closed]
+        done_weights = self.open_weights[closed]
         self.open_cells = self.open_cells[~closed]
         self.open_values = self.open_values[~closed]
+        self.open_weights = self.open_weights[~closed]
         order = np.lexsort((done_values, done_cells))
-        done_cells, done_values = done_cells[order], done_values[order]
-        cell, first, count = np.unique(
-            done_cells, return_index=True, return_counts=True)
-        middle = first + count // 2
-        odd = count % 2 == 1
+        done_cells, done_values, done_weights = (
+            done_cells[order], done_values[order], done_weights[order])
+        cumulative = np.cumsum(done_weights)
+        cell, first = np.unique(done_cells, return_index=True)
+        before = cumulative[first] - done_weights[first]
+        total = self.counts[cell]
+        low = np.searchsorted(
+            cumulative, before + (total - 1) // 2, side="right")
+        high = np.searchsorted(cumulative, before + total // 2, side="right")
         self.state[cell] = np.where(
-            odd, done_values[middle],
-            (done_values[middle - 1 + odd] + done_values[middle]) / 2)
+            total % 2 == 1, done_values[high],
+            (done_values[low] + done_values[high]) / 2)
 
 
 #: The state of a cell before its first value.  A ``sum`` starts at -0.0,
