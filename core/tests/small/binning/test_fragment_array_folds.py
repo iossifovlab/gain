@@ -1,9 +1,9 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
-"""The array fold of ``fragment_start`` tracks against the streaming fold.
+"""The array folds of fragment tracks against the streaming folds.
 
-The streaming fold, :class:`BinFragmentStartAggregator` fed the
-``heapq.merge`` of the record reads, is the oracle: the array path answers
-the same ``/values`` matrix, bit for bit, for each aggregator.
+The streaming fold of each mode, fed the ``heapq.merge`` of the record
+reads, is the oracle: the array path answers the same ``/values`` matrix,
+bit for bit, for each aggregator.
 """
 import heapq
 import logging
@@ -19,14 +19,17 @@ import pytest_mock
 from gain.binning import fragment_binner
 from gain.binning.binners import discover_binner_kinds
 from gain.binning.fragment_array_folds import (
+    CoverageRead,
     LengthRead,
     StartRead,
     _windows,
+    fold_coverage_profiles,
     fold_fragment_lengths,
     fold_fragment_starts,
 )
 from gain.binning.fragment_binner import FragmentScoreBinding
 from gain.binning.fragment_folds import (
+    BinFragmentCoverageAggregator,
     BinFragmentLengthAggregator,
     BinFragmentStartAggregator,
     FragmentValue,
@@ -128,10 +131,11 @@ def array_block(
 
 
 def spy_array_folds(mocker: pytest_mock.MockerFixture) -> list[Any]:
-    """Spy on the two array folds of the binner."""
+    """Spy on the three array folds of the binner."""
     return [
         mocker.spy(fragment_binner, "fold_fragment_starts"),
-        mocker.spy(fragment_binner, "fold_fragment_lengths")]
+        mocker.spy(fragment_binner, "fold_fragment_lengths"),
+        mocker.spy(fragment_binner, "fold_coverage_profiles")]
 
 
 def without_array_reads(mocker: pytest_mock.MockerFixture) -> Any:
@@ -665,3 +669,289 @@ def test_a_length_fold_clips_fragments_that_cross_the_region_edges(
 
     assert block[:, 0].tolist() == [2.0 * 4 + 1.0 * 3 + 10.0 * 3, 10.0 * 5]
     assert block[:, 1].tolist() == [10.0, 5.0]
+
+
+COVERAGE = {"mode": "coverage_profile"}
+#: No ``uncovered_value`` key gives 0 in coverage_profile mode, and
+#: ``None`` gives no fill.
+COVERAGE_UNCOVERED: list[dict[str, Any]] = [
+    {}, {"uncovered_value": None}, {"uncovered_value": 3},
+    {"uncovered_value": -0.7}]
+
+
+@pytest.mark.parametrize("aggregate", [
+    {**COVERAGE, **uncovered, "aggregator": aggregator}
+    for aggregator in LENGTH_AGGREGATORS for uncovered in COVERAGE_UNCOVERED
+], ids=str)
+@pytest.mark.parametrize("entry", [
+    {"resource_query": "frags/*"},
+    {"resource_query": "frags/s1", "pool": False, "value": {"value": 2}},
+    {"resource_query": "frags/*", "value": {"score_id": "count"}},
+    BY_CLASS,
+    {**BY_CLASS, "value": {"score_id": "count"}},
+])
+@pytest.mark.parametrize("region", [
+    *REGIONS, BedRegion("chr1", 13, 33), BedRegion("chr1", 21, 21)],
+    ids=str)
+def test_an_int_coverage_profile_track_answers_the_streaming_fold(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+    mocker: pytest_mock.MockerFixture, aggregate: dict[str, Any],
+    entry: dict[str, Any], region: BedRegion,
+) -> None:
+    entry = {**entry, "aggregate": aggregate}
+    expected, expected_dropped = streaming_block(
+        entry, region, repo, genome, mocker)
+
+    block, dropped = array_block(entry, region, repo, genome, mocker)
+
+    assert block.dtype == expected.dtype
+    assert block.shape == expected.shape
+    assert np.array_equal(block, expected, equal_nan=True)
+    assert np.array_equal(np.signbit(block), np.signbit(expected))
+    assert dropped == expected_dropped
+
+
+#: The int values of the coverage fuzz.  Values that cancel, such as 3
+#: and -3, make a level of 0 inside the covered bases, and NaN is a
+#: fragment with no value.
+COVERAGE_VALUES = [1, 1, 2, 3, -3, -1, 5, -5, 0, np.nan]
+
+
+def random_coverage_extents(
+    rng: np.random.Generator, start: int, end: int,
+) -> list[list[Extent]]:
+    """The extents of :func:`random_extents` with int values."""
+    return [
+        [(begin, stop, cell,
+          float(COVERAGE_VALUES[rng.integers(len(COVERAGE_VALUES))]))
+         for begin, stop, cell, _ in extents]
+        for extents in random_extents(rng, start, end)]
+
+
+def streaming_coverage_fold(
+    reads: list[list[Extent]], *, start: int, end: int, bin_size: int,
+    aggregator: str, uncovered_value: float | None,
+) -> np.ndarray:
+    """The oracle: one streaming coverage fold per track, as the binner.
+
+    Each extent is clipped to the region before the merge by begin, and
+    a NaN value is ``None``, as the record read gives no value of an
+    ``int`` score.
+    """
+    folds = [
+        BinFragmentCoverageAggregator(
+            start=start, end=end, bin_size=bin_size, aggregator=aggregator,
+            uncovered_value=uncovered_value)
+        for _ in range(3)]
+    columns: list[list[float]] = [[] for _ in folds]
+    clipped = [
+        [(max(begin, start), min(stop, end), cell, value)
+         for begin, stop, cell, value in extents]
+        for extents in reads]
+    for begin, stop, cell, value in heapq.merge(
+            *clipped, key=operator.itemgetter(0)):
+        track = FUZZ_TRACKS.get(cell or "")
+        if track is None:
+            continue
+        columns[track].extend(
+            bin_value.value for bin_value in folds[track].feed(
+                FragmentValue(
+                    begin, stop, None if np.isnan(value) else int(value))))
+    for column, fold in zip(columns, folds, strict=True):
+        column.extend(bin_value.value for bin_value in fold.flush())
+    return np.array(columns, dtype=np.float64).T
+
+
+@pytest.mark.parametrize("aggregator", LENGTH_AGGREGATORS)
+@pytest.mark.parametrize(
+    "uncovered_value", [None, 0, 3, -0.7, 0.1, -0.0, 1 / 3], ids=repr)
+@pytest.mark.parametrize("bin_size", [1, 3, 10])
+@pytest.mark.parametrize("seed", range(30))
+def test_the_coverage_fold_answers_the_streaming_fold_on_random_fragments(
+    aggregator: str, uncovered_value: float | None, bin_size: int,
+    seed: int,
+) -> None:
+    rng = np.random.default_rng(seed)
+    start = int(rng.integers(1, 30))
+    end = start + int(rng.integers(0, 60))
+    reads = random_coverage_extents(rng, start, end)
+    expected = streaming_coverage_fold(
+        reads, start=start, end=end, bin_size=bin_size,
+        aggregator=aggregator, uncovered_value=uncovered_value)
+    coverage = [
+        CoverageRead(
+            extent_batches(rng, extents), value_score="value",
+            group_score="cell", track_of=FUZZ_TRACKS.get,
+            start=start, end=end)
+        for extents in reads]
+
+    block = fold_coverage_profiles(
+        coverage, start=start, end=end, bin_size=bin_size, tracks=3,
+        aggregator=aggregator, uncovered_value=uncovered_value)
+
+    assert np.array_equal(block, expected, equal_nan=True)
+    assert np.array_equal(np.signbit(block), np.signbit(expected))
+    assert [read.dropped for read in coverage] == [
+        sum(FUZZ_TRACKS.get(cell or "") is None
+            for _, _, cell, _ in extents)
+        for extents in reads]
+
+
+@pytest.mark.parametrize("batch", [1, 2])
+@pytest.mark.parametrize("cells", [["AAA"], ["BBB"], ["BBB", "DDD"]])
+def test_touching_fragments_of_one_level_make_one_run(
+    batch: int, cells: list[str],
+) -> None:
+    # [2, 5] and [6, 10] of each cell both have the level 1, so the
+    # profile has one run [2, 10].  The fill of base 1 comes first:
+    # 1/3 + 1 * 9.  Two runs would add 1/3 + 1 * 4 + 1 * 5, which rounds
+    # to another float.  With one fragment of each cell per batch, the
+    # frontier 6 splits the runs of all the cells between two windows.
+    extents: list[Extent] = sorted(
+        [(begin, stop, cell, 1.0)
+         for cell in cells for begin, stop in [(2, 5), (6, 10)]],
+        key=operator.itemgetter(0))
+    batch *= len(cells)
+    uncovered = 1 / 3
+    expected = streaming_coverage_fold(
+        [extents], start=1, end=10, bin_size=BIN_SIZE, aggregator="sum",
+        uncovered_value=uncovered)
+    rng = np.random.default_rng(0)
+    read = CoverageRead(
+        (next(extent_batches(rng, extents[i:i + batch]))
+         for i in range(0, len(extents), batch)),
+        value_score="value", group_score="cell",
+        track_of=FUZZ_TRACKS.get, start=1, end=10)
+
+    block = fold_coverage_profiles(
+        [read], start=1, end=10, bin_size=BIN_SIZE, tracks=3,
+        aggregator="sum", uncovered_value=uncovered)
+
+    columns = [FUZZ_TRACKS[cell] for cell in cells]
+    assert (expected[0, columns] == uncovered + 9).all()
+    assert uncovered + 9 != uncovered + 4 + 5
+    assert np.array_equal(block, expected, equal_nan=True)
+
+
+def test_the_coverage_fold_refuses_a_value_that_is_not_an_integer() -> None:
+    read = CoverageRead(
+        extent_batches(np.random.default_rng(0), [(2, 5, "BBB", 0.5)]),
+        value_score="value", group_score="cell",
+        track_of=FUZZ_TRACKS.get, start=1, end=10)
+
+    with pytest.raises(ValueError, match="integer"):
+        fold_coverage_profiles(
+            [read], start=1, end=10, bin_size=BIN_SIZE, tracks=3,
+            aggregator="sum")
+
+
+def test_a_window_frontier_that_no_track_covers_folds_the_gap() -> None:
+    # One fragment per batch: the frontier 50 falls after [5, 6] has
+    # ended, so no track holds a run open at the frontier.
+    extents: list[Extent] = [(5, 6, "AAA", 2.0), (50, 60, "AAA", 3.0)]
+    expected = streaming_coverage_fold(
+        [extents], start=1, end=100, bin_size=10, aggregator="sum",
+        uncovered_value=None)
+    rng = np.random.default_rng(0)
+    read = CoverageRead(
+        (next(extent_batches(rng, [extent])) for extent in extents),
+        value_score="value", group_score="cell",
+        track_of=FUZZ_TRACKS.get, start=1, end=100)
+
+    block = fold_coverage_profiles(
+        [read], start=1, end=100, bin_size=10, tracks=3,
+        aggregator="sum", uncovered_value=None)
+
+    assert np.array_equal(block, expected, equal_nan=True)
+
+
+@pytest.fixture
+def typed_repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
+    """``frags/int`` and ``frags/float`` declare ``count`` as int and float.
+
+    ``frags/float`` also has ``ratio``, a float score.
+    """
+    data = ("chrom pos_begin pos_end cell count\n"
+            "chr1 3 12 AAA 2\nchr1 8 20 AAA 1\n")
+    return a_grr().with_resource(
+        "frags/int", a_fragment_score()
+        .with_score("cell", "str").with_score("count", "int")
+        .with_tabix().with_data(data),
+    ).with_resource(
+        "frags/float", a_fragment_score()
+        .with_score("cell", "str").with_score("count", "float")
+        .with_score("ratio", "float")
+        .with_tabix().with_data(
+            "chrom pos_begin pos_end cell count ratio\n"
+            "chr1 4 9 AAA 2 0.5\n"),
+    ).build_repo(tmp_path / "grr")
+
+
+@pytest.mark.parametrize("entry", [
+    {"resource_query": "frags/float", "value": {"score_id": "ratio"}},
+    {"resource_query": "frags/int", "value": {"value": 0.5}},
+    {"resource_query": "frags/*", "value": {"score_id": "count"}},
+], ids=["float score", "float constant", "int and float score"])
+def test_a_coverage_profile_track_of_floats_keeps_the_streaming_fold(
+    typed_repo: GenomicResourceRepo, genome: ReferenceGenome,
+    mocker: pytest_mock.MockerFixture, entry: dict[str, Any],
+) -> None:
+    entry = {**entry, "aggregate": {**COVERAGE, "aggregator": "sum"}}
+    folds = spy_array_folds(mocker)
+    records = mocker.spy(
+        FragmentScore, "get_fragment_scores_overlapping_region")
+
+    bound_block(entry, BedRegion("chr1", 1, 20), typed_repo, genome)
+
+    assert sum(fold.call_count for fold in folds) == 0
+    assert records.call_count > 0
+
+
+@pytest.mark.parametrize("entry", [
+    {"resource_query": "frags/int"},
+    {"resource_query": "frags/int", "value": {"value": 2}},
+    {"resource_query": "frags/int", "value": {"score_id": "count"}},
+], ids=["default count", "int constant", "int score"])
+def test_a_coverage_profile_track_of_ints_takes_the_array_fold(
+    typed_repo: GenomicResourceRepo, genome: ReferenceGenome,
+    mocker: pytest_mock.MockerFixture, entry: dict[str, Any],
+) -> None:
+    entry = {**entry, "aggregate": {**COVERAGE, "aggregator": "sum"}}
+    region = BedRegion("chr1", 1, 20)
+    expected, _ = streaming_block(entry, region, typed_repo, genome, mocker)
+    records = mocker.spy(
+        FragmentScore, "get_fragment_scores_overlapping_region")
+
+    block, _ = array_block(entry, region, typed_repo, genome, mocker)
+
+    assert records.call_count == 0
+    assert np.array_equal(block, expected, equal_nan=True)
+
+
+@pytest.mark.parametrize("aggregator", LENGTH_AGGREGATORS)
+def test_a_region_past_2_53_in_absolute_sum_takes_the_streaming_fold(
+    tmp_path: pathlib.Path, genome: ReferenceGenome,
+    mocker: pytest_mock.MockerFixture, aggregator: str,
+) -> None:
+    # The exact levels of [3, 12] are 2**53 + 1 - 2**53 = 1.  The array
+    # read gives 2**53 + 1 as the float64 2**53, so an array fold would
+    # cancel the level to 0 and leave the bins empty.
+    data = ("chrom pos_begin pos_end cell count\n"
+            f"chr1 3 12 AAA {2**53 + 1}\n"
+            f"chr1 3 12 AAA {-2**53}\n")
+    repo = a_grr().with_resource(
+        "frags/big", a_fragment_score()
+        .with_score("cell", "str").with_score("count", "int")
+        .with_tabix().with_data(data)).build_repo(tmp_path / "grr")
+    entry = {"resource_query": "frags/big", "value": {"score_id": "count"},
+             "aggregate": {**COVERAGE, "aggregator": aggregator,
+                           "uncovered_value": None}}
+    region = BedRegion("chr1", 1, 20)
+    expected, _ = streaming_block(entry, region, repo, genome, mocker)
+    coverage = mocker.spy(fragment_binner, "fold_coverage_profiles")
+
+    block, _ = bound_block(entry, region, repo, genome)
+
+    assert coverage.call_count == 1
+    assert expected[0, 0] == (8.0 if aggregator == "sum" else 1.0)
+    assert np.array_equal(block, expected, equal_nan=True)

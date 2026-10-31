@@ -1,4 +1,5 @@
-"""Array bin folds: the ``fragment_start`` and ``fragment_length`` folds.
+"""Array bin folds: the ``fragment_start``, ``fragment_length`` and
+``coverage_profile`` folds.
 
 :func:`fold_fragment_starts` bins the fragments of one region from the
 batches of :meth:`FragmentScore.get_fragment_arrays_starting_in_region
@@ -31,6 +32,15 @@ block equals the one that :class:`~.fragment_folds.BinFragmentLengthAggregator`
 gives, with the same two exceptions.  The pieces of a window, the pieces
 of the ``uncovered_value`` fill included, are in feed order, so each bin
 gets its values in the order of the streaming fold.
+
+:func:`fold_coverage_profiles` bins the coverage profile of the same
+fragments, for ``int`` values.  It turns each fragment into a ``+v``
+event at its start and a ``-v`` event after its end, and sums the events
+of each track with an ``int64`` ``cumsum``.  The levels make runs as
+:class:`~.fragment_folds.CoverageProfile` makes them, and the length fold
+folds the runs.  The block equals the one that
+:class:`~.fragment_folds.BinFragmentCoverageAggregator` gives, with the
+exceptions of the length fold.
 """
 from __future__ import annotations
 
@@ -55,7 +65,8 @@ ARRAY_AGGREGATORS = (
     "count", "sum", "mean", "max", "min", "median", "product")
 #: The aggregators a length-weighted mode accepts: ``count`` would count
 #: base pairs, and ``product`` raise a value to the power of a length.
-#: The ``fragment_length`` array fold answers each of them.
+#: The two length-weighted array folds, ``fragment_length`` and
+#: ``coverage_profile``, answer each of them.
 LENGTH_AGGREGATORS = ("max", "mean", "median", "min", "sum")
 
 _FloatArray = npt.NDArray[np.float64]
@@ -199,6 +210,33 @@ class LengthRead(StartRead):
         return np.maximum(begins, self.start), np.minimum(ends, self.end)
 
 
+@dataclass
+class CoverageRead(LengthRead):
+    """The batches of one resource that overlap ``[start, end]``, as
+    :class:`LengthRead`.
+
+    A fragment with a NaN value is no coverage: the fold drops it, so it
+    covers no base.
+    """
+
+    def _kept(self, values: _FloatArray) -> npt.NDArray[np.bool_]:
+        return ~np.isnan(values)
+
+
+#: The running sum of the absolute values of a region must stay below
+#: this bound.  Below it, each value and each level is an exact integer
+#: in ``float64`` and in ``int64``.
+EXACT_LEVEL_BOUND = 2**53
+
+
+class InexactLevelsError(ValueError):
+    """The values of a region can make a level that is not exact.
+
+    :func:`fold_coverage_profiles` raises it when the running sum of the
+    absolute values of the region reaches :data:`EXACT_LEVEL_BOUND`.
+    """
+
+
 class _Window(NamedTuple):
     """The fragments of one window, in feed order."""
 
@@ -282,6 +320,185 @@ def fold_fragment_lengths(
     for window, frontier in _windows(reads):
         fold.add(window, frontier)
     return fold.cells.result()
+
+
+def fold_coverage_profiles(
+    reads: Sequence[CoverageRead], *,
+    start: int, end: int, bin_size: int, tracks: int, aggregator: str,
+    uncovered_value: float | None = None,
+) -> _FloatArray:
+    """Fold the coverage profile of ``reads`` into a ``(bins, tracks)`` block.
+
+    The values of the fragments must be integers.  The level of a base
+    in a track is the sum of the values of the fragments of the track
+    that cover it.  The runs of equal levels other than 0 are folded as
+    :func:`fold_fragment_lengths` folds fragments.  A base at level 0 is
+    uncovered, and gets the ``uncovered_value``.
+
+    Raises :class:`InexactLevelsError` when the running sum of the
+    absolute values reaches :data:`EXACT_LEVEL_BOUND`, and
+    :class:`ValueError` when a value is not an integer.
+    """
+    if aggregator not in LENGTH_AGGREGATORS:
+        raise ValueError(
+            f"the length array fold has no {aggregator!r} aggregator")
+    profile = _CoverageRuns(start=start, end=end, tracks=tracks)
+    fold = _LengthFold(
+        start=start, end=end, bin_size=bin_size, tracks=tracks,
+        aggregator=aggregator, uncovered_value=uncovered_value)
+    for window, frontier in _windows(reads):
+        fold.add(*profile.add(window, frontier))
+    return fold.cells.result()
+
+
+class _CoverageRuns:
+    """Turns the fragments of each window into the runs of the profile.
+
+    ``pending`` holds the events at or after the frontier: their
+    positions, tracks and changes of level.  ``level`` is the level of
+    each track before the frontier.  ``held`` is the last run of each
+    track, which can go on into the next window; a level of 0 means no
+    run.
+    """
+
+    def __init__(self, *, start: int, end: int, tracks: int) -> None:
+        self.end = end
+        self.origin = start
+        self.magnitude = 0.0
+        self.pending = (
+            np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64),
+            np.empty(0, dtype=np.int64))
+        self.level = np.zeros(tracks, dtype=np.int64)
+        self.held_starts = np.zeros(tracks, dtype=np.int64)
+        self.held_ends = np.zeros(tracks, dtype=np.int64)
+        self.held_levels = np.zeros(tracks, dtype=np.int64)
+
+    def add(
+        self, window: _Window, frontier: int | None,
+    ) -> tuple[_Window, int | None]:
+        """The runs that end before ``frontier``, and their frontier.
+
+        No later run starts before the returned frontier.
+        """
+        self.magnitude += float(np.abs(window.scores).sum())
+        if self.magnitude >= EXACT_LEVEL_BOUND:
+            raise InexactLevelsError(
+                f"the values of the region reach {EXACT_LEVEL_BOUND} "
+                f"in absolute sum")
+        positions, tracks, changes = self._settle(window, frontier)
+        starts, ends, levels, tracks = self._segments(
+            positions, tracks, changes, frontier)
+        starts, ends, levels, tracks = self._runs(
+            starts, ends, levels, tracks)
+        self.held_levels[:] = 0
+        if frontier is not None:
+            held = ends == frontier - 1
+            self.held_starts[tracks[held]] = starts[held]
+            self.held_ends[tracks[held]] = ends[held]
+            self.held_levels[tracks[held]] = levels[held]
+            starts, ends, levels, tracks = (
+                starts[~held], ends[~held], levels[~held], tracks[~held])
+            self.origin = frontier
+        order = np.argsort(starts, kind="stable")
+        runs = _Window(
+            starts[order], ends[order], tracks[order],
+            levels[order].astype(np.float64))
+        if frontier is None:
+            return runs, None
+        open_starts = self.held_starts[self.held_levels != 0]
+        return runs, int(min([frontier, *open_starts.tolist()]))
+
+    def _settle(
+        self, window: _Window, frontier: int | None,
+    ) -> tuple[_IntArray, _IntArray, _IntArray]:
+        """The events before ``frontier``, sorted by track and position.
+
+        A track with a level other than 0 gets an event with no change at
+        the origin, so its level before the window starts a segment.
+        """
+        values = window.scores.astype(np.int64)
+        if not np.array_equal(values, window.scores):
+            raise ValueError(
+                "the coverage array fold needs integer values")
+        carried = np.flatnonzero(self.level)
+        positions = np.concatenate([
+            self.pending[0], window.begins, window.ends + 1,
+            np.full(len(carried), self.origin)])
+        tracks = np.concatenate([
+            self.pending[1], window.tracks, window.tracks, carried])
+        changes = np.concatenate([
+            self.pending[2], values, -values,
+            np.zeros(len(carried), dtype=np.int64)])
+        settled = np.ones(len(positions), dtype=bool) if frontier is None \
+            else positions < frontier
+        self.pending = (
+            positions[~settled], tracks[~settled], changes[~settled])
+        order = np.lexsort((positions[settled], tracks[settled]))
+        return (
+            positions[settled][order], tracks[settled][order],
+            changes[settled][order])
+
+    def _segments(
+        self, positions: _IntArray, tracks: _IntArray, changes: _IntArray,
+        frontier: int | None,
+    ) -> tuple[_IntArray, _IntArray, _IntArray, _IntArray]:
+        """The segments of one level from each event position on.
+
+        The last segment of a track ends before ``frontier``, or at
+        ``end`` for the last window.  The held runs join the segments.
+        """
+        if len(positions) == 0:
+            first = np.empty(0, dtype=np.int64)
+        else:
+            first = np.flatnonzero(np.concatenate([
+                [True],
+                (tracks[1:] != tracks[:-1])
+                | (positions[1:] != positions[:-1])]))
+        starts, owners = positions[first], tracks[first]
+        net = np.add.reduceat(changes, first) if len(first) \
+            else np.empty(0, dtype=np.int64)
+        total = np.cumsum(net)
+        new_track = np.concatenate([[True], owners[1:] != owners[:-1]]) \
+            if len(owners) else np.empty(0, dtype=bool)
+        heads = np.flatnonzero(new_track)
+        sizes = np.diff(np.append(heads, len(owners)))
+        levels = total - np.repeat((total - net)[heads], sizes) \
+            + self.level[owners]
+        last = np.append(heads[1:] - 1, len(owners) - 1) if len(heads) \
+            else np.empty(0, dtype=np.int64)
+        self.level[owners[last]] = levels[last]
+        ends = np.append(starts[1:] - 1, 0)
+        ends[last] = self.end if frontier is None else frontier - 1
+        held = np.flatnonzero(self.held_levels)
+        return (
+            np.concatenate([starts, self.held_starts[held]]),
+            np.concatenate([ends, self.held_ends[held]]),
+            np.concatenate([levels, self.held_levels[held]]),
+            np.concatenate([owners, held]))
+
+    @staticmethod
+    def _runs(
+        starts: _IntArray, ends: _IntArray, levels: _IntArray,
+        tracks: _IntArray,
+    ) -> tuple[_IntArray, _IntArray, _IntArray, _IntArray]:
+        """Join the touching segments of one level; drop the level 0.
+
+        As ``CoverageProfile``, two touching runs never share a level.
+        """
+        covered = levels != 0
+        starts, ends, levels, tracks = (
+            starts[covered], ends[covered], levels[covered], tracks[covered])
+        order = np.lexsort((starts, tracks))
+        starts, ends, levels, tracks = (
+            starts[order], ends[order], levels[order], tracks[order])
+        if len(starts) == 0:
+            return starts, ends, levels, tracks
+        heads = np.flatnonzero(np.concatenate([
+            [True],
+            (tracks[1:] != tracks[:-1]) | (starts[1:] != ends[:-1] + 1)
+            | (levels[1:] != levels[:-1])]))
+        tails = np.append(heads[1:] - 1, len(starts) - 1)
+        return starts[heads], ends[tails], levels[heads], tracks[heads]
 
 
 class _LengthFold:

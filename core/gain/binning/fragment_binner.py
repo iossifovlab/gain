@@ -115,8 +115,11 @@ from gain.binning.binners import (
 )
 from gain.binning.fragment_array_folds import (
     LENGTH_AGGREGATORS,
+    CoverageRead,
+    InexactLevelsError,
     LengthRead,
     StartRead,
+    fold_coverage_profiles,
     fold_fragment_lengths,
     fold_fragment_starts,
 )
@@ -1214,9 +1217,14 @@ class FragmentScoreBinding:
 
         A :data:`FRAGMENT_START` job on scores with column-array reads
         folds the array batches of each resource with
-        :func:`~.fragment_array_folds.fold_fragment_starts`, and a
+        :func:`~.fragment_array_folds.fold_fragment_starts`, a
         :data:`FRAGMENT_LENGTH` job with
-        :func:`~.fragment_array_folds.fold_fragment_lengths`.  Otherwise
+        :func:`~.fragment_array_folds.fold_fragment_lengths`, and a
+        :data:`COVERAGE_PROFILE` job of ``int`` values with
+        :func:`~.fragment_array_folds.fold_coverage_profiles`.  The
+        declared type of the score, or the type of the constant value,
+        decides what is ``int``.  A region whose levels can be inexact in
+        ``int64`` takes the streaming fold.  Otherwise
         one streaming fold per track, of the track's mode, is fed the
         merge by start of one read per resource -- starting-in, or
         overlapping with each fragment clipped to the region -- and each
@@ -1227,12 +1235,18 @@ class FragmentScoreBinding:
         :attr:`dropped` and logged.
         """
         dropped = [0] * len(self.scores)
+        mode = _fragment_def(self.job.tracks[0]).mode
         if not self._reads_arrays():
             block = self._bin_records(region, bin_size, dropped)
-        elif _fragment_def(self.job.tracks[0]).mode == FRAGMENT_START:
+        elif mode == FRAGMENT_START:
             block = self._bin_starts(region, bin_size, dropped)
-        else:
+        elif mode == FRAGMENT_LENGTH:
             block = self._bin_lengths(region, bin_size, dropped)
+        else:
+            try:
+                block = self._bin_coverage(region, bin_size, dropped)
+            except InexactLevelsError:
+                block = self._bin_records(region, bin_size, dropped)
         if self.job.grouping is not None:
             where = f"{region.chrom}:{region.start}-{region.stop}"
             for resource_id, count in zip(
@@ -1253,10 +1267,24 @@ class FragmentScoreBinding:
             else [*scores, job.grouping.score_id]
 
     def _reads_arrays(self) -> bool:
-        return _fragment_def(self.job.tracks[0]).mode in (
-            FRAGMENT_START, FRAGMENT_LENGTH) \
+        mode = _fragment_def(self.job.tracks[0]).mode
+        return (mode != COVERAGE_PROFILE or self._int_values()) \
             and all(score.supports_region_value_arrays(self._read_scores)
                     for score in self.scores)
+
+    def _int_values(self) -> bool:
+        """Whether the value of the job is an ``int`` in each resource.
+
+        The declared type of the score decides, because the array read
+        gives an ``int`` score as ``float64``.
+        """
+        job = self.job
+        if job.score_id is None:
+            return isinstance(job.value, int) \
+                and not isinstance(job.value, bool)
+        return all(
+            score.score_definitions[job.score_id].value_type == "int"
+            for score in self.scores)
 
     def _bin_starts(
         self, region: BedRegion, bin_size: int, dropped: list[int],
@@ -1274,12 +1302,28 @@ class FragmentScoreBinding:
         self, region: BedRegion, bin_size: int, dropped: list[int],
     ) -> npt.NDArray[np.float64]:
         """The array fold of a :data:`FRAGMENT_LENGTH` job."""
+        return self._bin_overlapping(
+            region, bin_size, dropped, LengthRead, fold_fragment_lengths)
+
+    def _bin_coverage(
+        self, region: BedRegion, bin_size: int, dropped: list[int],
+    ) -> npt.NDArray[np.float64]:
+        """The array fold of a :data:`COVERAGE_PROFILE` job of ints."""
+        return self._bin_overlapping(
+            region, bin_size, dropped, CoverageRead, fold_coverage_profiles)
+
+    def _bin_overlapping(
+        self, region: BedRegion, bin_size: int, dropped: list[int],
+        read_type: type[LengthRead],
+        fold: Callable[..., npt.NDArray[np.float64]],
+    ) -> npt.NDArray[np.float64]:
+        """Fold the fragments that overlap ``region`` with ``fold``."""
         definition = _fragment_def(self.job.tracks[0])
         return self._fold_arrays(
             region, dropped,
-            partial(LengthRead, start=region.start, end=region.stop),
+            partial(read_type, start=region.start, end=region.stop),
             FragmentScore.get_fragment_arrays_overlapping_region,
-            lambda reads: fold_fragment_lengths(
+            lambda reads: fold(
                 reads, start=region.start, end=region.stop,
                 bin_size=bin_size, tracks=len(self.job.tracks),
                 aggregator=definition.aggregator,
