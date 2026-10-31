@@ -94,7 +94,7 @@ from collections.abc import Callable, Generator, Iterable
 from dataclasses import dataclass
 from functools import partial
 from types import TracebackType
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypeVar
 from zipfile import BadZipFile
 
 import numpy as np
@@ -113,7 +113,13 @@ from gain.binning.binners import (
     match_resources,
     named_base,
 )
-from gain.binning.fragment_array_folds import StartRead, fold_fragment_starts
+from gain.binning.fragment_array_folds import (
+    LENGTH_AGGREGATORS,
+    LengthRead,
+    StartRead,
+    fold_fragment_lengths,
+    fold_fragment_starts,
+)
 from gain.binning.fragment_def import FragmentScoreDef
 from gain.binning.fragment_folds import (
     BinFragmentAggregator,
@@ -130,6 +136,7 @@ from gain.genomic_resources.genomic_scores import FragmentScore
 from gain.genomic_resources.genomic_scores.aggregation import (
     EMPTY_BIN_VALUES,
 )
+from gain.genomic_resources.genomic_scores.records import RecordArrays
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
     CategoricalHistogramConfig,
@@ -145,6 +152,8 @@ from gain.genomic_resources.score_def import ScoreValue
 from gain.utils.regions import BedRegion, calc_bin_index
 
 logger = logging.getLogger(__name__)
+
+_Read = TypeVar("_Read", bound=StartRead)
 
 # The GRR convention for single-cell fragment resources (F7).  Every
 # other mention of these names refers to the constants.
@@ -195,9 +204,6 @@ FRAGMENT_LENGTH = "fragment_length"
 COVERAGE_PROFILE = "coverage_profile"
 #: The accepted ``aggregate.mode`` values.
 MODES = (FRAGMENT_START, FRAGMENT_LENGTH, COVERAGE_PROFILE)
-#: The aggregators a length-weighted mode accepts: ``count`` would count
-#: base pairs, and ``product`` raise a value to the power of a length.
-LENGTH_AGGREGATORS = ("max", "mean", "median", "min", "sum")
 META_SOURCE_KEYS = frozenset({"resource_id", "resource_label", "file_name"})
 META_FILE_KEYS = frozenset({"file_separator", "file_format"})
 META_KEYS = META_SOURCE_KEYS | META_FILE_KEYS | frozenset({"filter"})
@@ -1208,7 +1214,9 @@ class FragmentScoreBinding:
 
         A :data:`FRAGMENT_START` job on scores with column-array reads
         folds the array batches of each resource with
-        :func:`~.fragment_array_folds.fold_fragment_starts`.  Otherwise
+        :func:`~.fragment_array_folds.fold_fragment_starts`, and a
+        :data:`FRAGMENT_LENGTH` job with
+        :func:`~.fragment_array_folds.fold_fragment_lengths`.  Otherwise
         one streaming fold per track, of the track's mode, is fed the
         merge by start of one read per resource -- starting-in, or
         overlapping with each fragment clipped to the region -- and each
@@ -1219,9 +1227,12 @@ class FragmentScoreBinding:
         :attr:`dropped` and logged.
         """
         dropped = [0] * len(self.scores)
-        block = self._bin_starts(region, bin_size, dropped) \
-            if self._reads_arrays() \
-            else self._bin_records(region, bin_size, dropped)
+        if not self._reads_arrays():
+            block = self._bin_records(region, bin_size, dropped)
+        elif _fragment_def(self.job.tracks[0]).mode == FRAGMENT_START:
+            block = self._bin_starts(region, bin_size, dropped)
+        else:
+            block = self._bin_lengths(region, bin_size, dropped)
         if self.job.grouping is not None:
             where = f"{region.chrom}:{region.start}-{region.stop}"
             for resource_id, count in zip(
@@ -1242,7 +1253,8 @@ class FragmentScoreBinding:
             else [*scores, job.grouping.score_id]
 
     def _reads_arrays(self) -> bool:
-        return _fragment_def(self.job.tracks[0]).mode == FRAGMENT_START \
+        return _fragment_def(self.job.tracks[0]).mode in (
+            FRAGMENT_START, FRAGMENT_LENGTH) \
             and all(score.supports_region_value_arrays(self._read_scores)
                     for score in self.scores)
 
@@ -1250,11 +1262,45 @@ class FragmentScoreBinding:
         self, region: BedRegion, bin_size: int, dropped: list[int],
     ) -> npt.NDArray[np.float64]:
         """The array fold of a :data:`FRAGMENT_START` job."""
+        return self._fold_arrays(
+            region, dropped, StartRead,
+            FragmentScore.get_fragment_arrays_starting_in_region,
+            lambda reads: fold_fragment_starts(
+                reads, start=region.start, end=region.stop,
+                bin_size=bin_size, tracks=len(self.job.tracks),
+                aggregator=_fragment_def(self.job.tracks[0]).aggregator))
+
+    def _bin_lengths(
+        self, region: BedRegion, bin_size: int, dropped: list[int],
+    ) -> npt.NDArray[np.float64]:
+        """The array fold of a :data:`FRAGMENT_LENGTH` job."""
+        definition = _fragment_def(self.job.tracks[0])
+        return self._fold_arrays(
+            region, dropped,
+            partial(LengthRead, start=region.start, end=region.stop),
+            FragmentScore.get_fragment_arrays_overlapping_region,
+            lambda reads: fold_fragment_lengths(
+                reads, start=region.start, end=region.stop,
+                bin_size=bin_size, tracks=len(self.job.tracks),
+                aggregator=definition.aggregator,
+                uncovered_value=definition.uncovered_value))
+
+    def _fold_arrays(
+        self, region: BedRegion, dropped: list[int],
+        make_read: Callable[..., _Read],
+        batches: Callable[..., Generator[RecordArrays, None, None]],
+        fold: Callable[[list[_Read]], npt.NDArray[np.float64]],
+    ) -> npt.NDArray[np.float64]:
+        """Fold one ``make_read`` of the ``batches`` of each resource.
+
+        The reads are closed after the fold, and the fragments that each
+        read dropped go to ``dropped``.
+        """
         job, track_maps = self.job, self.track_maps
         reads = {
-            index: StartRead(
-                score.get_fragment_arrays_starting_in_region(
-                    region.chrom, region.start, region.stop,
+            index: make_read(
+                batches(
+                    score, region.chrom, region.start, region.stop,
                     scores=self._read_scores),
                 value_score=job.score_id, constant=job.value,
                 group_score=None if job.grouping is None
@@ -1265,10 +1311,7 @@ class FragmentScoreBinding:
             if score.has_chromosome(region.chrom)
         }
         try:
-            block = fold_fragment_starts(
-                list(reads.values()), start=region.start, end=region.stop,
-                bin_size=bin_size, tracks=len(job.tracks),
-                aggregator=_fragment_def(job.tracks[0]).aggregator)
+            block = fold(list(reads.values()))
         finally:
             for read in reads.values():
                 read.batches.close()
