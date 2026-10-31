@@ -75,6 +75,9 @@ Most query methods have plural and singular forms. Plural methods, named ``get_f
    * - Starting in a region
      - :meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_fragment_scores_starting_in_region`, :meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_fragment_score_starting_in_region`
      - Fragments whose starts fall within the region
+   * - Column arrays
+     - :meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_fragment_arrays_overlapping_region`, :meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_fragment_arrays_starting_in_region`
+     - Batches of ``(begins, ends, {score_id: values})`` arrays, with the fragments of the matching ``get_fragment_scores_...`` read
    * - Aggregated region
      - :meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_fragment_scores_overlapping_region_agg`, :meth:`~gain.genomic_resources.genomic_scores.FragmentScore.get_fragment_score_overlapping_region_agg`
      - Aggregated values and the number of matching fragments
@@ -122,6 +125,8 @@ and ``grr.build_fragment_score_from_resource``.
    FragmentScore
    FragmentScore.DEFAULT_AGGREGATORS
    FragmentScore.HISTOGRAM_COUNT_UNIT
+   FragmentScore.get_fragment_arrays_overlapping_region
+   FragmentScore.get_fragment_arrays_starting_in_region
    FragmentScore.get_fragment_score_at_position
    FragmentScore.get_fragment_score_overlapping_region
    FragmentScore.get_fragment_score_overlapping_region_agg
