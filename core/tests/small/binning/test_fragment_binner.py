@@ -607,8 +607,8 @@ def test_a_binding_opens_each_resource_once_and_drains_every_read(
     opens = mocker.spy(FragmentScore, "open")
     ledger = ReadLedger()
     mocker.patch.object(
-        FragmentScore, "get_fragment_scores_starting_in_region",
-        ledger.wrap(FragmentScore.get_fragment_scores_starting_in_region))
+        FragmentScore, "get_fragment_arrays_starting_in_region",
+        ledger.wrap(FragmentScore.get_fragment_arrays_starting_in_region))
     (job,) = parse_fragment_entry(pooled(), repo, genome).jobs
     regions = [
         BedRegion("chr1", 1, 20), BedRegion("chr1", 21, 40),

@@ -932,6 +932,10 @@ class TabixGenomicPositionTable(GenomicPositionTable):
 
         columns = list(value_columns)
         fetch_start = None if start is None else start - 1
+        # The fetch below moves the file position that the record read's
+        # ``line_iterator`` reads from. Drop the record read's cursor, so
+        # that the next record read starts a fresh fetch.
+        self._discard_buffer()
         raw_iter = self.pysam_file.fetch(
             reference=fchrom, start=fetch_start, parser=pysam.asTuple())
 
