@@ -56,7 +56,6 @@ CONDA_NAMES: Mapping[str, str] = MappingProxyType({
 #: conda dependency.
 PIP_ONLY: Mapping[str, str] = MappingProxyType({
     "adrf": "not packaged on any conda channel",
-    "habit-hooks": "not packaged on any conda channel",
     "pylint-junit": "not packaged on any conda channel",
     "pytestarch": "not packaged on any conda channel",
     "sphinx-autorun": "not packaged on any conda channel",
@@ -134,24 +133,18 @@ class Section:
     title: str
     requires_python: tuple[str, ...]
     requirements: tuple[tuple[str, tuple[str, ...]], ...]
-    #: (canonical name, sorted extras) for each requirement that names
-    #: extras. Conda has no form for an extra, so only a pip-only
-    #: requirement may carry one; see ``check_extras``.
-    extras: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 @dataclass
 class _Entry:
     name: str
     clauses: list[str] = field(default_factory=list)
-    extras: set[str] = field(default_factory=set)
 
     def add(self, clauses: Iterable[str]) -> None:
         self.clauses.extend(c for c in clauses if c not in self.clauses)
 
     def render(self) -> str:
-        extras = f"[{','.join(sorted(self.extras))}]" if self.extras else ""
-        return self.name + extras + ",".join(self.clauses)
+        return self.name + ",".join(self.clauses)
 
 
 def conda_name(pypi_name: str) -> str:
@@ -181,24 +174,18 @@ def _clauses(text: str, source: str) -> tuple[str, ...]:
     return clauses
 
 
-def _requirement(
-    line: str, source: str,
-) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
-    """Return a requirement's canonical name, clauses and sorted extras."""
+def _requirement(line: str, source: str) -> tuple[str, tuple[str, ...]]:
     requirement = Requirement(line)
-    if requirement.marker or requirement.url:
+    if requirement.extras or requirement.marker or requirement.url:
         raise ValueError(
-            f"{source}: {line!r} carries a marker or a url, "
+            f"{source}: {line!r} carries an extra, a marker or a url, "
             f"which scripts/conda_env.py does not model")
     # Requirement.name keeps the name as written, so what follows it is
-    # the specifier text, after any extras.
-    specifier = line.lstrip()[len(requirement.name):].lstrip()
-    if requirement.extras:
-        specifier = specifier[specifier.index("]") + 1:]
+    # the specifier text.
+    specifier = line.lstrip()[len(requirement.name):]
     return (
         canonicalize_name(requirement.name),
         _clauses(specifier, f"{source}: {line!r}"),
-        tuple(sorted(requirement.extras)),
     )
 
 
@@ -211,14 +198,11 @@ def load_section(root: pathlib.Path, feed: Feed) -> Section:
         lines = lines[key]
     project = config["project"]
     source = f"{feed.pyproject} [{'.'.join(feed.table)}]"
-    parsed = [_requirement(line, source) for line in lines]
     return Section(
         title=f"{project['name']} ({source})",
         requires_python=_clauses(
             project["requires-python"], feed.pyproject),
-        requirements=tuple((name, clauses) for name, clauses, _ in parsed),
-        extras=tuple(
-            (name, extras) for name, _, extras in parsed if extras),
+        requirements=tuple(_requirement(line, source) for line in lines),
     )
 
 
@@ -242,19 +226,6 @@ def check_pip_only(
     if undeclared:
         raise ValueError(
             f"pip-only entries no feed declares: {', '.join(undeclared)}")
-
-
-def check_extras(
-    sections: Iterable[Section], pip_only: Mapping[str, str],
-) -> None:
-    """Raise if a requirement that conda installs names an extra."""
-    for section in sections:
-        for name, extras in section.extras:
-            if name not in pip_only:
-                raise ValueError(
-                    f"{section.title}: {name}[{','.join(extras)}] carries "
-                    f"an extra, which scripts/conda_env.py does not model "
-                    f"outside PIP_ONLY")
 
 
 def _clauses_by_package(
@@ -304,14 +275,11 @@ def render(
     for section in sections:
         python.add(section.requires_python)
         section_entries = by_section.setdefault(section.title, [])
-        extras = dict(section.extras)
         for name, clauses in section.requirements:
             if name in members:
                 continue
             if name in pip_only:
-                entry = pip_entries.setdefault(name, _Entry(name))
-                entry.add(clauses)
-                entry.extras.update(extras.get(name, ()))
+                pip_entries.setdefault(name, _Entry(name)).add(clauses)
                 continue
             conda = conda_name(name)
             if conda not in entries:
@@ -373,9 +341,9 @@ def render_all(
         output.filename: [load_section(root, feed) for feed in output.feeds]
         for output in outputs
     }
-    every_section = [s for per_output in sections.values() for s in per_output]
-    check_pip_only(every_section, pip_only)
-    check_extras(every_section, pip_only)
+    check_pip_only(
+        (s for per_output in sections.values() for s in per_output),
+        pip_only)
     return {
         output.filename: render(
             output, sections[output.filename], members, pip_only)

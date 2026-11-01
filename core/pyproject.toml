@@ -131,6 +131,11 @@ debug_annotator = "gain.annotation.debug_annotator:build_annotator"
 # longer enables anything: ``pip install gain-core[ann_data_10x]`` would
 # now pull numba, llvmlite, scikit-learn and statsmodels for no gain at
 # all.
+# habit-hooks coaching. A group of its own keeps it out of
+# dev-environment.yml, which scripts/conda_env.py renders from `dev`.
+habit = [
+    "habit-hooks[generic,python]~=1.5.0",
+]
 scanpy_drift = [
     "scanpy>=1.11",
 ]
@@ -146,7 +151,6 @@ dev = [
     "coverage",
     "deptry>=0.25.1",
     "fonttools",
-    "habit-hooks[generic,python]~=1.5.0",
     "mypy==1.15.0",
     # scripts/conda_env.py parses requirement strings with it; the test
     # that guards environment.yml (tests/test_conda_deps.py) imports it.
@@ -171,6 +175,9 @@ dev = [
     "types-pyyaml",
     "types-tqdm",
 ]
+
+[tool.uv]
+default-groups = ["dev", "habit"]
 
 [tool.hatch.version]
 source = "vcs"

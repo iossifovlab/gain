@@ -127,7 +127,8 @@ uv run habit-hooks --all                  # from the repo root
 uv run --directory gain habit-hooks --all # from the meta-repo
 ```
 
-- A plain `uv sync` removes habit-hooks, because habit-hooks is in the `dev` group of `gain-core`.
+- A plain `uv sync` removes habit-hooks, because habit-hooks is in the `habit` group of `gain-core`. `gain-core` sets `default-groups = ["dev", "habit"]`, so `--package gain-core` installs the group.
+- habit-hooks is not in the `dev` group, because `scripts/conda_env.py` renders `dev` into `dev-environment.yml` and habit-hooks is on no conda channel.
 - jscpd is not a Python package, so `uv sync` does not install it. Without jscpd on `PATH`, the run reports `incomplete-run`.
 - Run habit-hooks from the repo root, or with `--directory`. `uv run --project gain habit-hooks` scans nothing and reports a pass.
 - Rewrite the index only to record a new backlog: `uv run --no-sync habit-sensors --all | uv run --no-sync habit-snooze --snooze`.

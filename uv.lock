@@ -1348,7 +1348,6 @@ dev = [
     { name = "coverage" },
     { name = "deptry" },
     { name = "fonttools" },
-    { name = "habit-hooks", extra = ["python"] },
     { name = "mypy" },
     { name = "packaging" },
     { name = "pandas-stubs" },
@@ -1366,6 +1365,9 @@ dev = [
     { name = "types-psutil" },
     { name = "types-pyyaml" },
     { name = "types-tqdm" },
+]
+habit = [
+    { name = "habit-hooks", extra = ["python"] },
 ]
 scanpy-drift = [
     { name = "scanpy" },
@@ -1412,7 +1414,6 @@ dev = [
     { name = "coverage" },
     { name = "deptry", specifier = ">=0.25.1" },
     { name = "fonttools" },
-    { name = "habit-hooks", extras = ["generic", "python"], specifier = "~=1.5.0" },
     { name = "mypy", specifier = "==1.15.0" },
     { name = "packaging" },
     { name = "pandas-stubs" },
@@ -1431,6 +1432,7 @@ dev = [
     { name = "types-pyyaml" },
     { name = "types-tqdm" },
 ]
+habit = [{ name = "habit-hooks", extras = ["generic", "python"], specifier = "~=1.5.0" }]
 scanpy-drift = [{ name = "scanpy", specifier = ">=1.11" }]
 
 [[package]]
