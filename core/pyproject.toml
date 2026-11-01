@@ -145,6 +145,7 @@ dev = [
     "brotli",
     "coverage",
     "fonttools",
+    "import-linter",
     "mypy==1.15.0",
     # scripts/conda_env.py parses requirement strings with it; the test
     # that guards environment.yml (tests/test_conda_deps.py) imports it.

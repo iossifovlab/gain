@@ -11,6 +11,7 @@ dependencies:
   - brotli-python
   - coverage
   - fonttools
+  - import-linter
   - mypy==1.15.0
   - packaging
   - pandas-stubs
