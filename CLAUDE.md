@@ -121,13 +121,13 @@ cd core && pylint --rcfile=../pylintrc gain ../scripts
 habit-hooks coaches on code smells with its python and generic plugins (`.habit-hooks/config.toml`). It filters the findings through the committed snooze index `.habit-hooks/snooze.json`. A snoozed finding comes back when a branch changes its file, against `master`. The jscpd settings are in `.jscpd.json`.
 
 ```bash
-uv sync --package gain-core --group dev   # installs habit-hooks and deptry
+uv sync --package gain-core --group dev --group habit  # installs deptry and habit-hooks
 npm install -g jscpd@4                    # once per host
 uv run habit-hooks --all                  # from the repo root
 uv run --directory gain habit-hooks --all # from the meta-repo
 ```
 
-- A plain `uv sync` removes habit-hooks, because habit-hooks is in the `habit` group of `gain-core`. `gain-core` sets `default-groups = ["dev", "habit"]`, so `--package gain-core` installs the group.
+- A plain `uv sync` removes habit-hooks, because habit-hooks is in the `habit` group of `gain-core`. `uv sync --package gain-core --group dev` without `--group habit` also removes habit-hooks. uv reads `default-groups` only from the workspace root, and the root has no `habit` group.
 - habit-hooks is not in the `dev` group, because `scripts/conda_env.py` renders `dev` into `dev-environment.yml` and habit-hooks is on no conda channel.
 - jscpd is not a Python package, so `uv sync` does not install it. Without jscpd on `PATH`, the run reports `incomplete-run`.
 - Run habit-hooks from the repo root, or with `--directory`. `uv run --project gain habit-hooks` scans nothing and reports a pass.

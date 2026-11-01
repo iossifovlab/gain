@@ -1432,7 +1432,7 @@ dev = [
     { name = "types-pyyaml" },
     { name = "types-tqdm" },
 ]
-habit = [{ name = "habit-hooks", extras = ["generic", "python"], specifier = "~=1.5.0" }]
+habit = [{ name = "habit-hooks", extras = ["python"], specifier = "~=1.5.0" }]
 scanpy-drift = [{ name = "scanpy", specifier = ">=1.11" }]
 
 [[package]]
