@@ -1,5 +1,5 @@
 # habit-hooks: coaching from the python and generic plugins. Run it from
-# the repo root after `uv sync --package gain-core --group dev`.
+# the repo root after `uv sync --package gain-core --group dev --group habit`.
 plugins = ["python", "generic"]
 # A snoozed finding comes back once a branch touches its file.
 transformers = ["snooze-until-changed"]
