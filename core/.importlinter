@@ -65,8 +65,12 @@ name = statistics.chart_style imports nothing from gain
 type = forbidden
 source_modules =
     gain.genomic_resources.statistics.chart_style
-# The package itself, not a wildcard: a wildcard does not match the
-# package module.
+# import-linter skips a forbidden module that contains the source module,
+# so ``gain.genomic_resources`` alone checks nothing.  The two wildcards
+# check every module under it: the overlapping matches, ``statistics``
+# and ``chart_style`` itself, are skipped.  An import of the package
+# module ``gain.genomic_resources`` or ``gain.genomic_resources.statistics``
+# stays the job of the pytest fence.
 forbidden_modules =
     gain._version
     gain.annotation
@@ -76,6 +80,8 @@ forbidden_modules =
     gain.gene_scores
     gain.gene_sets
     gain.genomic_resources
+    gain.genomic_resources.*
+    gain.genomic_resources.statistics.*
     gain.grr
     gain.logging
     gain.task_graph

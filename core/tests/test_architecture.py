@@ -5,6 +5,7 @@ import functools
 import importlib
 import os
 import pathlib
+import sys
 import tomllib
 from collections.abc import (
     Callable,
@@ -528,7 +529,9 @@ def test_the_chart_style_leaf_imports_nothing_from_gain() -> None:
 IMPORT_LINTER_CONFIG = os.path.join(GAIN_ROOT, ".importlinter")
 
 
-def test_the_import_linter_contracts_are_kept() -> None:
+def test_the_import_linter_contracts_are_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Every contract in ``core/.importlinter`` is kept (gain#2070).
 
     The contracts state import fences of this file as import-linter
@@ -537,7 +540,10 @@ def test_the_import_linter_contracts_are_kept() -> None:
     pytest starts in, and ``no_cache`` keeps import-linter from writing
     ``.import_linter_cache`` into the checkout.  The broken contract
     and the import chain that breaks it are in the captured stdout.
+    ``lint_imports`` puts the current directory on ``sys.path`` and
+    never takes it off, so the test restores ``sys.path`` afterwards.
     """
+    monkeypatch.setattr(sys, "path", list(sys.path))
     result = lint_imports(
         config_filename=IMPORT_LINTER_CONFIG, no_cache=True)
 
