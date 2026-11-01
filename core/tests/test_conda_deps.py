@@ -254,6 +254,17 @@ def test_pip_only_dependency_renders_under_pip(
         "    - adrf>=0.1.13\n")
 
 
+def test_pip_only_dependency_keeps_its_extras(
+    conda_env: ModuleType, tmp_path: pathlib.Path,
+) -> None:
+    root = _workspace(
+        tmp_path, core=["numpy"], web_api=["adrf[b, a] ~=1.5.0"])
+
+    rendered = _render(conda_env, root, {"adrf": "not on conda"})
+
+    assert rendered.endswith("    - adrf[a,b]~=1.5.0\n")
+
+
 def test_no_pip_block_without_pip_only_dependencies(
     conda_env: ModuleType, tmp_path: pathlib.Path,
 ) -> None:

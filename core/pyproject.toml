@@ -144,7 +144,9 @@ dev = [
     # zopfli for a compression the tests never do (#1400).
     "brotli",
     "coverage",
+    "deptry>=0.25.1",
     "fonttools",
+    "habit-hooks[generic,python]~=1.5.0",
     "mypy==1.15.0",
     # scripts/conda_env.py parses requirement strings with it; the test
     # that guards environment.yml (tests/test_conda_deps.py) imports it.

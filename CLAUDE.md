@@ -116,6 +116,23 @@ cd core && pylint --rcfile=../pylintrc gain ../scripts
 - Install the hooks with `cp pre-commit pre-push .git/hooks/`. pre-commit runs `ruff check` on staged `.py` files only. pre-push runs ruff over the **whole tree** at the version `uv.lock` pins (via `uvx`, no venv needed) and refuses the push on any finding; it is ruff only, so pylint's whole-tree invariants (the module line cap below) stay yours to re-check.
 </important>
 
+<important if="you are running habit-hooks, or changing its configuration or snooze index">
+
+habit-hooks coaches on code smells with its python and generic plugins (`.habit-hooks/config.toml`). It filters the findings through the committed snooze index `.habit-hooks/snooze.json`. A snoozed finding comes back when a branch changes its file, against `master`. The jscpd settings are in `.jscpd.json`.
+
+```bash
+uv sync --package gain-core --group dev   # installs habit-hooks and deptry
+npm install -g jscpd@4                    # once per host
+uv run habit-hooks --all                  # from the repo root
+uv run --directory gain habit-hooks --all # from the meta-repo
+```
+
+- A plain `uv sync` removes habit-hooks, because habit-hooks is in the `dev` group of `gain-core`.
+- jscpd is not a Python package, so `uv sync` does not install it. Without jscpd on `PATH`, the run reports `incomplete-run`.
+- Run habit-hooks from the repo root, or with `--directory`. `uv run --project gain habit-hooks` scans nothing and reports a pass.
+- Rewrite the index only to record a new backlog: `uv run --no-sync habit-sensors --all | uv run --no-sync habit-snooze --snooze`.
+</important>
+
 <important if="you are adding or editing a ruff suppression, or touching a module near pylint's 1500-line cap">
 
 - Spell suppressions `# ruff: ignore[rule-name]` with the rule *name* (`unused-method-argument`, not `ARG002`). Ruff 0.16 deprecated the `# noqa` spelling and rule codes in `ruff.toml` selectors; the tree was converted in one pass, and CI flags a new old-style comment. The old code is kept in a trailing comment beside each `ruff.toml` entry for grepping.

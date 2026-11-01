@@ -10,6 +10,7 @@ dependencies:
   # gain-core (core/pyproject.toml [dependency-groups.dev])
   - brotli-python
   - coverage
+  - deptry>=0.25.1
   - fonttools
   - mypy==1.15.0
   - packaging
@@ -48,6 +49,8 @@ dependencies:
   # pip-only: PIP_ONLY in scripts/conda_env.py
   - pip
   - pip:
+    # habit-hooks: not packaged on any conda channel
+    - habit-hooks[generic,python]~=1.5.0
     # pylint-junit: not packaged on any conda channel
     - pylint-junit
     # pytestarch: not packaged on any conda channel
