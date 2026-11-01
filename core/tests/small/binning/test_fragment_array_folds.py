@@ -361,8 +361,9 @@ def test_a_subnormal_factor_of_a_product_rounds_as_the_streaming_fold(
     # ``ProductAggregator`` multiplies a subnormal value through frexp and
     # ldexp, which round twice.  ``np.multiply.at`` rounds once, so the
     # array fold multiplies such a cell one value at a time.
-    reads = [[(52, "AAA", 0.3), (56, "AAA", 7.40148500012542e-309),
-              (59, "AAA", -6.318824842378611e+265)]]
+    reads: list[list[Fragment]] = [[
+        (52, "AAA", 0.3), (56, "AAA", 7.40148500012542e-309),
+        (59, "AAA", -6.318824842378611e+265)]]
     expected = streaming_fold(reads, start=51, end=60, aggregator="product")
     rng = np.random.default_rng(0)
     starts = [StartRead(
@@ -460,7 +461,7 @@ def test_a_fragment_length_track_reads_the_overlapping_array_reader(
 
 
 LENGTH = {"mode": "fragment_length"}
-LENGTH_UNCOVERED = [
+LENGTH_UNCOVERED: list[dict[str, float]] = [
     {}, {"uncovered_value": 0}, {"uncovered_value": 3},
     {"uncovered_value": -0.7}]
 
