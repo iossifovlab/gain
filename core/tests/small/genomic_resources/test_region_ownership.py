@@ -9,6 +9,8 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing.builders import a_fragment_score
 
+from tests.small.genomic_resources.histogram_parity import as_number
+
 _HIST_DICT: dict = {
     "type": "number",
     "view_range": {"min": 0, "max": 1},
@@ -51,7 +53,8 @@ def _histogram_total(
     ]
     merged = scan.merge_histograms(
         resource, *(result.histograms for result in results))
-    return merged["s"].bars.sum()
+    total: float = as_number(merged["s"]).bars.sum()
+    return total
 
 
 @pytest.mark.parametrize(

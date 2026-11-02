@@ -9,7 +9,10 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
     build_score_implementation_from_resource,
     scan,
 )
-from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.repository import (
+    GenomicResource,
+    ReadWriteRepositoryProtocol,
+)
 from gain.genomic_resources.resource_types import FRAGMENT_SCORE_TYPES
 from gain.genomic_resources.statistics.exact_lengths import (
     NO_LENGTHS,
@@ -30,6 +33,7 @@ from gain.genomic_resources.testing.builders import (
 )
 from pytest_mock import MockerFixture
 
+from tests.small.genomic_resources.histogram_parity import as_number
 from tests.small.genomic_resources.info_page_html import (
     section_after,
     table_after,
@@ -422,7 +426,9 @@ def test_a_fragment_resource_with_no_statistics_file_says_not_computed(
     # there; it just has nothing to show.
     resource = _fragments(tmp_path)
     scan.do_noregion_histograms(resource)
-    resource.proto.delete_resource_file(
+    proto = resource.proto
+    assert isinstance(proto, ReadWriteRepositoryProtocol)
+    proto.delete_resource_file(
         resource, FRAGMENT_STATISTICS_FILE)
 
     page = _info_page(resource)
@@ -552,8 +558,9 @@ def test_fragment_statistics_are_chunk_invariant(
 
     merged = scan.merge_histograms(
         resource, *(result.histograms for result in results))
-    assert merged["s"].bars.tolist() == whole.histograms["s"].bars.tolist()
-    assert merged["s"].bars.sum() == len(_FRAGMENT_ROWS)
+    assert as_number(merged["s"]).bars.tolist() == \
+        as_number(whole.histograms["s"]).bars.tolist()
+    assert as_number(merged["s"]).bars.sum() == len(_FRAGMENT_ROWS)
 
     stats = merge_region_fragments(
         resource.resource_id, (result.fragments for result in results))

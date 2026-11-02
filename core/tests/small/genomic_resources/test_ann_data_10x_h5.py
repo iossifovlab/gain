@@ -14,7 +14,9 @@ from typing import Any
 
 import h5py
 import numpy as np
+import pandas as pd
 import pytest
+from anndata import AnnData
 from gain.genomic_resources.ann_data_resource import (
     load_ann_data_from_resource,
 )
@@ -30,6 +32,7 @@ from gain.genomic_resources.testing.builders import a_grr
 from gain.task_graph.cli_tools import task_graph_run
 from gain.task_graph.graph import TaskGraph
 from gain.task_graph.sequential_executor import SequentialExecutor
+from scipy.sparse import issparse, spmatrix
 
 _RESOURCE_ID = "single_cell/matrix"
 
@@ -85,6 +88,13 @@ _DUPLICATE_SYMBOLS = """
 _NOT_UNIQUE = r"Variable names are not unique"
 
 
+def _sparse_x(ann_data: AnnData) -> spmatrix:
+    """Return ``X`` of a 10x read, which is always a sparse matrix."""
+    matrix = ann_data.X
+    assert issparse(matrix), type(matrix)
+    return matrix
+
+
 def test_reads_a_10x_h5_without_scanpy(tmp_path: pathlib.Path) -> None:
     resource = (
         an_ann_data().with_format("10x_h5").build_resource(tmp_path)
@@ -98,7 +108,7 @@ def test_reads_a_10x_h5_without_scanpy(tmp_path: pathlib.Path) -> None:
     assert ann_data.shape == (3, 4)
     assert list(ann_data.obs_names) == ["CELL_1", "CELL_2", "CELL_3"]
     assert list(ann_data.var_names) == ["ACTB", "GAPDH", "MALAT1", "XIST"]
-    assert ann_data.X.todense().tolist() == [
+    assert _sparse_x(ann_data).todense().tolist() == [
         [4.0, 7.0, 10.0, 13.0],
         [5.0, 8.0, 11.0, 14.0],
         [6.0, 9.0, 12.0, 15.0],
@@ -118,7 +128,7 @@ def test_the_counts_come_back_as_float32(tmp_path: pathlib.Path) -> None:
 
     ann_data = load_ann_data_from_resource(resource)
 
-    assert ann_data.X.dtype == np.float32
+    assert _sparse_x(ann_data).dtype == np.float32
 
 
 def test_a_matrix_free_read_matches_that_dtype(
@@ -132,7 +142,7 @@ def test_a_matrix_free_read_matches_that_dtype(
 
     ann_data = load_ann_data_from_resource(resource, matrix_free=True)
 
-    assert ann_data.X.dtype == np.float32
+    assert _sparse_x(ann_data).dtype == np.float32
 
 
 def test_var_carries_the_named_fields_then_the_rest(
@@ -149,6 +159,7 @@ def test_var_carries_the_named_fields_then_the_rest(
 
     ann_data = load_ann_data_from_resource(resource)
 
+    assert isinstance(ann_data.var, pd.DataFrame)
     assert ann_data.var.to_csv().splitlines()[0] == (
         ",gene_ids,feature_types,genome,interval")
     assert list(ann_data.var["gene_ids"]) == [
@@ -383,7 +394,7 @@ def test_a_matrix_free_read_does_not_touch_the_counts(
 
     # The shape is the resource's, read from ``shape`` alone.
     assert ann_data.shape == (3, 4)
-    assert ann_data.X.nnz == 0
+    assert _sparse_x(ann_data).nnz == 0
     # ``_gen_repr`` emits its ``layers: None (.X)`` line only when X is
     # set, so a matrix-free read that left X unset would describe itself
     # differently from the full read it stands in for.

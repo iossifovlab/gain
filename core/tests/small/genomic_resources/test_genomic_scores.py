@@ -743,7 +743,8 @@ def _count_record(record: Record) -> tuple[Record, _CountingVariant]:
     variant, allele_index, _info, _meta = record[PAYLOAD]
     counting = _CountingVariant(variant)
     parser = build_vcf_parser(None)
-    rebuilt = parser(counting, allele_index)
+    # The stand-in quacks like the pysam record it wraps.
+    rebuilt = parser(cast(pysam.VariantRecord, counting), allele_index)
     assert rebuilt is not None
     return rebuilt, counting
 

@@ -87,7 +87,7 @@ _IDS = [kind.__name__ for kind, *_ in _KINDS]
 
 
 def _built(tmp_path: pathlib.Path, builder: Any) -> GenomicResource:
-    resource = builder.build_resource(tmp_path)
+    resource: GenomicResource = builder.build_resource(tmp_path)
     publish_statistics(resource)
     return resource
 

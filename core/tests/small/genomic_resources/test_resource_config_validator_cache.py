@@ -525,7 +525,7 @@ def _count_validations(
     """
     validations = 0
 
-    class Counting(resource_implementation.Validator):  # type: ignore[misc,valid-type]
+    class Counting(resource_implementation.Validator):
         def validate(self, *args: Any, **kwargs: Any) -> bool:
             nonlocal validations
             validations += 1

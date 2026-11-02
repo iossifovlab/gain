@@ -68,7 +68,7 @@ def _realize(
 ) -> pathlib.Path:
     """Realize ``builder`` and return the path of the file ``file:`` names."""
     resource = builder.build_resource(tmp_path)
-    return tmp_path / resource.get_config()["file"]
+    return tmp_path / str(resource.get_config()["file"])
 
 
 def _strings(dataset: h5py.Dataset) -> list[str]:

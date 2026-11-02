@@ -1,6 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import fields
 
 import numpy
@@ -431,7 +432,7 @@ def test_a_cleared_aggregator_refolds_like_a_fresh_one(name: str) -> None:
     assert agg.get_total_count() == fresh.get_total_count()
 
 
-def _most_common(k: int, values: list[tuple[object, int]]) -> object:
+def _most_common(k: int, values: Sequence[tuple[object, int]]) -> object:
     agg = Aggregator.build(f"most_common({k})")
     for value, count in values:
         agg.add(value, count)

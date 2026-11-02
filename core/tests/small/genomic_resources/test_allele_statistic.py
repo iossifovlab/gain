@@ -421,12 +421,14 @@ def test_each_row_takes_its_shares_over_its_own_alleles() -> None:
             "chr2", 4, {"substitution": 3, "insertion": 1}),
     )
 
-    assert [
-        (row.chrom,
-         row.shares["substitution"].percentage,
-         row.shares["insertion"].percentage)
-        for row in section.rows
-    ] == [
+    percentages = []
+    for row in section.rows:
+        assert row.shares is not None
+        percentages.append(
+            (row.chrom,
+             row.shares["substitution"].percentage,
+             row.shares["insertion"].percentage))
+    assert percentages == [
         ("chr1", "75.00%", "25.00%"),
         ("chr2", "75.00%", "25.00%"),
     ]

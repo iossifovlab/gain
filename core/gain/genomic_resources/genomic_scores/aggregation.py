@@ -76,6 +76,12 @@ from ..aggregators import Aggregator, ScoreAggregationQuery, to_float64
 # lowercase, no leading punctuation, spliced after the rule's "; ".
 QUERY_AGGREGATOR_REMEDY = "name one on the query"
 
+#: The value that one aggregator reduces a region to.  The aggregator sets
+#: the type: ``list`` and ``most_common`` give a list, ``value_count`` gives
+#: a dict that maps each value to its count, and every other aggregator
+#: gives a score value.
+AggregateValue = ScoreValue | list[ScoreValue] | dict[ScoreValue, int]
+
 
 def resolve_aggregation_queries(
     queries: Sequence[ScoreAggregationQuery] | None,
@@ -278,7 +284,7 @@ def fold_region_segments(
     *,
     score_ids: Sequence[str],
     weigh: Callable[[int, int], int],
-) -> list[ScoreValue]:
+) -> list[AggregateValue]:
     """Fold one region read into one value per request.
 
     ``segments`` is a stream of ``(left, right, values)`` as

@@ -405,7 +405,7 @@ def _read_with_warnings(
 ) -> tuple[list[object], list[str]]:
     """Read ``score_id`` over a region, returning its values and warnings."""
     with caplog.at_level(logging.WARNING), score:
-        values = [
+        values: list[object] = [
             score.get_score_value_from_record(record, score_id)
             for record in score.fetch_records("chr1", begin, end)
         ]

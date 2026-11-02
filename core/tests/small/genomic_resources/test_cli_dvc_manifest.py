@@ -36,7 +36,7 @@ TAMPERED_DATA = "TAMPERED DATA - not what the sidecar says!!\n"
 SAME_SIZE_TAMPERED_DATA = "TAMPERED DATA - trust me\n"
 
 
-def published_index(proto: ReadWriteRepositoryProtocol) -> str:
+def published_index(proto: FsspecReadWriteProtocol) -> str:
     """Return the repository index a run published, as searchable text.
 
     Read back through the protocol rather than off disk, so these

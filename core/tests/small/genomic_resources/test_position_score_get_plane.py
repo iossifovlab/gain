@@ -390,11 +390,12 @@ def test_a_contig_the_score_never_mentions_aggregates_as_uncovered(
         assert gapped.get_score_in_region_agg("1", 100, 116) is None
 
         # And with a replacement, both count the whole window by width.
-        counted = {
-            "aggregator": "count", "none_value_replacement": 0.0,
-        }
-        assert gapped.get_score_in_region_agg("nope", 10, 26, **counted) == 17
-        assert gapped.get_score_in_region_agg("1", 100, 116, **counted) == 17
+        assert gapped.get_score_in_region_agg(
+            "nope", 10, 26,
+            aggregator="count", none_value_replacement=0.0) == 17
+        assert gapped.get_score_in_region_agg(
+            "1", 100, 116,
+            aggregator="count", none_value_replacement=0.0) == 17
 
 
 def test_a_replacement_covers_a_contig_the_score_never_mentions(

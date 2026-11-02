@@ -5,8 +5,26 @@ Three suites compare a histogram built one way against one built another --
 per-record scan -- and each used to carry its own copy of the comparison,
 extended by hand.  This is the copy they share.
 """
+from collections.abc import Mapping
+
 import numpy as np
-from gain.genomic_resources.histogram import NumberHistogram
+from gain.genomic_resources.histogram import (
+    CategoricalHistogram,
+    Histogram,
+    NumberHistogram,
+)
+
+
+def as_number(hist: Histogram) -> NumberHistogram:
+    """Narrow a scanned histogram to the number histogram a test expects."""
+    assert isinstance(hist, NumberHistogram), hist
+    return hist
+
+
+def as_categorical(hist: Histogram) -> CategoricalHistogram:
+    """Narrow a scanned histogram to the categorical one a test expects."""
+    assert isinstance(hist, CategoricalHistogram), hist
+    return hist
 
 
 def assert_histograms_equal(
@@ -37,3 +55,13 @@ def assert_histograms_equal(
         theirs = getattr(got.moments, name)
         ours = getattr(want.moments, name)
         assert theirs == ours, (label, name, theirs, ours)
+
+
+def assert_all_histograms_equal(
+    got: Mapping[str, Histogram], want: Mapping[str, Histogram],
+) -> None:
+    """The same score ids, each with an equal number histogram."""
+    assert set(got) == set(want)
+    for score_id in want:
+        assert_histograms_equal(
+            as_number(got[score_id]), as_number(want[score_id]), score_id)

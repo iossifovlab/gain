@@ -9,6 +9,9 @@ from gain.genomic_resources.gene_models.gene_models_factory import (
 from gain.genomic_resources.gene_models.parsers import (
     SUPPORTED_GENE_MODELS_FILE_FORMATS,
 )
+from gain.genomic_resources.gene_models.transcript_models import (
+    TranscriptModel,
+)
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing.builders import (
     ResourceBuilder,
@@ -54,6 +57,14 @@ GENE_LABELLING_FORMATS = [
 ]
 
 
+def _transcripts(
+    gene_models: GeneModels, gene: str,
+) -> list[TranscriptModel]:
+    transcripts = gene_models.gene_models_by_gene_name(gene)
+    assert transcripts is not None, gene
+    return transcripts
+
+
 def parsed_transcripts(gene_models: GeneModels) -> dict[str, dict]:
     """Reduce parsed models to the facts every format states alike."""
     return {
@@ -68,7 +79,7 @@ def parsed_transcripts(gene_models: GeneModels) -> dict[str, dict]:
             ],
         }
         for gene in gene_models.gene_names()
-        for transcript in gene_models.gene_models_by_gene_name(gene)
+        for transcript in _transcripts(gene_models, gene)
     }
 
 
@@ -102,7 +113,7 @@ def test_the_default_transcripts_read_back_at_their_authored_bounds(
     gene_models = build_gene_models_from_resource(resource).load()
 
     assert sorted(gene_models.gene_names()) == ["G1", "G2"]
-    transcript = gene_models.gene_models_by_gene_name("G1")[0]
+    transcript = _transcripts(gene_models, "G1")[0]
     assert transcript.chrom == "chr1"
     assert transcript.strand == "+"
     assert transcript.tx == (11, 45)
@@ -168,7 +179,7 @@ def test_authored_transcripts_replace_the_defaults(
     gene_models = loaded(resource)
 
     assert gene_models.gene_names() == ["ALPHA"]
-    transcript = gene_models.gene_models_by_gene_name("ALPHA")[0]
+    transcript = _transcripts(gene_models, "ALPHA")[0]
     assert transcript.tr_name == "NM_1"
     assert transcript.chrom == "chr2"
     assert transcript.strand == "-"
@@ -349,7 +360,7 @@ def test_a_transcript_authored_without_a_cds_is_non_coding(
         .build_resource(tmp_path)
     )
 
-    transcript = loaded(resource).gene_models_by_gene_name("NR_1")[0]
+    transcript = _transcripts(loaded(resource), "NR_1")[0]
 
     assert not transcript.is_coding()
     assert [exon.frame for exon in transcript.exons] == [-1, -1]
@@ -376,7 +387,7 @@ def test_a_non_coding_transcript_carries_the_ucsc_empty_interval(
         .build_resource(tmp_path)
     )
 
-    transcript = loaded(resource).gene_models_by_gene_name("NR_1")[0]
+    transcript = _transcripts(loaded(resource), "NR_1")[0]
 
     assert transcript.cds == (41, 40)
 
@@ -586,7 +597,7 @@ def test_the_default_gain_format_reads_back_at_the_same_bounds(
 
     gene_models = build_gene_models_from_resource(resource).load()
 
-    transcript = gene_models.gene_models_by_gene_name("G1")[0]
+    transcript = _transcripts(gene_models, "G1")[0]
     assert transcript.chrom == "chr1"
     assert transcript.strand == "+"
     assert transcript.tx == (11, 45)

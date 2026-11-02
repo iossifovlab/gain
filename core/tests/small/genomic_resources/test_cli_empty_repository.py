@@ -53,7 +53,7 @@ def read_published_index_ids(repo_path: pathlib.Path) -> set[str]:
     # fetchall() rather than iterating the cursor: pylint cannot infer
     # that an apsw cursor is iterable and reports E1133 on the loop.
     return {
-        row[0]
+        str(row[0])
         for row in conn.execute("SELECT full_id FROM contents").fetchall()
     }
 

@@ -273,7 +273,8 @@ def test_what_an_etag_is_worth_as_a_change_token(
     """
     proto = fsspec_proto
     res = proto.get_resource("one")
-    info = {"size": 7} if etag is None else {"size": 7, "ETag": etag}
+    info: dict[str, object] = \
+        {"size": 7} if etag is None else {"size": 7, "ETag": etag}
     mocker.patch.object(proto.filesystem, "info", return_value=info)
 
     assert proto.get_resource_file_change_token(res, "data.txt") == expected

@@ -15,7 +15,6 @@ from gain.genomic_resources.genomic_scores import (
 from gain.genomic_resources.histogram import (
     CategoricalHistogramConfig,
     NullHistogramConfig,
-    NumberHistogram,
     NumberHistogramConfig,
 )
 from gain.genomic_resources.implementations.genomic_scores_impl import (
@@ -31,7 +30,11 @@ from gain.genomic_resources.testing.builders import (
 )
 
 from tests.small.genomic_resources.histogram_parity import (
-    assert_histograms_equal,
+    as_categorical,
+    as_number,
+)
+from tests.small.genomic_resources.histogram_parity import (
+    assert_all_histograms_equal as _assert_hists_equal,
 )
 
 
@@ -45,15 +48,6 @@ def _hist_conf(
         "x_log_scale": False,
         "y_log_scale": False,
     })
-
-
-def _assert_hists_equal(
-    bulk: dict[str, NumberHistogram],
-    ref: dict[str, NumberHistogram],
-) -> None:
-    assert set(bulk) == set(ref)
-    for score_id in ref:
-        assert_histograms_equal(bulk[score_id], ref[score_id], score_id)
 
 
 def _allele_tabix(tmp_path: pathlib.Path) -> GenomicResource:
@@ -89,7 +83,7 @@ def test_bulk_histogram_matches_per_record_allele_shared_position(
     bulk = scan.do_histogram_bulk(resource, confs, "chr1", 1, 20)
     _assert_hists_equal(bulk, ref)
     # Every record weighs 1, so the bars hold one count per record.
-    assert bulk["s"].bars.sum() == 4
+    assert as_number(bulk["s"]).bars.sum() == 4
 
 
 def _assert_min_max_equal(bulk: dict, ref: dict) -> None:
@@ -157,7 +151,7 @@ def test_multi_base_allele_record_weighs_one_not_its_span(
     bulk = scan.do_histogram_bulk(resource, confs, "chr1", 1, 40)
     _assert_hists_equal(bulk, ref)
     # Three records, one count each -- not 10 + 1 + 1 for the spans.
-    assert bulk["s"].bars.sum() == 3
+    assert as_number(bulk["s"]).bars.sum() == 3
 
 
 def test_a_multi_base_record_is_owned_by_the_region_holding_its_begin(
@@ -179,8 +173,8 @@ def test_a_multi_base_record_is_owned_by_the_region_holding_its_begin(
         scan.do_histogram_bulk(resource, confs, "chr1", 15, 25), reaching)
     _assert_hists_equal(
         scan.do_histogram_bulk(resource, confs, "chr1", 5, 15), owning)
-    assert reaching["s"].bars.sum() == 0
-    assert owning["s"].bars.sum() == 2
+    assert as_number(reaching["s"]).bars.sum() == 0
+    assert as_number(owning["s"]).bars.sum() == 2
 
 
 def _fragment_tabix(
@@ -253,7 +247,7 @@ def test_bulk_histogram_matches_per_record_fragment(
     bulk = scan.do_histogram_bulk(resource, confs, "chr1", 1, 300)
     _assert_hists_equal(bulk, ref)
     # Three fragments, one count each; their spans (91, 11, 176) stay out.
-    assert bulk["s"].bars.sum() == 3
+    assert as_number(bulk["s"]).bars.sum() == 3
 
 
 def test_bulk_min_max_matches_per_record_fragment(
@@ -341,11 +335,12 @@ def test_a_str_score_and_a_float_score_scan_together(
     bulk = scan.do_histogram_bulk(resource, confs, "chr1", 1, 20)
 
     assert set(bulk) == set(ref) == {"s", "other"}
-    assert np.array_equal(bulk["s"].bars, ref["s"].bars)
-    assert bulk["other"].raw_values == ref["other"].raw_values
+    assert np.array_equal(as_number(bulk["s"]).bars, as_number(ref["s"]).bars)
+    assert as_categorical(bulk["other"]).raw_values == \
+        as_categorical(ref["other"]).raw_values
     # sanity: an allele record weighs 1 however wide it is, so the two
     # alleles here are one count each.
-    assert bulk["other"].raw_values == {"aaa": 1, "bbb": 1}
+    assert as_categorical(bulk["other"]).raw_values == {"aaa": 1, "bbb": 1}
 
 
 def test_a_histogram_paired_with_the_wrong_score_type_disqualifies_it(
@@ -713,7 +708,7 @@ def test_an_all_na_fragment_column_folds_to_nothing(
     _assert_min_max_equal(bulk_min_max, ref_min_max)
     assert np.isnan(bulk_min_max["s"].min)
     assert np.isnan(bulk_min_max["s"].max)
-    assert bulk_hist["s"].bars.sum() == 0
+    assert as_number(bulk_hist["s"]).bars.sum() == 0
 
 
 @pytest.mark.parametrize(
@@ -735,7 +730,7 @@ def test_a_region_past_the_end_of_the_table_scans_to_nothing(
 
     _assert_hists_equal(bulk_hist, ref_hist)
     _assert_min_max_equal(bulk_min_max, ref_min_max)
-    assert bulk_hist["s"].bars.sum() == 0
+    assert as_number(bulk_hist["s"]).bars.sum() == 0
     assert np.isnan(bulk_min_max["s"].min)
 
 
@@ -765,7 +760,7 @@ def test_a_region_holding_a_single_record(
 
     _assert_hists_equal(bulk_hist, ref_hist)
     _assert_min_max_equal(bulk_min_max, ref_min_max)
-    assert bulk_hist["s"].bars.sum() == 1
+    assert as_number(bulk_hist["s"]).bars.sum() == 1
 
 
 @pytest.mark.parametrize(
@@ -788,7 +783,7 @@ def test_values_outside_the_view_range_reach_the_out_of_range_bins(
     bulk_hist = scan.do_histogram_bulk(resource, confs, "chr1", 1, 300)
 
     _assert_hists_equal(bulk_hist, ref_hist)
-    assert bulk_hist["s"].out_of_range_bins == [below, above]
+    assert as_number(bulk_hist["s"]).out_of_range_bins == [below, above]
 
 
 def test_multi_base_allele_record_min_max_reads_the_same_selection(

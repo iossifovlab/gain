@@ -108,7 +108,8 @@ def test_a_numpy_weight_still_serializes() -> None:
     # ``add_value`` takes whatever count a backend hands it; the bars
     # absorb a numpy int, and the stored accumulators must too.
     hist = NumberHistogram(_a_config())
-    hist.add_value(2.0, np.int64(3))
+    # The numpy count is outside the declared ``int`` on purpose.
+    hist.add_value(2.0, np.int64(3))  # type: ignore[arg-type]
 
     stored = json.loads(hist.serialize())
 
