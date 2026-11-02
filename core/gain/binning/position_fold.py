@@ -424,12 +424,17 @@ class ArrayBinFold:
         pair_weight = np.concatenate(
             (*(chunk[1] for chunk in held), weight[:n_closed]))
 
+        # The pairs are sorted by bin, so the pairs of each bin are one
+        # slice.
         nan_bins = np.unique(pair_bin[np.isnan(pair_value)])
         has_nan = np.isin(pair_bin, nan_bins)
-        for bin_index in nan_bins:
-            in_bin = pair_bin == bin_index
+        nan_low = np.searchsorted(pair_bin, nan_bins, side="left")
+        nan_high = np.searchsorted(pair_bin, nan_bins, side="right")
+        for bin_index, low, high in zip(
+                nan_bins.tolist(), nan_low.tolist(), nan_high.tolist(),
+                strict=True):
             self._acc[bin_index] = _python_median(
-                pair_value[in_bin], pair_weight[in_bin])
+                pair_value[low:high], pair_weight[low:high])
         self._weighted_median(
             pair_bin[~has_nan], pair_value[~has_nan], pair_weight[~has_nan])
 
