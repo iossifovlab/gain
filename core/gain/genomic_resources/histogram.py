@@ -39,6 +39,7 @@ from gain.genomic_resources.statistics.chart_style import (
 )
 from gain.genomic_resources.statistics.min_max import MinMaxValue
 from gain.genomic_resources.statistics.moments import Moments, MomentsSummary
+from gain.genomic_resources.statistics.png_bytes import rendered_png
 
 logger = logging.getLogger(__name__)
 
@@ -2027,13 +2028,14 @@ def plot_histogram(
         return
 
     if hist.config.plot_function is None:
-        with res.open_raw_file(image_filename, mode="wb") as outfile:
-            hist.plot(
-                outfile,
-                score_id,
-                small_values_description=small_values_desc,
-                large_values_description=large_values_desc,
-            )
+        image = rendered_png(lambda outfile: hist.plot(
+            outfile,
+            score_id,
+            small_values_description=small_values_desc,
+            large_values_description=large_values_desc,
+        ))
+        with res.open_raw_file(image_filename, mode="wb") as imagefile:
+            imagefile.write(image)
         return
 
     plot_file, plot_function_name = hist.config.plot_function.split(":")
@@ -2049,16 +2051,12 @@ def plot_histogram(
             plot_module_name, source_code)
         func = getattr(plot_module, plot_function_name)
 
-    with res.open_raw_file(
-        image_filename,
-        mode="wb",
-    ) as outfile:
-        func(
-            outfile,
-            hist,
-            score_id,
-            small_values_desc,
-            large_values_desc,
-        )
-
-    return
+    image = rendered_png(lambda outfile: func(
+        outfile,
+        hist,
+        score_id,
+        small_values_desc,
+        large_values_desc,
+    ))
+    with res.open_raw_file(image_filename, mode="wb") as imagefile:
+        imagefile.write(image)

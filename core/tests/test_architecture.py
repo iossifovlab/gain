@@ -526,6 +526,19 @@ def test_the_chart_style_leaf_imports_nothing_from_gain() -> None:
     )
 
 
+def test_the_png_bytes_leaf_imports_nothing_from_gain() -> None:
+    """``statistics.png_bytes`` is a leaf, transitively, as chart_style is.
+
+    ``histogram`` and the statistics package both write images through
+    it, and the package does not import ``histogram`` (gain#2048).
+    """
+    offenders = _gain_imports(STATISTICS_PKG / "png_bytes.py")
+    assert offenders == [], (
+        f"png_bytes imports {offenders}. It is the leaf both histogram "
+        f"and the statistics package write images through, and stays one"
+    )
+
+
 IMPORT_LINTER_CONFIG = os.path.join(GAIN_ROOT, ".importlinter")
 
 

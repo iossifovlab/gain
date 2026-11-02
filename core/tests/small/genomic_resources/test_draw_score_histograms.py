@@ -21,6 +21,11 @@ from gain.genomic_resources.testing.builders import (
     a_reference_genome,
 )
 
+from tests.small.genomic_resources.png_chunks import (
+    PNG_SIGNATURE,
+    software_chunks,
+)
+
 
 class UnsupportedResourceBuilder:
     """Realizes a resource whose ``type:`` no implementation is built for.
@@ -147,6 +152,71 @@ def test_draws_categorical_histogram(tmp_path: pathlib.Path) -> None:
     main(["-R", str(tmp_path), "-r", "scores/effect"])
 
     assert image.exists()
+
+
+def test_writes_the_built_in_histogram_without_the_software_chunk(
+        tmp_path: pathlib.Path) -> None:
+    """The bytes of the image depend on its pixels, not on the host.
+
+    Matplotlib puts its own version into a ``Software`` text chunk, so two
+    hosts with different matplotlib versions would write different bytes
+    from the same pixels (gain#2048).
+    """
+    a_grr().with_resource(
+        "scores/pos", a_position_score_with_one_histogram(),
+    ).build_repo(tmp_path)
+    image = tmp_path / "scores/pos/statistics/histogram_phastCons.png"
+    build_statistics_without_images(tmp_path, "scores/pos")
+
+    main(["-R", str(tmp_path), "-r", "scores/pos"])
+
+    written = image.read_bytes()
+    assert written.startswith(PNG_SIGNATURE)
+    assert software_chunks(written) == []
+
+
+PLOT_WITH_ITS_OWN_SAVEFIG = """
+import matplotlib
+matplotlib.use("agg")
+import matplotlib.pyplot as plt
+
+
+def plot(outfile, histogram, score_id, small_desc, large_desc):
+    plt.figure(figsize=(2, 2))
+    plt.bar(range(len(histogram.raw_values)), [1] * len(histogram.raw_values))
+    plt.savefig(outfile)
+    plt.close()
+"""
+
+
+def test_writes_a_custom_plot_without_the_software_chunk(
+        tmp_path: pathlib.Path) -> None:
+    """A ``plot_function`` that calls ``savefig`` itself is cleaned too.
+
+    Gain does not control the code of a ``plot_function``, so it cannot
+    keep the chunk out with a ``savefig`` argument (gain#2048).
+    """
+    a_grr().with_resource(
+        "scores/cells",
+        a_position_score()
+        .with_score("cell", "str")
+        .with_histogram({
+            "type": "categorical", "plot_function": "plot.py:plot"})
+        .with_data("""
+            chrom  pos_begin  pos_end  cell
+            1      10         15       a
+            1      17         19       b
+        """),
+    ).build_repo(tmp_path)
+    (tmp_path / "scores/cells/plot.py").write_text(PLOT_WITH_ITS_OWN_SAVEFIG)
+    image = tmp_path / "scores/cells/statistics/histogram_cell.png"
+    build_statistics_without_images(tmp_path, "scores/cells")
+
+    main(["-R", str(tmp_path), "-r", "scores/cells"])
+
+    written = image.read_bytes()
+    assert written.startswith(PNG_SIGNATURE)
+    assert software_chunks(written) == []
 
 
 PLOT_WHAT_IT_WAS_GIVEN = """
