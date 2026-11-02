@@ -171,7 +171,7 @@ class UserPipeline(AnnotationBaseView):
                 status=views.status.HTTP_400_BAD_REQUEST,
             )
 
-        if not temporary and pipeline_name is not None:
+        if not temporary and not pipeline_id and pipeline_name is not None:
             reason = pipeline_name_error(pipeline_name)
             if reason is not None:
                 return Response(

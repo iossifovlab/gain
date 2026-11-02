@@ -174,6 +174,7 @@ def test_create_with_an_absolute_name_is_refused(
     assert response.status_code == 400
     assert response.json() == INVALID_NAME
     assert not target.with_suffix(".yaml").exists()
+    assert not Pipeline.objects.filter(name=str(target)).exists()
 
 
 @pytest.mark.django_db
@@ -229,3 +230,29 @@ def test_create_refuses_a_path_outside_the_user_directory(
         settings.ANNOTATION_CONFIG_STORAGE_DIR, "x.yaml",
     ).exists()
     assert not Pipeline.objects.filter(name="../x").exists()
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("patched_lru_cache")
+def test_update_of_a_saved_pipeline_with_a_legacy_name_succeeds(
+    clients: dict[str, Client],
+    mocker: MockerFixture,
+) -> None:
+    client = clients["user"]
+    legacy_rule = mocker.patch(
+        "web_annotation.pipelines.views.pipeline_name_error",
+        return_value=None,
+    )
+    pipeline_id = _save_pipeline(client, ".draft")
+    mocker.stop(legacy_rule)
+    config_path = pathlib.Path(
+        str(Pipeline.objects.get(pk=int(pipeline_id)).config_path))
+
+    response = client.post("/api/pipelines/user", {
+        "id": pipeline_id,
+        "name": ".draft",
+        "config": ContentFile("- position_score: scores/pos2"),
+    })
+
+    assert response.status_code == 200
+    assert config_path.read_text() == "- position_score: scores/pos2"
