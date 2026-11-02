@@ -60,7 +60,7 @@ test.describe('expectInventoryCountText', () => {
 
     // Playwright's own failure, within the helper's budget -- not a later,
     // unrelated timeout from reading the vanished element.
-    await expect(failure).rejects.toThrow(/Timed out 1000ms waiting for/);
+    await expect(failure).rejects.toThrow(/with timeout 1000ms/);
     await expect(failure).rejects.not.toThrow(GRR_INVENTORY_DRIFT);
   });
 });
@@ -114,7 +114,7 @@ test.describe('expectInventoryOptionCount', () => {
 
     const failure = expectInventoryOptionCount(options(page), 7, 'genome selector', MID_CHECK);
 
-    await expect(failure).rejects.toThrow(/Timed out 1000ms waiting for/);
+    await expect(failure).rejects.toThrow(/with timeout 1000ms/);
     await expect(failure).rejects.not.toThrow(GRR_INVENTORY_DRIFT);
   });
 });
