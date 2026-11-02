@@ -735,7 +735,8 @@ class ReannotationPipeline(AnnotationPipeline):
         print(self.format_plan(reference), file=file or sys.stderr)
 
 
-class AnnotatorDecorator(Annotator):
+# Each concrete decorator implements annotate().
+class AnnotatorDecorator(Annotator):  # pylint: disable=abstract-method
     """Defines annotator decorator base class."""
 
     def __init__(self, child: Annotator):

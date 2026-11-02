@@ -35,9 +35,15 @@ def _request(
     user = SimpleNamespace(is_authenticated=authenticated, pk=user_pk)
     session = SimpleNamespace(session_key=session_key)
     meta = {"REMOTE_ADDR": ip}
+    # DRF 3.18 reads the header through ``request.headers``; a Django
+    # request carries both views of it.
+    headers: dict[str, str] = {}
     if x_forwarded_for is not None:
         meta["HTTP_X_FORWARDED_FOR"] = x_forwarded_for
-    return SimpleNamespace(user=user, session=session, META=meta)
+        headers["x-forwarded-for"] = x_forwarded_for
+    return SimpleNamespace(
+        user=user, session=session, META=meta, headers=headers,
+    )
 
 
 def test_anon_distinct_sessions_get_distinct_buckets(

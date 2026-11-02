@@ -115,7 +115,8 @@ class DaskExecutor(TaskGraphExecutorBase):
         than this number of its tasks are unfinished.
     """
 
-    def __init__(
+    # NO_TASK_CACHE records nothing, so one shared instance is safe.
+    def __init__(  # pylint: disable=dangerous-default-value
         self, dask_client: Client,
         task_cache: TaskCache = NO_TASK_CACHE, **kwargs: Any,
     ) -> None:

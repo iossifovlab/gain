@@ -88,7 +88,8 @@ class TaskGraphExecutorBase(TaskGraphExecutor):
         result files of those processes.
     """
 
-    def __init__(
+    # NO_TASK_CACHE records nothing, so one shared instance is safe.
+    def __init__(  # pylint: disable=dangerous-default-value
         self, task_cache: TaskCache = NO_TASK_CACHE,
         *,
         force: bool = False,
