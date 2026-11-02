@@ -18,9 +18,10 @@ installs the ``scanpy-drift`` dependency group.  The main suite excludes
 this directory by path, so no marker is needed.
 """
 import pathlib
-from typing import Any
+from typing import Any, cast
 
 import anndata as ad
+import pandas as pd
 import pytest
 import scanpy
 from gain.genomic_resources.ann_data_resource import (
@@ -33,6 +34,7 @@ from gain.genomic_resources.testing.ann_data_builder import (
     an_ann_data,
 )
 from gain.genomic_resources.testing.builders import a_grr
+from scipy.sparse import csr_matrix
 
 # Realized at a known id so the directory scanpy is handed is a computed
 # path.  Globbing for the matrix finds ``.grr/matrix.mtx.gz.state`` too --
@@ -63,7 +65,18 @@ def _realize(
 
 def _scanpy_read(directory: pathlib.Path, **params: Any) -> ad.AnnData:
     """Read the realized triple with scanpy, addressed as scanpy wants."""
-    return scanpy.read_10x_mtx(str(directory), **params)
+    ann_data: ad.AnnData = scanpy.read_10x_mtx(str(directory), **params)
+    return ann_data
+
+
+def _var(ann_data: ad.AnnData) -> pd.DataFrame:
+    """Return ``var``, which an in-memory read holds as a data frame."""
+    return cast(pd.DataFrame, ann_data.var)
+
+
+def _matrix(ann_data: ad.AnnData) -> csr_matrix:
+    """Return ``X``, which both readers hold as a ``csr_matrix``."""
+    return cast(csr_matrix, ann_data.X)
 
 
 def _assert_same_read(ours: ad.AnnData, theirs: ad.AnnData) -> None:
@@ -71,8 +84,8 @@ def _assert_same_read(ours: ad.AnnData, theirs: ad.AnnData) -> None:
     assert ours.shape == theirs.shape
     assert list(ours.obs_names) == list(theirs.obs_names)
     assert list(ours.var_names) == list(theirs.var_names)
-    assert ours.var.equals(theirs.var)
-    assert (ours.X != theirs.X).nnz == 0
+    assert _var(ours).equals(_var(theirs))
+    assert (_matrix(ours) != _matrix(theirs)).nnz == 0
     # The rendering the ``describe_ann_data.txt`` statistic is made of.
     assert str(ours) == str(theirs)
 
@@ -146,11 +159,11 @@ def test_the_matrix_free_read_describes_what_scanpy_reads(
     lean = load_ann_data_from_resource(resource, matrix_free=True)
 
     assert str(lean) == str(theirs)
-    assert lean.var.equals(theirs.var)
+    assert _var(lean).equals(_var(theirs))
     assert list(lean.obs_names) == list(theirs.obs_names)
     # And the one thing it deliberately does NOT reproduce.
-    assert lean.X.nnz == 0
-    assert theirs.X.nnz > 0
+    assert _matrix(lean).nnz == 0
+    assert _matrix(theirs).nnz > 0
 
 
 @pytest.mark.parametrize(

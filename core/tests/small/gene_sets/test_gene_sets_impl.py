@@ -9,6 +9,7 @@ from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GenomicResourceRepo,
+    ReadWriteRepositoryProtocol,
 )
 from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
@@ -169,7 +170,9 @@ def test_statistics_hash_skips_a_file_the_manifest_does_not_carry(
     # repository is built, which manifests every resource it finds.
     manifest = resource.get_manifest()
     del manifest.entries["test-mapnames.txt"]
-    resource.proto.save_manifest(resource, manifest)
+    proto = resource.proto
+    assert isinstance(proto, ReadWriteRepositoryProtocol)
+    proto.save_manifest(resource, manifest)
     assert "test-mapnames.txt" not in resource.get_manifest()
 
     impl = GeneSetCollectionImpl(resource)

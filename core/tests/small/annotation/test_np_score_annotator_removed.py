@@ -27,7 +27,10 @@ from gain.annotation.annotation_factory import (
     get_available_annotator_types,
     load_pipeline_from_yaml,
 )
-from gain.genomic_resources.repository import GR_CONF_FILE_NAME
+from gain.genomic_resources.repository import (
+    GR_CONF_FILE_NAME,
+    GenomicResourceProtocolRepo,
+)
 from gain.genomic_resources.resource_types import (
     RETIRED_ANNOTATOR_NAMES,
     retired_annotator_message,
@@ -66,7 +69,7 @@ _ALLELE_SCORE_RESOURCE = {
 
 
 @pytest.fixture
-def grr():
+def grr() -> GenomicResourceProtocolRepo:
     return build_inmemory_test_repository({
         "a_score": _ALLELE_SCORE_RESOURCE,
     })
@@ -74,7 +77,7 @@ def grr():
 
 @pytest.mark.parametrize("retired", list(RETIRED_ANNOTATOR_NAMES))
 def test_a_retired_annotator_name_is_refused_naming_its_replacement(
-    grr, retired: str,
+    grr: GenomicResourceProtocolRepo, retired: str,
 ) -> None:
     """A pipeline naming either retired spelling is told what to write."""
     with pytest.raises(AnnotationConfigurationError) as excinfo:
@@ -90,7 +93,7 @@ def test_a_retired_annotator_name_is_refused_naming_its_replacement(
 
 @pytest.mark.parametrize("retired", list(RETIRED_ANNOTATOR_NAMES))
 def test_a_retired_name_is_refused_before_a_wildcard_is_resolved(
-    grr, retired: str,
+    grr: GenomicResourceProtocolRepo, retired: str,
 ) -> None:
     """A wildcard ``resource_id`` must not swallow the migration message.
 

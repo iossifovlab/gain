@@ -806,6 +806,15 @@ def a_stub_binner(binding: StubBinding) -> type[Binner]:
     return cast(type[Binner], StubBinner)
 
 
+def definition_of(repo: GenomicResourceRepo) -> dict[str, Any]:
+    """The definition ``_bin_chunks`` builds its GRR from.
+
+    A filesystem test repository has no definition.  An empty one builds
+    the default GRR, as ``None`` does, and the stub binner never reads it.
+    """
+    return repo.definition or {}
+
+
 def one_bin_of(value: float) -> Callable[[BedRegion], Any]:
     return lambda _region: np.array([[value]], dtype=np.float64)
 
@@ -827,7 +836,8 @@ def test_a_task_saves_each_chunk_as_the_binner_returns_it(
             [path for path in paths if pathlib.Path(path).exists()]))
 
     _bin_chunks(
-        a_stub_binner(binding), JOB, regions, 10, repo.definition, chunk_dir)
+        a_stub_binner(binding), JOB, regions, 10, definition_of(repo),
+        chunk_dir)
 
     assert on_disk_at_each_ask == [[], paths[:1], paths[:2]]
     assert [np.load(path)[0] for path in paths] == [0.0, 1.0, 2.0]
@@ -846,7 +856,7 @@ def test_a_task_saves_column_i_of_a_block_to_track_i(
         [[1.0, 10.0], [2.0, 20.0]], dtype=np.float64))
 
     _bin_chunks(
-        a_stub_binner(binding), job, [region], 10, repo.definition,
+        a_stub_binner(binding), job, [region], 10, definition_of(repo),
         chunk_dir)
 
     np.testing.assert_array_equal(
@@ -873,7 +883,7 @@ def test_a_task_closes_its_binding_when_saving_a_chunk_fails(
 
     with pytest.raises(OSError) as failure:
         _bin_chunks(
-            a_stub_binner(binding), JOB, regions, 10, repo.definition,
+            a_stub_binner(binding), JOB, regions, 10, definition_of(repo),
             chunk_dir)
 
     assert failure.value.filename == str(unwritable)
@@ -895,7 +905,7 @@ def test_a_wrong_shaped_block_fails_the_task_and_writes_no_chunk(
 
     with pytest.raises(ValueError, match=r"\(1, 1\)"):
         _bin_chunks(
-            a_stub_binner(binding), JOB, [region], 10, repo.definition,
+            a_stub_binner(binding), JOB, [region], 10, definition_of(repo),
             chunk_dir)
 
     assert not pathlib.Path(
@@ -969,7 +979,7 @@ def test_a_block_of_another_dtype_fails_the_task_and_writes_no_chunk(
 
     with pytest.raises(ValueError, match="float64"):
         _bin_chunks(
-            a_stub_binner(binding), JOB, [region], 10, repo.definition,
+            a_stub_binner(binding), JOB, [region], 10, definition_of(repo),
             chunk_dir)
 
     assert not pathlib.Path(

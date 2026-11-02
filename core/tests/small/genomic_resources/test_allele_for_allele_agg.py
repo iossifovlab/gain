@@ -23,6 +23,7 @@ from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     build_allele_score_from_resource,
 )
+from gain.genomic_resources.genomic_scores.aggregation import AggregateValue
 from gain.genomic_resources.score_filter import ScoreFilterError
 from gain.genomic_resources.testing.builders import (
     a_grr,
@@ -76,7 +77,8 @@ def repeated_alleles(tmp_path: pathlib.Path, tabix: bool) -> AlleleScore:
     ("value_count", {0.2: 1, 0.5: 1}),
 ])
 def test_the_rows_of_a_repeated_allele_fold_together(
-    repeated_alleles: AlleleScore, aggregator: str, expected: object,
+    repeated_alleles: AlleleScore, aggregator: str,
+    expected: AggregateValue,
 ) -> None:
     with repeated_alleles.open() as score:
         aggregate = score.get_allele_scores_for_allele_agg(
@@ -93,7 +95,8 @@ def test_the_rows_of_a_repeated_allele_fold_together(
     ("value_count", {0.2: 1}),
 ])
 def test_a_filter_rejecting_one_row_folds_the_other(
-    repeated_alleles: AlleleScore, aggregator: str, expected: object,
+    repeated_alleles: AlleleScore, aggregator: str,
+    expected: AggregateValue,
 ) -> None:
     with repeated_alleles.open() as score:
         aggregate = score.get_allele_scores_for_allele_agg(

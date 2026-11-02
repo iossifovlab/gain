@@ -43,6 +43,7 @@ from ..aggregators import (
     validate_aggregator,
 )
 from .aggregation import (
+    AggregateValue,
     build_region_aggregators,
     fold_into_bins,
     fold_region_segments,
@@ -86,14 +87,16 @@ class FragmentAggregate:
         the region, that pass the overlap fractions and that ``score_filter``
         keeps. A region with no fragments gives ``0``. A filter that rejects
         every fragment gives ``0`` too.
-    values : tuple[ScoreValue, ...]
+    values : tuple[AggregateValue, ...]
         One reduced value for each query, in the order of the queries. The
         same score asked twice with two aggregators gives two values. A value is
-        ``None`` when its aggregator has nothing to reduce.
+        ``None`` when its aggregator has nothing to reduce. The aggregator
+        sets the type of its value: ``list`` gives a list and
+        ``value_count`` gives a dict.
     """
 
     count: int
-    values: tuple[ScoreValue, ...]
+    values: tuple[AggregateValue, ...]
 
 
 #: One fragment as the record plane yields it -- its own unclipped span,
@@ -123,7 +126,7 @@ def _query_resolver(
     resource_id: str,
     *,
     maxsize: int,
-) -> Callable[[tuple[ScoreAggregationQuery, ...]], _ResolvedQueries]:
+) -> functools._lru_cache_wrapper[_ResolvedQueries]:
     """A memoised resolver of query tuples for ONE score's definitions.
 
     :func:`~.aggregation.resolve_aggregation_queries` under a

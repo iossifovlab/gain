@@ -956,7 +956,7 @@ def test_writer_does_not_omit_literal_zeros_from_info(
 ) -> None:
     attributes = [
         Attribute("score_1", "source_number",
-                      internal=False, parameters={}),
+                      internal=False),
     ]
 
     with pysam.VariantFile(str(sample_vcf)) as vcf:
@@ -981,9 +981,9 @@ def test_writer_does_not_write_empty_values_into_info(
     (gain#1222, ADR 0026)."""
     attributes = [
         Attribute("score_1", "source_string",
-                      internal=False, parameters={}),
+                      internal=False),
         Attribute("score_2", "source_bool",
-                      internal=False, parameters={}),
+                      internal=False),
     ]
 
     with pysam.VariantFile(str(sample_vcf)) as vcf:

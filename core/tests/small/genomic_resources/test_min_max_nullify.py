@@ -54,7 +54,8 @@ def test_one_region_refusing_nullifies_a_score_the_others_folded(
     only the records that happened to fold, with nothing saying so.
     """
     folded = {"s": MinMaxValue("s", 0.1, 1.0)}
-    refused = {"s": NullMinMaxValue("s", "refused in this region")}
+    refused: dict[str, MinMaxValue] = {
+        "s": NullMinMaxValue("s", "refused in this region")}
     regions = [folded, refused] if region_order == "refused last" \
         else [refused, folded]
     hist_confs: dict = {"s": NumberHistogramConfig.default_config(None)}
@@ -81,9 +82,10 @@ def test_a_refused_scores_null_config_names_the_score_and_the_cause() -> None:
 
     updated = scan.update_hist_confs(hist_confs, refused)
 
-    assert isinstance(updated[score_id], NullHistogramConfig)
-    assert score_id in updated[score_id].reason
-    assert refusal_reason in updated[score_id].reason
+    config = updated[score_id]
+    assert isinstance(config, NullHistogramConfig)
+    assert score_id in config.reason
+    assert refusal_reason in config.reason
 
 
 def _many_rowed_text_tabix(

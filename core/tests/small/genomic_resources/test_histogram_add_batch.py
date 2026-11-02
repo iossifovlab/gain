@@ -83,6 +83,8 @@ def _straddling_bin_edges(config: NumberHistogramConfig) -> np.ndarray:
 
     values = np.concatenate(grid)
     lo, hi = config.view_range
+    assert lo is not None
+    assert hi is not None
     in_view = (values >= lo) & (values <= hi)
     return values[in_view]
 
@@ -236,7 +238,8 @@ def test_add_batch_log_scale_is_vectorized_not_a_per_value_loop() -> None:
     original = NumberHistogram.add_value
 
     def counting_add_value(
-        self: NumberHistogram, value: float | None, count: int = 1,
+        self: NumberHistogram, value: float | np.generic | None,
+        count: int = 1,
     ) -> None:
         nonlocal calls
         calls += 1

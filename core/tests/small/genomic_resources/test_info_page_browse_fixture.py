@@ -25,7 +25,7 @@ import pathlib
 from gain.genomic_resources.cli import _create_contents_db
 from gain.genomic_resources.repository import (
     GR_INDEX_NON_LABEL_COLUMNS,
-    GenomicResourceProtocolRepo,
+    GenomicResourceRepo,
 )
 from gain.genomic_resources.testing import build_filesystem_test_protocol
 from gain.genomic_resources.testing.info_page_fixtures import (
@@ -48,14 +48,14 @@ _SUMMARY_COLUMN = frozenset({"summary"})
 
 def _indexed_browse_repo(
     tmp_path: pathlib.Path,
-) -> GenomicResourceProtocolRepo:
+) -> GenomicResourceRepo:
     """The browse fixture with an FTS index built into it."""
     repo = a_browse_repo(tmp_path)
     _create_contents_db(build_filesystem_test_protocol(tmp_path))
     return repo
 
 
-def _found(repo: GenomicResourceProtocolRepo, term: str) -> set[str]:
+def _found(repo: GenomicResourceRepo, term: str) -> set[str]:
     """The resource ids an FTS5 expression matches."""
     return {res.resource_id for res in repo.search_resources(search_term=term)}
 

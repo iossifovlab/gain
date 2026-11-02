@@ -234,10 +234,10 @@ def test_the_seam_runs_with_the_memo_lock_held(
     assert proto.lock_held_while_enumerating is True
 
 
-def fsspec_protocol_classes() -> list[type]:
+def fsspec_protocol_classes() -> list[type[FsspecReadOnlyProtocol]]:
     """Every fsspec protocol class currently defined, test-local ones too."""
-    found = []
-    pending = [FsspecReadOnlyProtocol]
+    found: list[type[FsspecReadOnlyProtocol]] = []
+    pending: list[type[FsspecReadOnlyProtocol]] = [FsspecReadOnlyProtocol]
     while pending:
         protocol_class = pending.pop()
         found.append(protocol_class)

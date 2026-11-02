@@ -10,11 +10,15 @@ from gain.genomic_resources.histogram import (
     CategoricalHistogram,
     NullHistogram,
 )
+from gain.genomic_resources.implementations.genomic_scores_impl import (
+    GenomicScoreImplementation,
+)
 from gain.genomic_resources.repository import GR_CONF_FILE_NAME
 from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
 )
 from gain.genomic_resources.testing.builders import (
+    PositionScoreBuilder,
     a_gene_score,
     a_grr,
     a_position_score,
@@ -45,7 +49,9 @@ class UnsupportedResourceBuilder:
             f"type: {self.resource_type}\n")
 
 
-def a_position_score_with_one_histogram(score_id: str = "phastCons"):
+def a_position_score_with_one_histogram(
+    score_id: str = "phastCons",
+) -> PositionScoreBuilder:
     """A minimal drawable position score -- one score, one histogram."""
     return (
         a_position_score()
@@ -273,8 +279,9 @@ def test_skips_score_with_null_histogram(tmp_path: pathlib.Path) -> None:
     statistics = tmp_path / "scores/two/statistics"
 
     # both scores are on the loop the tool walks; only "raw" is null
-    score = build_resource_implementation(
-        repo.get_resource("scores/two")).score
+    impl = build_resource_implementation(repo.get_resource("scores/two"))
+    assert isinstance(impl, GenomicScoreImplementation)
+    score = impl.score
     assert score.get_all_scores() == ["phastCons", "raw"]
     assert isinstance(score.get_score_histogram("raw"), NullHistogram)
 

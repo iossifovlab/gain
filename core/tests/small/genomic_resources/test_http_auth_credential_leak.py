@@ -24,6 +24,7 @@ from gain.genomic_resources.fsspec_protocol import (
     FsspecReadOnlyProtocol,
     FsspecReadWriteProtocol,
     FsspecRepositoryProtocol,
+    _RedactingFile,
     build_fsspec_protocol,
 )
 from gain.genomic_resources.genomic_position_table.table_tabix import (
@@ -35,6 +36,7 @@ from gain.genomic_resources.reference_genome import (
 from gain.genomic_resources.repository import (
     GR_MANIFEST_FILE_NAME,
     GenomicResource,
+    GenomicResourceProtocolRepo,
 )
 from gain.genomic_resources.repository_factory import (
     _REPO_DEFINITION_ADAPTER,
@@ -505,6 +507,7 @@ def test_repo_proto_public_url_strips_url_userinfo() -> None:
     repo = build_genomic_resource_repository(
         {"id": "f11-repo", "type": "http",
          "url": f"https://alice:{_SECRET}@grr.example.com"})
+    assert isinstance(repo, GenomicResourceProtocolRepo)
     pub = repo.proto.get_public_url()
     assert _SECRET not in pub
     assert "alice" not in pub
@@ -1509,8 +1512,8 @@ def test_buffered_read_failure_does_not_leak_url_credential(
         proto.filesystem, "open", return_value=_FailingRaw())
 
     with pytest.raises(OSError) as excinfo:
-        io.BufferedReader(
-            proto.open_raw_file(resource, "data.txt", "rb"),
+        io.BufferedReader(typing.cast(
+            io.RawIOBase, proto.open_raw_file(resource, "data.txt", "rb")),
         ).read(*read_args)
 
     _assert_redacted(excinfo.value, planted, "data.txt")
@@ -1657,6 +1660,7 @@ def test_raw_file_handle_advertises_exactly_what_it_wraps(
     proto, resource = _a_real_resource(tmp_path, "i1078-capabilities")
 
     with proto.open_raw_file(resource, "lines.txt", "rb") as infile:
+        assert isinstance(infile, _RedactingFile)
         inner = infile._inner
         for op in (
             "readall", "readinto", "readinto1", "read1",
@@ -1763,7 +1767,7 @@ def test_md5_sum_reads_a_multi_chunk_file_in_bounded_reads(
             sizes.append(read_args[0] if read_args else None)
             return real_read(*read_args)
 
-        handle.read = read  # type: ignore[method-assign]
+        handle.read = read
         return handle
 
     mocker.patch.object(proto.filesystem, "open", side_effect=recording_open)
@@ -2399,10 +2403,12 @@ def _a_refused_s3_protocol(
     configuration, not a hypothetical, and it is why the predicate cannot
     simply ask whether the scheme is s3.
     """
-    def presign(url: str, **_kwargs: object) -> str:
+    def presign(
+        path: str, expiration: int = 100, **_kwargs: object,
+    ) -> str:
         # What s3fs does in one line: the s3:// url becomes an https url on
         # the endpoint, with the credential appended as query parameters.
-        signed = f"https://127.0.0.1:1/{url.removeprefix('s3://')}"
+        signed = f"https://127.0.0.1:1/{path.removeprefix('s3://')}"
         return signed if query is None else f"{signed}?{query}"
 
     filesystem = FaultyFileSystem()

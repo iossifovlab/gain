@@ -16,7 +16,6 @@ import shutil
 import textwrap
 import threading
 from collections.abc import Callable, Generator, Iterable, Iterator
-from types import ModuleType
 from typing import Any
 from unittest import mock
 
@@ -794,7 +793,7 @@ def a_resource_whose_meta_is(
 
 
 def count_calls(
-    monkeypatch: pytest.MonkeyPatch, name: str, *modules: ModuleType,
+    monkeypatch: pytest.MonkeyPatch, name: str, *modules: object,
 ) -> list[tuple[Any, ...]]:
     """Spy on the callable ``name`` and answer the list its calls land in.
 

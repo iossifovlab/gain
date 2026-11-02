@@ -357,8 +357,10 @@ def test_the_region_read_drops_the_alleles_the_filter_rejects(
             allele_keys=(),
             score_filter=score_filter)
 
+    # ``pytest.approx`` stands in for a score value on purpose.
     assert aggregate == AlleleAggregate(
-        values=([pytest.approx(0.2)],), allele_keys=("1:10:A:C",))
+        values=([pytest.approx(0.2)],),  # type: ignore[list-item]
+        allele_keys=("1:10:A:C",))
 
 
 def test_a_region_keeping_no_allele_is_not_a_region_holding_none(

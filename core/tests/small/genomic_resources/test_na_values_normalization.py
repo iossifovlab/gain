@@ -13,6 +13,7 @@ collection and matched against the raw value's own type, never by substring, on
 both a text/tabix backend and bigWig.
 """
 import pathlib
+from collections.abc import Iterable
 
 import pytest
 from gain.genomic_resources.genomic_scores import (
@@ -25,6 +26,7 @@ from gain.genomic_resources.score_def import (
 )
 from gain.genomic_resources.testing import build_inmemory_test_resource
 from gain.genomic_resources.testing.builders import (
+    ResourceBuilder,
     a_bigwig_score,
     a_grr,
     a_position_score,
@@ -32,7 +34,8 @@ from gain.genomic_resources.testing.builders import (
 
 
 def _open_position(
-    tmp_path: pathlib.Path, builder, *, resource_id: str = "pos",
+    tmp_path: pathlib.Path, builder: ResourceBuilder, *,
+    resource_id: str = "pos",
 ) -> PositionScore:
     repo = a_grr().with_resource(resource_id, builder).build_repo(tmp_path)
     score = PositionScore(repo.get_resource(resource_id)).open()
@@ -233,10 +236,10 @@ def test_bigwig_scalar_na_value_matches_float_payload(
             pytest.approx(1.0)
 
 
-def _serialized(na_values: object) -> str:
+def _serialized(na_values: Iterable[object]) -> str:
     # The exact form GenomicScoreImplementation.calc_statistics_hash uses to
     # fold na_values into the statistics hash.
-    return str(sorted(str(na) for na in na_values))  # type: ignore[union-attr]
+    return str(sorted(str(na) for na in na_values))
 
 
 @pytest.mark.parametrize("value_type", ["float", "int"])

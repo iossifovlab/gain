@@ -25,6 +25,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import gain.templates as templates_module
+import jinja2
 import pytest
 from gain.templates import get_template
 
@@ -43,7 +44,7 @@ def test_a_template_renders_markdown_without_the_caller_supplying_it() -> None:
     sentence as one bogus tag.  Seeing it escaped proves the global is
     bound to the wrapper rather than to the library it renders through.
     """
-    def doc_plugin():
+    def doc_plugin() -> dict[str, str]:
         return {"plugin_doc.jinja": "{{ markdown(text)|safe }}"}
 
     ep = make_entry_point("doc_plugin", doc_plugin)
@@ -78,14 +79,14 @@ def test_the_environment_is_published_already_carrying_the_global(
         """Stands in for the module's cache, watching what gets published."""
 
         def __init__(self) -> None:
-            self._env = None
+            self._env: jinja2.Environment | None = None
 
         @property
-        def env(self):
+        def env(self) -> jinja2.Environment | None:
             return self._env
 
         @env.setter
-        def env(self, value) -> None:
+        def env(self, value: jinja2.Environment | None) -> None:
             published.append(value is not None and "markdown" in value.globals)
             self._env = value
 

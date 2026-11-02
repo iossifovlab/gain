@@ -13,13 +13,23 @@ import gzip
 import logging
 import pathlib
 
+import pandas as pd
 import pytest
+from anndata import AnnData
 from gain.genomic_resources.ann_data_resource import (
     load_ann_data_from_resource,
     resolve_10x_layout,
 )
 from gain.genomic_resources.testing.ann_data_builder import an_ann_data
 from gain.genomic_resources.testing.builders import a_grr
+from scipy.sparse import issparse, spmatrix
+
+
+def _sparse_x(ann_data: AnnData) -> spmatrix:
+    """Return ``X`` of a 10x read, which is always a sparse matrix."""
+    matrix = ann_data.X
+    assert issparse(matrix), type(matrix)
+    return matrix
 
 
 def test_reads_a_current_layout_triple_without_scanpy(
@@ -394,6 +404,8 @@ class TestTheMatrixFreeRead:
         lean = load_ann_data_from_resource(resource, matrix_free=True)
 
         assert str(lean) == str(full)
+        assert isinstance(full.obs, pd.DataFrame)
+        assert isinstance(full.var, pd.DataFrame)
         assert lean.obs.equals(full.obs)
         assert lean.var.equals(full.var)
 
@@ -404,7 +416,7 @@ class TestTheMatrixFreeRead:
             an_ann_data().with_format("10x_mtx").build_resource(tmp_path)
         )
 
-        assert load_ann_data_from_resource(resource).X.nnz == 12
+        assert _sparse_x(load_ann_data_from_resource(resource)).nnz == 12
 
         lean = load_ann_data_from_resource(resource, matrix_free=True)
 
@@ -412,7 +424,7 @@ class TestTheMatrixFreeRead:
         # ``layers: None (.X)`` line disappears with X=None, and the
         # statistic is then not byte-identical to the full read's.
         assert lean.shape == (3, 4)
-        assert lean.X.nnz == 0
+        assert _sparse_x(lean).nnz == 0
 
     def test_it_never_reads_the_matrix_body(
         self, tmp_path: pathlib.Path,

@@ -100,12 +100,17 @@ def test_an_allele_score_counts_each_line_once(alleles: AlleleScore) -> None:
     allele score is ``max``, not the position kind's ``mean``.
     """
     with alleles.open() as score:
-        (mean,) = score.get_allele_scores_in_region_agg(
+        mean_aggregate = score.get_allele_scores_in_region_agg(
             "1", 10, 10,
-            queries=[ScoreAggregationQuery("freq", "mean")]).values
-        (default,) = score.get_allele_scores_in_region_agg(
+            queries=[ScoreAggregationQuery("freq", "mean")])
+        default_aggregate = score.get_allele_scores_in_region_agg(
             "1", 10, 10,
-            queries=[ScoreAggregationQuery("freq")]).values
+            queries=[ScoreAggregationQuery("freq")])
+
+    assert mean_aggregate is not None
+    assert default_aggregate is not None
+    (mean,) = mean_aggregate.values
+    (default,) = default_aggregate.values
 
     assert mean == pytest.approx(0.15)
     assert default == 0.2

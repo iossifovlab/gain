@@ -92,6 +92,7 @@ import textwrap
 import weakref
 from collections.abc import Sized
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -99,6 +100,7 @@ from gain.genomic_resources.bigwig_scores import (
     extract_bigwig_value,
 )
 from gain.genomic_resources.genomic_position_table import (
+    TabixGenomicPositionTable,
     build_genomic_position_table,
 )
 from gain.genomic_resources.genomic_position_table.record import (
@@ -112,6 +114,9 @@ from gain.genomic_resources.genomic_position_table.table import (
 )
 from gain.genomic_resources.genomic_position_table.table_bigwig import (
     BigWigTable,
+)
+from gain.genomic_resources.genomic_position_table.table_inmemory import (
+    InmemoryGenomicPositionTable,
 )
 from gain.genomic_resources.genomic_scores import (
     GenomicScore,
@@ -182,13 +187,13 @@ def _build_mapped_tabix(tmp_path: pathlib.Path) -> Backend:
 # rather than in _BACKENDS: that list is "every backend in the tree", which the
 # record-contract file it lives in reads as an exhaustiveness claim, and a
 # mapped in-memory table is not a sixth backend.
-_MAPPED_BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
+_MAPPED_BACKENDS = [
     pytest.param(
         _build_mapped_inmemory, extract_column_value,
         id="inmemory-mapped"),
     pytest.param(_build_mapped_tabix, extract_column_value, id="tabix-mapped"),
 ]
-_LIFETIME_BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
+_LIFETIME_BACKENDS = [
     *_BACKENDS, *_MAPPED_BACKENDS,
 ]
 
@@ -1133,7 +1138,7 @@ def _build_tabix_configured_header(tmp_path: pathlib.Path) -> Backend:
 # against a header-less table (gain#361).  Kept off _LIFETIME_BACKENDS,
 # because the retained header would need a _MAY_SURVIVE_CLOSE entry -- see
 # the note there.
-_CONFIGURED_HEADER_BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
+_CONFIGURED_HEADER_BACKENDS = [
     pytest.param(
         _build_inmemory_configured_header, extract_column_value,
         id="inmemory-list"),
@@ -1176,7 +1181,7 @@ def _build_multi_contig_bigwig(tmp_path: pathlib.Path) -> Backend:
 # two mapped tabular ones put the base class's ``chrom_map`` under that
 # question; the bigWig one puts its own ``chroms`` dict there, which is the
 # contig state gain#350 was about.
-_MULTI_CONTIG_BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
+_MULTI_CONTIG_BACKENDS = [
     pytest.param(
         _build_multi_contig_inmemory, extract_column_value,
         id="inmemory-mapped-multi"),
@@ -1572,7 +1577,7 @@ def test_a_closed_inmemory_table_retains_no_records(
     score = _an_inmemory_score(tmp_path, n_records)
     with score.open():
         assert len(list(score.table.get_all_records())) == n_records
-    table = score.table
+    table = cast(InmemoryGenomicPositionTable, score.table)
 
     retained = sum(len(recs) for recs in table.records_by_chr.values())
     assert retained == 0, (
@@ -1673,7 +1678,7 @@ def test_a_closed_bigwig_table_retains_no_contigs(
     score = _a_bigwig_score(tmp_path, n_contigs)
     with score.open():
         assert len(score.table.get_chromosomes()) == n_contigs
-    table = score.table
+    table = cast(BigWigTable, score.table)
 
     assert len(table.chroms) == 0, (
         f"a closed bigWig table still holds {len(table.chroms)} contigs; "
@@ -1813,7 +1818,9 @@ def test_a_reopened_tabix_table_does_not_answer_from_the_old_buffer(
         .with_tabix()
     )
     repo = a_grr().with_resource("pos", builder).build_repo(tmp_path)
-    table = PositionScore(repo.get_resource("pos")).table
+    table = cast(
+        TabixGenomicPositionTable,
+        PositionScore(repo.get_resource("pos")).table)
 
     def values_at(begin: int, end: int) -> list[float]:
         # the payload is the raw tabix row; s_float is its 4th column, after
@@ -1867,8 +1874,8 @@ def test_a_tabix_close_that_fails_partway_leaves_it_open_not_unmapped(
     ``chr1``, so a table answering from the file (map gone) says ``['1']`` where
     a still-mapped one says ``['chr1']``.
     """
-    score, region = _build_mapped_tabix(tmp_path)  # type: ignore[misc]
-    table = score.table
+    score, region = _build_mapped_tabix(tmp_path)
+    table = cast(TabixGenomicPositionTable, score.table)
     table.open()
     # read so a fetch cursor exists, then answer contigs off the open table
     list(table.get_records_in_region(*region))

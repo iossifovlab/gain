@@ -600,8 +600,11 @@ def test_a_query_list_given_as_an_iterator_is_remembered_whole(
     ``Sequence``, but the read is public and the wrong answer is silent.
     """
     with fragments.open() as score:
+        # The iterator breaks the ``Sequence`` signature on purpose.
         from_iterator = score.get_fragment_scores_overlapping_region_agg(
-            "1", 100, 199, queries=iter([ScoreAggregationQuery("v", "max")]))
+            "1", 100, 199,
+            queries=iter([ScoreAggregationQuery("v", "max")]),  # type: ignore[arg-type]
+        )
         from_list = score.get_fragment_scores_overlapping_region_agg(
             "1", 100, 199, queries=[ScoreAggregationQuery("v", "max")])
 
@@ -696,8 +699,11 @@ def test_a_fragment_counts_once_however_long_it_is(
         aggregate = score.get_fragment_scores_overlapping_region_agg(
             "1", 100, 199, queries=[ScoreAggregationQuery("v", "mean")])
 
+    # ``pytest.approx`` stands in for a score value on purpose.
     assert aggregate == FragmentAggregate(
-        count=4, values=(pytest.approx((3.0 + 1.0 + 2.0 + 4.0) / 4),))
+        count=4,
+        values=(pytest.approx((3.0 + 1.0 + 2.0 + 4.0) / 4),),  # type: ignore[arg-type]
+    )
 
 
 def test_a_region_no_fragment_overlaps_counts_zero(

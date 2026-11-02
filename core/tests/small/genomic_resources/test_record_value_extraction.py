@@ -34,6 +34,7 @@ by test_backend_record_contract.py.
 from __future__ import annotations
 
 import logging
+import pathlib
 from typing import Any
 
 import pytest
@@ -85,7 +86,7 @@ def _defs(score: PositionScore | AlleleScore) -> list[GenomicScoreDef]:
 
 
 def _open_position(
-    tmp_path, data: str, *, tabix: bool = False,
+    tmp_path: pathlib.Path, data: str, *, tabix: bool = False,
 ) -> PositionScore:
     builder = (
         a_position_score()
@@ -101,7 +102,7 @@ def _open_position(
     return score
 
 
-def test_bulk_matches_per_score_on_tabular(tmp_path) -> None:
+def test_bulk_matches_per_score_on_tabular(tmp_path: pathlib.Path) -> None:
     score = _open_position(tmp_path, """
         chrom  pos_begin  s_float  s_str
         1      10         0.5      hello
@@ -120,7 +121,9 @@ def test_bulk_matches_per_score_on_tabular(tmp_path) -> None:
 
 
 @pytest.mark.parametrize(("tabix", "extractor"), _TABULAR_BACKENDS)
-def test_bulk_na_value_yields_none(tmp_path, tabix, extractor) -> None:
+def test_bulk_na_value_yields_none(
+    tmp_path: pathlib.Path, tabix: bool, extractor: object,
+) -> None:
     # The NA token must *parse successfully* so this test actually exercises
     # the na_values branch: ``"nan"`` is a configured NA value for a float
     # score AND ``float("nan")`` returns ``nan`` (it does not raise).  A
@@ -161,7 +164,8 @@ def test_bulk_na_value_yields_none(tmp_path, tabix, extractor) -> None:
 
 @pytest.mark.parametrize(("tabix", "extractor"), _TABULAR_BACKENDS)
 def test_bulk_unparseable_value_logs_and_yields_none(
-    tmp_path, tabix, extractor, caplog: pytest.LogCaptureFixture,
+    tmp_path: pathlib.Path, tabix: bool, extractor: object,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     # Runs on both record backends so the parse-failure branch (with its
     # logger.exception) is proven over both record payloads.
@@ -194,7 +198,9 @@ def test_bulk_unparseable_value_logs_and_yields_none(
         assert len(caplog.records) == per_score_records
 
 
-def test_bulk_matches_per_score_on_vcf_absent_info_key(tmp_path) -> None:
+def test_bulk_matches_per_score_on_vcf_absent_info_key(
+    tmp_path: pathlib.Path,
+) -> None:
     builder = a_vcf_info_score().with_data("""
 ##fileformat=VCFv4.1
 ##INFO=<ID=scoreA,Number=1,Type=Float,Description="score A">
@@ -216,7 +222,9 @@ chr1   11  .  A   T   .    .      scoreA=0.2;scoreB=0.5
         assert None in bulk
 
 
-def test_vcf_backend_is_routed_to_the_info_extractor(tmp_path) -> None:
+def test_vcf_backend_is_routed_to_the_info_extractor(
+    tmp_path: pathlib.Path,
+) -> None:
     # The VCF backend yields records, but its scores are INFO fields rather than
     # columns, so a record payload's __getitem__ is not the lookup it needs: it
     # is routed to extract_vcf_value, which performs the INFO lookup.
@@ -245,7 +253,7 @@ chr1   10  .  A   T   .    .      scoreA=0.1
 
 
 def test_record_backend_reads_a_record_through_the_column_extractor(
-    tmp_path,
+    tmp_path: pathlib.Path,
 ) -> None:
     # The record path, end to end: the in-memory backend yields records, so the
     # score reads them with extract_column_value; the core fields come off the
@@ -265,7 +273,9 @@ def test_record_backend_reads_a_record_through_the_column_extractor(
         assert score.get_score_value_from_record(record, "s_float") == 0.5
 
 
-def test_the_score_is_routed_before_it_reports_itself_open(tmp_path) -> None:
+def test_the_score_is_routed_before_it_reports_itself_open(
+    tmp_path: pathlib.Path,
+) -> None:
     # ``table_loaded = True`` is the score PUBLISHING itself: from that write
     # on, a second caller's ``open()`` takes the ``is_open()`` early return and
     # goes straight to reading ``_extract_value``.  So the routing must
@@ -306,7 +316,9 @@ def test_the_score_is_routed_before_it_reports_itself_open(tmp_path) -> None:
         assert seen_at_publication == [extract_column_value]
 
 
-def test_bigwig_backend_is_routed_to_the_identity_extractor(tmp_path) -> None:
+def test_bigwig_backend_is_routed_to_the_identity_extractor(
+    tmp_path: pathlib.Path,
+) -> None:
     # Since #238 the bigWig backend is on the record contract too, and its
     # payload is now the interval's VALUE rather than a four-element row.  So
     # it is routed to extract_bigwig_value -- an identity, with no column index
@@ -331,7 +343,7 @@ def test_bigwig_backend_is_routed_to_the_identity_extractor(tmp_path) -> None:
             pytest.approx(0.11)
 
 
-def test_get_score_from_record_singular(tmp_path) -> None:
+def test_get_score_from_record_singular(tmp_path: pathlib.Path) -> None:
     # extract_column_value.get_score (the singular path) is exercised directly:
     # the other tests here go through the bulk get_values.  The in-memory
     # backend is routed to extract_column_value, so this pins the read
@@ -347,7 +359,7 @@ def test_get_score_from_record_singular(tmp_path) -> None:
         assert score.get_score_value_from_record(record, "s_str") == "hello"
 
 
-def test_get_values_returns_new_ordered_list(tmp_path) -> None:
+def test_get_values_returns_new_ordered_list(tmp_path: pathlib.Path) -> None:
     score = _open_position(tmp_path, """
         chrom  pos_begin  s_float  s_str
         1      10         0.5      hello
@@ -368,7 +380,7 @@ def test_get_values_returns_new_ordered_list(tmp_path) -> None:
 # ids: the region read, and the three point reads.
 
 def test_region_fetch_empty_region_unknown_score_raises(
-    tmp_path,
+    tmp_path: pathlib.Path,
 ) -> None:
     score = _open_position(tmp_path, """
         chrom  pos_begin  s_float  s_str
@@ -382,7 +394,7 @@ def test_region_fetch_empty_region_unknown_score_raises(
 
 
 def test_region_fetch_nonempty_region_unknown_score_raises(
-    tmp_path,
+    tmp_path: pathlib.Path,
 ) -> None:
     score = _open_position(tmp_path, """
         chrom  pos_begin  s_float  s_str
@@ -395,7 +407,7 @@ def test_region_fetch_nonempty_region_unknown_score_raises(
 
 
 def test_point_fetch_empty_region_unknown_score_raises(
-    tmp_path,
+    tmp_path: pathlib.Path,
 ) -> None:
     score = _open_position(tmp_path, """
         chrom  pos_begin  s_float  s_str
@@ -408,7 +420,7 @@ def test_point_fetch_empty_region_unknown_score_raises(
 
 
 def test_the_refusal_names_the_unknown_id_and_the_available_ones(
-    tmp_path,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The message has to be actionable: a typo is the likely cause."""
     score = _open_position(tmp_path, """
@@ -422,7 +434,7 @@ def test_the_refusal_names_the_unknown_id_and_the_available_ones(
 
 
 def test_allele_point_fetch_empty_region_unknown_score_raises(
-    tmp_path,
+    tmp_path: pathlib.Path,
 ) -> None:
     builder = a_vcf_info_score().with_data("""
 ##fileformat=VCFv4.1

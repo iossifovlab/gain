@@ -205,8 +205,8 @@ def _annotate_the_deletion(resource: dict) -> object:
               aggregator: max
     """, repo)
     with pipeline.open() as work_pipeline:
-        return work_pipeline.annotate(
-            VCFAllele("1", 10, "AT", "A"))["cadd_raw"]
+        annotation = work_pipeline.annotate(VCFAllele("1", 10, "AT", "A"))
+    return annotation["cadd_raw"]
 
 
 def test_the_advised_migration_keeps_np_score_indel_annotation() -> None:

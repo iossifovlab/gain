@@ -20,6 +20,7 @@ from gain.genomic_resources.testing import (
     setup_directories,
 )
 from gain.genomic_resources.testing.builders import (
+    PositionScoreBuilder,
     a_bigwig_score,
     a_grr,
     a_position_score,
@@ -33,7 +34,7 @@ from .conftest import (
 )
 
 
-def a_chr1_score(genome_id: Any = None):
+def a_chr1_score(genome_id: Any = None) -> PositionScoreBuilder:
     builder = (
         a_position_score()
         .with_score("score", "float")
@@ -693,7 +694,9 @@ def test_coverage_too_small_to_show_is_floored_on_the_rendered_page(
     assert ">0.00%<" not in page
 
 
-def _a_chr1_score_covering(genome_id: str, covered: int):
+def _a_chr1_score_covering(
+    genome_id: str, covered: int,
+) -> PositionScoreBuilder:
     """The module's score shape, over a chosen number of positions.
 
     :func:`a_chr1_score` holds nine, which no integer contig length

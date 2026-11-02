@@ -25,6 +25,7 @@ import pathlib
 import textwrap
 
 import pytest
+from gain.annotation.allele_score_annotator import AlleleScoreAnnotator
 from gain.annotation.annotatable import Region, VCFAllele
 from gain.annotation.annotation_config import AnnotationConfigurationError
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
@@ -159,6 +160,7 @@ def test_a_region_answers_aggregated_values(
         # does that lazily, and this test bypasses annotate().
         pipeline.open()
         annotator = pipeline.annotators[0]
+        assert isinstance(annotator, AlleleScoreAnnotator)
         result = annotator._do_annotate(Region("chr1", 10, 16), {})
 
     assert isinstance(result, AnnotatedValues)

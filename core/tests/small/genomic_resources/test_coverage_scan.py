@@ -10,7 +10,10 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
     build_score_implementation_from_resource,
     scan,
 )
-from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.repository import (
+    GenomicResource,
+    ReadWriteRepositoryProtocol,
+)
 from gain.genomic_resources.statistics.coverage import (
     COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE,
     COVERAGE_STATISTICS_FILE,
@@ -465,8 +468,9 @@ def test_info_page_without_the_statistics_file_says_not_computed(
     # there, statistics/coverage.json is not.
     resource = _multivalued_tabix(tmp_path)
     scan.do_noregion_histograms(resource)
-    resource.proto.delete_resource_file(
-        resource, "statistics/coverage.json")
+    proto = resource.proto
+    assert isinstance(proto, ReadWriteRepositoryProtocol)
+    proto.delete_resource_file(resource, "statistics/coverage.json")
 
     page = PositionScoreImplementation(resource).get_info()
 

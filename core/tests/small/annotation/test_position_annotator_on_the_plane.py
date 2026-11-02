@@ -33,6 +33,7 @@ import pytest
 from gain.annotation.annotatable import Region, VCFAllele
 from gain.annotation.annotation_config import AnnotationConfigurationError
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
+from gain.annotation.annotation_pipeline import AnnotationPipeline
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing.builders import (
     a_grr,
@@ -67,7 +68,7 @@ def repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
 
 def _pipeline(
     repo: GenomicResourceRepo, attributes: str,
-) -> object:
+) -> AnnotationPipeline:
     return load_pipeline_from_yaml(textwrap.dedent(f"""
         - position_score:
             resource_id: scores

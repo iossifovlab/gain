@@ -42,6 +42,7 @@ from gain.genomic_resources.genomic_scores import (
     build_allele_score_from_resource,
 )
 from gain.genomic_resources.genomic_scores.aggregation import (
+    AggregateValue,
     build_region_aggregator,
     distinct_score_ids,
     fold_region_segments,
@@ -104,7 +105,7 @@ def _fold(
     *,
     weigh: Callable[[int, int], int],
     score_ids: list[str] | None = None,
-) -> list[ScoreValue]:
+) -> list[AggregateValue]:
     """Drive the fold the way its caller does.
 
     The aggregators are built here, parallel to ``requests`` and before
@@ -189,11 +190,13 @@ def test_a_region_read_derives_its_score_list_once(
     )
 
     with two_alleles.open() as score:
-        assert score.get_allele_scores_in_region_agg(
+        aggregate = score.get_allele_scores_in_region_agg(
             "1", 10, 14, queries=[
                 ScoreAggregationQuery("s", "mean"),
                 ScoreAggregationQuery("t", "mean"),
-            ]).values == (pytest.approx(0.5), pytest.approx(1.5))
+            ])
+        assert aggregate is not None
+        assert aggregate.values == (pytest.approx(0.5), pytest.approx(1.5))
 
     assert len(calls) == 1
 

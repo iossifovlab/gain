@@ -538,7 +538,7 @@ pipeline {
                                             name: 'core',
                                             pkg: cell.pkg,
                                             tests: cell.tests,
-                                            mypyTarget: 'gain',
+                                            mypyTarget: 'gain tests',
                                             mypyExtra: '--config-file /workspace/mypy.ini',
                                             // The repo-root scripts/ belongs to no
                                             // project, so no WORKDIR-relative `.`

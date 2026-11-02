@@ -33,6 +33,7 @@ from ..aggregators import (
     PositionScoreAggregationQuery,
 )
 from .aggregation import (
+    AggregateValue,
     build_region_aggregator,
     distinct_score_ids,
     resolve_aggregator_name,
@@ -578,7 +579,7 @@ class PositionScore(GenomicScore):
         score: str | None = None,
         aggregator: str | None = None,
         none_value_replacement: ScoreValue | None = None,
-    ) -> ScoreValue:
+    ) -> AggregateValue:
         # pylint: disable=too-many-positional-arguments
         """Reduce a region to one value for one score.
 
@@ -605,10 +606,11 @@ class PositionScore(GenomicScore):
 
         Returns
         -------
-        ScoreValue
+        AggregateValue
             The aggregated value. It is ``None`` when the aggregator has
             no value to report, for example when no position of the region
-            has a value.
+            has a value. The aggregator sets the type of the value:
+            ``list`` gives a list and ``value_count`` gives a dict.
 
         Raises
         ------
@@ -627,7 +629,7 @@ class PositionScore(GenomicScore):
     def get_scores_in_region_agg(
         self, chrom: str, start: int, end: int,
         queries: Sequence[PositionScoreAggregationQuery],
-    ) -> tuple[ScoreValue, ...]:
+    ) -> tuple[AggregateValue, ...]:
         """Reduce a region to one value for each query.
 
         Each position of the region counts once. A record counts once for
@@ -647,10 +649,12 @@ class PositionScore(GenomicScore):
 
         Returns
         -------
-        tuple[ScoreValue, ...]
+        tuple[AggregateValue, ...]
             One value for each query, in the order of ``queries``. A value
             is ``None`` when the aggregator has no value to report. The
-            tuple is empty when ``queries`` is empty.
+            aggregator sets the type of its value: ``list`` gives a list
+            and ``value_count`` gives a dict. The tuple is empty when
+            ``queries`` is empty.
 
         Raises
         ------

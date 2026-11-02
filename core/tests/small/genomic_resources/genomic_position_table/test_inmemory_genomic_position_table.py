@@ -12,6 +12,9 @@ from gain.genomic_resources.genomic_position_table.record import (
     POS_BEGIN,
     POS_END,
 )
+from gain.genomic_resources.genomic_position_table.table import (
+    GenomicPositionTable,
+)
 from gain.genomic_resources.testing import (
     build_filesystem_test_resource,
     convert_to_tab_separated,
@@ -191,7 +194,9 @@ def test_get_records_in_region_without_chrom(tmp_path: pathlib.Path) -> None:
     assert len(list(tab.get_all_records())) == 2
 
 
-def _empty_mapped_contig_table(tmp_path: pathlib.Path):
+def _empty_mapped_contig_table(
+    tmp_path: pathlib.Path,
+) -> GenomicPositionTable:
     # A chrom_mapping.filename maps two reference contigs -- 'kept' onto a file
     # contig that has data rows, and 'empty' onto a file contig with none.  So
     # 'empty' is in get_chromosomes() but has no records: a known-but-empty

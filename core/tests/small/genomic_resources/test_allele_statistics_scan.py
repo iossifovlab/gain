@@ -11,7 +11,10 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
     build_score_implementation_from_resource,
     scan,
 )
-from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.repository import (
+    GenomicResource,
+    ReadWriteRepositoryProtocol,
+)
 from gain.genomic_resources.statistics.alleles import (
     ALLELE_COMPLEX_GRID_IMAGE_FILE,
     ALLELE_DELETION_LENGTHS_IMAGE_FILE,
@@ -22,6 +25,7 @@ from gain.genomic_resources.statistics.alleles import (
     serves_allele_arrays,
 )
 from gain.genomic_resources.testing.builders import (
+    AlleleScoreBuilder,
     a_fragment_score,
     a_position_score,
     an_allele_score,
@@ -58,7 +62,9 @@ _MIXED_TABLE = """
 """
 
 
-def _maybe_tabix(builder: Any, *, tabix: bool) -> Any:
+def _maybe_tabix(
+    builder: AlleleScoreBuilder, *, tabix: bool,
+) -> AlleleScoreBuilder:
     """Put a fixture on the bulk scan path, or leave it on the per-record one.
 
     A tabix-indexed table serves column arrays and is bulk-eligible; a plain
@@ -847,7 +853,9 @@ def test_info_page_without_the_statistics_file_says_not_computed(
     # there, statistics/alleles.json is not.
     resource = _mixed_allele_score(tmp_path)
     cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
-    resource.proto.delete_resource_file(resource, ALLELE_STATISTICS_FILE)
+    proto = resource.proto
+    assert isinstance(proto, ReadWriteRepositoryProtocol)
+    proto.delete_resource_file(resource, ALLELE_STATISTICS_FILE)
 
     section = section_after(
         _info_page(resource), "<h2>Alleles</h2>")

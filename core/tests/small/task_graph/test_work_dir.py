@@ -1,6 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 """The work-dir convention a task-graph CLI tool follows (``work_dir``)."""
 import pathlib
+from typing import Any
 
 import pytest
 import pytest_mock
@@ -11,7 +12,9 @@ from gain.task_graph.work_dir import (
 )
 
 
-def _work_dir_args(work_dir: pathlib.Path, output: pathlib.Path, **over):
+def _work_dir_args(
+    work_dir: pathlib.Path, output: pathlib.Path, **over: Any,
+) -> dict[str, Any]:
     args = {
         "work_dir": str(work_dir),
         "work_dir_created": True,

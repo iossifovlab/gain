@@ -307,7 +307,8 @@ def test_slow_submission_does_not_end_the_run_early(
     for i in range(num_tasks):
         graph.create_task(f"WideTask{i}", double, args=[i], deps=[])
 
-    executor = DaskExecutor(_SlowSubmitClient(dask_client, delay=0.2))
+    executor = DaskExecutor(
+        cast("Client", _SlowSubmitClient(dask_client, delay=0.2)))
 
     results = {
         task.task_id: result for task, result in executor.execute(graph)
@@ -346,7 +347,8 @@ def test_slow_gather_does_not_end_the_run_early(
     for i in range(num_tasks):
         graph.create_task(f"WideTask{i}", double, args=[i], deps=[])
 
-    executor = DaskExecutor(_SlowGatherClient(dask_client, delay=0.2))
+    executor = DaskExecutor(
+        cast("Client", _SlowGatherClient(dask_client, delay=0.2)))
 
     results = {
         task.task_id: result for task, result in executor.execute(graph)
@@ -408,7 +410,7 @@ def test_a_task_that_dies_on_the_worker_is_delivered_as_an_error(
 
     task_cache = FileTaskCache(cache_dir=str(tmp_path))
     executor = DaskExecutor(
-        _DyingWorkerClient(dask_client),
+        cast("Client", _DyingWorkerClient(dask_client)),
         task_cache=task_cache,
         task_log_dir=str(tmp_path / "logs"),
     )
@@ -1153,7 +1155,7 @@ class _CompletionRacingCallbackClient(_WrappedClient):
         self.raced_gather = self._gather_entered.wait(timeout)
 
     def map(self, *args: Any, **kwargs: Any) -> Any:
-        futures = list(self._client.map(*args, **kwargs))
+        futures: list[Any] = list(self._client.map(*args, **kwargs))
         futures[self._raise_at_index] = _RaisingAfterCompletionFuture(
             futures[self._raise_at_index], self)
         return futures

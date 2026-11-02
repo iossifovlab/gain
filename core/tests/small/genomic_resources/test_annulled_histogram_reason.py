@@ -54,7 +54,8 @@ def a_stale_histogram(tmp_path: pathlib.Path) -> bytes:
             {"type": "number", "number_of_bins": 10}),
         tmp_path / "numeric")
     with numeric.open_raw_file("statistics/histogram_annulled.json") as inf:
-        return inf.read()
+        stale: bytes = inf.read()
+    return stale
 
 
 def test_a_built_score_reads_back_its_configured_reason(

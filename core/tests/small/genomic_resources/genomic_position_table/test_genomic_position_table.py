@@ -966,7 +966,9 @@ def test_invalid_chrom_mapping_file_with_tabix(
     res = build_filesystem_test_resource(tmp_path)
     assert res.config is not None
     open_tabix_file = mocker.spy(GenomicResource, "open_tabix_file")
-    table = build_genomic_position_table(res, res.config["table"])
+    table = cast(
+        TabixGenomicPositionTable,
+        build_genomic_position_table(res, res.config["table"]))
 
     with pytest.raises(ValueError, match="The chromosome") as exception:
         table.open()
@@ -1956,7 +1958,9 @@ def test_contig_length_tabix_table(
 def test_find_chromosome_length_tabix_reports_a_length(
         tabix_table: TabixGenomicPositionTable) -> None:
     """The tri-state hook answers with a number when the probe finds one."""
-    assert tabix_table.find_chromosome_length("1") >= 13
+    length = tabix_table.find_chromosome_length("1")
+    assert isinstance(length, int)
+    assert length >= 13
 
 
 def test_find_chromosome_length_tabix_failed_probe_is_undetermined(
@@ -2094,7 +2098,9 @@ def test_find_chromosome_length_vcf_reports_a_length_and_undetermined(
     with build_genomic_position_table(
             vcf_res, vcf_res.config["tabix_table"]) as tab:
         assert isinstance(tab, VCFGenomicPositionTable)
-        assert tab.find_chromosome_length("chr1") >= 30
+        length = tab.find_chromosome_length("chr1")
+        assert isinstance(length, int)
+        assert length >= 30
 
         mocker.patch.object(
             table_tabix, "get_chromosome_length_tabix", return_value=None)
@@ -2354,7 +2360,8 @@ def test_vcf_header_load_refuses_a_broken_sidecar_naming_the_resource(
     # header it would not parse, so the broken one is written by hand over
     # it -- as bgzf, the shape a shipped sidecar has.
     with pysam.BGZFile(
-            str(tmp_path / "one_score" / "data.header.vcf.gz"), "wb") as out:
+            str(tmp_path / "one_score" / "data.header.vcf.gz"), "wb",
+            index=None) as out:
         out.write(sidecar.encode())
 
     res = build_filesystem_test_repository(tmp_path).get_resource("one_score")

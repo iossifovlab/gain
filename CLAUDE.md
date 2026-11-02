@@ -106,7 +106,7 @@ CI runs **ruff + mypy + pylint** on each package *and its `scripts/`* (plus esli
 
 ```bash
 cd core && ruff check --fix . ../scripts
-cd core && mypy --config-file ../mypy.ini gain ../scripts
+cd core && mypy --config-file ../mypy.ini gain tests ../scripts
 cd core && pylint --rcfile=../pylintrc gain ../scripts
 ```
 

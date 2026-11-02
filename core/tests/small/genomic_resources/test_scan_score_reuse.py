@@ -44,6 +44,11 @@ from gain.genomic_resources.testing.builders import (
     an_allele_score,
 )
 
+from tests.small.genomic_resources.histogram_parity import (
+    as_categorical,
+    as_number,
+)
+
 
 def _hist_conf() -> NumberHistogramConfig:
     return NumberHistogramConfig.from_dict({
@@ -171,7 +176,7 @@ def test_histogram_task_builds_the_score_once_on_the_bulk_path(
     result = scan.do_histogram_task(resource, confs, "chr1", 1, 20)
 
     assert spy.call_count == 1
-    assert result.histograms["s1"].bars.sum() > 0
+    assert as_number(result.histograms["s1"]).bars.sum() > 0
 
 
 def test_histogram_task_builds_the_score_once_on_the_per_record_path(
@@ -194,7 +199,7 @@ def test_histogram_task_builds_the_score_once_on_the_per_record_path(
     result = scan.do_histogram_task(resource, confs, "chr1", 1, 20)
 
     assert spy.call_count == 1
-    assert result.histograms["s"].raw_values == {3: 3, 7: 1}
+    assert as_categorical(result.histograms["s"]).raw_values == {3: 3, 7: 1}
 
 
 def test_min_max_task_builds_the_score_once_on_the_bulk_path(
@@ -276,7 +281,7 @@ def test_histogram_task_reopens_the_shared_score_for_an_allele_scan(
     assert spy.call_count == 1
     assert result.alleles is not None, \
         "an allele score's task must carry its allele statistics back"
-    assert result.histograms["score"].bars.sum() == 3
+    assert as_number(result.histograms["score"]).bars.sum() == 3
 
 
 @pytest.mark.parametrize("already_opened", [False, True])

@@ -23,7 +23,11 @@ from gain.genomic_resources.testing.builders import (
 )
 
 from tests.small.genomic_resources.histogram_parity import (
-    assert_histograms_equal,
+    as_categorical,
+    as_number,
+)
+from tests.small.genomic_resources.histogram_parity import (
+    assert_all_histograms_equal as _assert_hists_equal,
 )
 
 
@@ -35,15 +39,6 @@ def _hist_conf() -> NumberHistogramConfig:
         "x_log_scale": False,
         "y_log_scale": False,
     })
-
-
-def _assert_hists_equal(
-    bulk: dict[str, NumberHistogram],
-    ref: dict[str, NumberHistogram],
-) -> None:
-    assert set(bulk) == set(ref)
-    for score_id in ref:
-        assert_histograms_equal(bulk[score_id], ref[score_id], score_id)
 
 
 def _multiscore_tabix(tmp_path: pathlib.Path) -> GenomicResource:
@@ -78,7 +73,8 @@ def test_bulk_histogram_matches_per_record_tabix_multiscore(
 
     _assert_hists_equal(bulk, ref)
     # sanity: the NA rows were actually skipped, not binned as 0.
-    assert ref["s2"].bars.sum() < ref["s1"].bars.sum() + 10
+    assert as_number(ref["s2"]).bars.sum() < \
+        as_number(ref["s1"]).bars.sum() + 10
 
 
 def test_bulk_histogram_matches_per_record_zero_based(
@@ -131,7 +127,7 @@ def test_bulk_histogram_matches_per_record_configured_na(
     bulk = scan.do_histogram_bulk(
         resource, confs, "chr1", 1, 6)
     _assert_hists_equal(bulk, ref)
-    assert bulk["s"].bars.sum() == ref["s"].bars.sum()
+    assert as_number(bulk["s"]).bars.sum() == as_number(ref["s"]).bars.sum()
 
 
 def test_bulk_histogram_matches_per_record_subregion_clip(
@@ -285,8 +281,8 @@ def test_bulk_histogram_matches_per_record_int_score(
     _assert_hists_equal(bulk, ref)
     # sanity: the tokens int() refuses really were dropped, and the ones it
     # accepts really were binned -- three records in view, spanning 3+1+4 bp.
-    assert ref["s"].bars.sum() == 3 + 1
-    assert ref["s"].out_of_range_bins == [0, 4 + 2]
+    assert as_number(ref["s"]).bars.sum() == 3 + 1
+    assert as_number(ref["s"]).out_of_range_bins == [0, 4 + 2]
 
 
 def test_bulk_histogram_matches_per_record_int_score_via_the_task(
@@ -362,7 +358,8 @@ def test_bulk_categorical_matches_per_record_str_score(
 
     _assert_categorical_equal(bulk, ref)
     # sanity: counted by span, not by record -- "aaa" covers 3 + 6 bases.
-    assert ref["s"].raw_values == {"aaa": 9, "bbb": 10, "ccc": 1}
+    assert as_categorical(ref["s"]).raw_values == \
+        {"aaa": 9, "bbb": 10, "ccc": 1}
 
 
 def test_bulk_categorical_matches_per_record_str_score_selected(
@@ -385,7 +382,8 @@ def test_bulk_categorical_matches_per_record_str_score_selected(
         resource, confs, "chr1", 2, 13)
 
     _assert_categorical_equal(bulk, ref)
-    assert ref["s"].raw_values == {"aaa": 6, "bbb": 1 + 9, "ccc": 1}
+    assert as_categorical(ref["s"]).raw_values == \
+        {"aaa": 6, "bbb": 1 + 9, "ccc": 1}
 
 
 def test_bulk_categorical_matches_per_record_via_the_task(
@@ -420,7 +418,7 @@ def test_an_int_score_with_a_categorical_histogram_keeps_the_per_record_path(
     # ...and the per-record path it stays on does build the histogram.
     ref = scan.do_histogram(
         resource, confs, "chr1", 1, 20)
-    assert ref["s"].raw_values == {3: 3, 7: 1, 1000: 4, 123: 2}
+    assert as_categorical(ref["s"]).raw_values == {3: 3, 7: 1, 1000: 4, 123: 2}
 
 
 def test_a_str_score_with_a_number_histogram_keeps_the_per_record_path(
@@ -570,7 +568,7 @@ def test_bulk_matches_per_record_float_underscore_token(
     bulk = scan.do_histogram_bulk(
         resource, confs, "chr1", 1, 4)
     _assert_hists_equal(bulk, ref)
-    assert bulk["s"].max_value == 1000.0
+    assert as_number(bulk["s"]).max_value == 1000.0
 
 
 def test_a_score_without_column_arrays_is_not_bulk_eligible(

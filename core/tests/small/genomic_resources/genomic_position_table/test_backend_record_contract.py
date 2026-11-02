@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import pathlib
 from collections.abc import Callable, Iterable
+from typing import cast
 
 import numpy as np
 import pytest
@@ -65,6 +66,7 @@ from gain.genomic_resources.genomic_scores import (
     PositionScore,
 )
 from gain.genomic_resources.score_def import (
+    ValueExtractor,
     extract_column_value,
 )
 from gain.genomic_resources.testing.builders import (
@@ -172,7 +174,7 @@ def _build_bigwig(tmp_path: pathlib.Path) -> Backend:
 # and fails a concrete backend that is missing from this list.  It lives there
 # because the release-policy tests are what a missing entry silently robs of a
 # subject (gain#359), but what it holds to reality is this list.
-_BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
+_BACKENDS = [
     pytest.param(_build_inmemory, extract_column_value, id="inmemory"),
     pytest.param(_build_tabix, extract_column_value, id="tabix"),
     pytest.param(_build_vcf, extract_vcf_value, id="vcf"),
@@ -184,7 +186,7 @@ _BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
 # each backend must declare is read off this list rather than kept in a
 # second one.  (Which kind an entry's fixture really builds is what
 # test_open_routes_a_backend_to_the_extractor_its_payload_needs checks.)
-_KIND_OF_EXTRACTOR = {
+_KIND_OF_EXTRACTOR: dict[ValueExtractor, PayloadKind] = {
     extract_column_value: PayloadKind.ROW,
     extract_vcf_value: PayloadKind.VARIANT,
     extract_bigwig_value: PayloadKind.VALUE,
@@ -208,7 +210,8 @@ def build_every_backend(
     """
     built = {}
     for param in _BACKENDS:
-        build_backend, _extractor = param.values
+        build_backend = cast(
+            Callable[[pathlib.Path], Backend], param.values[0])
         backend_dir = tmp_path / str(param.id)
         backend_dir.mkdir()
         score, _region = build_backend(backend_dir)
@@ -233,7 +236,7 @@ def build_every_backend(
 #
 # test_every_backend_declares_whether_its_records_hash keeps this list in
 # step with _BACKENDS.
-_HASHABILITY: list[pytest.param] = [  # type: ignore[valid-type]
+_HASHABILITY = [
     pytest.param(_build_inmemory, True, id="inmemory"),
     pytest.param(_build_tabix, False, id="tabix"),
     pytest.param(_build_vcf, False, id="vcf"),
@@ -354,7 +357,7 @@ def test_a_backend_yields_what_its_payload_kind_claim_says(
 def test_open_routes_a_backend_to_the_extractor_its_payload_needs(
     tmp_path: pathlib.Path,
     build_backend: Callable[[pathlib.Path], Backend],
-    extractor: object,
+    extractor: ValueExtractor,
 ) -> None:
     # The other half: ``GenomicScore.open`` must route each backend to the
     # value extractor that can actually read ITS payload.  Together with the
@@ -404,7 +407,7 @@ def test_open_routes_a_backend_to_the_extractor_its_payload_needs(
 #
 # test_a_backend_serves_value_arrays_exactly_when_it_claims_to holds every
 # backend to its entry in BOTH directions.
-_VALUE_ARRAYS: list[pytest.param] = [  # type: ignore[valid-type]
+_VALUE_ARRAYS = [
     pytest.param(_build_inmemory, False, id="inmemory"),
     pytest.param(_build_tabix, True, id="tabix"),
     pytest.param(_build_vcf, False, id="vcf"),
@@ -576,7 +579,7 @@ def _build_bigwig_scan(tmp_path: pathlib.Path) -> GenomicScore:
 
 # Every backend again -- the same four, over data long enough for the
 # boundedness half to be able to fail.
-_SCAN_BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
+_SCAN_BACKENDS = [
     pytest.param(_build_inmemory_scan, id="inmemory"),
     pytest.param(_build_tabix_scan, id="tabix"),
     pytest.param(_build_vcf_scan, id="vcf"),
@@ -756,7 +759,7 @@ def _build_bigwig_held(tmp_path: pathlib.Path) -> GenomicScore:
     return PositionScore(repo.get_resource("bw"))
 
 
-_HELD_BACKENDS: list[pytest.param] = [  # type: ignore[valid-type]
+_HELD_BACKENDS = [
     pytest.param(_build_inmemory_held, id="inmemory"),
     pytest.param(_build_tabix_held, id="tabix"),
     pytest.param(_build_vcf_held, id="vcf"),

@@ -58,6 +58,7 @@ from ..aggregators import (
     ScoreAggregationQuery,
 )
 from .aggregation import (
+    AggregateValue,
     build_region_aggregators,
     fold_region_segments,
     request_score_ids,
@@ -87,17 +88,18 @@ class AlleleAggregate:
     """The answer of a folding read: one value per query, and the allele keys.
 
     Attributes:
-        values (tuple[ScoreValue, ...]): One value for each query of the
+        values (tuple[AggregateValue, ...]): One value for each query of the
             read, in the order asked. A query is a score with an
             aggregator, so one score asked with two aggregators gives two
-            values.
+            values. The aggregator sets the type of its value: ``list``
+            gives a list and ``value_count`` gives a dict.
         allele_keys (tuple[str, ...] | None): The distinct allele keys of
             the rows that were folded, in the order the rows were first
             seen. The value is ``None`` when the read was not asked for
             keys. See :func:`allele_key` for the format.
     """
 
-    values: tuple[ScoreValue, ...]
+    values: tuple[AggregateValue, ...]
     allele_keys: tuple[str, ...] | None
 
 

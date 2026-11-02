@@ -204,7 +204,9 @@ def test_weighted_mean_is_closer_to_the_exact_mean_than_replication() -> None:
     """Weighting rounds once per record, replication once per base pair."""
     total_weight = sum(weight for _, weight in _LARGE_REGION_RECORDS)
     exact = sum(
-        Fraction(value) * weight for value, weight in _LARGE_REGION_RECORDS
+        (Fraction(value) * weight
+         for value, weight in _LARGE_REGION_RECORDS),
+        Fraction(0),
     ) / total_weight
 
     weighted = _fold_weighted("mean", _LARGE_REGION_RECORDS)

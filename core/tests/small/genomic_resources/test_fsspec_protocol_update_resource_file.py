@@ -2,7 +2,7 @@
 import os
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 from fsspec.exceptions import FSTimeoutError
@@ -134,7 +134,7 @@ class _StallingFile:
     def __enter__(self) -> "_StallingFile":
         return self
 
-    def __exit__(self, *_args: object) -> bool:
+    def __exit__(self, *_args: object) -> Literal[False]:
         return False
 
     def read(self, *_args: object) -> bytes:
@@ -201,14 +201,14 @@ class _ShortReadFile:
         self._real.__enter__()
         return self
 
-    def __exit__(self, *args: object) -> bool:
+    def __exit__(self, *args: object) -> Literal[False]:
         self._real.__exit__(*args)
         return False
 
     def read(self, *args: object) -> bytes:
         if self._keep <= 0:
             return b""
-        chunk = self._real.read(*args)
+        chunk: bytes = self._real.read(*args)
         if not chunk:
             return chunk
         if len(chunk) > self._keep:
@@ -320,12 +320,12 @@ class _CorruptingFile:
         self._real.__enter__()
         return self
 
-    def __exit__(self, *args: object) -> bool:
+    def __exit__(self, *args: object) -> Literal[False]:
         self._real.__exit__(*args)
         return False
 
     def read(self, *args: object) -> bytes:
-        chunk = self._real.read(*args)
+        chunk: bytes = self._real.read(*args)
         if not chunk:
             return chunk
         return bytes(b ^ 0xFF for b in chunk)
@@ -613,14 +613,14 @@ class _PartialThenStallingFile:
         self._real.__enter__()
         return self
 
-    def __exit__(self, *args: object) -> bool:
+    def __exit__(self, *args: object) -> Literal[False]:
         self._real.__exit__(*args)
         return False
 
     def read(self, *args: object) -> bytes:
         if self._served:
             raise FSTimeoutError("simulated stall after partial read")
-        chunk = self._real.read(*args)
+        chunk: bytes = self._real.read(*args)
         if chunk:
             self._served = True
             return chunk
