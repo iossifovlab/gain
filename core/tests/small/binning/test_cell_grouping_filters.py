@@ -8,7 +8,7 @@ from typing import Any
 
 import pandas as pd
 import pytest
-from gain.binning import fragment_binner
+from gain.binning import fragment_grouping
 from gain.binning.fragment_binner import (
     CellGrouping,
     DuplicateBarcodeError,
@@ -44,7 +44,7 @@ def a_table() -> pd.DataFrame:
 def expected(operand: str | None) -> dict[str, str]:
     return {
         f"B{i}": f"G{i}" for i, cell in enumerate(KINDS)
-        if fragment_binner._as_text(cell) == operand}
+        if fragment_grouping._as_text(cell) == operand}
 
 
 @pytest.mark.parametrize("operand", ["a", "2", "2.5", "b", "zzz", None])
@@ -97,13 +97,13 @@ def test_track_maps_converts_filter_cells_once_not_per_resource(
     })
     monkeypatch.setattr(MetaTable, "load", lambda *_: table)
     seen: list[Any] = []
-    original = fragment_binner._as_text
+    original = fragment_grouping._as_text
 
     def counting(value: Any) -> str | None:
         seen.append(value)
         return original(value)
 
-    monkeypatch.setattr(fragment_binner, "_as_text", counting)
+    monkeypatch.setattr(fragment_grouping, "_as_text", counting)
     grouping = a_grouping(MetaFilter("kind", value="k1"))
     resources = [a_resource() for _ in range(10)]
 
@@ -121,23 +121,23 @@ def test_resolve_grouping_converts_filter_cells_once_not_per_resource(
         "group": ["G"] * 50,
     })
     meta_table = MetaTable(resource_id="meta")
-    tables = fragment_binner._Tables("job", NO_GRR)
+    tables = fragment_grouping._Tables("job", NO_GRR)
     tables.loaded[meta_table] = table
     monkeypatch.setattr(
-        fragment_binner, "_score_type", lambda *_: "float")
+        fragment_grouping, "_score_type", lambda *_: "float")
     seen: list[Any] = []
-    original = fragment_binner._as_text
+    original = fragment_grouping._as_text
 
     def counting(value: Any) -> str | None:
         seen.append(value)
         return original(value)
 
-    monkeypatch.setattr(fragment_binner, "_as_text", counting)
-    meta = fragment_binner._MetaSpec(
+    monkeypatch.setattr(fragment_grouping, "_as_text", counting)
+    meta = fragment_grouping._MetaSpec(
         filters=(MetaFilter("kind", value="k1"),), table=meta_table)
     resources = [a_resource() for _ in range(10)]
 
-    fragment_binner._resolve_grouping(
+    fragment_grouping._resolve_grouping(
         "job", {
             "cell_score_id": "cell", "cell_meta_column": "barcode",
             "group_meta_column": "group"},
@@ -186,13 +186,13 @@ def test_track_maps_converts_a_column_once_for_repeated_conjuncts(
     })
     monkeypatch.setattr(MetaTable, "load", lambda *_: table)
     seen: list[Any] = []
-    original = fragment_binner._as_text
+    original = fragment_grouping._as_text
 
     def counting(value: Any) -> str | None:
         seen.append(value)
         return original(value)
 
-    monkeypatch.setattr(fragment_binner, "_as_text", counting)
+    monkeypatch.setattr(fragment_grouping, "_as_text", counting)
     grouping = a_grouping(
         MetaFilter("kind", value="k1"), MetaFilter("kind", value="k1"))
 

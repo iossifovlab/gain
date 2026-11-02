@@ -1,4 +1,3 @@
-# pylint: disable=too-many-lines
 """``fragment_score_binner``: fragments per bin, by group, pooled or not.
 
 An entry names a query over ``fragment_score`` resources and produces,
@@ -83,27 +82,20 @@ uncovered throughout.
 """
 from __future__ import annotations
 
-import gzip
 import heapq
 import json
-import math
 import operator
-import os
-from collections import Counter, defaultdict
-from collections.abc import Callable, Generator, Iterable
+from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from functools import partial
 from types import TracebackType
 from typing import Any, ClassVar, TypeVar
-from zipfile import BadZipFile
 
 import numpy as np
 import numpy.typing as npt
-import pandas as pd
 
 from gain import logging
 from gain.binning.binners import (
-    NUMERIC_VALUE_TYPES,
     BinningJob,
     RunDefinitionError,
     Track,
@@ -114,7 +106,6 @@ from gain.binning.binners import (
     named_base,
 )
 from gain.binning.fragment_array_folds import (
-    LENGTH_AGGREGATORS,
     CoverageRead,
     InexactLevelsError,
     LengthRead,
@@ -132,21 +123,53 @@ from gain.binning.fragment_folds import (
     BinValue,
     FragmentValue,
 )
-from gain.genomic_resources.data_frame_resource import (
-    load_data_frame_from_resource,
+from gain.binning.fragment_grouping import (
+    AGGREGATE_KEYS,
+    BARCODE_COLUMN,
+    CELL_GROUP_DEFAULTS,
+    CELL_GROUP_KEYS,
+    CELL_META_RESOURCE_ID_LABEL,
+    CELL_SCORE,
+    CLASS_COLUMN,
+    CONVENTION_META,
+    COUNT_SCORE,
+    COVERAGE_PROFILE,
+    DEFAULT_GROUP,
+    ENTRY_KEYS,
+    FILE_FORMATS,
+    FILTER_KEYS,
+    FRAGMENT_LENGTH,
+    FRAGMENT_START,
+    GROUP_KEYS,
+    META_FILE_KEYS,
+    META_KEYS,
+    META_SOURCE_KEYS,
+    MODES,
+    MOVED_TO_VALUE,
+    SAMPLE_ID_COLUMN,
+    SAMPLE_ID_LABEL,
+    VALUE_GROUP_KEY,
+    VALUE_KEYS,
+    CellGrouping,
+    DuplicateBarcodeError,
+    MetaFilter,
+    MetaTable,
+    ValueGrouping,
+    _Aggregate,
+    _as_text,
+    _FragmentValue,
+    _Group,
+    _is_labelled,
+    _is_single_cell,
+    _MetaSpec,
+    _partition,
+    _quoted,
+    _resolve_grouping,
+    _resolve_value_grouping,
+    _Tables,
 )
 from gain.genomic_resources.genomic_scores import FragmentScore
-from gain.genomic_resources.genomic_scores.aggregation import (
-    EMPTY_BIN_VALUES,
-)
 from gain.genomic_resources.genomic_scores.records import RecordArrays
-from gain.genomic_resources.histogram import (
-    CategoricalHistogram,
-    CategoricalHistogramConfig,
-    HistogramError,
-    NullHistogram,
-    NullHistogramConfig,
-)
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
@@ -158,352 +181,42 @@ logger = logging.getLogger(__name__)
 
 _Read = TypeVar("_Read", bound=StartRead)
 
-# The GRR convention for single-cell fragment resources (F7).  Every
-# other mention of these names refers to the constants.
-
-#: The fragment resource's label naming its cell-metadata ``data_frame``.
-CELL_META_RESOURCE_ID_LABEL = "cell_meta_resource_id"
-#: The fragment resource's label naming its sample.
-SAMPLE_ID_LABEL = "sample_id"
-#: The metadata table's column naming a row's sample.
-SAMPLE_ID_COLUMN = "sample_id"
-#: The metadata table's column holding a cell's barcode.
-BARCODE_COLUMN = "barcode"
-#: The metadata table's column holding a cell's group.
-CLASS_COLUMN = "class"
-#: The fragment score carrying a fragment's barcode.
-CELL_SCORE = "cell"
-#: The fragment score holding a fragment's read pairs.
-COUNT_SCORE = "count"
-
-#: The group of an entry that names none.
-DEFAULT_GROUP = "all"
-
-ENTRY_KEYS = frozenset({
-    "resource_query", "search_term", "pool", "group", "value", "aggregate",
-    "meta", "name"})
-#: The keys of a metadata grouping, each with its default.
-CELL_GROUP_DEFAULTS = {
-    "cell_score_id": CELL_SCORE,
-    "cell_meta_column": BARCODE_COLUMN,
-    "group_meta_column": CLASS_COLUMN,
-}
-CELL_GROUP_KEYS = frozenset(CELL_GROUP_DEFAULTS)
-#: The key of a raw-value grouping: the ``str`` score whose values group.
-VALUE_GROUP_KEY = "group_score_id"
-GROUP_KEYS = frozenset({"group", VALUE_GROUP_KEY}) | CELL_GROUP_KEYS
-VALUE_KEYS = frozenset({"score_id", "value"})
-AGGREGATE_KEYS = frozenset({"mode", "aggregator", "uncovered_value"})
-#: The keys ``aggregate`` does not take, each with the ``value`` key that
-#: says what one fragment adds.
-MOVED_TO_VALUE = {"score": "score_id", "value": "value"}
-#: The fragment mode reducing, per bin, the fragments that start in it.
-FRAGMENT_START = "fragment_start"
-#: The fragment mode reducing, per bin, the fragments that overlap it,
-#: each weighted by its overlap in base pairs.
-FRAGMENT_LENGTH = "fragment_length"
-#: The fragment mode reducing, per bin, the coverage profile of the
-#: fragments, weighted by base pairs; a base at 0 is uncovered.
-COVERAGE_PROFILE = "coverage_profile"
-#: The accepted ``aggregate.mode`` values.
-MODES = (FRAGMENT_START, FRAGMENT_LENGTH, COVERAGE_PROFILE)
-META_SOURCE_KEYS = frozenset({"resource_id", "resource_label", "file_name"})
-META_FILE_KEYS = frozenset({"file_separator", "file_format"})
-META_KEYS = META_SOURCE_KEYS | META_FILE_KEYS | frozenset({"filter"})
-FILTER_KEYS = frozenset({"column", "value", "label"})
-#: A local table's formats, each with its separator (none for excel).
-FILE_FORMATS: dict[str, str | None] = {
-    "csv": ",", "tsv": "\t", "excel": None}
-
-
-def _as_text(value: Any) -> str | None:
-    """A table cell, a label or a score value as the text it is matched by.
-
-    ``None`` for a missing value -- ``None``, NaN, ``pd.NA`` (a cell of
-    a nullable-dtype column) or the empty string -- which matches nothing
-    and names no group.  An integral float is written as an int, since a
-    numeric column read with a missing cell is a float column, and its
-    ``2`` must still match a label ``2``.
-    """
-    if value is None or value is pd.NA:
-        return None
-    if isinstance(value, float):
-        if math.isnan(value):
-            return None
-        if value.is_integer():
-            return str(int(value))
-    text = str(value)
-    return text or None
-
-
-def _quoted(names: Iterable[str]) -> str:
-    return ", ".join(repr(name) for name in names)
-
-
-def _partition(
-    resources: list[GenomicResource],
-    predicate: Callable[[GenomicResource], bool],
-) -> tuple[list[str], list[str]]:
-    """The ids of ``resources`` that satisfy ``predicate``, and the rest."""
-    chosen: list[str] = []
-    rest: list[str] = []
-    for resource in resources:
-        (chosen if predicate(resource) else rest).append(
-            resource.resource_id)
-    return chosen, rest
-
-
-@dataclass(frozen=True)
-class MetaFilter:
-    """One conjunct of a ``meta`` filter: ``column`` equals an operand.
-
-    The operand is the literal ``value``, or -- when ``label`` is set --
-    the value of that label on the fragment resource whose rows are
-    being selected.
-    """
-
-    column: str
-    value: str | None = None
-    label: str | None = None
-
-    def operand(self, resource: GenomicResource) -> str | None:
-        """The text this conjunct's column must equal, for ``resource``."""
-        if self.label is None:
-            return self.value
-        return _as_text(resource.get_labels().get(self.label))
-
-
-@dataclass(frozen=True)
-class MetaTable:
-    """Where a cell-metadata table is read from.
-
-    A ``data_frame`` resource, ``resource_id``, or a local file at the
-    absolute ``path``, read as ``file_format`` with ``file_separator``
-    (the format's own when unset).  The parent resolving a run and a
-    worker binding a job read it through the same :meth:`load`.
-    """
-
-    resource_id: str | None = None
-    path: str | None = None
-    file_format: str = "csv"
-    file_separator: str | None = None
-
-    @property
-    def name(self) -> str:
-        """The resource id, or the local file's absolute path."""
-        if self.resource_id is not None:
-            return self.resource_id
-        assert self.path is not None
-        return self.path
-
-    @property
-    def is_local(self) -> bool:
-        return self.path is not None
-
-    def load(self, grr: GenomicResourceRepo) -> pd.DataFrame:
-        """Read the table, from ``grr`` or from the local file."""
-        if self.resource_id is not None:
-            return load_data_frame_from_resource(
-                grr.get_resource(self.resource_id))
-        assert self.path is not None
-        if self.file_format == "excel":
-            return pd.read_excel(self.path)
-        return pd.read_csv(
-            self.path,
-            sep=self.file_separator or FILE_FORMATS[self.file_format])
-
-    @property
-    def parameters(self) -> dict[str, Any]:
-        if self.resource_id is not None:
-            return {"meta_resource_id": self.resource_id}
-        return {
-            "meta_file": self.path,
-            "meta_file_format": self.file_format,
-            "meta_file_separator": self.file_separator,
-        }
-
-
-class DuplicateBarcodeError(ValueError):
-    """A barcode on more than one of a resource's filtered rows."""
-
-
-@dataclass(frozen=True)
-class _TextColumn:
-    """A table column as the text its cells are matched by, factorized.
-
-    ``codes`` holds, per cell, the index of its text in ``texts``, or -1
-    for a cell with no text form.  Matching a resource's operand is then
-    an integer comparison, not a pass of ``_as_text`` over the column.
-    """
-
-    codes: np.ndarray
-    texts: dict[str, int]
-
-    @staticmethod
-    def of(column: pd.Series) -> _TextColumn:
-        """Convert each cell of ``column`` to text once and factorize."""
-        codes, uniques = pd.factorize(
-            pd.Series([_as_text(cell) for cell in column.tolist()],
-                      dtype=object))
-        return _TextColumn(
-            codes, {str(text): i for i, text in enumerate(uniques)})
-
-    def matches(self, operand: str | None) -> np.ndarray:
-        """The boolean mask of the cells whose text is ``operand``."""
-        if operand is None:
-            return np.asarray(self.codes == -1)
-        code = self.texts.get(operand)
-        if code is None:
-            return np.zeros(len(self.codes), dtype=bool)
-        return np.asarray(self.codes == code)
-
-
-@dataclass(frozen=True)
-class CellGrouping:
-    """How a fragment's barcode becomes a group: a filtered table lookup.
-
-    ``cell_score_id`` is the fragment score carrying the barcode; the
-    metadata ``table``, its rows selected per fragment resource by
-    ``filters``, maps the barcode in ``cell_meta_column`` to the group in
-    ``group_meta_column``.
-    """
-
-    cell_score_id: str
-    cell_meta_column: str
-    group_meta_column: str
-    table: MetaTable
-    filters: tuple[MetaFilter, ...]
-
-    def prepare_filters(self, table: pd.DataFrame) -> dict[str, _TextColumn]:
-        """Each filter column of ``table`` as text, converted once."""
-        return {
-            column: _TextColumn.of(table[column])
-            for column in dict.fromkeys(f.column for f in self.filters)
-        }
-
-    def groups_of(
-        self, table: pd.DataFrame, resource: GenomicResource,
-        prepared: dict[str, _TextColumn] | None = None,
-    ) -> dict[str, str]:
-        """Map each barcode of ``resource``'s rows to its group.
-
-        The rows are those every filter conjunct selects, as a boolean
-        mask; a row whose group is empty names no group and is left out,
-        so its barcode maps nowhere.  A barcode on more than one row is
-        a :class:`DuplicateBarcodeError`.  ``prepared`` is
-        :meth:`prepare_filters` of ``table``, when the caller holds it.
-        """
-        if prepared is None:
-            prepared = self.prepare_filters(table)
-        mask = np.ones(len(table), dtype=bool)
-        for conjunct in self.filters:
-            mask &= prepared[conjunct.column].matches(
-                conjunct.operand(resource))
-        rows = table[mask]
-        mapping: dict[str, str] = {}
-        seen: Counter[str] = Counter()
-        for barcode, group in zip(
-                rows[self.cell_meta_column].tolist(),
-                rows[self.group_meta_column].tolist(), strict=True):
-            barcode_text, group_text = _as_text(barcode), _as_text(group)
-            if barcode_text is None:
-                continue
-            seen[barcode_text] += 1
-            if group_text is not None:
-                mapping[barcode_text] = group_text
-        repeated = sorted(
-            barcode for barcode, count in seen.items() if count > 1)
-        if repeated:
-            raise DuplicateBarcodeError(
-                f"barcodes {_quoted(repeated)} appear on more than one "
-                f"of its rows")
-        return mapping
-
-    @property
-    def score_id(self) -> str:
-        """The fragment score a group is looked up by."""
-        return self.cell_score_id
-
-    @property
-    def dropped_reason(self) -> str:
-        return (
-            "their barcode absent from the cell metadata rows or of no "
-            "group")
-
-    def track_maps(
-        self, grr: GenomicResourceRepo, resources: list[GenomicResource],
-        index_of: dict[str, int],
-    ) -> list[dict[str, int]]:
-        """Per resource, each barcode's track index; the table read once."""
-        table = self.table.load(grr)
-        prepared = self.prepare_filters(table)
-        return [
-            {
-                barcode: index_of[group]
-                for barcode, group in self.groups_of(
-                    table, resource, prepared).items()
-                if group in index_of
-            }
-            for resource in resources
-        ]
-
-    @property
-    def parameters(self) -> dict[str, Any]:
-        return {
-            "cell_score_id": self.cell_score_id,
-            "cell_meta_column": self.cell_meta_column,
-            "group_meta_column": self.group_meta_column,
-            **self.table.parameters,
-            "filter": [
-                {"column": f.column, "value": f.value, "label": f.label}
-                for f in self.filters
-            ],
-        }
-
-
-@dataclass(frozen=True)
-class ValueGrouping:
-    """How a fragment's raw value of a ``str`` score becomes a group.
-
-    The group of a fragment of the job's ``index``-th resource is
-    ``prefixes[index]`` followed by its ``group_score_id`` value -- the
-    resource's ``<sample_id>:`` in a pooled job, nothing in an unpooled
-    one -- when ``values[index]``, the values its histogram lists, has
-    that value, and none otherwise.
-    """
-
-    group_score_id: str
-    prefixes: tuple[str, ...]
-    values: tuple[tuple[str, ...], ...]
-
-    @property
-    def score_id(self) -> str:
-        """The fragment score whose value is the group."""
-        return self.group_score_id
-
-    @property
-    def dropped_reason(self) -> str:
-        return (
-            f"their {self.group_score_id!r} value missing or not among "
-            f"the score's histogram values")
-
-    def track_maps(
-        self,
-        grr: GenomicResourceRepo,  # ruff: ignore[unused-method-argument]
-        resources: list[GenomicResource],
-        index_of: dict[str, int],
-    ) -> list[dict[str, int]]:
-        """Per resource, each of its values' track index."""
-        # pylint: disable=unused-argument
-        assert len(resources) == len(self.prefixes) == len(self.values)
-        return [
-            {value: index_of[prefix + value] for value in values}
-            for prefix, values in zip(self.prefixes, self.values, strict=True)
-        ]
-
-    @property
-    def parameters(self) -> dict[str, Any]:
-        return {VALUE_GROUP_KEY: self.group_score_id}
+__all__ = [
+    "AGGREGATE_KEYS",
+    "BARCODE_COLUMN",
+    "CELL_GROUP_DEFAULTS",
+    "CELL_GROUP_KEYS",
+    "CELL_META_RESOURCE_ID_LABEL",
+    "CELL_SCORE",
+    "CLASS_COLUMN",
+    "CONVENTION_META",
+    "COUNT_SCORE",
+    "COVERAGE_PROFILE",
+    "DEFAULT_GROUP",
+    "ENTRY_KEYS",
+    "FILE_FORMATS",
+    "FILTER_KEYS",
+    "FRAGMENT_LENGTH",
+    "FRAGMENT_START",
+    "GROUP_KEYS",
+    "META_FILE_KEYS",
+    "META_KEYS",
+    "META_SOURCE_KEYS",
+    "MODES",
+    "MOVED_TO_VALUE",
+    "SAMPLE_ID_COLUMN",
+    "SAMPLE_ID_LABEL",
+    "VALUE_GROUP_KEY",
+    "VALUE_KEYS",
+    "CellGrouping",
+    "DuplicateBarcodeError",
+    "FragmentBinningJob",
+    "FragmentScoreBinding",
+    "FragmentScoreBinner",
+    "MetaFilter",
+    "MetaTable",
+    "ValueGrouping",
+]
 
 
 def _fragment_def(track: Track) -> FragmentScoreDef:
@@ -538,614 +251,6 @@ class FragmentBinningJob(BinningJob):
                 or self.grouping.table.path is None:
             return ()
         return (self.grouping.table.path,)
-
-
-@dataclass(frozen=True)
-class _FragmentValue:
-    """What one fragment adds: a numeric score's value, or a constant.
-
-    Exactly one of ``score_id`` and a constant ``value``; the default is
-    the constant 1, so a bin's ``sum`` is its fragment count.
-    """
-
-    score_id: str | None
-    value: float
-
-    @classmethod
-    def parse(
-        cls, label: str, config: Any, matches: list[GenomicResource],
-    ) -> _FragmentValue:
-        """Resolve an entry's ``value`` block against its matches.
-
-        A score must be numeric in every matched resource.
-        """
-        check_keys(label, config, VALUE_KEYS)
-        if len(config) != 1:
-            raise RunDefinitionError(
-                f"{label}: give one of score_id or value"
-                f"{', not both' if config else ''}")
-        if "score_id" not in config:
-            value = config["value"]
-            if isinstance(value, bool) or not isinstance(value, int | float):
-                raise RunDefinitionError(
-                    f"{label}: value must be a number, not {value!r}")
-            return cls(score_id=None, value=value)
-        score_id = _require_text(label, "score_id", config["score_id"])
-        for resource in matches:
-            value_type = _score_type(label, resource, score_id)
-            if value_type not in NUMERIC_VALUE_TYPES:
-                raise RunDefinitionError(
-                    f"{label}: resource {resource.resource_id!r} score "
-                    f"{score_id!r} is of type {value_type!r}; only a "
-                    f"numeric score (int or float) can be aggregated")
-        return cls(score_id=score_id, value=1)
-
-    @classmethod
-    def default(cls) -> _FragmentValue:
-        """The value of an entry that states none: 1 per fragment."""
-        return cls(score_id=None, value=1)
-
-
-@dataclass(frozen=True)
-class _Aggregate:
-    """How a bin reduces the values of its fragments.
-
-    ``mode`` says which fragments reach a bin; ``aggregator`` is the
-    fold over their values.  The default is :data:`FRAGMENT_START` and
-    ``sum``.
-    """
-
-    mode: str
-    aggregator: str
-    #: What an uncovered base adds, with a weight of 1 bp; ``None``,
-    #: nothing.  :data:`FRAGMENT_START` takes none.
-    uncovered_value: float | None = None
-
-    @classmethod
-    def parse(cls, label: str, config: Any) -> _Aggregate:
-        """Resolve an entry's ``aggregate`` block.
-
-        The aggregator must be one the mode's fold accepts, and
-        ``uncovered_value`` a number or ``null``, not given in
-        :data:`FRAGMENT_START` mode; omitted, it is ``0`` in
-        :data:`COVERAGE_PROFILE` mode and ``None`` otherwise.  What one
-        fragment adds is ``value``'s, and refused here.
-        """
-        if isinstance(config, dict):
-            for key, value_key in MOVED_TO_VALUE.items():
-                if key in config:
-                    raise RunDefinitionError(
-                        f"{label}: {key} is not an aggregate key; what one "
-                        f"fragment adds is the entry's value key: give "
-                        f"value: {{{value_key}: {config[key]}}}")
-        check_keys(label, config, AGGREGATE_KEYS)
-        mode = config.get("mode", FRAGMENT_START)
-        if mode not in MODES:
-            raise RunDefinitionError(
-                f"{label}: mode {mode!r} is not supported; use one of "
-                f"{', '.join(MODES)}")
-        aggregator = _require_text(
-            label, "aggregator", config.get("aggregator", "sum"))
-        if aggregator not in EMPTY_BIN_VALUES:
-            raise RunDefinitionError(
-                f"{label}: aggregator {aggregator!r} does not produce a "
-                f"number; use one of {', '.join(sorted(EMPTY_BIN_VALUES))}")
-        if mode == FRAGMENT_START:
-            if "uncovered_value" in config:
-                raise RunDefinitionError(
-                    f"{label}: uncovered_value does not apply in "
-                    f"{FRAGMENT_START} mode, where a bin reduces only the "
-                    f"fragments starting in it; give mode: "
-                    f"{FRAGMENT_LENGTH} or {COVERAGE_PROFILE}, or drop "
-                    f"uncovered_value")
-            return cls(mode=mode, aggregator=aggregator)
-        if aggregator == "count":
-            raise RunDefinitionError(
-                f"{label}: aggregator 'count' would count base pairs, not "
-                f"fragments, in {mode} mode; for the covered base pairs "
-                f"give aggregator: sum with value: {{value: 1}}")
-        if aggregator not in LENGTH_AGGREGATORS:
-            raise RunDefinitionError(
-                f"{label}: aggregator {aggregator!r} would weigh a value "
-                f"by its overlap as a power in {mode} mode; use one of "
-                f"{', '.join(LENGTH_AGGREGATORS)}")
-        uncovered = config.get(
-            "uncovered_value", 0 if mode == COVERAGE_PROFILE else None)
-        return cls(
-            mode=mode, aggregator=aggregator,
-            uncovered_value=_uncovered_value(label, uncovered))
-
-    @classmethod
-    def default(cls) -> _Aggregate:
-        """The aggregate of an entry that states none: the sum."""
-        return cls(mode=FRAGMENT_START, aggregator="sum")
-
-
-def _uncovered_value(label: str, uncovered: Any) -> float | None:
-    """``uncovered`` as a finite float, or None; anything else is refused.
-
-    NaN is refused because it is the output's marker for no uncovered
-    value, and an infinity or an integer too large for a float because
-    neither fills a bin with a number.
-    """
-    if uncovered is None:
-        return None
-    value = math.nan
-    if not isinstance(uncovered, bool) and isinstance(uncovered, int | float):
-        try:
-            value = float(uncovered)
-        except OverflowError:
-            value = math.nan
-    if not math.isfinite(value):
-        raise RunDefinitionError(
-            f"{label}: uncovered_value must be a number or null, not "
-            f"{uncovered!r}")
-    return value
-
-
-def _score_type(
-    label: str, resource: GenomicResource, score_id: Any,
-) -> str:
-    """The value type of ``resource``'s score ``score_id``, which must exist."""
-    definitions = FragmentScore(resource).score_definitions
-    if score_id not in definitions:
-        raise RunDefinitionError(
-            f"{label}: resource {resource.resource_id!r} has no score "
-            f"{score_id!r}; its scores are {sorted(definitions)}")
-    return definitions[score_id].value_type
-
-
-def _require_text(label: str, key: str, value: Any) -> str:
-    if not isinstance(value, str) or not value:
-        raise RunDefinitionError(
-            f"{label}: {key} must be a non-empty string, not {value!r}")
-    return value
-
-
-def _is_single_cell(resource: GenomicResource) -> bool:
-    """Whether ``resource`` has the convention's cell and count scores."""
-    definitions = FragmentScore(resource).score_definitions
-    return CELL_SCORE in definitions and COUNT_SCORE in definitions
-
-
-def _is_labelled(resource: GenomicResource) -> bool:
-    """Whether ``resource`` names its cell metadata -- the label tier."""
-    return resource.get_labels().get(CELL_META_RESOURCE_ID_LABEL) \
-        is not None
-
-
-@dataclass(frozen=True)
-class _Group:
-    """An entry's ``group``: at most one of its three forms.
-
-    The ``constant`` group name, the metadata grouping's three
-    ``cell_keys``, or the ``value_score`` whose raw values group; all
-    ``None`` when the entry gives no ``group``, so that the resources'
-    labels decide.
-    """
-
-    constant: str | None = None
-    cell_keys: dict[str, str] | None = None
-    value_score: str | None = None
-
-    @classmethod
-    def parse(cls, label: str, config: Any) -> _Group:
-        """Parse an entry's ``group`` block; ``None`` when it is omitted."""
-        if config is None:
-            return cls()
-        check_keys(label, config, GROUP_KEYS)
-        forms = [
-            form for form, keys in (
-                ("group", {"group"}),
-                ("cell_score_id, cell_meta_column and group_meta_column",
-                 CELL_GROUP_KEYS),
-                (VALUE_GROUP_KEY, {VALUE_GROUP_KEY}))
-            if keys & config.keys()]
-        if len(forms) > 1:
-            given = "both" if len(forms) == 2 else "all of"
-            raise RunDefinitionError(
-                f"{label}: give one form of group -- group; cell_score_id, "
-                f"cell_meta_column and group_meta_column; or "
-                f"{VALUE_GROUP_KEY} -- not {given} {'; '.join(forms)}")
-        if "group" in config:
-            return cls(constant=_require_text(label, "group", config["group"]))
-        if VALUE_GROUP_KEY in config:
-            return cls(value_score=_require_text(
-                label, VALUE_GROUP_KEY, config[VALUE_GROUP_KEY]))
-        return cls(cell_keys={
-            key: _require_text(label, key, config.get(key, default))
-            for key, default in CELL_GROUP_DEFAULTS.items()})
-
-
-def _parse_filters(label: str, config: Any) -> tuple[MetaFilter, ...]:
-    if config is None:
-        return ()
-    if not isinstance(config, list):
-        raise RunDefinitionError(
-            f"{label}: expected a list of {{column, value | label}} "
-            f"conjuncts")
-    filters = []
-    for index, conjunct in enumerate(config):
-        item = f"{label}[{index}]"
-        check_keys(item, conjunct, FILTER_KEYS)
-        column = _require_text(item, "column", conjunct.get("column"))
-        if ("value" in conjunct) == ("label" in conjunct):
-            raise RunDefinitionError(
-                f"{item}: give exactly one of value or label")
-        if "label" in conjunct:
-            filters.append(MetaFilter(column, label=_require_text(
-                item, "label", conjunct["label"])))
-        else:
-            value = _as_text(conjunct["value"])
-            if value is None:
-                raise RunDefinitionError(
-                    f"{item}: value must not be empty")
-            filters.append(MetaFilter(column, value=value))
-    return tuple(filters)
-
-
-@dataclass(frozen=True)
-class _MetaSpec:
-    """A ``meta`` block: one table source and the filter of its rows.
-
-    The source is a fixed ``table`` -- a resource id or a local file --
-    or ``resource_label``, the label whose value on each fragment
-    resource is the id of its table.
-    """
-
-    filters: tuple[MetaFilter, ...]
-    table: MetaTable | None = None
-    resource_label: str | None = None
-
-    @classmethod
-    def parse(
-        cls, label: str, config: Any, base_dir: str | None,
-    ) -> _MetaSpec:
-        """Parse a ``meta`` block; a local file is read from ``base_dir``."""
-        check_keys(label, config, META_KEYS)
-        sources = sorted(META_SOURCE_KEYS & config.keys())
-        if len(sources) != 1:
-            raise RunDefinitionError(
-                f"{label}: give exactly one of resource_id, resource_label "
-                f"or file_name; got {', '.join(sources) or 'none'}")
-        (source,) = sources
-        if source != "file_name" and META_FILE_KEYS & config.keys():
-            raise RunDefinitionError(
-                f"{label}: file_format and file_separator go only with "
-                f"file_name")
-        filters = _parse_filters(f"{label}.filter", config.get("filter"))
-        if source == "resource_id":
-            return cls(filters, table=MetaTable(resource_id=_require_text(
-                label, "resource_id", config["resource_id"])))
-        if source == "resource_label":
-            return cls(filters, resource_label=_require_text(
-                label, "resource_label", config["resource_label"]))
-        return cls(filters, table=_parse_local_table(label, config, base_dir))
-
-    def table_of(self, label: str, resource: GenomicResource) -> MetaTable:
-        """The table whose rows map ``resource``'s barcodes."""
-        if self.table is not None:
-            return self.table
-        assert self.resource_label is not None
-        value = resource.get_labels().get(self.resource_label)
-        if value is None:
-            raise RunDefinitionError(
-                f"{label}: resource {resource.resource_id!r} has no label "
-                f"{self.resource_label!r} naming its cell metadata table; "
-                f"label it, or give meta a resource_id or a file_name")
-        if not isinstance(value, str) or not value:
-            raise RunDefinitionError(
-                f"{label}: resource {resource.resource_id!r} label "
-                f"{self.resource_label!r} must name one data_frame "
-                f"resource, not {value!r}")
-        return MetaTable(resource_id=value)
-
-
-#: ``meta`` omitted under a metadata grouping: the convention's table.
-CONVENTION_META = _MetaSpec(
-    filters=(MetaFilter(SAMPLE_ID_COLUMN, label=SAMPLE_ID_LABEL),),
-    resource_label=CELL_META_RESOURCE_ID_LABEL)
-
-
-def _parse_local_table(
-    label: str, config: dict[str, Any], base_dir: str | None,
-) -> MetaTable:
-    """A local table, its relative name read from ``base_dir``.
-
-    Made absolute here, since the tasks run inside the work directory.
-    """
-    file_name = _require_text(label, "file_name", config["file_name"])
-    path = os.path.abspath(os.path.join(
-        base_dir if base_dir is not None else os.getcwd(),
-        os.path.expanduser(file_name)))
-    file_format = config.get("file_format")
-    if file_format is None:
-        suffix = os.path.splitext(path)[1].lower()
-        file_format = {".tsv": "tsv", ".xls": "excel", ".xlsx": "excel"}\
-            .get(suffix, "csv")
-    file_format = _require_text(label, "file_format", file_format)
-    if file_format not in FILE_FORMATS:
-        raise RunDefinitionError(
-            f"{label}: file_format must be one of "
-            f"{', '.join(FILE_FORMATS)}, not {file_format!r}")
-    separator = config.get("file_separator")
-    if separator is not None:
-        if file_format == "excel":
-            raise RunDefinitionError(
-                f"{label}: file_separator does not apply to an excel file")
-        separator = _require_text(label, "file_separator", separator)
-    return MetaTable(
-        path=path, file_format=file_format, file_separator=separator)
-
-
-class _Tables:
-    """The metadata tables an entry reads, each loaded and checked once."""
-
-    def __init__(self, label: str, grr: GenomicResourceRepo) -> None:
-        self.label = label
-        self.grr = grr
-        self.loaded: dict[MetaTable, pd.DataFrame] = {}
-
-    def load(
-        self, table: MetaTable, resource_ids: Iterable[str],
-    ) -> pd.DataFrame:
-        """Read ``table`` for ``resource_ids``, named in any refusal."""
-        if table in self.loaded:
-            return self.loaded[table]
-        whose = f"resource(s) {_quoted(resource_ids)}"
-        if table.resource_id is not None:
-            meta = self.grr.find_resource(table.resource_id)
-            if meta is None:
-                raise RunDefinitionError(
-                    f"{self.label}: {whose} name the cell metadata table "
-                    f"{table.resource_id!r}, which the repository does "
-                    f"not have")
-            if meta.get_type() != "data_frame":
-                raise RunDefinitionError(
-                    f"{self.label}: {whose} name the cell metadata table "
-                    f"{table.resource_id!r}, a {meta.get_type()} resource, "
-                    f"not a data_frame")
-        try:
-            frame = table.load(self.grr)
-        # ImportError: a legacy .xls needs xlrd, which gain does not
-        # depend on.
-        except (OSError, ValueError, BadZipFile, ImportError) as err:
-            what = (
-                f"resource {table.resource_id!r} cannot be read as a "
-                f"data_frame" if table.resource_id is not None
-                else f"the local file {table.path!r} cannot be read")
-            raise RunDefinitionError(
-                f"{self.label}: the cell metadata table of {whose}: "
-                f"{what}: {err}") from err
-        self.loaded[table] = frame
-        return frame
-
-
-def _resolve_grouping(
-    label: str, cell_keys: dict[str, str], meta: _MetaSpec,
-    resources: list[GenomicResource], tables: _Tables,
-) -> tuple[CellGrouping, dict[str, set[str]]]:
-    """Resolve one job's metadata grouping, and each resource's groups.
-
-    A job reads one table, so resources pooled into it must name the
-    same one.
-    """
-    meta_label = f"{label}.meta"
-    named: dict[MetaTable, list[str]] = defaultdict(list)
-    for resource in resources:
-        named[meta.table_of(meta_label, resource)].append(
-            resource.resource_id)
-    if len(named) > 1:
-        sides = "; ".join(
-            f"{table.name!r} for {_quoted(ids)}"
-            for table, ids in named.items())
-        raise RunDefinitionError(
-            f"{meta_label}: the pooled resources name different cell "
-            f"metadata tables: {sides}; a pooled entry reads one table -- "
-            f"give pool: false, one entry per study, or an explicit "
-            f"shared meta: {{resource_id: ...}}")
-    ((table, resource_ids),) = named.items()
-    grouping = CellGrouping(table=table, filters=meta.filters, **cell_keys)
-    frame = tables.load(table, resource_ids)
-    columns = [
-        grouping.cell_meta_column, grouping.group_meta_column,
-        *(conjunct.column for conjunct in grouping.filters)]
-    for column in columns:
-        if column not in frame.columns:
-            raise RunDefinitionError(
-                f"{meta_label}: the cell metadata table {table.name!r} of "
-                f"resource(s) {_quoted(resource_ids)} has no column "
-                f"{column!r}; its columns are "
-                f"{[str(c) for c in frame.columns]}")
-    prepared = grouping.prepare_filters(frame)
-    groups_of: dict[str, set[str]] = {}
-    for resource in resources:
-        _score_type(label, resource, grouping.cell_score_id)
-        for conjunct in grouping.filters:
-            if conjunct.label is None:
-                continue
-            value = resource.get_labels().get(conjunct.label)
-            if isinstance(value, list):
-                raise RunDefinitionError(
-                    f"{meta_label}.filter: resource "
-                    f"{resource.resource_id!r} label {conjunct.label!r} "
-                    f"is a list, {value!r}; a filter compares a column "
-                    f"to one value")
-            if conjunct.operand(resource) is None:
-                raise RunDefinitionError(
-                    f"{meta_label}.filter: resource "
-                    f"{resource.resource_id!r} has no label "
-                    f"{conjunct.label!r} to filter {conjunct.column!r} by")
-        try:
-            mapping = grouping.groups_of(frame, resource, prepared)
-        except DuplicateBarcodeError as err:
-            raise RunDefinitionError(
-                f"{meta_label}: in the cell metadata table {table.name!r}, "
-                f"the rows of resource {resource.resource_id!r}: "
-                f"{err}") from err
-        groups_of[resource.resource_id] = set(mapping.values())
-    return grouping, groups_of
-
-
-def _stored_histogram_type(
-    resource: GenomicResource, filename: str,
-) -> str | None:
-    """The ``config.type`` of a stored histogram file, as written.
-
-    ``None`` when the file is absent or is not a histogram's JSON.
-    """
-    try:
-        with resource.open_raw_file(filename, mode="rb") as infile:
-            content = infile.read()
-        if filename.endswith(".gz"):
-            content = gzip.decompress(content)
-        data = json.loads(content)
-    except (OSError, ValueError):
-        return None
-    config = data.get("config") if isinstance(data, dict) else None
-    kind = config.get("type") if isinstance(config, dict) else None
-    return kind if isinstance(kind, str) else None
-
-
-def _value_groups(
-    label: str, resource: GenomicResource, score_id: str,
-) -> list[str]:
-    """The distinct values of ``resource``'s ``str`` score, sorted.
-
-    Read from the score's full categorical histogram; a histogram that
-    cannot give every value -- absent, unpulled, annulled or truncated --
-    is refused, naming the resource and how to repair it.
-    """
-    whose = f"{label}: resource {resource.resource_id!r} score {score_id!r}"
-    rebuild = (
-        "pull its data (dvc pull), or build its statistics (grr_manage "
-        "repo-stats or resource-stats)")
-    score = FragmentScore(resource)
-    config = score.get_histogram_config(score_id)
-    if isinstance(config, NullHistogramConfig):
-        raise RunDefinitionError(
-            f"{whose}: its definition annuls its histogram "
-            f"({config.reason!r}), so no statistics list its values; "
-            f"declare histogram: {{type: categorical}} on the score and "
-            f"rebuild its statistics")
-    try:
-        histogram = score.get_score_histogram(score_id)
-    except HistogramError as err:
-        raise RunDefinitionError(
-            f"{whose}: its full histogram, which lists the groups, cannot "
-            f"be read: {err}; {rebuild}") from err
-    if isinstance(histogram, NullHistogram):
-        # The statistics scan stores a null histogram for a categorical
-        # config only when its values pass the cap, which only a config
-        # without enforce_type has.  Anything else read back as null --
-        # no stored file, or one the scan did not write -- is rebuilt.
-        if isinstance(config, CategoricalHistogramConfig) \
-                and not config.enforce_type \
-                and _stored_histogram_type(
-                    resource, score.get_histogram_filename(score_id),
-                ) == "null":
-            raise RunDefinitionError(
-                f"{whose} has more distinct values than the default "
-                f"categorical histogram keeps "
-                f"({CategoricalHistogram.UNIQUE_VALUES_LIMIT}): "
-                f"{histogram.reason!r}; declare histogram: {{type: "
-                f"categorical}} on the score and rebuild its statistics")
-        raise RunDefinitionError(
-            f"{whose} has no histogram listing its values: "
-            f"{histogram.reason!r}; {rebuild}")
-    if not isinstance(histogram, CategoricalHistogram):
-        raise RunDefinitionError(
-            f"{whose} has a {histogram.type}, not the categorical "
-            f"histogram listing its values")
-    if histogram.truncated:
-        raise RunDefinitionError(
-            f"{whose}: its histogram is truncated and does not list every "
-            f"value; {rebuild}")
-    return sorted({
-        text for text in map(_as_text, histogram.raw_values)
-        if text is not None})
-
-
-def _resolve_value_grouping(
-    label: str, score_id: str, fragment_value: _FragmentValue,
-    resources: list[GenomicResource], *, pool: bool,
-) -> tuple[ValueGrouping, list[str]]:
-    """Resolve one job's raw-value grouping, and its sorted groups.
-
-    Pooled, each resource's groups are prefixed with its
-    :data:`SAMPLE_ID_LABEL` label, which each must carry, without a
-    ``:``, so that a group name splits back one way only, and no two
-    may share, so that two resources' cells never reach one track.
-    """
-    group_label = f"{label}.group"
-    prefixes = [""] * len(resources)
-    if pool:
-        sample_ids = [
-            None if isinstance(value, list) else _as_text(value)
-            for value in (
-                r.get_labels().get(SAMPLE_ID_LABEL) for r in resources)]
-        unlabelled = [
-            r.resource_id
-            for r, sample_id in zip(resources, sample_ids, strict=True)
-            if sample_id is None]
-        if unlabelled:
-            raise RunDefinitionError(
-                f"{group_label}: a pooled {VALUE_GROUP_KEY} grouping "
-                f"prefixes each group with the resource's "
-                f"{SAMPLE_ID_LABEL!r} label, which {_quoted(unlabelled)} "
-                f"do not carry as one value; label them, or give "
-                f"pool: false")
-        coloned = [
-            f"{r.resource_id!r} ({sample_id!r})"
-            for r, sample_id in zip(resources, sample_ids, strict=True)
-            if sample_id is not None and ":" in sample_id]
-        if coloned:
-            raise RunDefinitionError(
-                f"{group_label}: a pooled {VALUE_GROUP_KEY} grouping "
-                f"names each group <{SAMPLE_ID_LABEL}>:<value>, so the "
-                f"{SAMPLE_ID_LABEL!r} label may not contain ':'; "
-                f"{', '.join(coloned)} does; relabel it, or give "
-                f"pool: false")
-        sharing: dict[str, list[str]] = {}
-        for resource, sample_id in zip(resources, sample_ids, strict=True):
-            assert sample_id is not None
-            sharing.setdefault(sample_id, []).append(resource.resource_id)
-        shared = [
-            f"{_quoted(ids)} ({sample_id!r})"
-            for sample_id, ids in sharing.items() if len(ids) > 1]
-        if shared:
-            raise RunDefinitionError(
-                f"{group_label}: a pooled {VALUE_GROUP_KEY} grouping "
-                f"keeps samples apart by their {SAMPLE_ID_LABEL!r} label, "
-                f"and {'; '.join(shared)} share one, which would merge "
-                f"their cells into the same tracks; label each resource "
-                f"with its own sample, or give pool: false")
-        prefixes = [f"{sample_id}:" for sample_id in sample_ids]
-    values = []
-    for resource in resources:
-        if score_id == fragment_value.score_id:
-            raise RunDefinitionError(
-                f"{group_label}: resource {resource.resource_id!r} score "
-                f"{score_id!r} is the aggregated score; group by another "
-                f"score")
-        value_type = _score_type(group_label, resource, score_id)
-        if value_type != "str":
-            raise RunDefinitionError(
-                f"{group_label}: resource {resource.resource_id!r} score "
-                f"{score_id!r} is of type {value_type!r}; only a str "
-                f"score's values group")
-        values.append(tuple(_value_groups(group_label, resource, score_id)))
-    groups = {
-        prefix + value
-        for prefix, of_resource in zip(prefixes, values, strict=True)
-        for value in of_resource}
-    if not groups:
-        raise RunDefinitionError(
-            f"{group_label}: the {score_id!r} histograms of "
-            f"{_quoted(r.resource_id for r in resources)} list no value")
-    return (
-        ValueGrouping(score_id, tuple(prefixes), tuple(values)),
-        sorted(groups))
 
 
 @dataclass(frozen=True)
