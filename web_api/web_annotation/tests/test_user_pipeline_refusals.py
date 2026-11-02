@@ -5,14 +5,31 @@ GET and DELETE address saved pipelines only. Any other id -- anything an
 anonymous caller sends, a temporary pipeline id, a non-integer -- answers
 a JSON 400 on GET and a no-op 204 on DELETE, never a 500 (#1674).
 """
+import pathlib
+from typing import Any
+
 import pytest
+from django.conf import settings
 from django.core.files.base import ContentFile
 from django.test import Client
+from pytest_mock import MockerFixture
 
 from web_annotation.models import Pipeline, TemporaryPipeline
 from web_annotation.pipeline_cache import LRUPipelineCache
 
 NOT_RECOGNIZED = {"reason": "Pipeline name not recognized!"}
+INVALID_NAME = {"reason": "Invalid pipeline name!"}
+
+
+def _config_files() -> set[pathlib.Path]:
+    return set(pathlib.Path(settings.ANNOTATION_CONFIG_STORAGE_DIR).rglob("*"))
+
+
+def _post_named_pipeline(client: Client, name: str) -> Any:
+    return client.post("/api/pipelines/user", {
+        "name": name,
+        "config": ContentFile("- position_score: scores/pos1"),
+    })
 
 
 def _save_pipeline(client: Client, name: str | None = None) -> str:
@@ -126,3 +143,89 @@ def test_delete_of_another_users_saved_pipeline_keeps_it(
     assert response.status_code == 204
     assert Pipeline.objects.filter(pk=int(admins_pipeline_id)).exists()
     assert patched_lru_cache.has_pipeline(admins_pipeline_id) is True
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("patched_lru_cache")
+@pytest.mark.parametrize("name", ["../x", "a\\b", "a\x00b"])
+def test_create_with_a_path_like_name_is_refused(
+    clients: dict[str, Client],
+    name: str,
+) -> None:
+    before = _config_files()
+
+    response = _post_named_pipeline(clients["user"], name)
+
+    assert response.status_code == 400
+    assert response.json() == INVALID_NAME
+    assert _config_files() == before
+    assert not Pipeline.objects.filter(name=name).exists()
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("patched_lru_cache")
+def test_create_with_an_absolute_name_is_refused(
+    clients: dict[str, Client],
+) -> None:
+    target = pathlib.Path(settings.DATA_STORAGE_DIR, "outside")
+
+    response = _post_named_pipeline(clients["user"], str(target))
+
+    assert response.status_code == 400
+    assert response.json() == INVALID_NAME
+    assert not target.with_suffix(".yaml").exists()
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("patched_lru_cache")
+@pytest.mark.parametrize("name", ["..", ".hidden"])
+def test_create_with_a_dot_name_is_refused(
+    clients: dict[str, Client],
+    name: str,
+) -> None:
+    before = _config_files()
+
+    response = _post_named_pipeline(clients["user"], name)
+
+    assert response.status_code == 400
+    assert response.json() == INVALID_NAME
+    assert _config_files() == before
+    assert not Pipeline.objects.filter(name=name).exists()
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("patched_lru_cache")
+@pytest.mark.parametrize("name", ["v1..2", "my pipeline"])
+def test_create_with_a_safe_name_saves_the_pipeline(
+    clients: dict[str, Client],
+    name: str,
+) -> None:
+    response = _post_named_pipeline(clients["user"], name)
+
+    assert response.status_code == 200
+    assert pathlib.Path(
+        settings.ANNOTATION_CONFIG_STORAGE_DIR,
+        "user@example.com",
+        f"{name}.yaml",
+    ).is_file()
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("patched_lru_cache")
+def test_create_refuses_a_path_outside_the_user_directory(
+    clients: dict[str, Client],
+    mocker: MockerFixture,
+) -> None:
+    mocker.patch(
+        "web_annotation.pipelines.views.pipeline_name_error",
+        return_value=None,
+    )
+
+    response = _post_named_pipeline(clients["user"], "../x")
+
+    assert response.status_code == 400
+    assert response.json() == INVALID_NAME
+    assert not pathlib.Path(
+        settings.ANNOTATION_CONFIG_STORAGE_DIR, "x.yaml",
+    ).exists()
+    assert not Pipeline.objects.filter(name="../x").exists()
