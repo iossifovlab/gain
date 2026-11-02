@@ -27,8 +27,8 @@ def test_custom_levels_present() -> None:
 
 def test_getlogger_returns_logger_with_custom_methods() -> None:
     logger = logging.getLogger("gain.test.proxy")
-    assert callable(logger.trace)  # type: ignore[attr-defined]
-    assert callable(logger.user_info)  # type: ignore[attr-defined]
+    assert callable(logger.trace)
+    assert callable(logger.user_info)
 
 
 def test_getlevelnamesmapping_reexported() -> None:

@@ -136,7 +136,7 @@ def test_the_table_layer_imports_nothing_from_the_score_layer() -> None:
         "gain.genomic_resources.score_resource",
         "gain.genomic_resources.score_implementation",
     }
-    offenders = []
+    offenders: list[str] = []
     for py in pathlib.Path(table_pkg).rglob("*.py"):
         text = py.read_text(encoding="utf8")
         offenders.extend(

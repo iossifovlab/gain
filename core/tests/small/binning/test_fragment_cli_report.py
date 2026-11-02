@@ -22,6 +22,7 @@ from gain.binning.fragment_binner import (
     SAMPLE_ID_LABEL,
 )
 from gain.genomic_resources.testing.builders import (
+    FragmentScoreBuilder,
     a_fragment_score,
     a_grr,
     a_reference_genome,
@@ -32,7 +33,7 @@ from tests.small.binning.conftest import CELL_META, S1_FRAGMENTS
 from tests.small.binning.test_binning_tool_cli import binning_tool
 
 
-def single_cell(**labels: str) -> object:
+def single_cell(**labels: str) -> FragmentScoreBuilder:
     return (
         a_fragment_score()
         .with_score(CELL_SCORE, "str").with_score(COUNT_SCORE, "int")

@@ -286,7 +286,8 @@ def test_a_length_fold_refuses_a_fragment_out_of_start_order() -> None:
 
 # The prototype's five length cases, on the global grid: a region ending
 # at 25 answers the whole bin 21-30 and fills it to 25 only.
-PROTOTYPE_FRAGMENTS = [(9, 14, 1), (14, 18, 2), (18, 26, 3)]
+PROTOTYPE_FRAGMENTS: list[tuple[int, int, float]] = [
+    (9, 14, 1), (14, 18, 2), (18, 26, 3)]
 
 
 def test_prototype_length() -> None:

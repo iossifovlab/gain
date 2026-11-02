@@ -38,6 +38,8 @@ from gain.binning.fragment_binner import (
     COUNT_SCORE,
     SAMPLE_ID_COLUMN,
     SAMPLE_ID_LABEL,
+    FragmentBinningJob,
+    FragmentScoreBinding,
 )
 from gain.binning.run_definition import (
     RunDefinition,
@@ -64,6 +66,10 @@ BIN_SIZE = 10
 KIND = "fragment_score_binner"
 CHR1 = BedRegion("chr1", 1, 40)
 S1_COUNT_BY_CLASS = [[1.0, 1.0], [0.0, 1.0], [0.0, 0.0], [0.0, 0.0]]
+#: Label keyword arguments of ``fragments``.  Typed ``Any`` so that mypy
+#: does not match the label values against ``count_type`` and ``cell``.
+S1_LABELS: dict[str, Any] = {SAMPLE_ID_LABEL: "S1"}
+META_LABELS: dict[str, Any] = {CELL_META_RESOURCE_ID_LABEL: "meta/cells"}
 
 
 def without_column(data: str, name: str) -> str:
@@ -98,10 +104,11 @@ def fragments(
 
 def labelled(sample: str, meta: str = "meta/cells", **labels: Any) -> Any:
     """A fragment resource of ``sample`` following the convention."""
+    convention: dict[str, Any] = {
+        SAMPLE_ID_LABEL: sample, CELL_META_RESOURCE_ID_LABEL: meta}
     return fragments(
         S1_FRAGMENTS if sample == "S1" else S2_FRAGMENTS,
-        **{SAMPLE_ID_LABEL: sample, CELL_META_RESOURCE_ID_LABEL: meta},
-        **labels)
+        **convention, **labels)
 
 
 def build_repo(
@@ -167,7 +174,7 @@ def test_an_unlabelled_resource_is_one_all_track_counting_fragments(
     # are not all 1, so a sum of them would differ.  The sample label
     # alone does not group.
     repo = build_repo(tmp_path, ("frags/s1", fragments(
-        count_type=count_type, cell=cell, **{SAMPLE_ID_LABEL: "S1"})))
+        count_type=count_type, cell=cell, **S1_LABELS)))
 
     run = parse({"resource_query": "frags/s1"}, repo, genome)
 
@@ -185,7 +192,7 @@ def test_value_score_id_count_gives_the_read_pairs_per_bin(
     # Read pairs are what a single-cell resource's count score holds;
     # an entry asks for them by name.
     repo = build_repo(
-        tmp_path, ("frags/s1", fragments(**{SAMPLE_ID_LABEL: "S1"})),
+        tmp_path, ("frags/s1", fragments(**S1_LABELS)),
         ("frags/lab", labelled("S1")))
 
     plain = parse({"resource_query": "frags/s1",
@@ -407,7 +414,7 @@ def test_a_filter_label_absent_or_a_list_is_refused_naming_the_resource(
     labels: dict[str, Any], fragments_: list[str],
 ) -> None:
     repo = build_repo(tmp_path, ("frags/s1", fragments(
-        **{CELL_META_RESOURCE_ID_LABEL: "meta/cells"}, **labels)))
+        **META_LABELS, **labels)))
 
     message = refusal({"resource_query": "frags/s1"}, repo, genome)
 
@@ -420,7 +427,7 @@ def test_a_pool_across_label_tiers_is_refused_naming_each_side(
 ) -> None:
     repo = build_repo(
         tmp_path, ("frags/a", labelled("S1")), ("frags/b", labelled("S2")),
-        ("frags/c", fragments(**{SAMPLE_ID_LABEL: "S1"})))
+        ("frags/c", fragments(**S1_LABELS)))
 
     message = refusal({"resource_query": "frags/*"}, repo, genome)
 
@@ -499,6 +506,7 @@ def test_dropped_fragments_are_counted_and_logged_per_resource_and_region(
         bound.bin_region(CHR1, BIN_SIZE)
         bound.bin_region(chr2, BIN_SIZE)
 
+    assert isinstance(bound, FragmentScoreBinding)
     assert bound.dropped == {
         ("frags/s1", "chr1:1-40"): 2, ("frags/s1", "chr2:1-40"): 0}
     logged = [r.getMessage() for r in caplog.records
@@ -522,6 +530,7 @@ def test_a_fully_annotated_resource_drops_no_fragment(
     with discover_binner_kinds()[job.binner].bind(job, repo) as bound:
         bound.bin_region(CHR1, BIN_SIZE)
 
+    assert isinstance(bound, FragmentScoreBinding)
     assert bound.dropped == {("frags/s1", "chr1:1-40"): 0}
 
 
@@ -547,7 +556,7 @@ def test_a_local_table_bins_as_the_same_data_frame_resource(
     tmp_path: pathlib.Path, genome: ReferenceGenome, file_format: str,
 ) -> None:
     repo = build_repo(tmp_path, ("frags/s1", fragments(
-        **{SAMPLE_ID_LABEL: "S1"})))
+        **S1_LABELS)))
     resource = parse({"resource_query": "frags/s1", "group": {}, "meta": {
         "resource_id": "meta/cells", "filter": BY_SAMPLE}}, repo, genome)
     file_name = write_cell_meta(tmp_path / "local", file_format)
@@ -562,7 +571,9 @@ def test_a_local_table_bins_as_the_same_data_frame_resource(
     np.testing.assert_array_equal(
         bin_job(local.jobs[0], CHR1, repo),
         bin_job(resource.jobs[0], CHR1, repo))
-    assert local.jobs[0].local_files == (
+    local_job = local.jobs[0]
+    assert isinstance(local_job, FragmentBinningJob)
+    assert local_job.local_files == (
         str(tmp_path / "local" / file_name),)
 
 
@@ -570,7 +581,7 @@ def test_a_local_table_s_separator_can_be_given(
     tmp_path: pathlib.Path, genome: ReferenceGenome,
 ) -> None:
     repo = build_repo(tmp_path, ("frags/s1", fragments(
-        **{SAMPLE_ID_LABEL: "S1"})))
+        **S1_LABELS)))
     (tmp_path / "cells.txt").write_text(CELL_META.replace(",", ";"))
 
     run = parse({"resource_query": "frags/s1", "group": {}, "meta": {
@@ -584,7 +595,7 @@ def test_an_unreadable_local_table_is_refused_naming_the_file(
     tmp_path: pathlib.Path, genome: ReferenceGenome,
 ) -> None:
     repo = build_repo(tmp_path, ("frags/s1", fragments(
-        **{SAMPLE_ID_LABEL: "S1"})))
+        **S1_LABELS)))
 
     with pytest.raises(RunDefinitionError) as excinfo:
         parse({"resource_query": "frags/s1", "group": {}, "meta": {
@@ -601,7 +612,7 @@ def test_a_legacy_xls_table_is_refused_naming_the_file(
 ) -> None:
     # A legacy (OLE2) .xls needs a reader gain does not depend on.
     repo = build_repo(tmp_path, ("frags/s1", fragments(
-        **{SAMPLE_ID_LABEL: "S1"})))
+        **S1_LABELS)))
     legacy = tmp_path / "cells.xls"
     legacy.write_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\0" * 504)
 
@@ -619,7 +630,7 @@ def test_a_file_format_that_is_not_text_is_refused_naming_the_entry(
     tmp_path: pathlib.Path, genome: ReferenceGenome,
 ) -> None:
     repo = build_repo(tmp_path, ("frags/s1", fragments(
-        **{SAMPLE_ID_LABEL: "S1"})))
+        **S1_LABELS)))
     write_cell_meta(tmp_path, "csv")
 
     with pytest.raises(RunDefinitionError) as excinfo:

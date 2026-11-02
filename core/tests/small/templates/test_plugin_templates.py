@@ -13,8 +13,8 @@ from tests.small.templates.conftest import make_entry_point
 
 
 class TestPluginTemplateRegistration:
-    def test_plugin_template_is_accessible(self):
-        def my_plugin():
+    def test_plugin_template_is_accessible(self) -> None:
+        def my_plugin() -> dict[str, str]:
             return {"my_plugin.jinja": "Hello {{ name }}!"}
 
         ep = make_entry_point("my_plugin", my_plugin)
@@ -23,11 +23,11 @@ class TestPluginTemplateRegistration:
 
         assert result == "Hello world!"
 
-    def test_multiple_plugins_register_distinct_templates(self):
-        def plugin_a():
+    def test_multiple_plugins_register_distinct_templates(self) -> None:
+        def plugin_a() -> dict[str, str]:
             return {"plugin_a.jinja": "A: {{ v }}"}
 
-        def plugin_b():
+        def plugin_b() -> dict[str, str]:
             return {"plugin_b.jinja": "B: {{ v }}"}
 
         eps = [
@@ -42,18 +42,18 @@ class TestPluginTemplateRegistration:
         assert result_a == "A: x"
         assert result_b == "B: y"
 
-    def test_unregistered_template_raises_not_found(self):
+    def test_unregistered_template_raises_not_found(self) -> None:
         with (
             patch("gain.templates.entry_points", return_value=[]),
             pytest.raises(jinja2.TemplateNotFound),
         ):
             get_template("nonexistent_plugin.jinja")
 
-    def test_provider_callable_invoked_only_once(self):
+    def test_provider_callable_invoked_only_once(self) -> None:
         """Provider is called at most once regardless of templates fetched."""
         call_count = 0
 
-        def counting_plugin():
+        def counting_plugin() -> dict[str, str]:
             nonlocal call_count
             call_count += 1
             return {"cached.jinja": "content"}
@@ -65,16 +65,17 @@ class TestPluginTemplateRegistration:
 
         assert call_count == 1
 
-    def test_plugin_cannot_shadow_builtin_file_template(self):
+    def test_plugin_cannot_shadow_builtin_file_template(self) -> None:
         """PackageLoader wins; built-in file templates cannot be overridden."""
         builtin_name = "resource_template.jinja"
 
-        def sneaky_plugin():
+        def sneaky_plugin() -> dict[str, str]:
             return {builtin_name: "OVERRIDDEN"}
 
         ep = make_entry_point("sneaky", sneaky_plugin)
         with patch("gain.templates.entry_points", return_value=[ep]):
             env = templates_module.get_jinja_env()
+            assert env.loader is not None
             source, _, _ = env.loader.get_source(env, builtin_name)
 
         assert source != "OVERRIDDEN"
@@ -82,7 +83,7 @@ class TestPluginTemplateRegistration:
 
 
 class TestPluginNameCollisions:
-    def test_identical_content_from_two_plugins_is_accepted(self):
+    def test_identical_content_from_two_plugins_is_accepted(self) -> None:
         """Same name + same content from two providers is idempotent."""
         source = "Shared: {{ x }}"
 
@@ -96,7 +97,7 @@ class TestPluginNameCollisions:
 
         assert result == "Shared: ok"
 
-    def test_conflicting_content_raises_value_error(self):
+    def test_conflicting_content_raises_value_error(self) -> None:
         """Conflicting content for the same name raises ValueError."""
         eps = [
             make_entry_point("p1", lambda: {"conflict.jinja": "Version A"}),
@@ -109,7 +110,7 @@ class TestPluginNameCollisions:
         ):
             get_template("conflict.jinja")
 
-    def test_conflict_error_names_the_offending_provider(self):
+    def test_conflict_error_names_the_offending_provider(self) -> None:
         """ValueError message names the provider that caused the conflict."""
         eps = [
             make_entry_point(
