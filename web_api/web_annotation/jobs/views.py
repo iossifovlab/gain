@@ -210,7 +210,7 @@ class AnnotateVCF(AnnotationBaseView):
                 status=views.status.HTTP_400_BAD_REQUEST)
 
         job.save()
-        work_dir = self.result_storage_dir / work_folder_name
+        work_dir = self.user_result_dir(request.user)
         pipeline = build_annotation_pipeline(
             pipeline.raw, pipeline.repository, work_dir=work_dir)
         args = get_args_vcf(
@@ -337,7 +337,7 @@ class AnnotateTabular(AnnotationBaseView):
 
         grr_definition = self.get_grr_definition()
         assert grr_definition is not None
-        work_dir = self.result_storage_dir / request.user.identifier
+        work_dir = self.user_result_dir(request.user)
 
         try:
             specify_job(job, **cast(dict[str, str], params))

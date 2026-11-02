@@ -31,6 +31,7 @@ from web_annotation.messages import (
     RESET_LINK_EMAIL_SENT,
 )
 from web_annotation.serializers import UserSerializer
+from web_annotation.storage_paths import account_email_error
 from web_annotation.throttling import (
     AccountConfirmRateThrottle,
     FirstRefusalThrottledAPIView,
@@ -219,6 +220,12 @@ class Registration(views.APIView):
 
         email = str(request.data["email"])
         password = str(request.data["password"])
+
+        email_error = account_email_error(email)
+        if email_error is not None:
+            return Response(
+                {"error": email_error},
+                status=views.status.HTTP_400_BAD_REQUEST)
 
         if User.objects.filter(email=email).exists():
             return Response(

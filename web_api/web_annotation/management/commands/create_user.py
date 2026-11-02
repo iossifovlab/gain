@@ -4,6 +4,7 @@ from typing import Any
 from django.core.management.base import BaseCommand, CommandError
 
 from web_annotation.models import User
+from web_annotation.storage_paths import account_email_error
 
 
 class Command(BaseCommand):
@@ -23,6 +24,9 @@ class Command(BaseCommand):
     def handle(self, *_args: Any, **options: Any) -> None:
         email = options["email"]
         password = options["password"]
+        email_error = account_email_error(email)
+        if email_error is not None:
+            raise CommandError(f"{email_error}: {email!r}")
         if User.objects.filter(email=email).exists():
             raise CommandError(
                 f"User with email {email} already exists")

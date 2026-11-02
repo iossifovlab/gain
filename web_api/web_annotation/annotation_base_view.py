@@ -46,6 +46,11 @@ from web_annotation.pipeline_cache import (
     PipelineNotCached,
     ThreadSafePipeline,
 )
+from web_annotation.storage_paths import (
+    INVALID_STORAGE_PATH,
+    UnsafeStoragePathError,
+    user_storage_dir,
+)
 from web_annotation.utils import (
     invalid_content_type_response,
     missing_upload_response,
@@ -612,23 +617,39 @@ class AnnotationMixin:
         input_path.write_bytes(uploaded_file.read())
 
     def _cleanup(self, job_name: int, folder_name: str) -> None:
-        """Cleanup the files of a failed job."""
+        """Cleanup the files of a failed job.
+
+        Deletes nothing when ``folder_name`` does not name a folder inside
+        each storage root.
+        """
+        try:
+            input_dir, config_dir, result_dir = (
+                user_storage_dir(root, folder_name)
+                for root in (
+                    settings.JOB_INPUT_STORAGE_DIR,
+                    settings.ANNOTATION_CONFIG_STORAGE_DIR,
+                    settings.JOB_RESULT_STORAGE_DIR,
+                )
+            )
+        except UnsafeStoragePathError:
+            logger.warning("Refused to clean up job %s files", job_name)
+            return
         data_filename = f"data-{job_name}"
-        inputs = Path(settings.JOB_INPUT_STORAGE_DIR).glob(
-            f"{folder_name}/{data_filename}*")
-        for in_file in inputs:
+        for in_file in input_dir.glob(f"{data_filename}*"):
             in_file.unlink(missing_ok=True)
-        config_filename = f"config-{job_name}.yaml"
-        config_path = Path(
-            settings.ANNOTATION_CONFIG_STORAGE_DIR,
-            f"{folder_name}/{config_filename}",
-        )
-        config_path.unlink(missing_ok=True)
-        results = Path(
-            settings.JOB_RESULT_STORAGE_DIR).glob(
-                f"{folder_name}/{data_filename}*")
-        for out_file in results:
+        (config_dir / f"config-{job_name}.yaml").unlink(missing_ok=True)
+        for out_file in result_dir.glob(f"{data_filename}*"):
             out_file.unlink(missing_ok=True)
+
+    def user_result_dir(self, user: BaseUser) -> Path:
+        """Return the folder of ``user`` under the job result root.
+
+        Raises
+        ------
+        UnsafeStoragePathError
+            When the folder does not resolve inside the job result root.
+        """
+        return user_storage_dir(self.result_storage_dir, user.identifier)
 
     def _validate_request(self, request: Request) -> Response | None:
         """Validate the request for creating a job."""
@@ -694,12 +715,18 @@ class AnnotationMixin:
         return ext
 
     def get_config_path(self, job_name: int, user: User) -> Path:
+        """Return the annotation config path of a job of ``user``.
+
+        Raises
+        ------
+        UnsafeStoragePathError
+            When the folder of ``user`` does not resolve inside the
+            annotation config root.
+        """
         config_filename = f"config-{job_name}.yaml"
-        return Path(
-            settings.ANNOTATION_CONFIG_STORAGE_DIR,
-            user.identifier,
-            config_filename,
-        )
+        return user_storage_dir(
+            settings.ANNOTATION_CONFIG_STORAGE_DIR, user.identifier,
+        ) / config_filename
 
     def _create_job(
         self,
@@ -722,9 +749,21 @@ class AnnotationMixin:
                 status=views.status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        job_name = request.user.generate_job_name()
-
-        config_path = self.get_config_path(job_name, request.user)
+        try:
+            input_dir, result_dir = (
+                user_storage_dir(root, request.user.identifier)
+                for root in (
+                    settings.JOB_INPUT_STORAGE_DIR,
+                    settings.JOB_RESULT_STORAGE_DIR,
+                )
+            )
+            job_name = request.user.generate_job_name()
+            config_path = self.get_config_path(job_name, request.user)
+        except UnsafeStoragePathError:
+            return Response(
+                {"reason": INVALID_STORAGE_PATH},
+                status=views.status.HTTP_400_BAD_REQUEST,
+            )
 
         save_response_or_pipeline = self._save_annotation_config(
             request, config_path)
@@ -741,11 +780,7 @@ class AnnotationMixin:
         file_ext = self._file_extension(request)
 
         data_filename = f"data-{job_name}{file_ext}"
-        input_path = Path(
-            settings.JOB_INPUT_STORAGE_DIR,
-            request.user.identifier,
-            data_filename,
-        )
+        input_path = input_dir / data_filename
 
         try:
             self._save_input_file(request, input_path)
@@ -759,11 +794,7 @@ class AnnotationMixin:
             )
 
         result_filename = f"result-{job_name}{file_ext}"
-        result_path = Path(
-            settings.JOB_RESULT_STORAGE_DIR,
-            request.user.identifier,
-            result_filename,
-        )
+        result_path = result_dir / result_filename
         result_path.parent.mkdir(parents=True, exist_ok=True)
 
         job_size = (
