@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import gzip
 import sys
 from collections.abc import Iterator
@@ -127,7 +128,7 @@ class EffectAnnotatorBuilder:
             return build_gene_models_from_file(
                 self.args.gene_models_filename,
                 self.args.gene_models_fileformat,
-                self.args.gene_mapping_filename)
+                self.args.gene_mapping_filename).load()
 
         gm = self.get_genomic_context().get_gene_models()
         if gm:
@@ -139,11 +140,11 @@ class EffectAnnotatorBuilder:
         if self.args.reference_genome_resource_id:
             resource = self.get_grr().get_resource(
                 self.args.reference_genome_resource_id)
-            return build_reference_genome_from_resource(resource)
+            return build_reference_genome_from_resource(resource).open()
 
         if self.args.reference_genome_filename:
             return build_reference_genome_from_file(
-                self.args.reference_genome_filename)
+                self.args.reference_genome_filename).open()
 
         ref = self.get_genomic_context().get_reference_genome()
         if ref:
@@ -364,18 +365,24 @@ def cli_columns() -> None:
     args = parser.parse_args(sys.argv[1:])
     VerbosityConfiguration.set(args)
     annotator = EffectAnnotatorBuilder(args).build_effect_annotator()
-    input_file = VariantColumnInputFile(args)
-    output_file = VariantColumnOutputFile(args)
     annotation_attributes = AnnotationAttributes(args)
+    with contextlib.ExitStack() as stack:
+        input_file = VariantColumnInputFile(args)
+        if args.input_filename != "-":
+            stack.callback(input_file.close)
+        output_file = VariantColumnOutputFile(args)
+        if args.output_filename != "-":
+            stack.callback(output_file.close)
 
-    output_file.write_columns(
-        input_file.get_header() + annotation_attributes.get_out_attributes())
-    for columns, vdef in input_file.get_lines():
-        logger.debug("vdef: %s AAA", vdef)
-        effect = annotator.do_annotate_variant(**vdef)  # type: ignore
         output_file.write_columns(
-            columns + annotation_attributes.get_values(effect),
-        )
+            input_file.get_header()
+            + annotation_attributes.get_out_attributes())
+        for columns, vdef in input_file.get_lines():
+            logger.debug("vdef: %s AAA", vdef)
+            effect = annotator.do_annotate_variant(**vdef)  # type: ignore
+            output_file.write_columns(
+                columns + annotation_attributes.get_values(effect),
+            )
 
 
 def cli_vcf() -> None:
