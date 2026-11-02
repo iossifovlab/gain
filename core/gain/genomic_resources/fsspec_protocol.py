@@ -2138,7 +2138,9 @@ class FsspecReadWriteProtocol(
                 content = cast(bytes, infile.read())
         except (OSError, ValueError) as error:
             logger.debug(
-                "ignoring unreadable .dvc pointer %s: %s", dvc_url, error)
+                "ignoring unreadable .dvc pointer %s: %s",
+                strip_url_userinfo(dvc_url),
+                strip_url_credentials(str(error)))
             return False
 
         return parse_dvc_pointer_out(content, name) is not None
