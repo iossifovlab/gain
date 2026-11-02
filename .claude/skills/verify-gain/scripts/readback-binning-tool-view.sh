@@ -37,21 +37,20 @@ v4=$'chr2\t6\t10\t0.30000001192092896'
 # expect <case> <exit code> <line>...: the case exits with the code, and
 # its stdout is exactly the lines, each ended by a newline.
 expect() {
-    local name="$1" want_rc="$2" got want
+    local name="$1" want_rc="$2" got want=""
     shift 2
     got="$(rc "$name")"
     echo "readback: $name exit $got"
     [[ "$got" == "$want_rc" ]] || bad "$name exited $got, not $want_rc"
+    # printf with no lines still prints a newline: an empty case wants "".
     if (($#)); then
-        want="$(printf '%s\n' "$@")"
-    else
-        want=""
+        want="$(printf '%s\n' "$@")"$'\n'
     fi
     if [[ ! -f "$ev/$name/stdout.txt" ]]; then
         bad "$name has no stdout.txt"
-    elif ! cmp -s <(printf '%s' "$want${want:+$'\n'}") "$ev/$name/stdout.txt"; then
+    elif ! cmp -s <(printf '%s' "$want") "$ev/$name/stdout.txt"; then
         bad "$name stdout differs from the expected text"
-        diff <(printf '%s' "$want${want:+$'\n'}") "$ev/$name/stdout.txt" || true
+        diff <(printf '%s' "$want") "$ev/$name/stdout.txt" || true
     fi
 }
 
