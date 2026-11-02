@@ -76,6 +76,7 @@ from gain.genomic_resources.statistics.exact_lengths import (
 from gain.genomic_resources.statistics.percentages import (
     percentages_over,
 )
+from gain.genomic_resources.statistics.png_bytes import rendered_png
 from gain.genomic_resources.statistics.record_validation import (
     validate_record_arrays,
 )
@@ -1440,6 +1441,8 @@ def save_allele_statistics(
     # nothing references (gain#989).
     if counts.complex_grid \
             and not _renders_as_table(counts.complex_grid):
+        grid = counts.complex_grid
+        image = rendered_png(lambda outfile: plot_complex_grid(outfile, grid))
         with resource.open_raw_file(
                 ALLELE_COMPLEX_GRID_IMAGE_FILE, mode="wb") as imagefile:
-            plot_complex_grid(imagefile, counts.complex_grid)
+            imagefile.write(image)

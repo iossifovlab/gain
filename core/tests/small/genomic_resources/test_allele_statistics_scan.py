@@ -33,6 +33,10 @@ from tests.small.genomic_resources.info_page_html import (
     section_after,
     table_after,
 )
+from tests.small.genomic_resources.png_chunks import (
+    PNG_SIGNATURE,
+    software_chunks,
+)
 
 # One fixture carries every class and both counting rules: three rows at
 # chr1:10 (two of them the SAME (chrom, pos, ref, alt) -- legitimate
@@ -1369,6 +1373,27 @@ def test_info_page_draws_a_complex_grid_with_more_cells_than_the_threshold(
     assert section.count(ALLELE_COMPLEX_GRID_IMAGE_FILE) == 1
     assert "<th>% of complex</th>" not in section
     assert resource.file_exists(ALLELE_COMPLEX_GRID_IMAGE_FILE)
+
+
+def test_writes_the_allele_images_without_the_software_chunk(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The complex grid and the length charts drop matplotlib's version.
+
+    The fixture is the dense complex score with one insertion and one
+    deletion added: the dense score alone has no indel, so it writes no
+    length chart (gain#2048).
+    """
+    resource = _all_groups_score(tmp_path)
+    cli_manage(["repo-stats", "-R", str(tmp_path), "-j", "1"])
+
+    images = [
+        ALLELE_COMPLEX_GRID_IMAGE_FILE, ALLELE_INSERTION_LENGTHS_IMAGE_FILE]
+    assert all(resource.file_exists(image) for image in images)
+    for image in images:
+        written = resource.get_file_content(image, mode="b")
+        assert written.startswith(PNG_SIGNATURE), image
+        assert software_chunks(written) == [], image
 
 
 def test_info_page_tables_a_sparse_complex_grid_instead_of_drawing_it(

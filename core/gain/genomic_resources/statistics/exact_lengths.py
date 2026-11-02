@@ -33,6 +33,7 @@ from gain.genomic_resources.statistics.length_histogram import (
     length_histogram_bin_index,
     plot_length_histogram,
 )
+from gain.genomic_resources.statistics.png_bytes import rendered_png
 
 #: The longest length the stored map resolves exactly.  A length at or
 #: above it folds into one overflow bucket keyed by the clamp, which
@@ -572,8 +573,11 @@ def write_length_chart(
     """
     if lengths is None or not lengths.has_counts_to_plot:
         return
-    with resource.open_raw_file(filename, mode="wb") as outfile:
-        plot_length_histogram(outfile, length_ladder(lengths), kind)
+    ladder = length_ladder(lengths)
+    image = rendered_png(
+        lambda outfile: plot_length_histogram(outfile, ladder, kind))
+    with resource.open_raw_file(filename, mode="wb") as imagefile:
+        imagefile.write(image)
 
 
 def _trimmed(value: float) -> str:
