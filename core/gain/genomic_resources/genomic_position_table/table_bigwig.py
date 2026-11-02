@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Generator, Iterable
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import numpy as np
 
@@ -192,7 +192,8 @@ class BigWigTable(GenomicPositionTable):
         table_definition: dict,
     ):
         super().__init__(genomic_resource, table_definition)
-        self._bw_file = None
+        # A pyBigWig handle; pyBigWig ships no type stubs.
+        self._bw_file: Any = None
         self.chroms: dict[str, int] = {}
 
         # A budget in RECORDS per ``intervals()`` call -- not in base pairs,

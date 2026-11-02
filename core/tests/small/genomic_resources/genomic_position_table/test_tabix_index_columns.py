@@ -90,6 +90,15 @@ def build_resource(
     return build_filesystem_test_protocol(tmp_path).get_resource(RESOURCE_ID)
 
 
+def build_table(
+    resource: GenomicResource,
+) -> table_tabix.TabixGenomicPositionTable:
+    """Build the resource's table, which every config here makes tabix."""
+    return cast(
+        table_tabix.TabixGenomicPositionTable,
+        build_genomic_position_table(resource, resource.get_config()["table"]))
+
+
 def a_config(table_body: str) -> str:
     return f"""
         type: position_score
@@ -112,7 +121,7 @@ def test_pos_end_column_disagreeing_with_the_index_is_refused(
         a_config("""    pos_end:
               column_index: 3"""),
         seq_col=0, start_col=1, end_col=2)
-    table = build_genomic_position_table(resource, resource.config["table"])
+    table = build_table(resource)
 
     with pytest.raises(MalformedResourceError) as excinfo:
         table.open()
@@ -129,7 +138,7 @@ def test_the_refusal_names_the_resource(tmp_path: pathlib.Path) -> None:
         a_config("""    pos_end:
               column_index: 3"""),
         seq_col=0, start_col=1, end_col=2)
-    table = build_genomic_position_table(resource, resource.config["table"])
+    table = build_table(resource)
 
     with pytest.raises(MalformedResourceError) as excinfo:
         table.open()
@@ -146,7 +155,7 @@ def test_every_core_column_is_compared_against_the_index(
         a_config(f"""    {field}:
               column_index: 3"""),
         seq_col=0, start_col=1, end_col=2)
-    table = build_genomic_position_table(resource, resource.config["table"])
+    table = build_table(resource)
 
     with pytest.raises(MalformedResourceError) as excinfo:
         table.open()
@@ -173,7 +182,7 @@ def test_every_disagreeing_field_is_named_not_just_the_first(
             pos_end:
               column_index: 3"""),
         seq_col=0, start_col=1, end_col=2)
-    table = build_genomic_position_table(resource, resource.config["table"])
+    table = build_table(resource)
 
     with pytest.raises(MalformedResourceError) as excinfo:
         table.open()
@@ -203,7 +212,7 @@ def test_no_end_column_note_is_absent_when_pos_end_agrees(
         a_config("""    chrom:
               column_index: 3"""),
         preset="vcf")
-    table = build_genomic_position_table(resource, resource.config["table"])
+    table = build_table(resource)
 
     with pytest.raises(MalformedResourceError) as excinfo:
         table.open()
@@ -228,7 +237,7 @@ def test_an_index_with_no_end_column_is_compared_by_its_begin_column(
         a_config("""    pos_end:
               column_index: 2"""),
         preset="vcf")
-    table = build_genomic_position_table(resource, resource.config["table"])
+    table = build_table(resource)
 
     with pytest.raises(MalformedResourceError) as excinfo:
         table.open()
@@ -247,9 +256,7 @@ def build_unstated_begin_table(
     resource = build_resource(
         tmp_path, a_config(""), data=UNSTATED_BEGIN_DATA,
         seq_col=1, start_col=2, end_col=3)
-    return cast(
-        table_tabix.TabixGenomicPositionTable,
-        build_genomic_position_table(resource, resource.config["table"]))
+    return build_table(resource)
 
 
 def test_a_column_the_configuration_never_states_is_refused_too(
@@ -280,7 +287,7 @@ def test_a_csi_index_is_validated_the_same_way(
         a_config("""    pos_end:
               column_index: 3"""),
         seq_col=0, start_col=1, end_col=2, csi=True)
-    table = build_genomic_position_table(resource, resource.config["table"])
+    table = build_table(resource)
 
     with pytest.raises(MalformedResourceError) as excinfo:
         table.open()
@@ -305,7 +312,7 @@ def test_a_csi_index_over_many_contigs_is_still_decoded(
               column_index: 3"""),
         data=MANY_CONTIGS_DATA,
         seq_col=0, start_col=1, end_col=2, csi=True)
-    table = build_genomic_position_table(resource, resource.config["table"])
+    table = build_table(resource)
 
     with pytest.raises(MalformedResourceError) as excinfo:
         table.open()
@@ -325,7 +332,7 @@ def test_a_table_configured_over_the_indexed_columns_opens(
         a_config("""    pos_end:
               column_index: 2"""),
         seq_col=0, start_col=1, end_col=2, csi=csi)
-    table = build_genomic_position_table(resource, resource.config["table"])
+    table = build_table(resource)
 
     with table.open() as opened:
         assert opened.get_chromosomes() == ["1"]
@@ -356,7 +363,7 @@ def test_the_pinned_index_is_the_one_validated(
         tmp_path / RESOURCE_ID / "pinned.txt.gz", TWO_ENDS_DATA,
         seq_col=0, start_col=1, end_col=3)
 
-    table = build_genomic_position_table(resource, resource.config["table"])
+    table = build_table(resource)
 
     with pytest.raises(MalformedResourceError) as excinfo:
         table.open()
@@ -419,7 +426,7 @@ def test_an_index_this_decoder_cannot_read_is_declined_out_loud(
         seq_col=0, start_col=1, end_col=2)
     monkeypatch.setattr(
         table_tabix, "parse_index_columns", lambda _header: None)
-    table = build_genomic_position_table(resource, resource.config["table"])
+    table = build_table(resource)
 
     with caplog.at_level(logging.WARNING), table.open() as opened:
         assert opened.get_chromosomes() == ["1"]
@@ -480,7 +487,7 @@ def test_an_index_that_cannot_be_fetched_is_declined_out_loud_too(
         return open_raw_file(filename, *args, **kwargs)
 
     monkeypatch.setattr(resource, "open_raw_file", fail_fetching_the_index)
-    table = build_genomic_position_table(resource, resource.config["table"])
+    table = build_table(resource)
 
     with caplog.at_level(logging.WARNING), table.open() as opened:
         assert opened.get_chromosomes() == ["1"]
@@ -510,7 +517,7 @@ def test_the_refused_table_leaves_no_open_handle(
         return handle
 
     monkeypatch.setattr(resource, "open_tabix_file", spy)
-    table = build_genomic_position_table(resource, resource.config["table"])
+    table = build_table(resource)
 
     with pytest.raises(MalformedResourceError):
         table.open()

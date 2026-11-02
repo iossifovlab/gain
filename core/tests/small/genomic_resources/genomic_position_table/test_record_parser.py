@@ -8,6 +8,7 @@ drop and the end-position bump.
 from __future__ import annotations
 
 from operator import itemgetter
+from typing import Any
 
 import pytest
 from gain.genomic_resources.genomic_position_table.record import (
@@ -18,13 +19,15 @@ from gain.genomic_resources.genomic_position_table.record import (
     POS_END,
     RECORD_SLOTS,
     REF,
+    Record,
+    TabularParser,
     build_tabular_parser,
     sort_key,
 )
 
 
-def _parser(**kwargs):
-    defaults = {
+def _parser(**kwargs: Any) -> TabularParser:
+    defaults: dict[str, Any] = {
         "chrom_key": 0,
         "pos_begin_key": 1,
         "pos_end_key": 2,
@@ -113,12 +116,13 @@ def test_the_payload_is_the_last_slot_and_the_count_derives_from_it() -> None:
     assert len(sort_key(("1", 10, 12, "A", "T", "row"))) == PAYLOAD
 
     # ...and the parser emits exactly that shape, in every specialisation.
-    for extra in [
+    extras: list[dict[str, Any]] = [
         {},
         {"zero_based": True},
         {"rev_chrom_map": {"1": "chr1"}},
         {"rev_chrom_map": {"1": "chr1"}, "zero_based": True},
-    ]:
+    ]
+    for extra in extras:
         parse = _parser(ref_key=3, alt_key=4, **extra)
         row = ["1", "10", "12", "A", "T", "0.5"]
         record = parse(row)
@@ -234,8 +238,11 @@ def test_sort_key_agrees_with_an_explicit_decoded_slot_key() -> None:
         ["1", "9", "12", "A", "T", "0.5"],
         ["2", "1", "1", "A", "T", "0.6"],
     ]
-    records = [parse(row) for row in rows]
-    assert all(record is not None for record in records)
+    records: list[Record] = []
+    for row in rows:
+        record = parse(row)
+        assert record is not None
+        records.append(record)
 
     explicit = itemgetter(CHROM, POS_BEGIN, POS_END, REF, ALT)
     assert [sort_key(r) for r in records] == [explicit(r) for r in records]
@@ -302,7 +309,11 @@ def test_ref_alt_absent_yield_none() -> None:
     ids=["identity", "zero_based", "mapped", "zero_based_mapped"],
 )
 def test_ref_alt_are_read_independently_in_every_specialisation(
-    ref_key, alt_key, expected_ref, expected_alt, extra,
+    ref_key: int | None,
+    alt_key: int | None,
+    expected_ref: str | None,
+    expected_alt: str | None,
+    extra: dict[str, Any],
 ) -> None:
     # ref and alt are configured INDEPENDENTLY: either may be present without
     # the other.  Pin all four ref/alt combinations against all four fused
@@ -437,7 +448,7 @@ def test_zero_based_and_chrom_mapping_unmapped_contig_returns_none() -> None:
     ),
 ])
 def test_factory_selects_the_specialisation_once_at_build_time(
-    kwargs, expected,
+    kwargs: dict[str, Any], expected: str,
 ) -> None:
     # The factory's contract is that (chrom-mapping, zero-based) is resolved
     # ONCE, at build time, into a single fused closure -- a row can never

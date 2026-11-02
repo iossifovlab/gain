@@ -2,7 +2,9 @@
 """Tests for gain.genomic_resources.gene_models.parsers module."""
 import inspect
 import re
+from collections.abc import Callable
 from io import StringIO
+from typing import Any
 
 import pytest
 from gain.genomic_resources.gene_models import parsers
@@ -264,7 +266,7 @@ def test_the_format_parsers_are_exactly_the_ones_reachable_by_name() -> None:
     quietly shrink, and a one-way check would report nothing missing
     precisely because it had stopped looking.
     """
-    defined = {
+    defined: set[Callable[..., Any]] = {
         obj
         for name, obj in vars(parsers).items()
         if _FORMAT_PARSER_NAME.fullmatch(name) and inspect.isfunction(obj)

@@ -42,6 +42,7 @@ from typing import Any
 import pytest
 from gain.genomic_resources.genomic_position_table import (
     LineBuffer,
+    TabixGenomicPositionTable,
     build_genomic_position_table,
 )
 from gain.genomic_resources.genomic_position_table.record import (
@@ -533,7 +534,7 @@ def test_abandoned_queries_keep_the_buffer_bounded(build_tables: Any) -> None:
     assert len(tabix_table.buffer) <= LineBuffer.COMPACT_FLOOR
 
 
-def _buffered_begins(table: GenomicPositionTable) -> list[int]:
+def _buffered_begins(table: TabixGenomicPositionTable) -> list[int]:
     return [record[POS_BEGIN] for record in table.buffer.deque]
 
 
