@@ -39,7 +39,10 @@ export default defineConfig({
   },
   globalTimeout: 1200000,
   testDir: './tests',
-  outputDir: process.env.CI ? '/reports' : './test-results',
+  // A subdirectory, not the /reports bind mount itself: Playwright removes
+  // outputDir before a run, and the agent uid cannot remove a mount root
+  // (EACCES on rmdir '/reports'). Same layout as info_pages_e2e.
+  outputDir: process.env.CI ? '/reports/test-results' : './test-results',
   fullyParallel: false,
   /* Reporter to use. See https://playwright.dev/docs/test-reporters */
   reporter: process.env.CI ? 
