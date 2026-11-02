@@ -4,6 +4,7 @@ import time
 
 import pytest
 from django.test import AsyncClient
+from gain.annotation.annotation_config import AnnotationConfigurationError
 from pytest_mock import MockerFixture
 from rest_framework.exceptions import NotFound, ValidationError
 
@@ -187,12 +188,29 @@ async def test_async_missing_pipeline_maps_to_404() -> None:
 
 
 def test_exception_mapping_helper_validation_error() -> None:
-    """The shared build->4xx mapper returns a ValidationError (400)."""
+    """The shared build->4xx mapper returns a ValidationError (400).
+
+    A known configuration error keeps its text in the client message.
+    """
     view = SingleAnnotation()
-    err = ValueError("bad resource")
+    err = AnnotationConfigurationError("bad resource")
     mapped = view._build_error_to_drf(err)
     assert isinstance(mapped, ValidationError)
     assert "bad resource" in str(mapped)
+
+
+def test_build_error_message_hides_unknown_exception_text() -> None:
+    """An unexpected build error reaches the client as a bare message.
+
+    The text of an ``OSError`` can carry a server path, so no part of it
+    may reach the client (iossifovlab/gain#2108).
+    """
+    mapped = SingleAnnotation._build_error_to_drf(
+        OSError("/srv/secret/path"))
+
+    assert isinstance(mapped, ValidationError)
+    assert mapped.detail == [
+        "Pipeline could not be loaded: Invalid configuration"]
 
 
 def test_exception_mapping_helper_not_found() -> None:
