@@ -7,6 +7,7 @@ the full parser of its tool without running the tool.
 """
 import argparse
 
+import pytest
 from gain.genomic_resources import cli, cli_cache_repo
 
 
@@ -46,3 +47,47 @@ def test_cache_repo_parser_reads_the_worker_count() -> None:
 
     assert (args.pipeline, args.jobs, args.progress) == (
         "pipeline.yaml", 8, False)
+
+
+def test_repo_info_rejects_a_resource(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    parser = cli._build_manage_argument_parser()
+
+    with pytest.raises(SystemExit) as excinfo:
+        parser.parse_args(["repo-info", "-r", "x"])
+
+    assert excinfo.value.code == 2
+    assert "unrecognized arguments: -r x" in capsys.readouterr().err
+
+
+def test_every_repo_command_rejects_a_resource(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo_commands = sorted(
+        name for name in _subcommands(cli._build_manage_argument_parser())
+        if name.startswith("repo-"))
+    assert repo_commands
+
+    rejected = []
+    for command in repo_commands:
+        with pytest.raises(SystemExit) as excinfo:
+            cli._build_manage_argument_parser().parse_args(
+                [command, "-r", "x"])
+        err = capsys.readouterr().err
+        if (excinfo.value.code == 2
+                and "unrecognized arguments: -r x" in err):
+            rejected.append(command)
+
+    assert rejected == repo_commands
+
+
+@pytest.mark.parametrize("command", [
+    "resource-stats", "resource-repair", "resource-info",
+])
+def test_the_resource_commands_take_a_resource(command: str) -> None:
+    parser = cli._build_manage_argument_parser()
+
+    args = parser.parse_args([command, "-r", "x"])
+
+    assert args.resource == "x"
