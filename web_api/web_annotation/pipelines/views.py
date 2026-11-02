@@ -62,9 +62,7 @@ def pipeline_name_error(name: str) -> str | None:
     A saved pipeline is stored as ``<name>.yaml`` in the directory of
     its owner, so the name must be a single, non-hidden path component.
     """
-    if any(char in name for char in ("/", "\\", "\0")):
-        return INVALID_PIPELINE_NAME
-    if name.startswith("."):
+    if name.startswith(".") or any(c in name for c in ("/", "\\", "\0")):
         return INVALID_PIPELINE_NAME
     return None
 

@@ -147,8 +147,10 @@ def test_delete_of_another_users_saved_pipeline_keeps_it(
 
 @pytest.mark.django_db
 @pytest.mark.usefixtures("patched_lru_cache")
-@pytest.mark.parametrize("name", ["../x", "a\\b", "a\x00b"])
-def test_create_with_a_path_like_name_is_refused(
+@pytest.mark.parametrize(
+    "name", ["../x", "a\\b", "a\x00b", "..", ".hidden"],
+)
+def test_create_with_an_unsafe_name_is_refused(
     clients: dict[str, Client],
     name: str,
 ) -> None:
@@ -175,23 +177,6 @@ def test_create_with_an_absolute_name_is_refused(
     assert response.json() == INVALID_NAME
     assert not target.with_suffix(".yaml").exists()
     assert not Pipeline.objects.filter(name=str(target)).exists()
-
-
-@pytest.mark.django_db
-@pytest.mark.usefixtures("patched_lru_cache")
-@pytest.mark.parametrize("name", ["..", ".hidden"])
-def test_create_with_a_dot_name_is_refused(
-    clients: dict[str, Client],
-    name: str,
-) -> None:
-    before = _config_files()
-
-    response = _post_named_pipeline(clients["user"], name)
-
-    assert response.status_code == 400
-    assert response.json() == INVALID_NAME
-    assert _config_files() == before
-    assert not Pipeline.objects.filter(name=name).exists()
 
 
 @pytest.mark.django_db
