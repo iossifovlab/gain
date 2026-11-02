@@ -15,11 +15,11 @@ from tests.small.genomic_resources.png_chunks import (
 )
 
 
-def _plain_savefig_png() -> bytes:
+def _plain_savefig_png(metadata: dict[str, str] | None = None) -> bytes:
     figure = Figure(figsize=(2, 2))
     figure.subplots().plot([0, 1, 2], [2, 0, 1])
     buffer = io.BytesIO()
-    figure.savefig(buffer, format="png")
+    figure.savefig(buffer, format="png", metadata=metadata)
     return buffer.getvalue()
 
 
@@ -41,11 +41,7 @@ def test_removes_the_software_chunk_and_keeps_every_other_chunk() -> None:
 
 
 def test_keeps_a_text_chunk_with_another_keyword() -> None:
-    figure = Figure(figsize=(2, 2))
-    figure.subplots().plot([0, 1, 2], [2, 0, 1])
-    buffer = io.BytesIO()
-    figure.savefig(buffer, format="png", metadata={"Title": "x"})
-    original = buffer.getvalue()
+    original = _plain_savefig_png(metadata={"Title": "x"})
     title_chunks = [
         chunk for chunk in png_chunks(original)
         if chunk[4:8] == b"tEXt" and chunk[8:].startswith(b"Title\x00")
