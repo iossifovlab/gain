@@ -405,6 +405,11 @@ class AnnotationMixin:
         is futile (the config is deterministically unbuildable), so surface a
         4xx client error instead of letting it escape as a 500. Returns the
         exception so the caller can ``raise ... from`` with the original cause.
+
+        The client message goes through ``format_config_error``, so only the
+        text of a known configuration error reaches the client. The text of
+        any other exception (an ``OSError`` path, a GRR error) stays in the
+        log (iossifovlab/gain#2108).
         """
         # Escaped for the same reason as the deferred-load WARNING: this
         # replays on every later fetch of an unbuildable saved pipeline, so
@@ -414,7 +419,8 @@ class AnnotationMixin:
             "pipeline failed to build: %s",
             escape_unsafe_characters(str(build_error)))
         return ValidationError(
-            f"Pipeline could not be loaded: {build_error}")
+            "Pipeline could not be loaded: "
+            f"{format_config_error(build_error)}")
 
     @staticmethod
     def _missing_pipeline_to_drf(pipeline_id: str) -> NotFound:
@@ -555,9 +561,9 @@ class AnnotationMixin:
         await sync_to_async(self._put_pipeline_or_404)(pipeline_id, user)
 
     def get_genome(self, data: QueryDict) -> str:
-        """Get genome from a request."""
+        """Get genome from a request; an empty field means no genome."""
         genome = data.get("genome")
-        if genome is None:
+        if not genome:
             return ""
         if genome not in GRR_GENOMES:
             raise ValueError(

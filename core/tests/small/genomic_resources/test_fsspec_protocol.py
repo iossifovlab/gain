@@ -3,6 +3,7 @@
 import gzip
 import inspect
 import io
+import logging
 import os
 import pathlib
 import shutil
@@ -1324,6 +1325,84 @@ def test_gitignore_malformed_dvc_pointer_does_not_raise_or_exempt() -> None:
     res = proto.get_resource("res")
     entries = proto.collect_resource_entries(res)  # must not raise
     assert "scores.bw" not in entries
+
+
+def test_unreadable_dvc_pointer_log_carries_no_url_credentials(
+    mocker: MockerFixture,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The debug line about an unreadable `.dvc` pointer echoes the open
+    # error; a presigned url in that error must lose both its userinfo and
+    # its query-string signature (gain#2112).
+    proto = build_inmemory_test_protocol({
+        "res": {
+            GR_CONF_FILE_NAME: "",
+            "scores.bw": "score data.",
+            "scores.bw.dvc": SCORES_DVC_CONTENT,
+            ".gitignore": "/scores.bw\n",
+        },
+    })
+    real_open = proto.filesystem.open
+
+    def failing_open(path: str, *args: Any, **kwargs: Any) -> Any:
+        if str(path).endswith("scores.bw.dvc"):
+            raise OSError(
+                "cannot read https://alice:s3cr3t@grr.example.org/"
+                "res/scores.bw.dvc?X-Amz-Signature=deadbeef")
+        return real_open(path, *args, **kwargs)
+
+    mocker.patch.object(proto.filesystem, "open", side_effect=failing_open)
+    res = proto.get_resource("res")
+
+    with caplog.at_level(
+            logging.DEBUG, logger="gain.genomic_resources.fsspec_protocol"):
+        proto.collect_resource_entries(res)
+
+    messages = [
+        record.getMessage() for record in caplog.records
+        if "unreadable .dvc pointer" in record.getMessage()
+    ]
+    assert len(messages) == 1
+    assert "grr.example.org/res/scores.bw.dvc" in messages[0]
+    assert "s3cr3t" not in messages[0]
+    assert "alice" not in messages[0]
+    assert "X-Amz-Signature" not in messages[0]
+    assert "deadbeef" not in messages[0]
+
+
+def test_unreadable_dvc_pointer_log_strips_userinfo_from_the_url(
+    mocker: MockerFixture,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The pointer url itself is wrapped, not only the error (gain#2112).
+    # The assertion reads the raw `record.args`: the global `getMessage`
+    # patch strips userinfo from the formatted message, so a message-only
+    # check passes even when the wrap is dropped.
+    proto = build_inmemory_test_protocol({"res": {GR_CONF_FILE_NAME: ""}})
+    mocker.patch.object(proto.filesystem, "isdir", return_value=False)
+    mocker.patch.object(
+        proto.filesystem, "open", side_effect=OSError("cannot read"))
+
+    with caplog.at_level(
+            logging.DEBUG, logger="gain.genomic_resources.fsspec_protocol"):
+        managed = proto._is_dvc_managed_leaf(
+            "https://alice:s3cr3t@grr.example.org/res",
+            "scores.bw", {"scores.bw.dvc"})
+
+    assert not managed
+    records = [
+        record for record in caplog.records
+        if "unreadable .dvc pointer" in record.msg
+    ]
+    assert len(records) == 1
+    assert isinstance(records[0].args, tuple)
+    raw_args = " ".join(str(arg) for arg in records[0].args)
+    assert "alice" not in raw_args
+    assert "s3cr3t" not in raw_args
+    message = records[0].getMessage()
+    assert "grr.example.org/res/scores.bw.dvc" in message
+    assert "alice" not in message
+    assert "s3cr3t" not in message
 
 
 def test_gitignore_dvc_pointer_without_outs_does_not_exempt() -> None:

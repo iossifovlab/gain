@@ -4,6 +4,7 @@ import time
 
 import pytest
 from django.test import AsyncClient
+from gain.annotation.annotation_config import AnnotationConfigurationError
 from pytest_mock import MockerFixture
 from rest_framework.exceptions import NotFound, ValidationError
 
@@ -199,9 +200,12 @@ async def test_async_doc_missing_pipeline_maps_to_404() -> None:
 
 
 def test_doc_exception_mapping_helper_validation_error() -> None:
-    """The shared build->4xx mapper returns a ValidationError (400)."""
+    """The shared build->4xx mapper returns a ValidationError (400).
+
+    A known configuration error keeps its text in the client message.
+    """
     view = PipelineDoc()
-    err = ValueError("bad resource")
+    err = AnnotationConfigurationError("bad resource")
     mapped = view._build_error_to_drf(err)
     assert isinstance(mapped, ValidationError)
     assert "bad resource" in str(mapped)
