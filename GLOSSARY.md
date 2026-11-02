@@ -393,6 +393,31 @@ DataFrame.
 _Avoid_: track name (the name of an entry is the optional `name` in
 `binner_def`)
 
+**Entry**:
+One item of the `binners` list of a run definition. An entry names a binner
+kind and the resources that it reads, and it makes one or more **tracks**.
+_Avoid_: binner (the kind that reads an entry), job, task
+
+**Group**:
+The fragments that one fragment **track** reduces. The name of the group is
+the **selector** of the track.
+_Avoid_: class (a cell class is one source of groups), cluster
+
+**Grouping**:
+The rule that puts each fragment of an **entry** into a **group**. A *cell
+grouping* finds the group of the cell barcode of the fragment in a cell
+metadata table. A *value grouping* uses the value of a text score of the
+fragment as the group. A *constant group* puts every fragment into one named
+group. When an entry gives no grouping, the labels of its resources select a
+cell grouping or the constant group `all`.
+_Avoid_: classification, cell typing
+
+**Contribution**:
+What one fragment adds to its bin of a fragment **track**: the value of a
+numeric score of the fragment, or a constant, which is 1 when the **entry**
+gives none. The `value` key of an entry sets it.
+_Avoid_: value (a score value is any value of a score), weight
+
 ### Task graph
 
 **Task graph**:
