@@ -14,7 +14,7 @@ from django.core.files.base import ContentFile
 from django.test import Client
 from pytest_mock import MockerFixture
 
-from web_annotation.models import Pipeline, TemporaryPipeline
+from web_annotation.models import Pipeline, TemporaryPipeline, User
 from web_annotation.pipeline_cache import LRUPipelineCache
 
 NOT_RECOGNIZED = {"reason": "Pipeline name not recognized!"}
@@ -236,20 +236,19 @@ def test_create_refuses_a_path_outside_the_user_directory(
 @pytest.mark.usefixtures("patched_lru_cache")
 def test_update_of_a_saved_pipeline_with_a_legacy_name_succeeds(
     clients: dict[str, Client],
-    mocker: MockerFixture,
 ) -> None:
     client = clients["user"]
-    legacy_rule = mocker.patch(
-        "web_annotation.pipelines.views.pipeline_name_error",
-        return_value=None,
-    )
-    pipeline_id = _save_pipeline(client, ".draft")
-    mocker.stop(legacy_rule)
-    config_path = pathlib.Path(
-        str(Pipeline.objects.get(pk=int(pipeline_id)).config_path))
+    owner = User.objects.get(email="user@example.com")
+    user_dir = pathlib.Path(
+        settings.ANNOTATION_CONFIG_STORAGE_DIR, owner.identifier)
+    user_dir.mkdir(parents=True, exist_ok=True)
+    config_path = user_dir / ".draft.yaml"
+    config_path.write_text("- position_score: scores/pos1")
+    legacy = Pipeline.objects.create(
+        name=".draft", config_path=str(config_path), owner=owner)
 
     response = client.post("/api/pipelines/user", {
-        "id": pipeline_id,
+        "id": str(legacy.pk),
         "name": ".draft",
         "config": ContentFile("- position_score: scores/pos2"),
     })
