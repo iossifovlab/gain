@@ -427,9 +427,9 @@ class ArrayBinFold:
         nan_bins = np.unique(pair_bin[np.isnan(pair_value)])
         has_nan = np.isin(pair_bin, nan_bins)
         for bin_index in nan_bins:
+            in_bin = pair_bin == bin_index
             self._acc[bin_index] = _python_median(
-                pair_value[pair_bin == bin_index],
-                pair_weight[pair_bin == bin_index])
+                pair_value[in_bin], pair_weight[in_bin])
         self._weighted_median(
             pair_bin[~has_nan], pair_value[~has_nan], pair_weight[~has_nan])
 
