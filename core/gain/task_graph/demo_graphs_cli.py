@@ -2,6 +2,7 @@ import argparse
 import random
 import sys
 import time
+from collections.abc import Callable
 
 from gain.task_graph.cli_tools import TaskGraphCli
 from gain.task_graph.graph import TaskGraph
@@ -27,44 +28,35 @@ def task_part_b(seconds: str) -> str:
     return 2_000 * "B"
 
 
-def task_summary_b(seconds: str, *args: str) -> str:
-    time.sleep(timeout(seconds))
-    if len(args) <= 5:
-        return "b".join(args)
-    return "c".join(args[:5])
-
-
 def task_part_c(seconds: str, *_args: str) -> str:
     time.sleep(timeout(seconds))
     return 2_000 * "C"
 
 
-def task_summary_c(seconds: str, *args: str) -> str:
-    time.sleep(timeout(seconds))
-    if len(args) <= 5:
-        return "b".join(args)
-    return "c".join(args[:5])
-
-
-def _build_graph_a(graph_params: list[str] | None) -> TaskGraph:
+def _build_fan_in_graph(
+    graph_letter: str,
+    defaults: tuple[str, str, str],
+    part_func: Callable[[str], str],
+    graph_params: list[str] | None,
+) -> TaskGraph:
     task_graph = TaskGraph()
 
-    num_of_parts, parts_sleep, summary_sleep = "10", "2", "2"
+    num_of_parts, parts_sleep, summary_sleep = defaults
 
     if graph_params:
         if len(graph_params) != 3:
             raise ValueError(
-                "The graph A needs three parameters: "
+                f"The graph {graph_letter} needs three parameters: "
                 "<number of parts>, <seconds for parts>, "
                 "<seconds for summary>")
         num_of_parts, parts_sleep, summary_sleep = graph_params
     print(
-        f"Bulding graph A with {num_of_parts} parts, "
-        f"{parts_sleep} seconds for each parts, and "
-        f"{summary_sleep} secoconds for the summary")
+        f"Building graph {graph_letter} with {num_of_parts} parts, "
+        f"{parts_sleep} seconds for each part, and "
+        f"{summary_sleep} seconds for the summary")
 
     parts = [task_graph.create_task(
-        f"part {p}", task_part, args=[parts_sleep], deps=[])
+        f"part {p}", part_func, args=[parts_sleep], deps=[])
         for p in range(int(num_of_parts))]
     task_graph.create_task(
         "summary", task_summary, args=[summary_sleep], deps=parts)
@@ -85,7 +77,7 @@ def _build_graph_d(graph_params: list[str] | None) -> TaskGraph:
                 "<seconds for parts>, <seconds for summary>")
         num_of_clicks, num_of_parts, parts_sleep, summary_sleep = graph_params
     print(
-        f"Bulding graph D with {num_of_clicks} clicks, "
+        f"Building graph D with {num_of_clicks} clicks, "
         f"with {num_of_parts} parts per click and one summary task per click, "
         f"{parts_sleep} seconds for each part, and "
         f"{summary_sleep} seconds for the summary")
@@ -96,31 +88,6 @@ def _build_graph_d(graph_params: list[str] | None) -> TaskGraph:
             for p in range(int(num_of_parts))]
         task_graph.create_task(
             f"summary {click}", task_summary, args=[summary_sleep], deps=parts)
-    return task_graph
-
-
-def _build_graph_b(graph_params: list[str] | None) -> TaskGraph:
-    task_graph = TaskGraph()
-
-    num_of_parts, parts_sleep, summary_sleep = "2", "5", "10"
-
-    if graph_params:
-        if len(graph_params) != 3:
-            raise ValueError(
-                "The graph B needs three parameters: "
-                "<number of parts>, <seconds for parts>, "
-                "<seconds for summary>")
-        num_of_parts, parts_sleep, summary_sleep = graph_params
-    print(
-        f"Bulding graph A with {num_of_parts} parts, "
-        f"{parts_sleep} seconds for each parts, and "
-        f"{summary_sleep} secoconds for the summary")
-
-    parts = [task_graph.create_task(
-        f"part {p}", task_part_b, args=[parts_sleep], deps=[])
-        for p in range(int(num_of_parts))]
-    task_graph.create_task(
-        "summary", task_summary, args=[summary_sleep], deps=parts)
     return task_graph
 
 
@@ -137,9 +104,9 @@ def _build_graph_c(graph_params: list[str] | None) -> TaskGraph:
                 "<sleep for summary>")
         num_of_parts, parts_sleep, summary_sleep = graph_params
     print(
-        f"Bulding graph C with {num_of_parts} parts, "
-        f"{parts_sleep} seconds sleep for each parts, and "
-        f"{summary_sleep} secoconds sleep for the summary")
+        f"Building graph C with {num_of_parts} parts, "
+        f"{parts_sleep} seconds sleep for each part, and "
+        f"{summary_sleep} seconds sleep for the summary")
 
     parts = [
         task_graph.create_task(
@@ -150,10 +117,11 @@ def _build_graph_c(graph_params: list[str] | None) -> TaskGraph:
         "summary", task_summary, args=[summary_sleep], deps=parts)
     parts2 = [
         task_graph.create_task(
-            f"part2 {p}", task_part, args=[summary], deps=[summary])
+            f"part2 {p}", task_part, args=[parts_sleep], deps=[summary])
         for p in range(int(num_of_parts))
     ]
-    task_graph.create_task("summary2", task_summary, args=[], deps=parts2)
+    task_graph.create_task(
+        "summary2", task_summary, args=[summary_sleep], deps=parts2)
     return task_graph
 
 
@@ -161,10 +129,12 @@ def build_demo_graph(graph_type: str,
                      graph_params: list[str] | None) -> TaskGraph:
     """Build a demo graph."""
     if graph_type == "A":
-        return _build_graph_a(graph_params)
+        return _build_fan_in_graph(
+            "A", ("10", "2", "2"), task_part, graph_params)
 
     if graph_type == "B":
-        return _build_graph_b(graph_params)
+        return _build_fan_in_graph(
+            "B", ("2", "5", "10"), task_part_b, graph_params)
 
     if graph_type == "C":
         return _build_graph_c(graph_params)
