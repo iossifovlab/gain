@@ -66,12 +66,15 @@ def test_the_info_and_repair_commands_build_with_the_default_region_size(
     assert _REQUESTED_REGION_SIZES == [DEFAULT_STATISTICS_REGION_SIZE]
 
 
-@pytest.mark.parametrize("command", ["repo-info", "resource-info"])
+@pytest.mark.parametrize("command", [
+    ["repo-info"],
+    ["resource-info", "-r", "one"],
+])
 def test_the_info_commands_take_a_region_size(
-    region_size_recorder_repo: pathlib.Path, command: str,
+    region_size_recorder_repo: pathlib.Path, command: list[str],
 ) -> None:
     cli.cli_manage([
-        command, "-R", str(region_size_recorder_repo), "-r", "one",
+        *command, "-R", str(region_size_recorder_repo),
         "-j", "1", "--region-size", "5"])
 
     assert _REQUESTED_REGION_SIZES == [5]

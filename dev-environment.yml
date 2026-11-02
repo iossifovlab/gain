@@ -10,6 +10,7 @@ dependencies:
   # gain-core (core/pyproject.toml [dependency-groups.dev])
   - brotli-python
   - coverage
+  - deptry>=0.25.1
   - fonttools
   - import-linter
   - mypy==1.15.0

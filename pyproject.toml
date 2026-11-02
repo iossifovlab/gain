@@ -55,3 +55,9 @@ docs = [
     "sphinx-reredirects",
     "gain-vep-annotator",
 ]
+
+# deptry reads the import names of the workspace members from this map.
+# Without it, deptry reports both members as unused (DEP002).
+[tool.deptry.package_module_name_map]
+gain-core = "gain"
+gain-web-api = "web_annotation"
