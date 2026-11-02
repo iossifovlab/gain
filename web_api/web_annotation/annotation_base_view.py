@@ -561,9 +561,9 @@ class AnnotationMixin:
         await sync_to_async(self._put_pipeline_or_404)(pipeline_id, user)
 
     def get_genome(self, data: QueryDict) -> str:
-        """Get genome from a request."""
+        """Get genome from a request; an empty field means no genome."""
         genome = data.get("genome")
-        if genome is None:
+        if not genome:
             return ""
         if genome not in GRR_GENOMES:
             raise ValueError(
