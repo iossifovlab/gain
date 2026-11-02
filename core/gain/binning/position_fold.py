@@ -25,6 +25,18 @@ The fold keeps the rules of the per-run fold:
   in one numpy operation, or along one bin with ``np.add.accumulate``,
   which adds in sequence.  An open bin at the end of a batch continues
   its running sum in the next batch.
+- ``median`` keeps one ``(value, weight)`` pair for each part with a
+  value, as :class:`~gain.genomic_resources.aggregators.MedianAggregator`
+  does.  The fold keeps the pairs of the open bin only: the bin that
+  holds the cursor, the first position that no record claimed yet.  The
+  bins before the cursor are closed, and the fold computes their medians
+  at the end of each batch.  A closed bin without a NaN value gets a
+  weighted median from a stable sort by value, which keeps two equal
+  values (``-0.0`` and ``0.0``) in position order, as ``list.sort``
+  does.  A closed bin with a NaN value goes to ``MedianAggregator``
+  itself, with its pairs in position order: Python sorts a list with a
+  NaN in an order that depends on the input, and a numpy sort puts NaN
+  last.
 
 ``docs/adr/0038-the-position-binner-folds-value-arrays-with-numpy.md``
 records why the fold exists and what it was measured against.
@@ -37,11 +49,13 @@ from typing import Protocol
 import numpy as np
 import numpy.typing as npt
 
+from gain.genomic_resources.aggregators import MedianAggregator, to_float64
 from gain.utils.regions import calc_bin_index
 
-#: The aggregators the array fold serves.  ``median`` and ``product``
-#: keep the per-run fold.
-ARRAY_FOLD_AGGREGATORS = frozenset({"count", "sum", "mean", "max", "min"})
+#: The aggregators the array fold serves.  ``product`` keeps the per-run
+#: fold.
+ARRAY_FOLD_AGGREGATORS = frozenset(
+    {"count", "sum", "mean", "max", "min", "median"})
 
 #: The largest magnitude of an exact sum of int parts that a float64 holds.
 _EXACT_INT_LIMIT = 2 ** 53
@@ -58,6 +72,7 @@ BoolArray = npt.NDArray[np.bool_]
 #: starts from ``0``.
 _START = {
     "sum": -0.0, "mean": 0.0, "max": -np.inf, "min": np.inf, "count": 0.0,
+    "median": np.nan,
 }
 _IDENTITY = {
     "sum": -0.0, "mean": -0.0, "max": -np.inf, "min": np.inf, "count": 0.0,
@@ -172,6 +187,18 @@ def _min_along(
     return bottom
 
 
+def _python_median(values: FloatArray, weights: IntArray) -> float:
+    """The median that ``MedianAggregator`` gives for the pairs, in order.
+
+    The values go in as Python floats, so an overflow of the mean of the
+    two middle values gives ``inf`` without a numpy warning.
+    """
+    aggregator = MedianAggregator()
+    for value, weight in zip(values.tolist(), weights.tolist(), strict=True):
+        aggregator.add(value, weight)
+    return to_float64(aggregator.get_final())
+
+
 _STEPS: dict[
     str, Callable[[FloatArray, FloatArray, BoolArray], FloatArray]] = {
     "sum": _add_step, "mean": _add_step, "max": _max_step, "min": _min_step,
@@ -220,6 +247,29 @@ class ArrayBinFold:
         self._used: IntArray = np.zeros(n_bins, dtype=np.int64)
         # The first position that no record claimed yet.
         self._cursor = start
+        # The ``median`` pairs of the open bin, in position order: the
+        # local bin, the value and the weight of each part with a value.
+        self._pair_bin: IntArray = np.empty(0, dtype=np.int64)
+        self._pair_value: FloatArray = np.empty(0, dtype=np.float64)
+        self._pair_weight: IntArray = np.empty(0, dtype=np.int64)
+
+    @property
+    def cursor(self) -> int:
+        """The first position that no record claimed yet."""
+        return self._cursor
+
+    @property
+    def held_pairs(self) -> list[tuple[int, float, int]]:
+        """The ``median`` pairs that the fold holds for the open bin.
+
+        Each pair is the grid bin index, the value and the weight of one
+        part, in position order.  Only ``median`` holds pairs.
+        """
+        return [
+            (int(bin_index) + self._first_bin, float(value), int(weight))
+            for bin_index, value, weight in zip(
+                self._pair_bin, self._pair_value, self._pair_weight,
+                strict=True)]
 
     def add_batch(
         self, pos_begin: IntArray, pos_end: IntArray, values: FloatArray,
@@ -273,11 +323,13 @@ class ArrayBinFold:
         answers.
         """
         if self._cursor <= self.end:
+            begin = self._cursor
+            # The cursor moves first: the last piece closes every bin.
+            self._cursor = self.end + 1
             self._fold_pieces(
-                np.array([self._cursor], dtype=np.int64),
+                np.array([begin], dtype=np.int64),
                 np.array([self.end], dtype=np.int64),
                 np.array([np.nan]), np.array([True]))
-            self._cursor = self.end + 1
         if self.aggregator == "count":
             return self._used.astype(np.float64)
         has_value = self._used > 0
@@ -322,6 +374,10 @@ class ArrayBinFold:
             np.where(missing, 0, length), group_start)
         if self.aggregator == "count":
             return
+        if self.aggregator == "median":
+            keep = ~missing
+            self._fold_median(local_bin[keep], value[keep], length[keep])
+            return
 
         # The per-run fold adds Python floats, which overflow to ``inf``
         # and give NaN for ``inf - inf`` without a warning.  The array
@@ -334,6 +390,69 @@ class ArrayBinFold:
             operand[missing] = _IDENTITY[self.aggregator]
             self._fold_in_order(
                 operand, missing, seen, group_start, group_bin)
+
+    def _fold_median(
+        self, part_bin: IntArray, value: FloatArray, weight: IntArray,
+    ) -> None:
+        """Add the ``median`` pairs and close the bins before the cursor."""
+        pair_bin = np.concatenate((self._pair_bin, part_bin))
+        pair_value = np.concatenate((self._pair_value, value))
+        pair_weight = np.concatenate((self._pair_weight, weight))
+        if self._cursor <= self.end:
+            open_bin = (
+                calc_bin_index(self.bin_size, self._cursor)
+                - self._first_bin)
+        else:
+            open_bin = len(self._acc)
+        n_closed = int(np.searchsorted(pair_bin, open_bin, side="left"))
+        self._pair_bin = pair_bin[n_closed:]
+        self._pair_value = pair_value[n_closed:]
+        self._pair_weight = pair_weight[n_closed:]
+        if n_closed == 0:
+            return
+        pair_bin = pair_bin[:n_closed]
+        pair_value = pair_value[:n_closed]
+        pair_weight = pair_weight[:n_closed]
+
+        nan_bins = np.unique(pair_bin[np.isnan(pair_value)])
+        has_nan = np.isin(pair_bin, nan_bins)
+        for bin_index in nan_bins:
+            self._acc[bin_index] = _python_median(
+                pair_value[pair_bin == bin_index],
+                pair_weight[pair_bin == bin_index])
+        self._weighted_median(
+            pair_bin[~has_nan], pair_value[~has_nan], pair_weight[~has_nan])
+
+    def _weighted_median(
+        self, pair_bin: IntArray, value: FloatArray, weight: IntArray,
+    ) -> None:
+        """The weighted median of each bin, as ``MedianAggregator`` gives.
+
+        The pairs come in position order and hold no NaN value.
+        """
+        if len(pair_bin) == 0:
+            return
+        # Two stable sorts: by value, then by bin.  Equal values keep
+        # their position order, as they do in ``list.sort``.
+        order = np.argsort(value, kind="stable")
+        order = order[np.argsort(pair_bin[order], kind="stable")]
+        pair_bin, value = pair_bin[order], value[order]
+        cumulative = np.cumsum(weight[order])
+        group_start = np.flatnonzero(
+            np.concatenate(([True], pair_bin[1:] != pair_bin[:-1])))
+        group_end = np.append(group_start[1:], len(pair_bin)) - 1
+        before = np.where(
+            group_start > 0, cumulative[group_start - 1], 0)
+        total = cumulative[group_end] - before
+        # The value at ``rank`` is the first one whose cumulative weight,
+        # from the start of the bin, passes the rank.
+        high = value[np.searchsorted(
+            cumulative, before + total // 2, side="right")]
+        low = value[np.searchsorted(
+            cumulative, before + (total - 1) // 2, side="right")]
+        with np.errstate(over="ignore", invalid="ignore"):
+            median = np.where(total % 2 == 1, high, (low + high) / 2)
+        self._acc[pair_bin[group_start]] = median
 
     def _fold_in_order(
         self, operand: FloatArray, missing: BoolArray, seen: BoolArray,

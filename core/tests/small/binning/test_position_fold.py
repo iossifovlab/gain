@@ -5,7 +5,8 @@
 
 ``PositionScoreBinding.bin_region`` folds the batches of
 ``fetch_region_value_arrays`` with numpy for a ``float`` score under
-``count``, ``sum``, ``mean``, ``max`` and ``min`` (gain#1957).  Every
+``count``, ``sum``, ``mean``, ``max``, ``min`` (gain#1957) and
+``median`` (gain#1969).  Every
 other case keeps the per-run fold of ``get_score_in_bins``, which stays
 the reference: the parity tests here compare the two bit for bit.
 """
@@ -19,6 +20,7 @@ from gain.binning.binners import (
     PositionScoreDef,
     Track,
 )
+from gain.binning.position_fold import ArrayBinFold
 from gain.genomic_resources.aggregators import to_float64
 from gain.genomic_resources.genomic_scores import (
     DEFAULT_VALUE_ARRAYS_BATCH_SIZE,
@@ -30,7 +32,7 @@ from gain.genomic_resources.testing.builders import (
     a_grr,
     a_position_score,
 )
-from gain.utils.regions import BedRegion
+from gain.utils.regions import BedRegion, calc_bin_index
 
 #: Twenty one-position values whose sum in order differs from the
 #: pairwise sum of ``np.add.reduceat``: the stretch ``chr1:40-59`` of
@@ -88,7 +90,7 @@ BIGWIG_DATA = """
     chr2   29         40       1.0
 """
 
-AGGREGATORS = ["count", "sum", "mean", "max", "min"]
+AGGREGATORS = ["count", "sum", "mean", "max", "min", "median"]
 
 REGIONS = {
     "inside-one-bin": BedRegion("chr1", 9, 12),
@@ -269,10 +271,9 @@ def test_a_float_score_reads_through_the_array_read(
 
 @pytest.mark.parametrize("resource_id,aggregator", [
     ("int_score", "sum"),
-    ("tabix", "median"),
     ("tabix", "product"),
     ("in_memory", "mean"),
-], ids=["int-score", "median", "product", "no-array-read"])
+], ids=["int-score", "product", "no-array-read"])
 def test_the_other_cases_keep_the_per_run_fold(
     repo: GenomicResourceRepo, mocker: pytest_mock.MockerFixture,
     resource_id: str, aggregator: str,
@@ -472,3 +473,99 @@ def test_an_overflow_gives_no_warning_in_the_array_fold(
         actual = bin_column(huge_repo, track, HUGE_REGION, bin_size)
 
     assert_same_bits(actual, expected)
+
+
+#: One bin of three one-position records, ``3.0``, NaN and ``1.0``, and
+#: an uncovered stretch (4-5).  Python sorts the pairs with the NaN in
+#: an order that depends on the input, and a numpy sort puts NaN last,
+#: so the two medians differ.
+MEDIAN_NAN_TABIX_DATA = """
+    chrom  pos_begin  pos_end  s
+    chr1   1          1        3.0
+    chr1   2          2        NaN
+    chr1   3          3        1.0
+"""
+
+MEDIAN_NAN_REGION = BedRegion("chr1", 1, 5)
+
+
+@pytest.fixture(scope="module")
+def median_nan_repo(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> GenomicResourceRepo:
+    return (
+        a_grr()
+        .with_resource("tabix", a_position_score()
+                       .with_score("s", "float")
+                       .with_tabix()
+                       .with_data(MEDIAN_NAN_TABIX_DATA))
+        .build_repo(tmp_path_factory.mktemp("median_nan_grr")))
+
+
+def numpy_weighted_median(pairs: list[tuple[float, int]]) -> float:
+    """The weighted median of the pairs after a stable numpy sort."""
+    values = np.array([value for value, _ in pairs])
+    weights = np.array([weight for _, weight in pairs])
+    order = np.argsort(values, kind="stable")
+    cumulative = np.cumsum(weights[order])
+    total = int(cumulative[-1])
+    high = values[order][np.searchsorted(
+        cumulative, total // 2, side="right")]
+    if total % 2 == 1:
+        return float(high)
+    low = values[order][np.searchsorted(
+        cumulative, (total - 1) // 2, side="right")]
+    return float((low + high) / 2)
+
+
+@pytest.mark.parametrize("replacement,pairs", [
+    (None, [(3.0, 1), (np.nan, 1), (1.0, 1)]),
+    (2.0, [(3.0, 1), (np.nan, 1), (1.0, 1), (2.0, 2)]),
+], ids=["none", "non-zero"])
+def test_a_median_bin_with_a_nan_value_goes_to_the_median_aggregator(
+    median_nan_repo: GenomicResourceRepo, mocker: pytest_mock.MockerFixture,
+    replacement: float | None, pairs: list[tuple[float, int]],
+) -> None:
+    arrays = mocker.spy(PositionScore, "_parsed_column_batches")
+    track = a_track("tabix", "median", replacement)
+    expected = reference_column(
+        median_nan_repo, track, MEDIAN_NAN_REGION, LARGE_BIN_SIZE)
+
+    actual = bin_column(
+        median_nan_repo, track, MEDIAN_NAN_REGION, LARGE_BIN_SIZE)
+
+    assert arrays.call_count == 1
+    assert_same_bits(actual, expected)
+    # Not vacuous: a numpy weighted median of the same pairs differs.
+    assert not np.array_equal(
+        [numpy_weighted_median(pairs)], expected, equal_nan=True)
+
+
+#: Records over bins of 4 positions (1-4, 5-8, 9-12).  The record 3-5
+#: crosses a bin boundary, the record 6-8 leaves the cursor on the first
+#: position of a bin, and the last record leaves it past the region.
+OPEN_BIN_RECORDS = [
+    (1, 2, 1.0), (3, 5, 2.0), (6, 8, 3.0), (9, 9, 4.0), (10, 12, 5.0),
+]
+
+
+def test_the_median_fold_holds_the_pairs_of_the_open_bin_only() -> None:
+    bin_size = 4
+    fold = ArrayBinFold("median", None, 1, 12, bin_size)
+    held_counts = []
+
+    for begin, end, value in OPEN_BIN_RECORDS:
+        fold.add_batch(
+            np.array([begin]), np.array([end]), np.array([value]),
+            np.array([False]))
+
+        pairs = fold.held_pairs
+        held_counts.append(len(pairs))
+        cursor = fold.cursor
+        if cursor > 12 or (cursor - 1) % bin_size == 0:
+            assert pairs == []
+        else:
+            open_bin = calc_bin_index(bin_size, cursor)
+            assert all(pair[0] == open_bin for pair in pairs)
+
+    assert held_counts == [1, 1, 0, 1, 0]

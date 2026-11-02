@@ -4,7 +4,9 @@
 - **Date:** 2026-10-16
 - **Issues:** [gain#1841](https://github.com/iossifovlab/gain/issues/1841) (the
   measurement and the prototype),
-  [gain#1957](https://github.com/iossifovlab/gain/issues/1957) (the fold)
+  [gain#1957](https://github.com/iossifovlab/gain/issues/1957) (the fold),
+  [gain#1969](https://github.com/iossifovlab/gain/issues/1969) (the `median`
+  fold)
 - **Amends:** [ADR 0025](0025-binning-tool-writes-one-hdf5-matrix-from-a-fixed-grid.md),
   decision D14. D14 kept `get_scores_in_bins` as the read of the position
   binner and did not file a vectorised fold. This record files the fold.
@@ -58,7 +60,7 @@ all of these conditions are true:
 
 - The score serves the array read: `supports_region_value_arrays` is true.
 - The value type of the score is `float`.
-- The aggregator is `count`, `sum`, `mean`, `max` or `min`.
+- The aggregator is `count`, `sum`, `mean`, `max`, `min` or `median`.
 - The `none_value_replacement` is exact as a float sum over one bin:
   `replacement_is_exact` is true. The Consequences section gives the
   reason.
@@ -100,10 +102,64 @@ The array read gives an `int` score as `float64`. The aggregators keep an
 signed infinity. The array fold cannot give these results, so an `int`
 score keeps the present fold.
 
-### 3. `median` and `product` keep the present fold
+### 3. `product` keeps the present fold
 
-This is a gap that two open issues track, not a permanent choice:
-gain#1969 vectorises `median`, and gain#1970 vectorises `product`.
+The `product` gap is not a permanent choice. An open issue tracks it:
+gain#1970 vectorises `product`. gain#1969 closed the `median` gap. The
+section below records its decisions.
+
+## The `median` fold (gain#1969)
+
+`MedianAggregator` keeps one `(value, weight)` pair for each part of a run
+with a value. The weight is the length of the part. At the end, it sorts
+the pairs by value with the stable `list.sort` and selects the middle ranks
+in the weight-expanded order. The maintainer decided three points on
+2026-11-02.
+
+### 4. A bin with a NaN value goes to `MedianAggregator`
+
+A NaN value is a value (see the Consequences section). The fold gives a bin
+with a NaN value to `MedianAggregator` itself. It adds one pair for each part
+of the bin that has a value, in position order, as `get_score_in_bins` does.
+The parts that the replacement fills are in that order too. The fold adds
+each value as a Python `float`, so an overflow in `(first + second) / 2`
+gives no numpy warning.
+
+The reason: Python sorts a list with a NaN in an order that depends on the
+input, and a numpy sort puts NaN last. A probe on `MedianAggregator` gave
+`nan` for the pairs `[(3.0, 1), (nan, 1), (1.0, 1)]`. A numpy weighted median
+gave `3.0` for the same pairs. A numpy fold cannot give the Python order,
+and NaN values are rare.
+
+### 5. A bin without a NaN value uses a vectorised weighted median
+
+The fold sorts the parts by bin and by value with a stable sort. Then it
+searches the cumulative weights of each bin for the middle ranks.
+
+The reason: a stable sort keeps two equal values in record order, as
+`list.sort` does. So `-0.0` and `0.0` come out as `MedianAggregator` gives
+them. The probe confirmed this for `[(-0.0, 1), (0.0, 1)]` and
+`[(0.0, 1), (-0.0, 2)]`.
+
+### 6. The fold keeps pairs only for the open bin
+
+The open bin is the bin that holds the cursor of the fold: the first
+position that no record claimed yet. Every bin before the open bin is
+closed, because the next batch starts at the cursor. The fold computes the
+median of each closed bin at the end of the batch. Only the pairs of the
+open bin carry into the next batch. When the cursor is on the first
+position of a bin, the open bin has no pairs.
+
+The reason: one region can be a whole chromosome. All the pairs of chr1
+would take several GB, and the binner runs several jobs in parallel.
+
+The `replacement_is_exact` gate applies to `median` as it is. Under the
+gate, `float(r)` equals an `int` replacement `r`. So the binner gets the
+same float in each of these cases:
+
+- An odd total weight selects `r`.
+- A float value and `r` are the two middle values.
+- Two middle values are `r`.
 
 ## Consequences
 
