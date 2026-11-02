@@ -12,24 +12,6 @@ from gain.genomic_resources.gene_models.gene_models_factory import (
 )
 from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.testing.gene_models_builder import a_gene_models
-from gain.testing.t4c8_import import t4c8_genes as setup_t4c8_genes
-from gain.testing.t4c8_import import t4c8_genome as setup_t4c8_genome
-
-
-@pytest.fixture(scope="session")
-def t4c8_genome(tmp_path_factory: pytest.TempPathFactory) -> ReferenceGenome:
-    root_path = tmp_path_factory.mktemp("t4c8_genome")
-    genome = setup_t4c8_genome(root_path)
-    genome.open()
-    return genome
-
-
-@pytest.fixture(scope="session")
-def t4c8_genes(tmp_path_factory: pytest.TempPathFactory) -> GeneModels:
-    root_path = tmp_path_factory.mktemp("t4c8_genes")
-    gene_models = setup_t4c8_genes(root_path)
-    gene_models.load()
-    return gene_models
 
 
 @pytest.mark.parametrize(
