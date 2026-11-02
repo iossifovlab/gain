@@ -11,6 +11,7 @@ from gain.annotation.annotation_factory import (
     load_pipeline_from_file,
     load_pipeline_from_file_or_resource,
 )
+from gain.annotation.annotator_base import AnnotatorBase
 from gain.genomic_resources.repository import GenomicResourceRepo
 
 _FACTORY_LOGGER = "gain.annotation.annotation_factory"
@@ -61,6 +62,7 @@ def test_build_pipeline_default_work_dir_is_absolute(
         [{"position_score": "one"}], annotation_grr)
 
     annotator = pipeline.annotators[0]
+    assert isinstance(annotator, AnnotatorBase)
     assert annotator.work_dir.is_absolute()
     assert not str(annotator.work_dir).startswith("work")
 
@@ -92,6 +94,7 @@ def test_build_pipeline_warns_once_for_multiple_annotators(
     # both annotators live under the same memoized temp root
     root = annotation_factory._get_default_work_dir()
     for annotator in pipeline.annotators:
+        assert isinstance(annotator, AnnotatorBase)
         assert root in annotator.work_dir.parents
 
 
@@ -107,6 +110,7 @@ def test_build_pipeline_explicit_work_dir_used_verbatim_no_warning(
             [{"position_score": "one"}], annotation_grr, work_dir=explicit)
 
     annotator = pipeline.annotators[0]
+    assert isinstance(annotator, AnnotatorBase)
     assert annotator.work_dir == explicit / "A0_position_score"
 
     default_work_dir_warnings = [
@@ -221,6 +225,7 @@ def test_load_pipeline_from_file_or_resource_grr_id_branch_work_dir(
             "res_pipeline", annotation_grr, work_dir=explicit)
 
     annotator = pipeline.annotators[0]
+    assert isinstance(annotator, AnnotatorBase)
     assert annotator.work_dir == explicit / "A0_position_score"
 
     default_work_dir_warnings = [

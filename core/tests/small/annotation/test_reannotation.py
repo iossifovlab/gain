@@ -46,10 +46,10 @@ def test_dependency_graph_empty() -> None:
 def test_dependency_graph_no_dependencies() -> None:
     # annotator can depend on nothing
     dummy_annotator_1 = DummyAnnotator(
-        [Attribute("attr_1", "attr_1", internal=False, parameters={})],
+        [Attribute("attr_1", "attr_1", internal=False)],
     )
     dummy_annotator_2 = DummyAnnotator(
-        [Attribute("attr_2", "attr_2", internal=False, parameters={})],
+        [Attribute("attr_2", "attr_2", internal=False)],
     )
     pipeline = _make_pipeline_with([dummy_annotator_1, dummy_annotator_2])
     graph = _build_dependency_graph(pipeline)
@@ -62,11 +62,11 @@ def test_dependency_graph_no_dependencies() -> None:
 def test_dependency_graph_one_dependency() -> None:
     # annotator can depend on one annotator
     attribute_1 = \
-        Attribute("attr_1", "attr_1", internal=False, parameters={})
+        Attribute("attr_1", "attr_1", internal=False)
     dummy_annotator_1 = DummyAnnotator([attribute_1])
 
     attribute_2 = \
-        Attribute("attr_2", "attr_2", internal=False, parameters={})
+        Attribute("attr_2", "attr_2", internal=False)
     dummy_annotator_2 = DummyAnnotator([attribute_2], dependencies=("attr_1",))
 
     pipeline = _make_pipeline_with([dummy_annotator_1, dummy_annotator_2])
@@ -82,15 +82,15 @@ def test_dependency_graph_one_dependency() -> None:
 def test_dependency_graph_multiple_dependencies() -> None:
     # annotator can depend on multiple annotators
     attribute_1 = \
-        Attribute("attr_1", "attr_1", internal=False, parameters={})
+        Attribute("attr_1", "attr_1", internal=False)
     dummy_annotator_1 = DummyAnnotator([attribute_1])
 
     attribute_2 = \
-        Attribute("attr_2", "attr_2", internal=False, parameters={})
+        Attribute("attr_2", "attr_2", internal=False)
     dummy_annotator_2 = DummyAnnotator([attribute_2])
 
     attribute_3 = \
-        Attribute("attr_3", "attr_3", internal=False, parameters={})
+        Attribute("attr_3", "attr_3", internal=False)
     dummy_annotator_3 = DummyAnnotator([attribute_3],
                                        dependencies=("attr_1", "attr_2"))
 
@@ -111,15 +111,15 @@ def test_dependency_graph_multiple_dependencies() -> None:
 def test_dependency_graph_dependency_for_many() -> None:
     # annotator can be a dependency for multiple annotators
     attribute_1 = \
-        Attribute("attr_1", "attr_1", internal=False, parameters={})
+        Attribute("attr_1", "attr_1", internal=False)
     dummy_annotator_1 = DummyAnnotator([attribute_1])
 
     attribute_2 = \
-        Attribute("attr_2", "attr_2", internal=False, parameters={})
+        Attribute("attr_2", "attr_2", internal=False)
     dummy_annotator_2 = DummyAnnotator([attribute_2], dependencies=("attr_1",))
 
     attribute_3 = \
-        Attribute("attr_3", "attr_3", internal=False, parameters={})
+        Attribute("attr_3", "attr_3", internal=False)
     dummy_annotator_3 = DummyAnnotator([attribute_3], dependencies=("attr_1",))
 
     pipeline = _make_pipeline_with([dummy_annotator_1,
@@ -140,15 +140,15 @@ def test_dependency_graph_dependency_for_many() -> None:
 def test_dependency_graph_grandparent_dependency() -> None:
     # annotator can be a dependency for a child as well as grandchildren
     attribute_1 = \
-        Attribute("attr_1", "attr_1", internal=False, parameters={})
+        Attribute("attr_1", "attr_1", internal=False)
     dummy_annotator_1 = DummyAnnotator([attribute_1])
 
     attribute_2 = \
-        Attribute("attr_2", "attr_2", internal=False, parameters={})
+        Attribute("attr_2", "attr_2", internal=False)
     dummy_annotator_2 = DummyAnnotator([attribute_2], dependencies=("attr_1",))
 
     attribute_3 = \
-        Attribute("attr_3", "attr_3", internal=False, parameters={})
+        Attribute("attr_3", "attr_3", internal=False)
     dummy_annotator_3 = DummyAnnotator([attribute_3], dependencies=("attr_2",))
 
     pipeline = _make_pipeline_with([dummy_annotator_1,
@@ -169,11 +169,11 @@ def test_dependency_graph_grandparent_dependency() -> None:
 
 def test_get_rerun_annotators_dependency_changed() -> None:
     attribute_1 = \
-        Attribute("attr_1", "attr_1", internal=False, parameters={})
+        Attribute("attr_1", "attr_1", internal=False)
     dummy_annotator_1 = DummyAnnotator([attribute_1])
 
     attribute_2 = \
-        Attribute("attr_2", "attr_2", internal=False, parameters={})
+        Attribute("attr_2", "attr_2", internal=False)
     dummy_annotator_2 = DummyAnnotator([attribute_2], dependencies=("attr_1",))
 
     pipeline = _make_pipeline_with([dummy_annotator_1, dummy_annotator_2])
@@ -191,11 +191,11 @@ def test_get_rerun_annotators_dependency_changed() -> None:
 
 def test_get_rerun_annotators_internal_new_dependent() -> None:
     attribute_1 = \
-        Attribute("attr_1", "attr_1", internal=True, parameters={})
+        Attribute("attr_1", "attr_1", internal=True)
     dummy_annotator_1 = DummyAnnotator([attribute_1])
 
     attribute_2 = \
-        Attribute("attr_2", "attr_2", internal=False, parameters={})
+        Attribute("attr_2", "attr_2", internal=False)
     dummy_annotator_2 = DummyAnnotator([attribute_2], dependencies=("attr_1",))
 
     pipeline = _make_pipeline_with([dummy_annotator_1, dummy_annotator_2])
@@ -209,15 +209,15 @@ def test_get_rerun_annotators_internal_new_dependent() -> None:
 
 def test_get_rerun_annotators_internal_dependent_rerun() -> None:
     attribute_1 = \
-        Attribute("attr_1", "attr_1", internal=True, parameters={})
+        Attribute("attr_1", "attr_1", internal=True)
     dummy_annotator_1 = DummyAnnotator([attribute_1])
 
     attribute_2 = \
-        Attribute("attr_2", "attr_2", internal=True, parameters={})
+        Attribute("attr_2", "attr_2", internal=True)
     dummy_annotator_2 = DummyAnnotator([attribute_2], dependencies=("attr_1",))
 
     attribute_3 = \
-        Attribute("attr_3", "attr_3", internal=False, parameters={})
+        Attribute("attr_3", "attr_3", internal=False)
     dummy_annotator_3 = DummyAnnotator([attribute_3], dependencies=("attr_2",))
 
     pipeline = _make_pipeline_with([dummy_annotator_1,
@@ -235,11 +235,11 @@ def test_get_rerun_annotators_internal_dependent_rerun() -> None:
 
 def test_get_rerun_annotators_non_internal_new_dependent() -> None:
     attribute_1 = \
-        Attribute("attr_1", "attr_1", internal=False, parameters={})
+        Attribute("attr_1", "attr_1", internal=False)
     dummy_annotator_1 = DummyAnnotator([attribute_1])
 
     attribute_2 = \
-        Attribute("attr_2", "attr_2", internal=False, parameters={})
+        Attribute("attr_2", "attr_2", internal=False)
     dummy_annotator_2 = DummyAnnotator([attribute_2], dependencies=("attr_1",))
 
     pipeline = _make_pipeline_with([dummy_annotator_1, dummy_annotator_2])
@@ -251,15 +251,15 @@ def test_get_rerun_annotators_non_internal_new_dependent() -> None:
 
 def test_get_rerun_annotators_non_internal_rerun_dependent() -> None:
     attribute_1 = \
-        Attribute("attr_1", "attr_1", internal=False, parameters={})
+        Attribute("attr_1", "attr_1", internal=False)
     dummy_annotator_1 = DummyAnnotator([attribute_1])
 
     attribute_2 = \
-        Attribute("attr_2", "attr_2", internal=True, parameters={})
+        Attribute("attr_2", "attr_2", internal=True)
     dummy_annotator_2 = DummyAnnotator([attribute_2], dependencies=("attr_1",))
 
     attribute_3 = \
-        Attribute("attr_3", "attr_3", internal=False, parameters={})
+        Attribute("attr_3", "attr_3", internal=False)
     dummy_annotator_3 = DummyAnnotator([attribute_3], dependencies=("attr_2",))
 
     pipeline = _make_pipeline_with([dummy_annotator_1,
@@ -277,11 +277,11 @@ def test_get_rerun_annotators_non_internal_rerun_dependent() -> None:
 def test_get_deleted_attributes() -> None:
     # attribute deleted in new pipeline
     attribute_1 = \
-        Attribute("attr_1", "attr_1", internal=False, parameters={})
+        Attribute("attr_1", "attr_1", internal=False)
     dummy_annotator_1 = DummyAnnotator([attribute_1])
 
     attribute_2 = \
-        Attribute("attr_2", "attr_2", internal=False, parameters={})
+        Attribute("attr_2", "attr_2", internal=False)
     dummy_annotator_2 = DummyAnnotator([attribute_2])
 
     old_pipeline = _make_pipeline_with([dummy_annotator_1])
@@ -293,11 +293,11 @@ def test_get_deleted_attributes() -> None:
 def test_get_deleted_attributes_shared_name() -> None:
     # new attribute in new pipeline shares name with old - must still delete
     attribute_1 = \
-        Attribute("attr_1", "attr_1", internal=False, parameters={})
+        Attribute("attr_1", "attr_1", internal=False)
     dummy_annotator_1 = DummyAnnotator([attribute_1])
 
     attribute_2 = \
-        Attribute("attr_1", "attr_2", internal=False, parameters={})
+        Attribute("attr_1", "attr_2", internal=False)
     dummy_annotator_2 = DummyAnnotator([attribute_2])
 
     old_pipeline = _make_pipeline_with([dummy_annotator_1])
@@ -309,11 +309,11 @@ def test_get_deleted_attributes_shared_name() -> None:
 def test_get_deleted_attributes_ignore_internal() -> None:
     # don't try to delete internal attributes
     attribute_1 = \
-        Attribute("attr_1", "attr_1", internal=True, parameters={})
+        Attribute("attr_1", "attr_1", internal=True)
     dummy_annotator_1 = DummyAnnotator([attribute_1])
 
     attribute_2 = \
-        Attribute("attr_2", "attr_2", internal=False, parameters={})
+        Attribute("attr_2", "attr_2", internal=False)
     dummy_annotator_2 = DummyAnnotator([attribute_2])
 
     old_pipeline = _make_pipeline_with([dummy_annotator_1])
@@ -325,11 +325,11 @@ def test_get_deleted_attributes_ignore_internal() -> None:
 def test_get_deleted_attributes_full_reannotation() -> None:
     # full reannotation - delete all
     attribute_1 = \
-        Attribute("attr_1", "attr_1", internal=True, parameters={})
+        Attribute("attr_1", "attr_1", internal=True)
     dummy_annotator_1 = DummyAnnotator([attribute_1])
 
     attribute_2 = \
-        Attribute("attr_2", "attr_2", internal=False, parameters={})
+        Attribute("attr_2", "attr_2", internal=False)
     dummy_annotator_2 = DummyAnnotator([attribute_2])
 
     old_pipeline = _make_pipeline_with([dummy_annotator_1, dummy_annotator_2])
@@ -344,11 +344,11 @@ def test_full_reannotation_includes_all_new_annotators() -> None:
     # full reannotation must recompute every annotator of the new pipeline,
     # even ones unchanged between old and new (the regression in #108)
     attribute_1 = \
-        Attribute("attr_1", "attr_1", internal=False, parameters={})
+        Attribute("attr_1", "attr_1", internal=False)
     dummy_annotator_1 = DummyAnnotator([attribute_1])
 
     attribute_2 = \
-        Attribute("attr_2", "attr_2", internal=False, parameters={})
+        Attribute("attr_2", "attr_2", internal=False)
     dummy_annotator_2 = DummyAnnotator([attribute_2])
 
     old_pipeline = _make_pipeline_with(
@@ -366,15 +366,15 @@ def test_full_reannotation_includes_all_new_annotators() -> None:
 
 def test_adjust_for_reannotation() -> None:
     attribute_1 = \
-        Attribute("attr_1", "attr_1", internal=False, parameters={})
+        Attribute("attr_1", "attr_1", internal=False)
     dummy_annotator_1 = DummyAnnotator([attribute_1])
 
     attribute_2 = \
-        Attribute("attr_2", "attr_2", internal=True, parameters={})
+        Attribute("attr_2", "attr_2", internal=True)
     dummy_annotator_2 = DummyAnnotator([attribute_2], dependencies=("attr_1",))
 
     attribute_3 = \
-        Attribute("attr_3", "attr_3", internal=False, parameters={})
+        Attribute("attr_3", "attr_3", internal=False)
     dummy_annotator_3 = DummyAnnotator([attribute_3], dependencies=("attr_2",))
 
     old_pipeline = _make_pipeline_with(
@@ -408,19 +408,19 @@ def test_reannotation_plan_buckets() -> None:
     # attr_3 (unchanged but rerun because it depends on new attr_2): computed
     # attr_old: deleted (present only in the old pipeline)
     attribute_1 = \
-        Attribute("attr_1", "attr_1", internal=False, parameters={})
+        Attribute("attr_1", "attr_1", internal=False)
     dummy_annotator_1 = DummyAnnotator([attribute_1])
 
     attribute_old = \
-        Attribute("attr_old", "attr_old", internal=False, parameters={})
+        Attribute("attr_old", "attr_old", internal=False)
     dummy_annotator_old = DummyAnnotator([attribute_old])
 
     attribute_2 = \
-        Attribute("attr_2", "attr_2", internal=False, parameters={})
+        Attribute("attr_2", "attr_2", internal=False)
     dummy_annotator_2 = DummyAnnotator([attribute_2])
 
     attribute_3 = \
-        Attribute("attr_3", "attr_3", internal=False, parameters={})
+        Attribute("attr_3", "attr_3", internal=False)
     dummy_annotator_3 = DummyAnnotator([attribute_3], dependencies=("attr_2",))
 
     old_pipeline = _make_pipeline_with(
@@ -448,20 +448,20 @@ def test_reannotation_plan_computed_reason_names_consumed_attribute() -> None:
     # The COMPUTED reason must name the attribute actually consumed by the
     # dependent, not merely the trigger annotator's first attribute.
     attribute_1 = \
-        Attribute("attr_1", "attr_1", internal=False, parameters={})
+        Attribute("attr_1", "attr_1", internal=False)
     dummy_annotator_1 = DummyAnnotator([attribute_1])
 
     # New annotator producing two attributes; the dependent consumes the
     # second one (attr_new_b), not the first (attr_new_a).
     attribute_new_a = \
-        Attribute("attr_new_a", "attr_new_a", internal=False, parameters={})
+        Attribute("attr_new_a", "attr_new_a", internal=False)
     attribute_new_b = \
-        Attribute("attr_new_b", "attr_new_b", internal=False, parameters={})
+        Attribute("attr_new_b", "attr_new_b", internal=False)
     dummy_annotator_new = DummyAnnotator(
         [attribute_new_a, attribute_new_b])
 
     attribute_3 = \
-        Attribute("attr_3", "attr_3", internal=False, parameters={})
+        Attribute("attr_3", "attr_3", internal=False)
     dummy_annotator_3 = DummyAnnotator(
         [attribute_3], dependencies=("attr_new_b",))
 
@@ -481,11 +481,11 @@ def test_reannotation_plan_computed_reason_names_consumed_attribute() -> None:
 def test_reannotation_plan_internal_tag() -> None:
     # an added internal attribute must be flagged internal in the plan
     attribute_1 = \
-        Attribute("attr_1", "attr_1", internal=False, parameters={})
+        Attribute("attr_1", "attr_1", internal=False)
     dummy_annotator_1 = DummyAnnotator([attribute_1])
 
     attribute_internal = \
-        Attribute("attr_raw", "attr_raw", internal=True, parameters={})
+        Attribute("attr_raw", "attr_raw", internal=True)
     dummy_annotator_internal = DummyAnnotator([attribute_internal])
 
     old_pipeline = _make_pipeline_with([dummy_annotator_1])
@@ -502,11 +502,11 @@ def test_reannotation_plan_internal_tag() -> None:
 
 def test_reannotation_plan_full_reannotation() -> None:
     attribute_1 = \
-        Attribute("attr_1", "attr_1", internal=False, parameters={})
+        Attribute("attr_1", "attr_1", internal=False)
     dummy_annotator_1 = DummyAnnotator([attribute_1])
 
     attribute_2 = \
-        Attribute("attr_2", "attr_2", internal=False, parameters={})
+        Attribute("attr_2", "attr_2", internal=False)
     dummy_annotator_2 = DummyAnnotator([attribute_2])
 
     old_pipeline = _make_pipeline_with([dummy_annotator_1, dummy_annotator_2])
@@ -534,19 +534,19 @@ def test_reannotation_plan_full_reannotation() -> None:
 
 def test_format_plan_renders_all_buckets() -> None:
     attribute_1 = \
-        Attribute("attr_1", "attr_1", internal=False, parameters={})
+        Attribute("attr_1", "attr_1", internal=False)
     dummy_annotator_1 = DummyAnnotator([attribute_1])
 
     attribute_old = \
-        Attribute("attr_old", "attr_old", internal=False, parameters={})
+        Attribute("attr_old", "attr_old", internal=False)
     dummy_annotator_old = DummyAnnotator([attribute_old])
 
     attribute_2 = \
-        Attribute("attr_2", "attr_2", internal=False, parameters={})
+        Attribute("attr_2", "attr_2", internal=False)
     dummy_annotator_2 = DummyAnnotator([attribute_2])
 
     attribute_3 = \
-        Attribute("attr_3", "attr_3", internal=False, parameters={})
+        Attribute("attr_3", "attr_3", internal=False)
     dummy_annotator_3 = DummyAnnotator([attribute_3], dependencies=("attr_2",))
 
     old_pipeline = _make_pipeline_with(
@@ -572,11 +572,11 @@ def test_format_plan_renders_all_buckets() -> None:
 
 def test_format_plan_no_reference() -> None:
     attribute_1 = \
-        Attribute("attr_1", "attr_1", internal=False, parameters={})
+        Attribute("attr_1", "attr_1", internal=False)
     dummy_annotator_1 = DummyAnnotator([attribute_1])
 
     attribute_2 = \
-        Attribute("attr_2", "attr_2", internal=False, parameters={})
+        Attribute("attr_2", "attr_2", internal=False)
     dummy_annotator_2 = DummyAnnotator([attribute_2])
 
     old_pipeline = _make_pipeline_with([dummy_annotator_1])
@@ -590,11 +590,11 @@ def test_format_plan_no_reference() -> None:
 
 def test_format_plan_internal_tagged() -> None:
     attribute_1 = \
-        Attribute("attr_1", "attr_1", internal=False, parameters={})
+        Attribute("attr_1", "attr_1", internal=False)
     dummy_annotator_1 = DummyAnnotator([attribute_1])
 
     attribute_internal = \
-        Attribute("attr_raw", "attr_raw", internal=True, parameters={})
+        Attribute("attr_raw", "attr_raw", internal=True)
     dummy_annotator_internal = DummyAnnotator([attribute_internal])
 
     old_pipeline = _make_pipeline_with([dummy_annotator_1])
@@ -608,7 +608,7 @@ def test_format_plan_internal_tagged() -> None:
 
 def test_format_plan_full_reannotation_header() -> None:
     attribute_1 = \
-        Attribute("attr_1", "attr_1", internal=False, parameters={})
+        Attribute("attr_1", "attr_1", internal=False)
     dummy_annotator_1 = DummyAnnotator([attribute_1])
 
     old_pipeline = _make_pipeline_with([dummy_annotator_1])
@@ -623,13 +623,15 @@ def test_format_plan_full_reannotation_header() -> None:
     assert "COPIED   (0):" in text
 
 
-def test_print_plan_writes_to_file(capsys) -> None:
+def test_print_plan_writes_to_file(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     attribute_1 = \
-        Attribute("attr_1", "attr_1", internal=False, parameters={})
+        Attribute("attr_1", "attr_1", internal=False)
     dummy_annotator_1 = DummyAnnotator([attribute_1])
 
     attribute_2 = \
-        Attribute("attr_2", "attr_2", internal=False, parameters={})
+        Attribute("attr_2", "attr_2", internal=False)
     dummy_annotator_2 = DummyAnnotator([attribute_2])
 
     old_pipeline = _make_pipeline_with([dummy_annotator_1])
@@ -646,11 +648,11 @@ def test_print_plan_writes_to_file(capsys) -> None:
 def test_format_annotation_plan_plain_pipeline() -> None:
     # a plain (non-reannotation) pipeline: everything is ADDED
     attribute_1 = \
-        Attribute("attr_1", "attr_1", internal=False, parameters={})
+        Attribute("attr_1", "attr_1", internal=False)
     dummy_annotator_1 = DummyAnnotator([attribute_1])
 
     attribute_2 = \
-        Attribute("attr_2", "attr_2", internal=True, parameters={})
+        Attribute("attr_2", "attr_2", internal=True)
     dummy_annotator_2 = DummyAnnotator([attribute_2])
 
     pipeline = _make_pipeline_with([dummy_annotator_1, dummy_annotator_2])

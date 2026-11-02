@@ -20,6 +20,7 @@ from gain.annotation.annotatable import Region, VCFAllele
 from gain.annotation.annotation_config import AnnotationConfigurationError
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
+from gain.annotation.position_score_annotator import PositionScoreAnnotator
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing import build_inmemory_test_repository
 from gain.genomic_resources.testing.builders import (
@@ -431,6 +432,7 @@ def test_the_replacement_is_listed_among_the_attribute_properties(
           none_value_replacement: 0.0
     """) as pipeline:
         annotator = pipeline.annotators[0]
+        assert isinstance(annotator, PositionScoreAnnotator)
         properties = annotator.build_score_aggregator_documentation(
             annotator.attributes[0])
 

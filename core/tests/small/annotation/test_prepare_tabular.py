@@ -130,6 +130,7 @@ def test_indirect_sort_plan_vcf_like_injects_columns() -> None:
     assert plan.injected_count == 4
     assert plan.expected_annotatable_type is VCFAllele
     # inject helper returns the right values for a sample row
+    assert plan.inject is not None
     assert plan.inject({"vcf_like": "chr1:4:C:T", "score": "0.1"}) \
         == ["chr1", "4", "C", "T"]
 

@@ -95,7 +95,8 @@ def _annotate(
         """)
     pipeline = load_pipeline_from_yaml(pipeline_config, repo)
     with pipeline.open() as work_pipeline:
-        return work_pipeline.annotate(allele)
+        result: dict[str, Any] = work_pipeline.annotate(allele)
+    return result
 
 
 @pytest.fixture(scope="module")

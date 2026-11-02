@@ -240,9 +240,10 @@ def _peak_bytes_annotating(
         tracemalloc.start()
         try:
             pipeline.annotate(region)
-            return tracemalloc.get_traced_memory()[1]
+            peak = tracemalloc.get_traced_memory()[1]
         finally:
             tracemalloc.stop()
+    return peak
 
 
 def test_peak_memory_does_not_grow_with_the_number_of_fragments(

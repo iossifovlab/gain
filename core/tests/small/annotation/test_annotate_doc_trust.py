@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import pathlib
 from collections.abc import Callable
+from typing import cast
 
 import pytest
 import yaml
@@ -356,7 +357,7 @@ def test_the_template_funnels_documentation_through_two_markdown_calls(
     """
     seen: list[str] = []
     env = get_jinja_env()
-    real_markdown = env.globals["markdown"]
+    real_markdown = cast(Callable[..., str], env.globals["markdown"])
 
     def spy(text: str, *args: object, **kwargs: object) -> str:
         seen.append(text)

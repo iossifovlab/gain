@@ -435,7 +435,9 @@ def test_the_allele_attribute_is_not_folded_in_either_mode(
             allele_score_repository,
         )
         with pipeline.open() as work_pipeline:
-            return work_pipeline.annotate(VCFAllele("1", 10, "A", "G"))
+            result: object = work_pipeline.annotate(
+                VCFAllele("1", 10, "A", "G"))
+        return result
 
     # The two modes select different lines -- exact match takes one,
     # region takes every line overlapping the position -- but neither

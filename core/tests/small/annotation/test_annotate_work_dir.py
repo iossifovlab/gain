@@ -6,6 +6,8 @@ import pytest_mock
 from gain.annotation import annotate_vcf as annotate_vcf_module
 from gain.annotation.annotate_tabular import cli as cli_tabular
 from gain.annotation.annotate_vcf import cli as cli_vcf
+from gain.annotation.annotation_pipeline import AnnotationPipeline
+from gain.genomic_resources.genomic_context_base import GenomicContext
 from gain.genomic_resources.testing import setup_tabix, setup_vcf
 
 VCF_CONTENT = textwrap.dedent("""
@@ -29,7 +31,10 @@ TABULAR_CONTENT = textwrap.dedent("""
 """)
 
 
-def _vcf_argv(in_file, annotation_file, out_file, grr_file, *extra):
+def _vcf_argv(
+    in_file: pathlib.Path, annotation_file: pathlib.Path,
+    out_file: pathlib.Path, grr_file: pathlib.Path, *extra: str,
+) -> list[str]:
     return [str(a) for a in [
         in_file, annotation_file, "-o", out_file,
         "--grr", grr_file, "--region-size", 5, "-j", 1, *extra,
@@ -49,7 +54,7 @@ def test_annotate_vcf_cli_closes_pipeline(
     real_get_pipeline = annotate_vcf_module.get_pipeline_from_context
     close_spies: list = []
 
-    def _capturing_get_pipeline(context):
+    def _capturing_get_pipeline(context: GenomicContext) -> AnnotationPipeline:
         pipeline = real_get_pipeline(context)
         close_spies.append(mocker.spy(pipeline, "close"))
         return pipeline

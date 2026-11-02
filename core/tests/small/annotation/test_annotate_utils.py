@@ -176,7 +176,7 @@ def test_handle_default_args_work_dir(
     mocker: pytest_mock.MockerFixture,
     input_path: str,
     output_path: str | None,
-    expected_output: str | None, expected_work_dir: str | None,
+    expected_output: str, expected_work_dir: str,
 ) -> None:
     mocker.patch("os.path.exists", return_value=True)
     args = {

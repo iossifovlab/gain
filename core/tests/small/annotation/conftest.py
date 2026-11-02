@@ -13,6 +13,7 @@ from gain.annotation.annotation_config import (
     AnnotatorInfo,
     Attribute,
     AttributeConfig,
+    ParamsUsageMonitor,
 )
 from gain.annotation.annotation_pipeline import Annotator, AttributeSpec
 from gain.genomic_resources.repository import GenomicResourceRepo
@@ -62,6 +63,22 @@ def assert_refuses_empty_resource_id(
     assert "None" not in str(cause)
 
 
+def _params_dict(
+    parameters: dict[str, Any] | ParamsUsageMonitor,
+) -> dict[str, Any]:
+    if isinstance(parameters, ParamsUsageMonitor):
+        return parameters.as_dict()
+    return parameters
+
+
+def _params_monitor(
+    parameters: dict[str, Any] | ParamsUsageMonitor,
+) -> ParamsUsageMonitor:
+    if isinstance(parameters, ParamsUsageMonitor):
+        return parameters
+    return ParamsUsageMonitor(parameters)
+
+
 class DummyAnnotator(Annotator):
     """A dummy annotator that does nothing."""
 
@@ -75,7 +92,7 @@ class DummyAnnotator(Annotator):
         attr_configs: list[AttributeConfig] = [
             AttributeConfig(
                 name=a.name, source=a.source,
-                internal=a.internal, parameters=a.parameters,
+                internal=a.internal, parameters=_params_dict(a.parameters),
             )
             for a in attr_inputs
         ]
@@ -91,7 +108,7 @@ class DummyAnnotator(Annotator):
                 name=a.name,
                 source=a.source,
                 internal=a.internal,
-                parameters=a.parameters,
+                parameters=_params_monitor(a.parameters),
                 # An ``Attribute`` may carry a spec, so a test can say
                 # what TYPE the dummy provides; an ``AttributeConfig``
                 # has none, and the pipeline sees a typeless attribute.
