@@ -7,11 +7,14 @@ from gain.task_graph.cli_tools import (
 from gain.task_graph.demo_graphs_cli import build_demo_graph
 from gain.task_graph.graph import TaskGraph
 
+PART_SLEEP = "0.01"
+SUMMARY_SLEEP = "0.02"
+
 SHORT_PARAMS = {
-    "A": ["2", "0", "0"],
-    "B": ["2", "0", "0"],
-    "C": ["2", "0", "0"],
-    "D": ["2", "2", "0", "0"],
+    "A": ["2", PART_SLEEP, SUMMARY_SLEEP],
+    "B": ["2", PART_SLEEP, SUMMARY_SLEEP],
+    "C": ["2", PART_SLEEP, SUMMARY_SLEEP],
+    "D": ["2", "2", PART_SLEEP, SUMMARY_SLEEP],
 }
 
 
@@ -94,6 +97,45 @@ def test_no_parameters_selects_the_defaults(
 
     assert len(task_graph.tasks) == {"A": 11, "B": 3, "C": 6, "D": 55}[
         graph_type]
+
+
+@pytest.mark.parametrize("graph_type", ["A", "B", "C", "D"])
+def test_parts_get_the_part_sleep_and_summaries_the_summary_sleep(
+    graph_type: str,
+) -> None:
+    task_graph = build_demo_graph(graph_type, SHORT_PARAMS[graph_type])
+
+    sleeps = {
+        task.task_id: task_graph.get_task_desc(task).args
+        for task in task_graph.tasks
+    }
+    assert sleeps
+    for task_id, args in sleeps.items():
+        expected = PART_SLEEP if task_id.startswith("part") else SUMMARY_SLEEP
+        assert args == [expected], task_id
+
+
+@pytest.mark.parametrize(("graph_type", "printout"), [
+    ("A", (
+        "Building graph A with 10 parts, 2 seconds for each part, and "
+        "2 seconds for the summary")),
+    ("B", (
+        "Building graph B with 2 parts, 5 seconds for each part, and "
+        "10 seconds for the summary")),
+    ("C", (
+        "Building graph C with 2 parts, 5 seconds sleep for each part, "
+        "and 10 seconds sleep for the summary")),
+    ("D", (
+        "Building graph D with 5 clicks, with 10 parts per click and one "
+        "summary task per click, 2 seconds for each part, and 2 seconds "
+        "for the summary")),
+])
+def test_builder_prints_its_default_parameters(
+    graph_type: str, printout: str, capsys: pytest.CaptureFixture[str],
+) -> None:
+    build_demo_graph(graph_type, None)
+
+    assert capsys.readouterr().out.strip() == printout
 
 
 def test_unknown_graph_type_is_refused() -> None:
