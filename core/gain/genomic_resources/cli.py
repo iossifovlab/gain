@@ -318,94 +318,32 @@ def _configure_resource_manifest_subparser(
     VerbosityConfiguration.set_arguments(parser)
 
 
-def _configure_repo_stats_subparser(
-        subparsers: argparse._SubParsersAction) -> None:
-    parser = subparsers.add_parser(
-        "repo-stats",
-        help="Build the statistics for a resource")
-
-    _add_repository_resource_parameters_group(parser, use_resource=False)
-    _add_dry_run_and_force_parameters_group(parser)
-    _add_dvc_parameters_group(parser)
-    _add_hist_parameters_group(parser)
-    VerbosityConfiguration.set_arguments(parser)
-
-    TaskGraphCli.add_arguments(
-        parser, use_commands=False, task_progress_mode=False,
-    )
-
-
-def _configure_resource_stats_subparser(
-        subparsers: argparse._SubParsersAction) -> None:
-    parser = subparsers.add_parser(
-        "resource-stats",
-        help="Build the statistics for a resource")
-
-    _add_repository_resource_parameters_group(parser)
-    _add_dry_run_and_force_parameters_group(parser)
-    _add_dvc_parameters_group(parser)
-    _add_hist_parameters_group(parser)
-    VerbosityConfiguration.set_arguments(parser)
-
-    TaskGraphCli.add_arguments(
-        parser, use_commands=False, task_progress_mode=False,
-    )
+# The subcommands that build statistics, pages or both take the same
+# argument groups in the same order.  Only the name, the help text and the
+# ``-r``/``--resource`` option differ: a ``repo-*`` command works on the
+# whole repository, so it takes no resource.  Each row maps the name to
+# the help text and the ``use_resource`` value; the row order is the order
+# in which ``--help`` lists the commands.
+_STATS_INFO_REPAIR_COMMANDS: dict[str, tuple[str, bool]] = {
+    "repo-stats": ("Build the statistics for a resource", False),
+    "resource-stats": ("Build the statistics for a resource", True),
+    "repo-info": ("Build the index.html for the whole GRR", False),
+    "resource-info": (
+        "Build the index.html for the specific resource", True),
+    "repo-repair": (
+        "Update/rebuild manifest and histograms whole GRR", False),
+    "resource-repair": (
+        "Update/rebuild manifest and histograms for a resource", True),
+}
 
 
-def _configure_repo_repair_subparser(
-        subparsers: argparse._SubParsersAction) -> None:
-    parser = subparsers.add_parser(
-        "repo-repair",
-        help="Update/rebuild manifest and histograms whole GRR")
-    _add_repository_resource_parameters_group(parser, use_resource=False)
-    _add_dry_run_and_force_parameters_group(parser)
-    _add_dvc_parameters_group(parser)
-    _add_hist_parameters_group(parser)
-    VerbosityConfiguration.set_arguments(parser)
-
-    TaskGraphCli.add_arguments(
-        parser, use_commands=False, task_progress_mode=False,
-    )
-
-
-def _configure_resource_repair_subparser(
-        subparsers: argparse._SubParsersAction) -> None:
-    parser = subparsers.add_parser(
-        "resource-repair",
-        help="Update/rebuild manifest and histograms for a resource")
-    _add_repository_resource_parameters_group(parser)
-    _add_dry_run_and_force_parameters_group(parser)
-    _add_dvc_parameters_group(parser)
-    _add_hist_parameters_group(parser)
-    VerbosityConfiguration.set_arguments(parser)
-
-    TaskGraphCli.add_arguments(
-        parser, use_commands=False, task_progress_mode=False,
-    )
-
-
-def _configure_repo_info_subparser(
-        subparsers: argparse._SubParsersAction) -> None:
-    parser = subparsers.add_parser(
-        "repo-info", help="Build the index.html for the whole GRR",
-    )
-    _add_repository_resource_parameters_group(parser)
-    _add_dry_run_and_force_parameters_group(parser)
-    _add_dvc_parameters_group(parser)
-    _add_hist_parameters_group(parser)
-    VerbosityConfiguration.set_arguments(parser)
-
-    TaskGraphCli.add_arguments(
-        parser, use_commands=False, task_progress_mode=False,
-    )
-
-
-def _configure_resource_info_subparser(
-        subparsers: argparse._SubParsersAction) -> None:
-    parser = subparsers.add_parser(
-        "resource-info", help="Build the index.html for the specific resource",
-    )
-    _add_repository_resource_parameters_group(parser)
+def _configure_stats_info_repair_subparser(
+    subparsers: argparse._SubParsersAction, name: str,
+) -> None:
+    help_text, use_resource = _STATS_INFO_REPAIR_COMMANDS[name]
+    parser = subparsers.add_parser(name, help=help_text)
+    _add_repository_resource_parameters_group(
+        parser, use_resource=use_resource)
     _add_dry_run_and_force_parameters_group(parser)
     _add_dvc_parameters_group(parser)
     _add_hist_parameters_group(parser)
@@ -1420,12 +1358,8 @@ def _build_manage_argument_parser() -> argparse.ArgumentParser:
     _configure_repo_init_subparser(commands_parser)
     _configure_repo_manifest_subparser(commands_parser)
     _configure_resource_manifest_subparser(commands_parser)
-    _configure_repo_stats_subparser(commands_parser)
-    _configure_resource_stats_subparser(commands_parser)
-    _configure_repo_info_subparser(commands_parser)
-    _configure_resource_info_subparser(commands_parser)
-    _configure_repo_repair_subparser(commands_parser)
-    _configure_resource_repair_subparser(commands_parser)
+    for name in _STATS_INFO_REPAIR_COMMANDS:
+        _configure_stats_info_repair_subparser(commands_parser, name)
     _configure_repo_index_subparser(commands_parser)
     return parser
 
