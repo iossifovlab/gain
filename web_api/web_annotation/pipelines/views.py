@@ -1,5 +1,6 @@
 """Views for pipeline creation and manipulation."""
 import asyncio
+import os
 import time
 from concurrent.futures import Future
 from pathlib import Path
@@ -52,6 +53,19 @@ from web_annotation.validation_cache import ValidationResultCache
 logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
+
+INVALID_PIPELINE_NAME = "Invalid pipeline name!"
+
+
+def pipeline_name_error(name: str) -> str | None:
+    """Return the refusal reason for a name unfit as a file name.
+
+    A saved pipeline is stored as ``<name>.yaml`` in the directory of
+    its owner, so the name must be a single, non-hidden path component.
+    """
+    if name.startswith(".") or any(c in name for c in ("/", "\\", "\0")):
+        return INVALID_PIPELINE_NAME
+    return None
 
 
 class UserPipeline(AnnotationBaseView):
@@ -156,6 +170,14 @@ class UserPipeline(AnnotationBaseView):
                 status=views.status.HTTP_400_BAD_REQUEST,
             )
 
+        if not temporary and not pipeline_id and pipeline_name is not None:
+            reason = pipeline_name_error(pipeline_name)
+            if reason is not None:
+                return Response(
+                    {"reason": reason},
+                    status=views.status.HTTP_400_BAD_REQUEST,
+                )
+
         if not temporary and isinstance(
                 request.user, WebAnnotationAnonymousUser):
             return Response(
@@ -176,11 +198,23 @@ class UserPipeline(AnnotationBaseView):
         else:  # Create
             assert pipeline_name is not None
             if not temporary:
-                config_path = Path(
+                user_dir = Path(
                     settings.ANNOTATION_CONFIG_STORAGE_DIR,
                     request.user.identifier,
-                    config_filename,
                 )
+                try:
+                    base = os.path.realpath(user_dir)
+                    candidate = os.path.realpath(
+                        os.path.join(base, config_filename))
+                except ValueError:
+                    candidate = ""
+                    base = os.sep
+                if not candidate.startswith(base + os.sep):
+                    return Response(
+                        {"reason": INVALID_PIPELINE_NAME},
+                        status=views.status.HTTP_400_BAD_REQUEST,
+                    )
+                config_path = Path(candidate)
                 if pipeline_name is not None and Pipeline.objects.filter(
                     owner=request.user.user,
                     name=pipeline_name,
