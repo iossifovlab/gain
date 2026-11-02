@@ -22,7 +22,9 @@ from pytest_mock import MockerFixture
 
 from web_annotation.annotation_base_view import AnnotationBaseView
 from web_annotation.executor import SequentialTaskExecutor
-from web_annotation.models import Job, User
+from web_annotation.jobs import views as jobs_views
+from web_annotation.models import Job, User, UserWrapper
+from web_annotation.storage_paths import UnsafeStoragePathError
 
 
 @pytest.fixture
@@ -65,6 +67,8 @@ def _client_for(email: str) -> Client:
 @pytest.mark.django_db
 @pytest.mark.usefixtures("storage_roots")
 @pytest.mark.parametrize("email", [
+    "",
+    ".",
     "..",
     "../../outside",
     "/abs/dir",
@@ -89,7 +93,7 @@ def test_register_refuses_an_email_that_is_not_a_folder_name(
 
 @pytest.mark.django_db
 @pytest.mark.usefixtures("storage_roots")
-@pytest.mark.parametrize("email", ["..", "../../outside"])
+@pytest.mark.parametrize("email", [".", "..", "../../outside"])
 def test_create_user_command_refuses_an_email_that_is_not_a_folder_name(
     email: str,
 ) -> None:
@@ -193,6 +197,51 @@ def test_job_keeps_a_relative_folder_inside_the_storage_roots(
     assert response.status_code == 400
     assert _files_outside(storage_roots, tmp_path) == before
     assert not Job.objects.filter(owner__email="../../outside").exists()
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("storage_roots")
+def test_config_path_refuses_a_folder_outside_the_config_root() -> None:
+    user = User.objects.create_user(
+        "../../outside", "../../outside", "secret")
+
+    with pytest.raises(UnsafeStoragePathError):
+        AnnotationBaseView().get_config_path(7, user)
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("storage_roots")
+def test_result_dir_refuses_a_folder_outside_the_result_root() -> None:
+    user = User.objects.create_user(
+        "../../outside", "../../outside", "secret")
+
+    with pytest.raises(UnsafeStoragePathError):
+        AnnotationBaseView().user_result_dir(UserWrapper(user, "session"))
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("patched_lru_cache")
+@pytest.mark.parametrize("endpoint", sorted(JOB_REQUESTS))
+def test_job_work_dir_is_the_checked_result_folder(
+    storage_roots: dict[str, pathlib.Path],
+    mocker: MockerFixture,
+    endpoint: str,
+) -> None:
+    mocker.patch(
+        "web_annotation.annotation_base_view.AnnotationBaseView.JOB_EXECUTOR",
+        new_callable=SequentialTaskExecutor,
+    )
+    result_dir = mocker.spy(AnnotationBaseView, "user_result_dir")
+    build = mocker.spy(jobs_views, "build_annotation_pipeline")
+    client = _client_for("worker@example.com")
+
+    response = client.post(endpoint, _job_request(endpoint))
+
+    assert response.status_code == 200
+    assert result_dir.call_count == 1
+    assert build.call_args.kwargs["work_dir"] == result_dir.spy_return
+    assert result_dir.spy_return == \
+        storage_roots["JOB_RESULT_STORAGE_DIR"] / "worker@example.com"
 
 
 @pytest.mark.django_db

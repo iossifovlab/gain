@@ -16,6 +16,7 @@ INVALID_ACCOUNT_EMAIL = "Invalid email address"
 INVALID_STORAGE_PATH = "Invalid storage path!"
 
 _FORBIDDEN_CHARACTERS = ("/", "\\", "\x00")
+_NON_CHILD_NAMES = ("", ".", "..")
 
 
 class UnsafeStoragePathError(ValueError):
@@ -26,9 +27,11 @@ def account_email_error(email: str) -> str | None:
     """Return why ``email`` cannot name a storage folder, or ``None``.
 
     An email is refused when it contains ``/``, ``\\`` or a NUL character,
-    or when it is the ``..`` path component.
+    or when it is empty, ``.`` or ``..``: those names do not name a child
+    folder of a storage root.
     """
-    if any(char in email for char in _FORBIDDEN_CHARACTERS) or email == "..":
+    if any(char in email for char in _FORBIDDEN_CHARACTERS) \
+            or email in _NON_CHILD_NAMES:
         return INVALID_ACCOUNT_EMAIL
     return None
 
