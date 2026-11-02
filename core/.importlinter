@@ -1,0 +1,134 @@
+# Import contracts of gain core (gain#2070).
+#
+# Each contract states an import fence of tests/test_architecture.py as an
+# import-linter rule.  tests/test_architecture.py runs them through
+# ``importlinter.cli.lint_imports``, so a broken contract fails pytest.
+# From core/:  lint-imports --no-cache
+#
+# ``if TYPE_CHECKING:`` imports count, as they do in the fences.
+
+[importlinter]
+root_package = gain
+include_external_packages = True
+
+[importlinter:contract:gain-imports-no-gpf]
+name = gain imports nothing from gpf or gpf_web
+type = forbidden
+source_modules =
+    gain
+forbidden_modules =
+    gpf
+    gpf_web
+
+[importlinter:contract:table-layer-below-score-layer]
+name = genomic_position_table imports nothing from the score layer
+type = forbidden
+source_modules =
+    gain.genomic_resources.genomic_position_table
+forbidden_modules =
+    gain.genomic_resources.score_def
+    gain.genomic_resources.vcf_scores
+    gain.genomic_resources.bigwig_scores
+    gain.genomic_resources.genomic_scores
+    gain.genomic_resources.score_resource
+    gain.genomic_resources.score_implementation
+
+[importlinter:contract:grr-facade-is-external]
+name = no gain module imports the gain.grr facade
+type = protected
+protected_modules =
+    gain.grr
+allowed_importers =
+    gain.grr
+
+[importlinter:contract:statistics-not-to-histogram]
+name = the statistics package imports nothing from histogram, directly
+type = forbidden
+source_modules =
+    gain.genomic_resources.statistics
+forbidden_modules =
+    gain.genomic_resources.histogram
+# The score statistics reach histogram through genomic_scores, and the
+# fence accepts that chain: only a direct import breaks the rule.
+allow_indirect_imports = True
+
+[importlinter:contract:cli-errors-not-to-histogram]
+name = cli_errors imports nothing from histogram
+type = forbidden
+source_modules =
+    gain.genomic_resources.cli_errors
+forbidden_modules =
+    gain.genomic_resources.histogram
+
+[importlinter:contract:chart-style-is-a-leaf]
+name = statistics.chart_style imports nothing from gain
+type = forbidden
+source_modules =
+    gain.genomic_resources.statistics.chart_style
+# import-linter skips a forbidden module that contains the source module,
+# so ``gain.genomic_resources`` alone checks nothing.  The two wildcards
+# check every module under it: the overlapping matches, ``statistics``
+# and ``chart_style`` itself, are skipped.  An import of the package
+# module ``gain.genomic_resources`` or ``gain.genomic_resources.statistics``
+# stays the job of the pytest fence.
+forbidden_modules =
+    gain._version
+    gain.annotation
+    gain.binning
+    gain.dask
+    gain.effect_annotation
+    gain.gene_scores
+    gain.gene_sets
+    gain.genomic_resources
+    gain.genomic_resources.*
+    gain.genomic_resources.statistics.*
+    gain.grr
+    gain.logging
+    gain.task_graph
+    gain.templates
+    gain.testing
+    gain.utils
+
+[importlinter:contract:binning-not-to-annotation]
+name = binning imports nothing from annotation
+type = forbidden
+source_modules =
+    gain.binning
+forbidden_modules =
+    gain.annotation
+
+[importlinter:contract:stdlib-logging-in-three-modules]
+name = only gain.logging, log_levels and url_redaction import stdlib logging
+type = forbidden
+source_modules =
+    gain
+forbidden_modules =
+    logging
+ignore_imports =
+    gain.logging -> logging
+    gain.utils.log_levels -> logging
+    gain.utils.url_redaction -> logging
+
+[importlinter:contract:markdown2-in-one-module]
+name = only gain.templates.markdown_support imports markdown2
+type = forbidden
+source_modules =
+    gain
+forbidden_modules =
+    markdown2
+ignore_imports =
+    gain.templates.markdown_support -> markdown2
+
+[importlinter:contract:score-records-below-score-classes]
+name = genomic_scores records and aggregation import no score class module, directly
+type = forbidden
+source_modules =
+    gain.genomic_resources.genomic_scores.records
+    gain.genomic_resources.genomic_scores.aggregation
+forbidden_modules =
+    gain.genomic_resources.genomic_scores.base
+    gain.genomic_resources.genomic_scores.position
+    gain.genomic_resources.genomic_scores.allele
+    gain.genomic_resources.genomic_scores.fragment
+# gain#1088 has no fence yet: the rule covers direct imports only.
+allow_indirect_imports = True

@@ -5,6 +5,7 @@ import functools
 import importlib
 import os
 import pathlib
+import sys
 import tomllib
 from collections.abc import (
     Callable,
@@ -19,6 +20,7 @@ from typing import NamedTuple
 import pytest
 from gain.annotation import pipeline_doc
 from gain.templates import get_jinja_env
+from importlinter.cli import lint_imports
 from jinja2 import ChoiceLoader, nodes
 from pytestarch import EvaluableArchitecture, get_evaluable_architecture
 
@@ -521,6 +523,33 @@ def test_the_chart_style_leaf_imports_nothing_from_gain() -> None:
         f"chart_style imports {offenders}. It is the leaf both histogram "
         f"and the statistics package draw from, and stays one -- a chart "
         f"constant that needs a gain import does not belong there"
+    )
+
+
+IMPORT_LINTER_CONFIG = os.path.join(GAIN_ROOT, ".importlinter")
+
+
+def test_the_import_linter_contracts_are_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every contract in ``core/.importlinter`` is kept (gain#2070).
+
+    The contracts state import fences of this file as import-linter
+    rules; pytest is the one gate CI fails on, so they run here.  The
+    absolute config path keeps the result independent of the directory
+    pytest starts in, and ``no_cache`` keeps import-linter from writing
+    ``.import_linter_cache`` into the checkout.  The broken contract
+    and the import chain that breaks it are in the captured stdout.
+    ``lint_imports`` puts the current directory on ``sys.path`` and
+    never takes it off, so the test restores ``sys.path`` afterwards.
+    """
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    result = lint_imports(
+        config_filename=IMPORT_LINTER_CONFIG, no_cache=True)
+
+    assert result == 0, (
+        "an import-linter contract in core/.importlinter is broken -- "
+        "the captured stdout names the contract and the import chain"
     )
 
 
