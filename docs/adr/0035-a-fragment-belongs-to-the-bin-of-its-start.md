@@ -145,7 +145,7 @@ adds) and `aggregate` (how a bin reduces the values; F23).
 
 An omitted `meta` is `{resource_label: cell_meta_resource_id, filter:
 [{column: sample_id, label: sample_id}]}`, and the barcode is the fragment
-score `cell`. The constants live in `gain.binning.fragment_binner`, and every
+score `cell`. The constants live in `gain.binning.fragment_grouping`, and every
 other mention refers to them.
 
 All of it is checked at parse time, in the parent, before a task is built: the
