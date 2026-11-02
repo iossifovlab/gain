@@ -247,11 +247,12 @@ class ArrayBinFold:
         self._used: IntArray = np.zeros(n_bins, dtype=np.int64)
         # The first position that no record claimed yet.
         self._cursor = start
-        # The ``median`` pairs of the open bin, in position order: the
-        # local bin, the value and the weight of each part with a value.
-        self._pair_bin: IntArray = np.empty(0, dtype=np.int64)
-        self._pair_value: FloatArray = np.empty(0, dtype=np.float64)
-        self._pair_weight: IntArray = np.empty(0, dtype=np.int64)
+        # The ``median`` pairs of the open bin, in position order, as a
+        # list of chunks: the value and the weight of each part with a
+        # value.  The chunks join only when the bin closes, so a bin that
+        # spans many batches copies each pair once.
+        self._held_bin = -1
+        self._held: list[tuple[FloatArray, IntArray]] = []
 
     @property
     def cursor(self) -> int:
@@ -266,10 +267,9 @@ class ArrayBinFold:
         part, in position order.  Only ``median`` holds pairs.
         """
         return [
-            (int(bin_index) + self._first_bin, float(value), int(weight))
-            for bin_index, value, weight in zip(
-                self._pair_bin, self._pair_value, self._pair_weight,
-                strict=True)]
+            (self._held_bin + self._first_bin, float(value), int(weight))
+            for values, weights in self._held
+            for value, weight in zip(values, weights, strict=True)]
 
     def add_batch(
         self, pos_begin: IntArray, pos_end: IntArray, values: FloatArray,
@@ -395,24 +395,34 @@ class ArrayBinFold:
         self, part_bin: IntArray, value: FloatArray, weight: IntArray,
     ) -> None:
         """Add the ``median`` pairs and close the bins before the cursor."""
-        pair_bin = np.concatenate((self._pair_bin, part_bin))
-        pair_value = np.concatenate((self._pair_value, value))
-        pair_weight = np.concatenate((self._pair_weight, weight))
         if self._cursor <= self.end:
             open_bin = (
                 calc_bin_index(self.bin_size, self._cursor)
                 - self._first_bin)
         else:
             open_bin = len(self._acc)
-        n_closed = int(np.searchsorted(pair_bin, open_bin, side="left"))
-        self._pair_bin = pair_bin[n_closed:]
-        self._pair_value = pair_value[n_closed:]
-        self._pair_weight = pair_weight[n_closed:]
-        if n_closed == 0:
+        n_closed = int(np.searchsorted(part_bin, open_bin, side="left"))
+        if self._held and self._held_bin == open_bin:
+            # The parts of the batch all fall in the open bin.
+            if len(part_bin) > 0:
+                self._held.append((value.copy(), weight.copy()))
             return
-        pair_bin = pair_bin[:n_closed]
-        pair_value = pair_value[:n_closed]
-        pair_weight = pair_weight[:n_closed]
+        held_bin, held = self._held_bin, self._held
+        self._held_bin = open_bin
+        self._held = []
+        if n_closed < len(part_bin):
+            self._held.append(
+                (value[n_closed:].copy(), weight[n_closed:].copy()))
+        if not held and n_closed == 0:
+            return
+        pair_bin = np.concatenate((
+            *(np.full(len(chunk[0]), held_bin, dtype=np.int64)
+              for chunk in held),
+            part_bin[:n_closed]))
+        pair_value = np.concatenate(
+            (*(chunk[0] for chunk in held), value[:n_closed]))
+        pair_weight = np.concatenate(
+            (*(chunk[1] for chunk in held), weight[:n_closed]))
 
         nan_bins = np.unique(pair_bin[np.isnan(pair_value)])
         has_nan = np.isin(pair_bin, nan_bins)
