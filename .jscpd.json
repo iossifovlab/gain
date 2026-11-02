@@ -1,0 +1,9 @@
+{
+  "path": ["."],
+  "format": ["python"],
+  "gitignore": false,
+  "ignore": ["**/.venv/**", "**/node_modules/**", ".claude/**"],
+  "threshold": 0,
+  "minLines": 5,
+  "minTokens": 50
+}

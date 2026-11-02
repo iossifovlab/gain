@@ -134,6 +134,13 @@ debug_annotator = "gain.annotation.debug_annotator:build_annotator"
 scanpy_drift = [
     "scanpy>=1.11",
 ]
+# habit-hooks coaching. A group of its own keeps it out of
+# dev-environment.yml, which scripts/conda_env.py renders from `dev`.
+# The generic plugin is a base dependency of habit-hooks, so only the
+# python extra is named.
+habit = [
+    "habit-hooks[python]~=1.5.0",
+]
 dev = [
     # tests/small/templates/vendored_fonts.py decodes the woff2 fonts
     # under gain/templates/static/fonts to read which glyphs the icon
@@ -144,6 +151,7 @@ dev = [
     # zopfli for a compression the tests never do (#1400).
     "brotli",
     "coverage",
+    "deptry>=0.25.1",
     "fonttools",
     "import-linter",
     "mypy==1.15.0",
