@@ -317,7 +317,15 @@ class GenomicScoreDef(ScoreDef):
     # a VCF score def therefore never has this attribute at all.  Nothing else
     # reads it: ``fetch_region_value_arrays`` does, but the VCF backend does
     # not serve that call (``supports_region_value_arrays``).
-    score_index: int = field(init=False)        # internal
+    #
+    # ``repr=False`` and ``compare=False`` keep it out of ``repr`` and
+    # ``__eq__``.  It is a resolved, internal read-path value, not part of
+    # what a definition defines, and an unopened or a VCF def does not have
+    # it: the generated ``__repr__`` and ``__eq__`` would read the missing
+    # attribute and raise.  So the repr of a def is the same before and after
+    # open(), and an opened def equals an unopened one of the same resource.
+    score_index: int = field(
+        init=False, repr=False, compare=False)  # internal
     # Whether a malformed value COUNT has already been reported for this
     # field.  A ``Number=A``/``Number=R`` INFO field carries one value per
     # allele, so a row whose count does not match its ALT column is a broken
