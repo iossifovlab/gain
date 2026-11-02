@@ -402,7 +402,7 @@ class PositionScoreBinding:
         The bins are those of :meth:`PositionScore.get_score_in_bins`, the
         semantic reference for the global grid, the boundary split and
         first-record-wins.  A ``float`` score under ``count``, ``sum``,
-        ``mean``, ``max`` or ``min``, on a backend that serves
+        ``mean``, ``max``, ``min`` or ``median``, on a backend that serves
         :meth:`~gain.genomic_resources.genomic_scores.base.GenomicScore.fetch_region_value_arrays`,
         is folded from those arrays by
         :class:`~gain.binning.position_fold.ArrayBinFold`, with the same
