@@ -204,8 +204,12 @@ class UserPipeline(AnnotationBaseView):
                     request.user.identifier,
                 )
                 config_path = user_dir / config_filename
-                if not config_path.resolve().is_relative_to(
-                        user_dir.resolve()):
+                try:
+                    outside = not config_path.resolve().is_relative_to(
+                        user_dir.resolve())
+                except ValueError:
+                    outside = True
+                if outside:
                     return Response(
                         {"reason": INVALID_PIPELINE_NAME},
                         status=views.status.HTTP_400_BAD_REQUEST,

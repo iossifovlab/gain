@@ -234,6 +234,40 @@ def test_create_refuses_a_path_outside_the_user_directory(
 
 @pytest.mark.django_db
 @pytest.mark.usefixtures("patched_lru_cache")
+def test_create_checks_the_name_before_the_existing_name_query(
+    clients: dict[str, Client],
+) -> None:
+    owner = User.objects.get(email="user@example.com")
+    Pipeline.objects.create(
+        name="../x", config_path="unused.yaml", owner=owner)
+
+    response = _post_named_pipeline(clients["user"], "../x")
+
+    assert response.status_code == 400
+    assert response.json() == INVALID_NAME
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("patched_lru_cache")
+def test_create_refuses_a_nul_name_past_the_name_check(
+    clients: dict[str, Client],
+    mocker: MockerFixture,
+) -> None:
+    mocker.patch(
+        "web_annotation.pipelines.views.pipeline_name_error",
+        return_value=None,
+    )
+    before = _config_files()
+
+    response = _post_named_pipeline(clients["user"], "a\x00b")
+
+    assert response.status_code == 400
+    assert response.json() == INVALID_NAME
+    assert _config_files() == before
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("patched_lru_cache")
 def test_update_of_a_saved_pipeline_with_a_legacy_name_succeeds(
     clients: dict[str, Client],
 ) -> None:
