@@ -286,7 +286,8 @@ class VEPAnnotatorBase(DockerAnnotator):
         )
 
 
-class VEPCacheAnnotator(VEPAnnotatorBase):
+# The base raises NotImplementedError: this annotator is batch-only.
+class VEPCacheAnnotator(VEPAnnotatorBase):  # pylint: disable=abstract-method
     """Annotation pipeline adapter for dummy_annotate using tempfiles."""
 
     def __init__(
@@ -379,7 +380,8 @@ class VEPCacheAnnotator(VEPAnnotatorBase):
         )
 
 
-class VEPEffectAnnotator(VEPAnnotatorBase):
+# The base raises NotImplementedError: this annotator is batch-only.
+class VEPEffectAnnotator(VEPAnnotatorBase):  # pylint: disable=abstract-method
     """Annotation pipeline adapter for dummy_annotate using tempfiles."""
 
     def __init__(

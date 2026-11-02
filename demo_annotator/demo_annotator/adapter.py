@@ -128,7 +128,10 @@ class DemoAnnotatorAdapter(DockerAnnotator):
         )
 
 
-class DemoAnnotatorStreamAdapter(DemoAnnotatorAdapter):
+# The base raises NotImplementedError: this annotator is batch-only.
+class DemoAnnotatorStreamAdapter(  # pylint: disable=abstract-method
+    DemoAnnotatorAdapter,
+):
     """Annotation pipeline adapter for annotate_length using streams."""
 
     def _do_batch_annotate(

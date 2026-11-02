@@ -59,20 +59,19 @@ class PromoterEffectChecker(EffectChecker):
         # near base before the first exon means no base is inside an exon.
         if (
             request.transcript_model.strand == "+"
-            and request.variant.corrected_ref_position_last
-            < request.transcript_model.exons[0].start
-            and request.variant.corrected_ref_position_last
-            >= request.transcript_model.exons[0].start
+            and request.transcript_model.exons[0].start
             - request.promoter_len
+            <= request.variant.corrected_ref_position_last
+            < request.transcript_model.exons[0].start
         ):
             return self.create_positive_strand_effect(
                 request.transcript_model, request.variant,
             )
 
         if (
-            request.variant.position > request.transcript_model.exons[-1].stop
-            and request.transcript_model.strand == "-"
-            and request.variant.position
+            request.transcript_model.strand == "-"
+            and request.transcript_model.exons[-1].stop
+            < request.variant.position
             <= request.transcript_model.exons[-1].stop
             + request.promoter_len
         ):
