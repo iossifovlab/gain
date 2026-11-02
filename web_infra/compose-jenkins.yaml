@@ -391,11 +391,8 @@ services:
       CI: "1"
       # No passwd entry for the agent uid, so HOME would be `/`.
       HOME: /tmp
-      # Playwright clears its outputDir (/reports) at startup by
-      # removing the directory itself, and tolerates only the EBUSY a
-      # mount point answers. As a non-root uid the rmdir fails EACCES
-      # first -- `/` is root-owned -- and the run aborts with 0 tests.
-      # Skip that task: Jenkinsfile.e2e's `Wipe workspace` empties
-      # web_e2e/reports every build, so the suite still starts clean.
-      PW_TEST_NO_REMOVE_OUTPUT_DIRS: "1"
+      # Playwright removes its outputDir at startup. The CI outputDir is
+      # /reports/test-results (see web_e2e/playwright.config.ts), a
+      # subdirectory the agent uid owns, not the mount root /reports
+      # that the agent uid cannot rmdir (EACCES).
     command: ["npx", "playwright", "test"]
