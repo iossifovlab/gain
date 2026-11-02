@@ -1,5 +1,6 @@
 """Views for pipeline creation and manipulation."""
 import asyncio
+import os
 import time
 from concurrent.futures import Future
 from pathlib import Path
@@ -201,17 +202,19 @@ class UserPipeline(AnnotationBaseView):
                     settings.ANNOTATION_CONFIG_STORAGE_DIR,
                     request.user.identifier,
                 )
-                config_path = user_dir / config_filename
                 try:
-                    outside = not config_path.resolve().is_relative_to(
-                        user_dir.resolve())
+                    base = os.path.realpath(user_dir)
+                    candidate = os.path.realpath(
+                        os.path.join(base, config_filename))
                 except ValueError:
-                    outside = True
-                if outside:
+                    candidate = ""
+                    base = os.sep
+                if not candidate.startswith(base + os.sep):
                     return Response(
                         {"reason": INVALID_PIPELINE_NAME},
                         status=views.status.HTTP_400_BAD_REQUEST,
                     )
+                config_path = Path(candidate)
                 if pipeline_name is not None and Pipeline.objects.filter(
                     owner=request.user.user,
                     name=pipeline_name,
