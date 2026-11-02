@@ -40,6 +40,25 @@ def test_removes_the_software_chunk_and_keeps_every_other_chunk() -> None:
         mpimg.imread(io.BytesIO(original), format="png").shape[:2]
 
 
+def test_keeps_a_text_chunk_with_another_keyword() -> None:
+    figure = Figure(figsize=(2, 2))
+    figure.subplots().plot([0, 1, 2], [2, 0, 1])
+    buffer = io.BytesIO()
+    figure.savefig(buffer, format="png", metadata={"Title": "x"})
+    original = buffer.getvalue()
+    title_chunks = [
+        chunk for chunk in png_chunks(original)
+        if chunk[4:8] == b"tEXt" and chunk[8:].startswith(b"Title\x00")
+    ]
+    assert len(title_chunks) == 1
+    assert len(software_chunks(original)) == 1
+
+    stripped = without_software_chunk(original)
+
+    assert title_chunks[0] in png_chunks(stripped)
+    assert software_chunks(stripped) == []
+
+
 def test_returns_a_png_without_a_software_chunk_unchanged() -> None:
     already_clean = without_software_chunk(_plain_savefig_png())
     assert software_chunks(already_clean) == []
