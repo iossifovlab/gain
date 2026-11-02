@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "gain-web-api"
 description = "GAIn Web API — Django backend (the GPF Web Annotation app)."
 readme = "README.rst"
-requires-python = ">=3.12"
+requires-python = "<3.15,>=3.12"
 license = { text = "BSD-3-Clause" }
 authors = [
     { name = "Seqpipe Ltd.", email = "lubomir.chorbadjiev@gmail.com" },

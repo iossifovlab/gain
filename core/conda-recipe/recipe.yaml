@@ -31,7 +31,7 @@ requirements:
     - python >=3.12
     - pip
   run:
-    - python >=3.12
+    - python <3.15,>=3.12
     - anndata >=0.13
     - apsw >=3.52
     - cerberus >=1.3

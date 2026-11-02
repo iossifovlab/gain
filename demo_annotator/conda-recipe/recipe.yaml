@@ -36,7 +36,7 @@ requirements:
     - python >=3.12
     - pip
   run:
-    - python >=3.12
+    - python <3.15,>=3.12
     - gain-core
     - fsspec >=2026.2
 
