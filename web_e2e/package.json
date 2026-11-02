@@ -7,7 +7,7 @@
     "nodejs-polars": "^0.8.2"
   },
   "devDependencies": {
-    "@playwright/test": "1.51.1",
+    "@playwright/test": "1.62.1",
     "@types/node": "^22.13.10",
     "@typescript-eslint/eslint-plugin": "5.42.1",
     "@typescript-eslint/parser": "5.42.1",
@@ -16,5 +16,9 @@
     "eslint-plugin-node": "11.1.0",
     "eslint-plugin-only-warn": "1.0.3",
     "eslint-plugin-promise": "6.1.1"
+  },
+  "overrides": {
+    "js-yaml": "^4.3.2",
+    "minimatch": "^11.0.1"
   }
 }

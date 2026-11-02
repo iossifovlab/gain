@@ -396,7 +396,7 @@ test.describe('Add annotator to pipeline tests', () => {
     await page.locator('[id="chain-dropdown"] input').pressSequentially('hg19');
     const filteredOptions = page.locator('mat-option.resource-option');
 
-    expect(await filteredOptions.count()).toBe(4);
+    await expect(filteredOptions).toHaveCount(4);
   });
 
   test('should filter source_genome options by search text in configure step', async({ page }) => {
@@ -410,7 +410,7 @@ test.describe('Add annotator to pipeline tests', () => {
     await page.locator('[id="source_genome-dropdown"] input').pressSequentially('hs1');
     const filteredOptions = page.locator('mat-option.resource-option');
 
-    expect(await filteredOptions.count()).toBe(1);
+    await expect(filteredOptions).toHaveCount(1);
   });
 
   test('should disable Next button in configure step when a filled required field is cleared', async({ page }) => {
