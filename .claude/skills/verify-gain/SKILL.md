@@ -1,6 +1,6 @@
 ---
 name: verify-gain
-description: Drive the real gain command-line tools (annotate_tabular, annotate_vcf, grr_manage, binning_tool, grr_browse, grr_cache_repo) from this checkout's .venv against test_fixtures/mini-GRR (or a scratch copy of it), as a directory GRR or as an HTTP GRR served by the run's own verify-gain-<run id> compose project, and keep the evidence (command, stdout, stderr, exit code, output file, read-back) under .verify/<run id>/evidence/. Use it to prove a gain CLI change works end to end, beyond unit tests, with no network and no shared container touched.
+description: Drive the real gain command-line tools (annotate_tabular, annotate_vcf, grr_manage, binning_tool, binning_tool_view, grr_browse, grr_cache_repo) from this checkout's .venv against test_fixtures/mini-GRR (or a scratch copy of it), as a directory GRR or as an HTTP GRR served by the run's own verify-gain-<run id> compose project, and keep the evidence (command, stdout, stderr, exit code, output file, read-back) under .verify/<run id>/evidence/. Use it to prove a gain CLI change works end to end, beyond unit tests, with no network and no shared container touched.
 ---
 
 # verify-gain
@@ -118,10 +118,13 @@ PATH="$PWD/.venv/bin:$PATH" .claude/skills/verify-gain/scripts/doctor.sh "$RUN_I
 It fails (exit 1) with a message naming the fix when:
 
 - a CLI that the drives run (`annotate_tabular`, `annotate_vcf`,
-  `grr_browse`, `grr_cache_repo`, `grr_manage`, `binning_tool`) on `PATH`
-  is not this checkout's `.venv/bin/` one (on a workstation a conda env can
-  shadow it). Fix: `export PATH="$PWD/.venv/bin:$PATH"`. If
-  `.venv/bin/annotate_tabular` is missing, run `uv sync` first.
+  `grr_browse`, `grr_cache_repo`, `grr_manage`, `binning_tool`,
+  `binning_tool_view`) on `PATH` is not this checkout's `.venv/bin/` one
+  (on a workstation a conda env can shadow it). Fix: `export
+  PATH="$PWD/.venv/bin:$PATH"`. If `.venv/bin/annotate_tabular` is
+  missing, run `uv sync` first. A `.venv` from before `binning_tool_view`
+  was added has no `.venv/bin/binning_tool_view`: Doctor names that file,
+  and `uv sync` adds it.
 - `.venv/bin/python` cannot import `h5py` (the `binning-tool` read-back
   needs it). Fix: `uv sync`.
 - `test_fixtures/mini-GRR/mini_pipeline/genomic_resource.yaml` is missing:
@@ -238,6 +241,28 @@ which writes `$RUN/scratch/bin.yaml` and runs:
     -o $RUN/scratch/bins.h5 -w $RUN/scratch/bin-work -j 1
 ```
 
+**`features/binning-tool-view.md`** — `binning_tool_view` over an HDF5
+file that the drive makes itself:
+
+```bash
+.claude/skills/verify-gain/scripts/drive-binning-tool-view.sh "$RUN_ID"
+```
+
+which writes `$RUN/scratch/view-bin.yaml` (the run definition of
+`drive-binning-tool.sh`), runs
+
+```bash
+.venv/bin/binning_tool $RUN/scratch/view-bin.yaml -g $RUN/scratch/grr.yaml \
+    -o $RUN/scratch/view-bins.h5 -w $RUN/scratch/view-bin-work -j 1
+```
+
+and then runs `.venv/bin/binning_tool_view $RUN/scratch/view-bins.h5` once
+for each of eight cases: `tracks`, `bins`, `joined`, `region`,
+`separators`, `index-header`, `start-below-1` and `axes-differ`. The table
+in `features/binning-tool-view.md` gives the arguments of each case. The
+last two cases are usage errors and must exit 2. The drive runs all
+eight, and the read-back judges every exit code.
+
 **`features/http-grr.md`** — `grr_browse` and `grr_cache_repo` against the
 run's HTTP GRR (after `launch-http-grr.sh`):
 
@@ -271,6 +296,8 @@ Each drive keeps, in `$RUN/evidence/<feature>/`:
 | `added_file.txt`, `grr-copy.yaml`, `resources.txt`, `manifest.txt` | `grr-manage`: the added file, the definition of the copy, the resource ids of the copy and the `mini_vcf_plot` manifest after `repo-manifest` |
 | `bin.yaml` / `bins.h5` | `binning-tool`: the run definition and the HDF5 output |
 | `work_dir_left.txt` | `binning-tool`: whether the work directory was removed |
+| `<step>/` | `binning-tool-view`: `command.txt`, `stdout.txt`, `stderr.txt` and `exit_code.txt` of the `binning_tool` step and of each `binning_tool_view` case |
+| `bin.yaml` / `view-bins.h5` | `binning-tool-view`: the run definition and the HDF5 file that `binning_tool_view` reads |
 | `grr-http.yaml` | `grr-browse`, `grr-cache-repo`: the HTTP GRR definition, with the run's port |
 | `contents.json` | `grr-browse`: the served `.CONTENTS.json` |
 | `cached_files.txt` | `grr-cache-repo`: the files in `cache_dir` after the drive |
@@ -288,7 +315,10 @@ step 02 exits with the number of stale resources it reports (1 today), that
 manifest lists the file, and that `grr_manage list` and `grr_browse` list
 exactly the resources of the copy. For `binning-tool` it opens `bins.h5`
 with `h5py` and compares the four bins and the values `0`, `0.1`, `0.2`,
-`0.3` within `1e-6`. For `grr-browse` it compares
+`0.3` within `1e-6`. For `binning-tool-view` it compares the stdout of each
+`binning_tool_view` case with the exact expected text, and the exit code
+with the expected code; for the two exit-2 cases it checks the message on
+stderr. For `grr-browse` it compares
 the listed resource ids with the ids in `contents.json`. For
 `grr-cache-repo` it `cmp`s the cached `mini_pipeline.yaml`,
 `genomic_resource.yaml` and `mini_positionscore_bw_0.bw` with the served
@@ -301,6 +331,7 @@ cat "$RUN/evidence/annotate-tabular/exit_code.txt"
 .claude/skills/verify-gain/scripts/readback-annotate-vcf.sh "$RUN/evidence/annotate-vcf/output.vcf"
 .claude/skills/verify-gain/scripts/readback-grr-manage.sh "$RUN/evidence/grr-manage"
 .claude/skills/verify-gain/scripts/readback-binning-tool.sh "$RUN/evidence/binning-tool/bins.h5"
+.claude/skills/verify-gain/scripts/readback-binning-tool-view.sh "$RUN/evidence/binning-tool-view"
 .claude/skills/verify-gain/scripts/readback-grr-browse.sh \
     "$RUN/evidence/grr-browse/stdout.txt" "$RUN/evidence/grr-browse/contents.json"
 ```
@@ -341,6 +372,8 @@ All in `.claude/skills/verify-gain/scripts/`, all executable:
 | `readback-grr-manage.sh` | `readback-grr-manage.sh <evidence dir>` | checks the exit codes and messages of the six steps, the manifest and both listings |
 | `drive-binning-tool.sh` | `drive-binning-tool.sh <run id>` | drives `binning_tool` over `mini_positionscore_bw`, keeps the evidence, runs the read-back |
 | `readback-binning-tool.sh` | `readback-binning-tool.sh <bins.h5>` | opens the HDF5 file with `h5py`, checks the four bins and the values within `1e-6` |
+| `drive-binning-tool-view.sh` | `drive-binning-tool-view.sh <run id>` | makes an HDF5 file with `binning_tool`, drives `binning_tool_view` on it for each of eight cases, keeps the evidence, runs the read-back |
+| `readback-binning-tool-view.sh` | `readback-binning-tool-view.sh <evidence dir>` | compares the stdout of each `binning_tool_view` case with the exact expected text, and checks the exit codes and the two error messages |
 | `drive-grr-browse.sh` | `drive-grr-browse.sh <run id>` | drives `grr_browse` against the HTTP GRR, keeps the evidence, runs the read-back |
 | `readback-grr-browse.sh` | `readback-grr-browse.sh <stdout.txt> <contents.json>` | checks the listing holds exactly the `.CONTENTS.json` ids, from `mini_http`, none cached |
 | `drive-grr-cache-repo.sh` | `drive-grr-cache-repo.sh <run id>` | drives `grr_cache_repo mini_pipeline` against the HTTP GRR, keeps the evidence, runs the read-back |
@@ -359,8 +392,9 @@ $S/drive-annotate-tabular.sh "$RUN_ID"
 $S/drive-annotate-vcf.sh "$RUN_ID"
 $S/drive-grr-manage.sh "$RUN_ID"
 $S/drive-binning-tool.sh "$RUN_ID"
+$S/drive-binning-tool-view.sh "$RUN_ID"
 $S/cleanup.sh "$RUN_ID"
-ls .verify/$RUN_ID/evidence/{annotate-tabular,annotate-vcf,grr-manage,binning-tool}
+ls .verify/$RUN_ID/evidence/{annotate-tabular,annotate-vcf,grr-manage,binning-tool,binning-tool-view}
 ```
 
 A full HTTP run:

@@ -4,10 +4,10 @@
 # Read-only preflight. Run it before the first drive and after any failed
 # drive. Checks:
 #   1. every CLI the drives run (annotate_tabular, annotate_vcf,
-#      grr_browse, grr_cache_repo, grr_manage, binning_tool) on PATH is the
-#      checkout's .venv/bin one (a conda env can shadow them), and the
-#      checkout's .venv/bin/python imports h5py (the binning-tool
-#      read-back needs it);
+#      grr_browse, grr_cache_repo, grr_manage, binning_tool,
+#      binning_tool_view) on PATH is the checkout's .venv/bin one (a
+#      conda env can shadow them), and the checkout's .venv/bin/python
+#      imports h5py (the binning-tool read-back needs it);
 #   2. test_fixtures/mini-GRR is initialised (it is a git submodule);
 #   3. grr_browse with the run's GRR definition lists mini_pipeline.
 # For a run with an HTTP GRR (launch-http-grr.sh wrote
@@ -36,7 +36,7 @@ scratch="$run_dir/scratch"
 [[ -f "$scratch/grr.yaml" ]] || verify_die "doctor: $scratch/grr.yaml is missing (run launch.sh)"
 
 # 1. CLI on PATH comes from this checkout.
-for cli in annotate_tabular annotate_vcf grr_browse grr_cache_repo grr_manage binning_tool; do
+for cli in annotate_tabular annotate_vcf grr_browse grr_cache_repo grr_manage binning_tool binning_tool_view; do
     expected="$APP_VENV_BIN/$cli"
     [[ -x "$expected" ]] || verify_die "doctor: FAIL: $expected is missing; run 'uv sync' in $VERIFY_CHECKOUT"
     found="$(command -v "$cli" || true)"
