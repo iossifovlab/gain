@@ -54,6 +54,7 @@ from gain.genomic_resources.genomic_scores import (
     PositionScore,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.score_def import ScoreValue
 from gain.genomic_resources.testing.builders import (
     a_grr,
     a_position_score,
@@ -147,11 +148,11 @@ def _weighted_pass(pipeline: AnnotationPipeline) -> Callable[[], float]:
 def _replicated_pass(score: PositionScore) -> Callable[[], float]:
     """Replay the pre-#260 strategy: one copy of a value per base pair."""
     def run() -> float:
-        raw: list[float] = []
+        raw: list[ScoreValue] = []
         for left, right, values in score.fetch_region_segments_scores(
             _CHROM, 1, _REGION_LEN, [_SCORE_ID],
         ):
-            raw.extend([values[0]] * (right - left + 1))  # type: ignore[misc]
+            raw.extend([values[0]] * (right - left + 1))
         assert len(raw) == _REGION_LEN
         value = MeanAggregator().aggregate(raw)
         assert isinstance(value, float)

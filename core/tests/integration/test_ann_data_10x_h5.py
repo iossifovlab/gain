@@ -20,9 +20,10 @@ installs the ``scanpy-drift`` dependency group.  The main suite excludes
 this directory by path, so no marker is needed.
 """
 import pathlib
-from typing import Any
+from typing import Any, cast
 
 import anndata as ad
+import pandas as pd
 import pytest
 import scanpy
 from gain.genomic_resources.ann_data_resource import (
@@ -34,6 +35,7 @@ from gain.genomic_resources.testing.ann_data_builder import (
     an_ann_data,
 )
 from gain.genomic_resources.testing.builders import a_grr
+from scipy.sparse import csr_matrix
 
 _RESOURCE_ID = "single_cell/matrix"
 
@@ -81,7 +83,18 @@ def _realize(
 
 def _scanpy_read(path: pathlib.Path, **params: Any) -> ad.AnnData:
     """Read the realized file with scanpy, addressed as scanpy wants."""
-    return scanpy.read_10x_h5(path, **params)
+    ann_data: ad.AnnData = scanpy.read_10x_h5(path, **params)
+    return ann_data
+
+
+def _var(ann_data: ad.AnnData) -> pd.DataFrame:
+    """Return ``var``, which an in-memory read holds as a data frame."""
+    return cast(pd.DataFrame, ann_data.var)
+
+
+def _matrix(ann_data: ad.AnnData) -> csr_matrix:
+    """Return ``X``, which both readers hold as a ``csr_matrix``."""
+    return cast(csr_matrix, ann_data.X)
 
 
 def test_scanpy_reads_the_realized_fixture(tmp_path: pathlib.Path) -> None:
@@ -96,7 +109,7 @@ def test_scanpy_reads_the_realized_fixture(tmp_path: pathlib.Path) -> None:
     assert ann_data.shape == (3, 4)
     assert list(ann_data.obs_names) == ["CELL_1", "CELL_2", "CELL_3"]
     assert list(ann_data.var_names) == ["ACTB", "GAPDH", "MALAT1", "XIST"]
-    assert ann_data.X.todense().tolist() == [
+    assert _matrix(ann_data).todense().tolist() == [
         [4.0, 7.0, 10.0, 13.0],
         [5.0, 8.0, 11.0, 14.0],
         [6.0, 9.0, 12.0, 15.0],
@@ -116,7 +129,7 @@ def test_the_var_table_is_the_shape_the_stored_statistics_have(
 
     ann_data = _scanpy_read(path)
 
-    assert ann_data.var.to_csv().splitlines()[0] == (
+    assert _var(ann_data).to_csv().splitlines()[0] == (
         ",gene_ids,feature_types,genome,interval")
     assert list(ann_data.var["gene_ids"]) == [
         "ENSG001", "ENSG002", "ENSG003", "ENSG004"]
@@ -170,11 +183,11 @@ def test_the_matrix_free_read_describes_what_scanpy_reads(
     lean = load_ann_data_from_resource(resource, matrix_free=True)
 
     assert str(lean) == str(theirs)
-    assert lean.var.equals(theirs.var)
+    assert _var(lean).equals(_var(theirs))
     assert list(lean.obs_names) == list(theirs.obs_names)
     # And the one thing it deliberately does NOT reproduce.
-    assert lean.X.nnz == 0
-    assert theirs.X.nnz > 0
+    assert _matrix(lean).nnz == 0
+    assert _matrix(theirs).nnz > 0
 
 
 @pytest.mark.parametrize(
@@ -225,8 +238,8 @@ def test_neither_reader_de_duplicates_a_repeated_gene_symbol(
     # and the small tier already owns gain's index order.
     assert list(theirs.var_names) == expected_var_names
     assert list(ours.var_names) == list(theirs.var_names)
-    assert ours.var.equals(theirs.var)
-    assert (ours.X != theirs.X).nnz == 0
+    assert _var(ours).equals(_var(theirs))
+    assert (_matrix(ours) != _matrix(theirs)).nnz == 0
     # The rendering the ``describe_ann_data.txt`` statistic is made of.
     assert str(ours) == str(theirs)
 
@@ -248,7 +261,7 @@ def test_the_loader_reads_a_10x_h5_resource(tmp_path: pathlib.Path) -> None:
     theirs = _scanpy_read(path, gex_only=False)
     assert ours.shape == theirs.shape
     assert list(ours.var_names) == list(theirs.var_names)
-    assert ours.var.equals(theirs.var)
-    assert (ours.X != theirs.X).nnz == 0
+    assert _var(ours).equals(_var(theirs))
+    assert (_matrix(ours) != _matrix(theirs)).nnz == 0
     # The rendering the ``describe_ann_data.txt`` statistic is made of.
     assert str(ours) == str(theirs)
