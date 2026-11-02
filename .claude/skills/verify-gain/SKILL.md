@@ -257,9 +257,11 @@ which writes `$RUN/scratch/view-bin.yaml` (the run definition of
 ```
 
 and then runs `.venv/bin/binning_tool_view $RUN/scratch/view-bins.h5` once
-for each of eight cases (`--tracks`, `--bins`, `--bins --matrix`,
-`--region`, `--header index` and two usage errors). Two cases must exit
-2. The drive runs all eight, and the read-back judges every exit code.
+for each of eight cases: `tracks`, `bins`, `joined`, `region`,
+`separators`, `index-header`, `start-below-1` and `axes-differ`. The table
+in `features/binning-tool-view.md` gives the arguments of each case. The
+last two cases are usage errors and must exit 2. The drive runs all
+eight, and the read-back judges every exit code.
 
 **`features/http-grr.md`** — `grr_browse` and `grr_cache_repo` against the
 run's HTTP GRR (after `launch-http-grr.sh`):
