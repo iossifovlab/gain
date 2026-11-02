@@ -11,8 +11,9 @@ standalone.
 
 - The checkout has its own `.venv` from `uv sync` (core + web_api), so
   `.venv/bin/annotate_tabular` and `.venv/bin/grr_browse` exist and come from
-  this checkout's source. The same holds for `annotate_vcf`, `grr_manage`
-  and `binning_tool`, and `.venv/bin/python` imports `h5py`.
+  this checkout's source. The same holds for `annotate_vcf`, `grr_manage`,
+  `binning_tool` and `binning_tool_view`, and `.venv/bin/python` imports
+  `h5py`.
 - `test_fixtures/mini-GRR` is initialised
   (`git submodule update --init test_fixtures/mini-GRR`); a fresh worktree has
   it empty.
@@ -57,4 +58,5 @@ standalone.
 | [annotate-vcf.md](annotate-vcf.md) | `annotate_vcf` | mini-GRR, `mini_pipeline` | `scripts/drive-annotate-vcf.sh` |
 | [grr-manage.md](grr-manage.md) | `grr_manage`, `grr_browse` | a scratch copy of mini-GRR | `scripts/drive-grr-manage.sh` |
 | [binning-tool.md](binning-tool.md) | `binning_tool` | mini-GRR, `mini_genome` and `mini_positionscore_bw` | `scripts/drive-binning-tool.sh` |
+| [binning-tool-view.md](binning-tool-view.md) | `binning_tool`, `binning_tool_view` | mini-GRR, `mini_genome` and `mini_positionscore_bw` | `scripts/drive-binning-tool-view.sh` |
 | [http-grr.md](http-grr.md) | `grr_browse`, `grr_cache_repo` | HTTP GRR over a scratch copy of mini-GRR, `mini_pipeline` | `scripts/launch-http-grr.sh`, `scripts/drive-grr-browse.sh`, `scripts/drive-grr-cache-repo.sh` |
