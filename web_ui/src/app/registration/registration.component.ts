@@ -42,7 +42,7 @@ export class RegistrationComponent {
 
   private validateEmail(): boolean {
     const email = (this.email.nativeElement as HTMLInputElement).value;
-    const re = new RegExp(/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/);
+    const re = new RegExp(/^[^\s@]+@[^\s@.]+\.[^\s@]+$/);
     return re.test(String(email).toLowerCase());
   }
 

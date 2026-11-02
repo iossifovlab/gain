@@ -100,6 +100,32 @@ describe('RegistrationComponent', () => {
     expect(emailInput.value).toBe('mockInvalidEmail');
   });
 
+  it('should accept an email with a long top-level domain', () => {
+    emailInput.value = 'user@example.info';
+    passwordInput.value = 'mockPassword';
+    const registerSpy = jest.spyOn(usersServiceMock, 'registerUser');
+
+    component.register();
+    expect(component.validationMessage).toBe('');
+    expect(registerSpy).toHaveBeenCalledWith('user@example.info', 'mockPassword');
+  });
+
+  it('should reject a long adversarial email', () => {
+    const adversarialEmail = 'a@' + 'a'.repeat(5000) + '!';
+    emailInput.value = adversarialEmail;
+    passwordInput.value = 'mockPassword';
+    const registerSpy = jest.spyOn(usersServiceMock, 'registerUser');
+    registerSpy.mockClear();
+
+    component.register();
+    expect(component.validationMessage).toBe('Invalid email format.');
+    expect(registerSpy).not.toHaveBeenCalled();
+  });
+
+  it('should not set a pattern attribute on the email input', () => {
+    expect(emailInput.hasAttribute('pattern')).toBe(false);
+  });
+
   it('should show error message when password is in invalid', () => {
     emailInput.value = 'mockEmail@email.com';
     passwordInput.value = '12';

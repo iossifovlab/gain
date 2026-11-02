@@ -8,14 +8,7 @@
     <form (ngSubmit)="register()">
       <div class="form-group">
         <label for="email">email</label>
-        <input
-          #emailInput
-          id="email"
-          name="email"
-          type="email"
-          autocomplete="email"
-          spellcheck="false"
-          pattern="^\w+([\.\-]?\w+)*@\w+([\.\-]?\w+)*(\.\w{2,3})+$" />
+        <input #emailInput id="email" name="email" type="email" autocomplete="email" spellcheck="false" />
       </div>
       <div class="form-group">
         <label for="password">password</label>
