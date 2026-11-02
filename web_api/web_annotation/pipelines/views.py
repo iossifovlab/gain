@@ -43,6 +43,11 @@ from web_annotation.pipeline_cache import (
     await_build,
 )
 from web_annotation.pipelines.throttling import PipelineValidationRateThrottle
+from web_annotation.storage_paths import (
+    INVALID_STORAGE_PATH,
+    UnsafeStoragePathError,
+    user_storage_dir,
+)
 from web_annotation.utils import (
     invalid_content_type_response,
     missing_upload_response,
@@ -198,12 +203,18 @@ class UserPipeline(AnnotationBaseView):
         else:  # Create
             assert pipeline_name is not None
             if not temporary:
-                user_dir = Path(
-                    settings.ANNOTATION_CONFIG_STORAGE_DIR,
-                    request.user.identifier,
-                )
                 try:
-                    base = os.path.realpath(user_dir)
+                    user_dir = user_storage_dir(
+                        settings.ANNOTATION_CONFIG_STORAGE_DIR,
+                        request.user.identifier,
+                    )
+                except UnsafeStoragePathError:
+                    return Response(
+                        {"reason": INVALID_STORAGE_PATH},
+                        status=views.status.HTTP_400_BAD_REQUEST,
+                    )
+                base = str(user_dir)
+                try:
                     candidate = os.path.realpath(
                         os.path.join(base, config_filename))
                 except ValueError:
