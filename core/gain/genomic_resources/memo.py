@@ -84,5 +84,19 @@ class Memo[K: Hashable, V]:
         with self._lock:
             self._built.clear()
 
+    def discard(self, doomed: Callable[[K], bool]) -> int:
+        """Drop every memoised object whose key ``doomed`` accepts.
+
+        Returns
+        -------
+        int
+            The number of objects dropped.
+        """
+        with self._lock:
+            keys = [key for key in self._built if doomed(key)]
+            for key in keys:
+                del self._built[key]
+            return len(keys)
+
     def __len__(self) -> int:
         return len(self._built)
