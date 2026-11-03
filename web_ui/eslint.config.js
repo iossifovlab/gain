@@ -15,6 +15,32 @@ const prettier = require('eslint-plugin-prettier');
 const prettierConfig = require('eslint-config-prettier');
 
 const tsFiles = ['**/*.ts'];
+
+// @angular-eslint 22 removed the legacy "recommended" configs from its plugins.
+// These are the rule sets of plugin:@angular-eslint/recommended and
+// plugin:@angular-eslint/template/recommended in @angular-eslint 21.4.0.
+// The 22 ts-recommended set adds prefer-on-push-component-change-detection, which
+// this app does not adopt: its components keep ChangeDetectionStrategy.Eager.
+const angularRecommendedRules = {
+  '@angular-eslint/contextual-lifecycle': 'error',
+  '@angular-eslint/no-empty-lifecycle-method': 'error',
+  '@angular-eslint/no-input-rename': 'error',
+  '@angular-eslint/no-inputs-metadata-property': 'error',
+  '@angular-eslint/no-output-native': 'error',
+  '@angular-eslint/no-output-on-prefix': 'error',
+  '@angular-eslint/no-output-rename': 'error',
+  '@angular-eslint/no-outputs-metadata-property': 'error',
+  '@angular-eslint/prefer-inject': 'error',
+  '@angular-eslint/prefer-standalone': 'error',
+  '@angular-eslint/use-pipe-transform-interface': 'error',
+  '@angular-eslint/use-lifecycle-interface': 'warn',
+};
+const angularTemplateRecommendedRules = {
+  '@angular-eslint/template/banana-in-box': 'error',
+  '@angular-eslint/template/eqeqeq': 'error',
+  '@angular-eslint/template/no-negated-async': 'error',
+  '@angular-eslint/template/prefer-control-flow': 'error',
+};
 const htmlFiles = ['**/*.html'];
 
 /** Scope each block of a typescript-eslint flat config list to the .ts files. */
@@ -52,7 +78,7 @@ module.exports = [
       '@angular-eslint': angular,
     },
     // plugin:@angular-eslint/recommended
-    rules: angular.configs.recommended.rules,
+    rules: angularRecommendedRules,
   },
   {
     files: tsFiles,
@@ -194,7 +220,7 @@ module.exports = [
       '@angular-eslint/template': angularTemplate,
     },
     // plugin:@angular-eslint/template/recommended
-    rules: angularTemplate.configs.recommended.rules,
+    rules: angularTemplateRecommendedRules,
   },
 
   // *.html — plugin:prettier/recommended of eslint-plugin-prettier 4, written out.

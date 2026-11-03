@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, EventEmitter, inject, OnDestroy, OnInit, Output } from '@angular/core';
+import { Component, EventEmitter, inject, OnDestroy, OnInit, Output, ChangeDetectionStrategy } from '@angular/core';
 import { MatDialog } from '@angular/material/dialog';
 import { JobsService } from '../job-creation/jobs.service';
 import { Subscription, take } from 'rxjs';
@@ -11,6 +11,7 @@ import { ViewportService } from '../viewport.service';
   selector: 'app-jobs-table',
   imports: [CommonModule],
   templateUrl: './jobs-table.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './jobs-table.component.css'
 })
 export class JobsTableComponent implements OnInit, OnDestroy {

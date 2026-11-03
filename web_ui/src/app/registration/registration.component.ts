@@ -1,4 +1,4 @@
-import { Component, ElementRef, inject, ViewChild } from '@angular/core';
+import { Component, ElementRef, inject, ViewChild, ChangeDetectionStrategy } from '@angular/core';
 import { UsersService } from '../users.service';
 import { FormsModule } from '@angular/forms';
 
@@ -10,6 +10,7 @@ import { environment } from '../../../environments/environment';
   selector: 'app-registration',
   imports: [FormsModule, RouterModule],
   templateUrl: './registration.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './registration.component.css'
 })
 export class RegistrationComponent {

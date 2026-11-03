@@ -1,5 +1,5 @@
 
-import { Component, EventEmitter, inject, OnInit, Output } from '@angular/core';
+import { Component, EventEmitter, inject, OnInit, Output, ChangeDetectionStrategy } from '@angular/core';
 import { FileContent } from './jobs';
 import { JobsService } from './jobs.service';
 import { take } from 'rxjs';
@@ -15,6 +15,7 @@ import { SingleAnnotationService } from '../single-annotation.service';
     ColumnSpecifyingComponent
   ],
   templateUrl: './job-creation.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './job-creation.component.css'
 })
 export class JobCreationComponent implements OnInit {

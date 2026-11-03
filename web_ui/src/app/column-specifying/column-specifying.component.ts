@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, EventEmitter, inject, Input, OnChanges, Output } from '@angular/core';
+import { Component, EventEmitter, inject, Input, OnChanges, Output, ChangeDetectionStrategy } from '@angular/core';
 import { FileContent } from '../job-creation/jobs';
 import { TextShortenPipe } from '../text-shorten.pipe';
 import { MatSelectModule } from '@angular/material/select';
@@ -11,6 +11,7 @@ import { Subscription, take } from 'rxjs';
   selector: 'app-column-specifying',
   imports: [CommonModule, TextShortenPipe, MatSelectModule, MatFormFieldModule],
   templateUrl: './column-specifying.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './column-specifying.component.css'
 })
 export class ColumnSpecifyingComponent implements OnChanges {

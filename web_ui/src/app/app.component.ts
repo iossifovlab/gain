@@ -1,4 +1,12 @@
-import { ChangeDetectorRef, Component, DoCheck, inject, OnDestroy, OnInit } from '@angular/core';
+import {
+  ChangeDetectorRef,
+  Component,
+  DoCheck,
+  inject,
+  OnDestroy,
+  OnInit,
+  ChangeDetectionStrategy
+} from '@angular/core';
 import { Router, RouterModule, RouterOutlet } from '@angular/router';
 import { UsersService } from './users.service';
 import { UserData } from './users';
@@ -11,6 +19,7 @@ import { SocketNotificationsService } from './socket-notifications/socket-notifi
   selector: 'app-root',
   imports: [RouterOutlet, RouterModule, MarkdownModule],
   templateUrl: './app.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './app.component.css',
 })
 export class AppComponent implements DoCheck, OnInit, OnDestroy {

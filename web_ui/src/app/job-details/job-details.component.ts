@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, inject, OnInit } from '@angular/core';
+import { Component, inject, OnInit, ChangeDetectionStrategy } from '@angular/core';
 import { MAT_DIALOG_DATA, MatDialogContent } from '@angular/material/dialog';
 import { JobsService } from '../job-creation/jobs.service';
 import { getStatusClassName, Job } from '../job-creation/jobs';
@@ -8,6 +8,7 @@ import { getStatusClassName, Job } from '../job-creation/jobs';
   selector: 'app-job-details',
   imports: [MatDialogContent, CommonModule],
   templateUrl: './job-details.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './job-details.component.css'
 })
 export class JobDetailsComponent implements OnInit {

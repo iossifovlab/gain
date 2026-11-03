@@ -1,4 +1,4 @@
-import { Component, ElementRef, Input, OnInit, ViewChild } from '@angular/core';
+import { Component, ElementRef, Input, OnInit, ViewChild, ChangeDetectionStrategy } from '@angular/core';
 import { CategoricalHistogram } from '../single-annotation';
 
 import * as d3 from 'd3';
@@ -8,6 +8,7 @@ import { cloneDeep } from 'lodash';
   selector: 'app-categorical-histogram',
   imports: [],
   templateUrl: './categorical-histogram.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './categorical-histogram.component.css'
 })
 export class CategoricalHistogramComponent implements OnInit {

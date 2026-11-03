@@ -1,4 +1,4 @@
-import { Component, EventEmitter, inject, OnDestroy, OnInit, Output } from '@angular/core';
+import { Component, EventEmitter, inject, OnDestroy, OnInit, Output, ChangeDetectionStrategy } from '@angular/core';
 import { Subscription, take } from 'rxjs';
 import { SingleAnnotationService } from '../single-annotation.service';
 
@@ -9,6 +9,7 @@ import { AnnotatableHistory } from '../single-annotation';
   selector: 'app-annotatables-table',
   imports: [FormsModule],
   templateUrl: './annotatables-table.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './annotatables-table.component.css'
 })
 export class AnnotatablesTableComponent implements OnInit, OnDestroy {

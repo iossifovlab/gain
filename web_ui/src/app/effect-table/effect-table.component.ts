@@ -1,11 +1,12 @@
 import { CommonModule } from '@angular/common';
-import { Component, Input, OnInit } from '@angular/core';
+import { Component, Input, OnInit, ChangeDetectionStrategy } from '@angular/core';
 import { EffectDetail } from './effect-details';
 
 @Component({
   selector: 'app-effect-table',
   imports: [CommonModule],
   templateUrl: './effect-table.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './effect-table.component.css'
 })
 export class EffectTableComponent implements OnInit {

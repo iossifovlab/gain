@@ -1,4 +1,13 @@
-import { Component, ViewChild, OnInit, OnDestroy, HostListener, effect, inject } from '@angular/core';
+import {
+  Component,
+  ViewChild,
+  OnInit,
+  OnDestroy,
+  HostListener,
+  effect,
+  inject,
+  ChangeDetectionStrategy
+} from '@angular/core';
 import { JobsTableComponent } from '../jobs-table/jobs-table.component';
 import { filter, Observable, Subscription, switchMap, take } from 'rxjs';
 import { JobsService } from '../job-creation/jobs.service';
@@ -24,6 +33,7 @@ import { AnnotationPipelineStateService } from '../annotation-pipeline/annotatio
     JobCreationComponent,
   ],
   templateUrl: './annotation-jobs-wrapper.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './annotation-jobs-wrapper.component.css'
 })
 

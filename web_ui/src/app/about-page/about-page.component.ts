@@ -1,4 +1,4 @@
-import { Component, inject, OnInit } from '@angular/core';
+import { Component, inject, OnInit, ChangeDetectionStrategy } from '@angular/core';
 import { take } from 'rxjs';
 import { AboutPageService } from './about-page.service';
 import { MarkdownModule } from 'ngx-markdown';
@@ -7,6 +7,7 @@ import { MarkdownModule } from 'ngx-markdown';
   selector: 'app-about-page',
   imports: [MarkdownModule],
   templateUrl: './about-page.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './about-page.component.css',
 })
 export class AboutPageComponent implements OnInit {

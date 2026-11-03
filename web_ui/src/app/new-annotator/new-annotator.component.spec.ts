@@ -269,7 +269,7 @@ describe('NewAnnotatorComponent', () => {
         thresholds: [],
         scrollMargin: '',
         takeRecords: jest.fn()
-      } as IntersectionObserver;
+      };
     });
 
     fixture.detectChanges(); //triggers ngAfterViewInit
@@ -1119,7 +1119,7 @@ describe('Annotator created by resource', () => {
         thresholds: [],
         scrollMargin: '',
         takeRecords: jest.fn()
-      } as IntersectionObserver;
+      };
     });
 
     component.resourcePage = new ResourcePage(

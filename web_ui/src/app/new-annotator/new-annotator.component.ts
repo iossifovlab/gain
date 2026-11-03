@@ -1,5 +1,15 @@
 import { CommonModule } from '@angular/common';
-import { AfterViewInit, Component, ElementRef, inject, OnDestroy, OnInit, signal, ViewChild } from '@angular/core';
+import {
+  AfterViewInit,
+  Component,
+  ElementRef,
+  inject,
+  OnDestroy,
+  OnInit,
+  signal,
+  ViewChild,
+  ChangeDetectionStrategy
+} from '@angular/core';
 import { FormBuilder, FormControl, FormGroup, FormsModule, ReactiveFormsModule, Validators } from '@angular/forms';
 import { MatAutocompleteModule, MatAutocompleteTrigger } from '@angular/material/autocomplete';
 import { MatButtonModule } from '@angular/material/button';
@@ -61,6 +71,7 @@ import { cloneDeep } from 'lodash';
     }
   ],
   templateUrl: './new-annotator.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrls: ['./new-annotator.component.css', './material-components.css'],
 })
 export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
