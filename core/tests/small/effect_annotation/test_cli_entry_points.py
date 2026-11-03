@@ -200,6 +200,37 @@ def test_vcf_annotates_each_alt_allele_into_info_fields(
     ]
 
 
+def test_vcf_writes_one_value_per_alt_allele_of_a_multiallelic_record(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    t4c8_args: list[str],
+) -> None:
+    input_path = tmp_path / "in.vcf"
+    input_path.write_text(textwrap.dedent("""\
+        ##fileformat=VCFv4.2
+        ##contig=<ID=chr1>
+        #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO
+        chr1\t14\t.\tG\tA,T\t.\t.\t.
+    """))
+    output_path = tmp_path / "out.vcf"
+
+    run_entry_point(monkeypatch, "annotate_variant_effects_vcf", [
+        *t4c8_args, str(input_path), str(output_path)])
+
+    with pysam.VariantFile(str(output_path)) as outfile:
+        rows = [
+            (rec.alts, rec.info["WE"], rec.info["GE"], rec.info["ED"])
+            for rec in outfile
+        ]
+    assert rows == [
+        (("A", "T"),
+         ("missense", "nonsense"),
+         ("t4:missense", "t4:nonsense"),
+         ("tx1:t4:missense:2/14(Glu->Lys)",
+          "tx1:t4:nonsense:2/14(Glu->End)")),
+    ]
+
+
 def open_paths() -> set[pathlib.Path]:
     """Return the paths of the files that this process has open."""
     fd_dir = pathlib.Path("/proc/self/fd")

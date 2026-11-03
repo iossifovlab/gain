@@ -450,7 +450,7 @@ def cli_vcf() -> None:
                 buff.append(v)
 
         for out_a, buff in zip(out_as, buffers, strict=True):
-            variant.info[out_a] = ",".join(buff)
+            variant.info[out_a] = tuple(buff)
         print(str(variant), file=outfile, end="")
 
     infile.close()
