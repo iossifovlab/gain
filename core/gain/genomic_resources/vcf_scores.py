@@ -556,6 +556,142 @@ def _refuse_overridden_address(
         f"'{score_id}'.")
 
 
+def _header_scoredefs(
+    vcf_header_info: dict[str, Any],
+) -> dict[str, GenomicScoreDef]:
+    """Build one score definition for each INFO field of the header."""
+    def converter(val: Any) -> Any:
+        try:
+            if isinstance(val, tuple):
+                return "|".join(map(str, val))
+        except TypeError:
+            pass
+
+        return val
+
+    vcf_scoredefs = {}
+
+    for key, value in vcf_header_info.items():
+        # A scalar-valued field needs no parser at all: pysam has already
+        # decoded it (and a per-allele one is indexed down to one element
+        # before the parse).  Everything else keeps ``converter``, whose
+        # whole job is the tuple join.  The SAME set decides the config
+        # override in :func:`_override_scoredef`, so the two cannot drift
+        # apart.
+        is_scalar = value.number in _SCALAR_VALUED_NUMBERS
+
+        vcf_scoredefs[key] = GenomicScoreDef(
+            score_id=key,
+            col_name=key,
+            col_index=None,
+            desc=value.description or "",
+            value_parser=None if is_scalar else converter,
+            # ``Type=`` describes ONE element; the joined value is text
+            # whatever that says, so a multi-valued field declares what it
+            # actually holds rather than what its elements are (gain#1259).
+            value_type=(
+                VCF_TYPE_CONVERSION_MAP[value.type] if is_scalar else "str"),
+            na_values=(),
+            aggregator=None,
+            small_values_desc=None,
+            large_values_desc=None,
+            hist_conf=None,
+        )
+    return vcf_scoredefs
+
+
+def _refuse_configured_fields(
+    resource_id: str,
+    vcf_header_info: dict[str, Any],
+    vcf_scoredefs: dict[str, GenomicScoreDef],
+    config_scoredefs: dict[str, GenomicScoreDef] | None, *,
+    merge: bool,
+) -> None:
+    """Run the id and arity refusals of :func:`parse_vcf_scoredefs`."""
+    # A configured id the header does not declare is refused before the
+    # arity loop below or the override loop indexes the header by it:
+    # neither the arity nor the type can be asked of a field that is not
+    # there, and both indexers raised a bare KeyError naming neither the
+    # resource nor the block (gain#1489).
+    if config_scoredefs is not None:
+        for score in config_scoredefs:
+            _refuse_undeclared_id(resource_id, score, vcf_header_info)
+
+    # Every field that becomes a definition -- all of them with no config or
+    # a merging one, else the ones the config names -- is checked here,
+    # before the override loop's two config-side refusals (the docstring
+    # says why that order).
+    defined = (
+        vcf_scoredefs if config_scoredefs is None or merge
+        else config_scoredefs)
+    for score in defined:
+        _refuse_genotype_arity(resource_id, score, vcf_header_info[score])
+
+
+def _override_scoredef(
+    resource_id: str,
+    score: str,
+    config_scoredef: GenomicScoreDef,
+    vcf_scoredef: GenomicScoreDef,
+    header_entry: Any,
+) -> GenomicScoreDef:
+    """Override the header definition of ``score`` by its config entry."""
+    _refuse_overridden_address(resource_id, config_scoredef)
+
+    # ONE rule for both, which is why neither is a ``config.x or vcf.x``
+    # (a ``None`` on either side means "nothing to parse", not
+    # "unstated", and ``str``'s falsiness is not the question either):
+    # the config's type AND its parser apply exactly where the parse is
+    # handed a scalar, and nowhere else.
+    #
+    # A field the header declares multi-valued keeps the header's
+    # converter, because that converter IS the field's ``|``-join:
+    # taking the config's parser there fed the raw tuple to
+    # ``int``/``float`` (a logged non-value per row) or to ``str`` (the
+    # tuple's repr, silently) -- gain#1233.  Taking it whenever the
+    # config merely stated a ``type:`` is the older, wider form of the
+    # same mistake, which read a ``Flag`` as ``1.0`` (gain#1221).
+    #
+    # The TYPE travels with the parser rather than following the config
+    # on its own, which is what gain#1233 left it doing.  That rested on
+    # a type being merely descriptive for a value that is joined text
+    # either way; it is not.  It selects the histogram, so a joined
+    # field declaring ``int`` was answered with a NUMBER histogram and
+    # aborted its own statistics build in ``np.isnan`` (gain#1259).  A
+    # config may still describe such a field -- ``desc``, aggregators
+    # and histogram config are all its own -- but not by claiming its
+    # value is something the join cannot produce.
+    config_type = config_scoredef.value_type
+    number = header_entry.number
+    is_scalar = number in _SCALAR_VALUED_NUMBERS
+    takes_config_type = config_type is not None and is_scalar
+    _refuse_overridden_type(
+        resource_id, score, number, header_entry.type,
+        config_type, is_scalar=is_scalar)
+
+    value_type = (
+        config_type if takes_config_type else vcf_scoredef.value_type)
+    value_parser = (
+        config_scoredef.value_parser if takes_config_type
+        else vcf_scoredef.value_parser)
+
+    return GenomicScoreDef(
+        score_id=vcf_scoredef.score_id,
+        desc=config_scoredef.desc or vcf_scoredef.desc,
+        value_type=value_type,
+
+        aggregator=config_scoredef.aggregator,
+
+        small_values_desc=config_scoredef.small_values_desc,
+        large_values_desc=config_scoredef.large_values_desc,
+        col_name=vcf_scoredef.col_name,
+        col_index=vcf_scoredef.col_index,
+        hist_conf=config_scoredef.hist_conf,
+        value_parser=value_parser,
+        na_values=config_scoredef.na_values or vcf_scoredef.na_values,
+    )
+
+
 def parse_vcf_scoredefs(
     vcf_header_info: dict[str, Any] | None,
     config_scoredefs: dict[str, GenomicScoreDef] | None, *,
@@ -623,61 +759,12 @@ def parse_vcf_scoredefs(
     the config acts as a filter; ``True`` keeps the rest as the header
     defined them.  It is the resource's ``merge_vcf_scores`` setting.
     """
-    def converter(val: Any) -> Any:
-        try:
-            if isinstance(val, tuple):
-                return "|".join(map(str, val))
-        except TypeError:
-            pass
-
-        return val
-
-    vcf_scoredefs = {}
-
     assert vcf_header_info is not None
 
-    for key, value in vcf_header_info.items():
-        # A scalar-valued field needs no parser at all: pysam has already
-        # decoded it (and a per-allele one is indexed down to one element
-        # before the parse).  Everything else keeps ``converter``, whose
-        # whole job is the tuple join.  The SAME set decides the config
-        # override below, so the two cannot drift apart.
-        is_scalar = value.number in _SCALAR_VALUED_NUMBERS
-
-        vcf_scoredefs[key] = GenomicScoreDef(
-            score_id=key,
-            col_name=key,
-            col_index=None,
-            desc=value.description or "",
-            value_parser=None if is_scalar else converter,
-            # ``Type=`` describes ONE element; the joined value is text
-            # whatever that says, so a multi-valued field declares what it
-            # actually holds rather than what its elements are (gain#1259).
-            value_type=(
-                VCF_TYPE_CONVERSION_MAP[value.type] if is_scalar else "str"),
-            na_values=(),
-            aggregator=None,
-            small_values_desc=None,
-            large_values_desc=None,
-            hist_conf=None,
-        )
-    # A configured id the header does not declare is refused before either
-    # loop below indexes the header by it: neither the arity nor the type
-    # can be asked of a field that is not there, and both indexers raised a
-    # bare KeyError naming neither the resource nor the block (gain#1489).
-    if config_scoredefs is not None:
-        for score in config_scoredefs:
-            _refuse_undeclared_id(resource_id, score, vcf_header_info)
-
-    # Every field that becomes a definition -- all of them with no config or
-    # a merging one, else the ones the config names -- is checked here,
-    # before the override loop's two config-side refusals (the docstring
-    # says why that order).
-    defined = (
-        vcf_scoredefs if config_scoredefs is None or merge
-        else config_scoredefs)
-    for score in defined:
-        _refuse_genotype_arity(resource_id, score, vcf_header_info[score])
+    vcf_scoredefs = _header_scoredefs(vcf_header_info)
+    _refuse_configured_fields(
+        resource_id, vcf_header_info, vcf_scoredefs, config_scoredefs,
+        merge=merge)
 
     if config_scoredefs is None:
         return vcf_scoredefs
@@ -685,63 +772,9 @@ def parse_vcf_scoredefs(
     # allow overriding of vcf-generated scoredefs
     scoredefs = {}
     for score, config_scoredef in config_scoredefs.items():
-        vcf_scoredef = vcf_scoredefs[score]
-        _refuse_overridden_address(resource_id, config_scoredef)
-
-        # ONE rule for both, which is why neither is a ``config.x or vcf.x``
-        # (a ``None`` on either side means "nothing to parse", not
-        # "unstated", and ``str``'s falsiness is not the question either):
-        # the config's type AND its parser apply exactly where the parse is
-        # handed a scalar, and nowhere else.
-        #
-        # A field the header declares multi-valued keeps the header's
-        # converter, because that converter IS the field's ``|``-join:
-        # taking the config's parser there fed the raw tuple to
-        # ``int``/``float`` (a logged non-value per row) or to ``str`` (the
-        # tuple's repr, silently) -- gain#1233.  Taking it whenever the
-        # config merely stated a ``type:`` is the older, wider form of the
-        # same mistake, which read a ``Flag`` as ``1.0`` (gain#1221).
-        #
-        # The TYPE travels with the parser rather than following the config
-        # on its own, which is what gain#1233 left it doing.  That rested on
-        # a type being merely descriptive for a value that is joined text
-        # either way; it is not.  It selects the histogram, so a joined
-        # field declaring ``int`` was answered with a NUMBER histogram and
-        # aborted its own statistics build in ``np.isnan`` (gain#1259).  A
-        # config may still describe such a field -- ``desc``, aggregators
-        # and histogram config are all its own -- but not by claiming its
-        # value is something the join cannot produce.
-        config_type = config_scoredef.value_type
-        header_entry = vcf_header_info[score]
-        number = header_entry.number
-        is_scalar = number in _SCALAR_VALUED_NUMBERS
-        takes_config_type = config_type is not None and is_scalar
-        _refuse_overridden_type(
-            resource_id, score, number, header_entry.type,
-            config_type, is_scalar=is_scalar)
-
-        value_type = (
-            config_type if takes_config_type else vcf_scoredef.value_type)
-        value_parser = (
-            config_scoredef.value_parser if takes_config_type
-            else vcf_scoredef.value_parser)
-
-        scoredef = GenomicScoreDef(
-            score_id=vcf_scoredef.score_id,
-            desc=config_scoredef.desc or vcf_scoredef.desc,
-            value_type=value_type,
-
-            aggregator=config_scoredef.aggregator,
-
-            small_values_desc=config_scoredef.small_values_desc,
-            large_values_desc=config_scoredef.large_values_desc,
-            col_name=vcf_scoredef.col_name,
-            col_index=vcf_scoredef.col_index,
-            hist_conf=config_scoredef.hist_conf,
-            value_parser=value_parser,
-            na_values=config_scoredef.na_values or vcf_scoredef.na_values,
-        )
-        scoredefs[score] = scoredef
+        scoredefs[score] = _override_scoredef(
+            resource_id, score, config_scoredef, vcf_scoredefs[score],
+            vcf_header_info[score])
 
     if merge:
         for score, vcf_scoredef in vcf_scoredefs.items():
