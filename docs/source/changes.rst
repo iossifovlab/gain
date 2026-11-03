@@ -1,6 +1,83 @@
 Release Notes
 =============
 
+* 2026.11.0
+    * Distribution: ``gain-core`` is published to PyPI and bioconda, the
+      install docs take it from bioconda and keep the ``iossifovlab``
+      channel for the annotators, the sdist and wheel ship the LICENSE,
+      and ``requires-python`` is capped at ``<3.15``.
+    * ``binning_tool``: the fragment score binner reads and folds
+      ``fragment_start``, ``fragment_length`` and int
+      ``coverage_profile`` tracks from value arrays, through the new
+      ``FragmentScore`` readers
+      ``get_fragment_arrays_starting_in_region`` and
+      ``get_fragment_arrays_overlapping_region``, and the array fold of
+      a float score serves ``median``.
+    * Statistics: a ``NumberHistogram`` stores the same ``sum`` and
+      ``sum_of_squares`` whatever the order of the additions, and the
+      statistics PNG images no longer embed the matplotlib version, so a
+      rebuild on another host leaves both unchanged. A missing gene set
+      collection histogram is ``None``.
+    * Annotation and GRR: ``annotate_variant_effects_vcf`` writes one
+      INFO value per alternate allele instead of failing on a
+      multi-allelic record, ``grr_manage repo-info`` drops the ignored
+      ``-r``/``--resource`` option, ``GenomicScoreDef`` ``repr()`` and
+      ``==`` work before ``open()``, and a forked task graph run accepts
+      a ``None`` ``task_status_dir``.
+    * gainweb: the single-allele report shows the histogram of an
+      attribute folded by ``list`` or ``most_common``. Registration and
+      pipeline saves refuse an email or a pipeline name that would leave
+      the user's storage folder, the email check runs in linear time
+      and accepts long TLDs, an empty genome field means no genome
+      instead of a 500, and a failed pipeline build sends the client a
+      sanitized error. Python, Angular and Playwright dependencies are
+      updated to close the open Dependabot alerts.
+    * Docs: revised Python interface and Genomic resources pages.
+    * **Issues closed in this release:** `all issues
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+is%3Aclos
+      ed+reason%3Acompleted+closed%3A2026-10-19T11%3A27%3A38Z..2026-11-0
+      3T07%3A54%3A24Z>`__, `bug issues
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+label%3Ab
+      ug+is%3Aclosed+reason%3Acompleted+closed%3A2026-10-19T11%3A27%3A38
+      Z..2026-11-03T07%3A54%3A24Z>`__.
+
+* 2026.10.2
+    * Task graph: named clusters are a dict under ``gain_named_cluster``
+      in the dask config, so a user file can add one and keep the
+      bundled ones; the old ``dae_named_cluster`` list still works with
+      a warning. ``setup_client`` leaves the dask config unchanged,
+      ``chain_tasks`` passes the first task its resolved arguments, and
+      the bundled slurm cluster uses ``number_of_workers``.
+    * Annotation: the default ``region_length_cutoff`` of the position
+      and allele score annotators is 15 Mbp, the effect annotator's
+      value, and a region over the cutoff logs a warning. The annotator
+      decorators forward ``batch_annotate``.
+    * Scores: ``GenomicScore.aggregate_region`` is removed in favour of
+      the per-kind aggregating reads, ``get_score_histogram()`` and its
+      sibling accessors read the only score when no id is given, and the
+      position score binner folds from value arrays with numpy.
+      Log-scale histogram bin edges are rounded to 10 significant
+      digits, so ``repo-repair --force`` on another host no longer
+      rewrites the statistics.
+    * gainweb: a logged exception or a Django 500 posts to a Zulip
+      stream when the four ``GPFWA_ZULIP_*`` variables are set, at most
+      10 posts per 10 minutes and with URL credentials stripped; handled
+      request errors log at WARNING. The web UI keeps the pipeline list
+      and status right when the reload after a save, save-as or delete
+      fails.
+    * Docs: a Task graph chapter and a "Running in parallel" page, a
+      revised Annotators chapter with "Testing an annotator", a Binning
+      infrastructure page with the command-line tools grouped, and
+      resource pages that open with how to create the resource in place
+      of the Factories page.
+    * **Issues closed in this release:** `all issues
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+is%3Aclos
+      ed+reason%3Acompleted+closed%3A2026-10-15T09%3A03%3A43Z..2026-10-1
+      9T11%3A27%3A38Z>`__, `bug issues
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+label%3Ab
+      ug+is%3Aclosed+reason%3Acompleted+closed%3A2026-10-15T09%3A03%3A43
+      Z..2026-10-19T11%3A27%3A38Z>`__.
+
 * 2026.10.1
     * ``binning_tool`` output and tooling: the ``/tracks`` table has one
       layout for every binner kind (``tracks_layout`` 2), the run
