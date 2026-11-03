@@ -18,7 +18,7 @@
 
 # syntax=docker/dockerfile:1.7
 
-ARG NODE_IMAGE=node:22.14.0-alpine
+ARG NODE_IMAGE=node:22.22.3-alpine
 ARG HTTPD_IMAGE=httpd:2.4-alpine
 ARG BACKEND_IMAGE=gain-web-api-prod:latest
 

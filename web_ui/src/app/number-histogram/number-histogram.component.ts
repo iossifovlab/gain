@@ -1,4 +1,4 @@
-import { Component, ElementRef, Input, OnInit, ViewChild } from '@angular/core';
+import { Component, ElementRef, Input, OnInit, ViewChild, ChangeDetectionStrategy } from '@angular/core';
 import { NumberHistogram } from '../single-annotation';
 import * as d3 from 'd3';
 
@@ -15,6 +15,7 @@ interface BinBar {
   imports: [FormatResultValuePipe],
   providers: [FormatResultValuePipe],
   templateUrl: './number-histogram.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './number-histogram.component.css'
 })
 export class NumberHistogramComponent implements OnInit {

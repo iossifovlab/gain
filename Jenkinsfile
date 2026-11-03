@@ -1309,7 +1309,7 @@ pipeline {
                             # 10 release pipeline's digest-pinned
                             # rebuild.
                             docker pull python:3.12-slim
-                            docker pull node:22.14.0-alpine
+                            docker pull node:22.22.3-alpine
                             docker pull httpd:2.4-alpine
 
                             # Build backend under $CI_TAG so the
@@ -1332,7 +1332,7 @@ pipeline {
                             # from the backend image we just built.
                             docker build \
                                 -f web_ui/Dockerfile.production \
-                                --build-arg NODE_IMAGE=node:22.14.0-alpine \
+                                --build-arg NODE_IMAGE=node:22.22.3-alpine \
                                 --build-arg HTTPD_IMAGE=httpd:2.4-alpine \
                                 --build-arg BACKEND_IMAGE="$BACKEND_REPO:$CI_TAG" \
                                 -t "$FRONTEND_REPO:$CI_TAG" .
@@ -1349,7 +1349,7 @@ pipeline {
                             {
                                 echo "PYTHON_IMAGE=$(docker image inspect python:3.12-slim \
                                     --format '{{index .RepoDigests 0}}')"
-                                echo "NODE_IMAGE=$(docker image inspect node:22.14.0-alpine \
+                                echo "NODE_IMAGE=$(docker image inspect node:22.22.3-alpine \
                                     --format '{{index .RepoDigests 0}}')"
                                 echo "HTTPD_IMAGE=$(docker image inspect httpd:2.4-alpine \
                                     --format '{{index .RepoDigests 0}}')"

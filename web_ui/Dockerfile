@@ -8,7 +8,7 @@
 # Pinned to the same Node version as Dockerfile.production so CI
 # exercises the same toolchain that ships to production. Bumping is
 # a one-line change in both files when an upgrade is wanted.
-ARG NODE_VERSION=22.14.0-alpine
+ARG NODE_VERSION=22.22.3-alpine
 FROM node:${NODE_VERSION}
 
 WORKDIR /app

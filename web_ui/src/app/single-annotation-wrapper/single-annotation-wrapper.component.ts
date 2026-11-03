@@ -1,4 +1,4 @@
-import { Component, ViewChild, OnInit, HostListener, effect, inject } from '@angular/core';
+import { Component, ViewChild, OnInit, HostListener, effect, inject, ChangeDetectionStrategy } from '@angular/core';
 import { filter, take } from 'rxjs';
 import { AnnotationPipelineComponent } from '../annotation-pipeline/annotation-pipeline.component';
 import { CommonModule } from '@angular/common';
@@ -17,6 +17,7 @@ import { AnnotationPipelineStateService } from '../annotation-pipeline/annotatio
     AnnotatablesTableComponent,
   ],
   templateUrl: './single-annotation-wrapper.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './single-annotation-wrapper.component.css'
 })
 

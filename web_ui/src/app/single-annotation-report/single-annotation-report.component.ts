@@ -1,4 +1,13 @@
-import { Component, effect, ElementRef, inject, Input, TemplateRef, ViewChild } from '@angular/core';
+import {
+  Component,
+  effect,
+  ElementRef,
+  inject,
+  Input,
+  TemplateRef,
+  ViewChild,
+  ChangeDetectionStrategy
+} from '@angular/core';
 import { Annotator, Attribute, SingleAnnotationReport } from '../single-annotation';
 import { CommonModule } from '@angular/common';
 import { MarkdownModule } from 'ngx-markdown';
@@ -21,6 +30,7 @@ import { isArray } from 'lodash';
     FormatResultValuePipe
   ],
   templateUrl: './single-annotation-report.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './single-annotation-report.component.css'
 })
 export class SingleAnnotationReportComponent {

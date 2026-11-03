@@ -11,6 +11,7 @@ import {
   OnInit,
   TemplateRef,
   ViewChild,
+  ChangeDetectionStrategy
 } from '@angular/core';
 import {
   debounceTime, filter, map, Observable, of, startWith, Subject, Subscription, switchMap, take, tap
@@ -111,6 +112,7 @@ function savedPipelinePatch(
     OverlayModule
   ],
   templateUrl: './annotation-pipeline.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './annotation-pipeline.component.css'
 })
 
@@ -231,7 +233,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   }
 
   public ngAfterViewInit(): void {
-    const editorElement = this.pipelineEditorRef._editorContainer.nativeElement as HTMLElement;
+    const editorElement = this.pipelineEditorRef['editorContainer']().nativeElement;
 
     this.resizeObserver = new ResizeObserver(() => {
       const currentVw = (editorElement.clientWidth / window.innerWidth) * 100;
@@ -806,7 +808,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   }
 
   private autoScroll(): void {
-    const editor = this.pipelineEditorRef['_editor'] as Monaco.editor.IStandaloneCodeEditor;
+    const editor = this.pipelineEditorRef['_editor'];
     const contentChangeDisposable = editor.onDidChangeModelContent(() => {
       editor.revealLine(editor.getModel().getLineCount(), 1);
       contentChangeDisposable.dispose();

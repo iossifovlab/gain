@@ -1,4 +1,4 @@
-import { Component, ElementRef, inject, OnInit, ViewChild } from '@angular/core';
+import { Component, ElementRef, inject, OnInit, ViewChild, ChangeDetectionStrategy } from '@angular/core';
 import { UsersService } from '../users.service';
 import { FormsModule } from '@angular/forms';
 
@@ -11,6 +11,7 @@ import { map, take } from 'rxjs';
   selector: 'app-login',
   imports: [FormsModule, RouterModule],
   templateUrl: './login.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './login.component.css',
 })
 export class LoginComponent implements OnInit {

@@ -1,4 +1,4 @@
-import { Component, EventEmitter, OnInit, Output, inject } from '@angular/core';
+import { Component, EventEmitter, OnInit, Output, inject, ChangeDetectionStrategy } from '@angular/core';
 import { environment } from '../../../environments/environment';
 
 import { FormControl, FormsModule, ReactiveFormsModule } from '@angular/forms';
@@ -22,6 +22,7 @@ import { AnnotationPipelineStateService } from '../annotation-pipeline/annotatio
     ReactiveFormsModule
   ],
   templateUrl: './single-annotation.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './single-annotation.component.css'
 })
 export class SingleAnnotationComponent implements OnInit {

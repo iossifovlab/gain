@@ -1,4 +1,4 @@
-import { Component, inject, OnInit } from '@angular/core';
+import { Component, inject, OnInit, ChangeDetectionStrategy } from '@angular/core';
 import { UsersService } from '../users.service';
 import { filter, take } from 'rxjs';
 import { RateLimits } from '../users';
@@ -8,6 +8,7 @@ import { CommonModule, KeyValuePipe } from '@angular/common';
   selector: 'app-user-quotas',
   imports: [CommonModule, KeyValuePipe],
   templateUrl: './user-quotas.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './user-quotas.component.css',
 })
 export class UserQuotasComponent implements OnInit {

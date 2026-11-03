@@ -1,4 +1,4 @@
-import { Component, inject, Input, OnInit } from '@angular/core';
+import { Component, inject, Input, OnInit, ChangeDetectionStrategy } from '@angular/core';
 import { SingleAnnotationService } from '../single-annotation.service';
 import { CategoricalHistogram, NumberHistogram, ValueType } from '../single-annotation';
 import { NumberHistogramComponent } from '../number-histogram/number-histogram.component';
@@ -8,6 +8,7 @@ import { CategoricalHistogramComponent } from '../categorical-histogram/categori
 @Component({
   selector: 'app-histogram-wrapper',
   imports: [NumberHistogramComponent, CategoricalHistogramComponent],
+  changeDetection: ChangeDetectionStrategy.Eager,
   templateUrl: './histogram-wrapper.component.html'
 })
 export class HistogramWrapperComponent implements OnInit {
