@@ -9,6 +9,7 @@ sequence and the lock around it for all six memos.
 import datetime
 import threading
 import time
+from collections.abc import Callable
 
 import pytest
 from gain.genomic_resources.memo import Memo, config_memo_key
@@ -92,3 +93,25 @@ def test_a_builder_that_raises_stores_nothing_and_a_retry_builds() -> None:
 
     assert len(memo) == 0
     assert memo.get_or_build("key", lambda: built) is built
+
+
+def test_discard_drops_only_the_keys_the_predicate_accepts() -> None:
+    memo: Memo[str, str] = Memo()
+    built: list[str] = []
+
+    def builder(key: str) -> Callable[[], str]:
+        def build() -> str:
+            built.append(key)
+            return key
+        return build
+
+    for key in ("keep-a", "drop-b", "keep-c", "drop-d"):
+        memo.get_or_build(key, builder(key))
+    built.clear()
+
+    dropped = memo.discard(lambda key: key.startswith("drop-"))
+
+    assert dropped == 2
+    for key in ("keep-a", "keep-c", "drop-b", "drop-d"):
+        memo.get_or_build(key, builder(key))
+    assert built == ["drop-b", "drop-d"]

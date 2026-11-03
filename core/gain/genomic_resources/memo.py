@@ -54,13 +54,15 @@ def config_memo_key(config: Any) -> str:
 
 
 class Memo[K: Hashable, V]:
-    """A thread-safe, never-evicting memo from a key to a built object.
+    """A thread-safe memo from a key to a built object.
 
     ``get_or_build`` returns the object stored under a key, building and
     storing it first on a miss. The build runs under the memo's lock, so
     two callers racing on one key build it once and both receive the very
     same object; a builder must therefore not call back into the same
-    memo. Objects are held by strong reference until ``clear``.
+    memo. The memo never evicts on its own: objects are held by strong
+    reference until ``clear`` drops them all, or ``discard`` drops the
+    ones whose key a predicate accepts.
     """
 
     def __init__(self) -> None:
@@ -83,6 +85,20 @@ class Memo[K: Hashable, V]:
         """Drop every memoised object."""
         with self._lock:
             self._built.clear()
+
+    def discard(self, doomed: Callable[[K], bool]) -> int:
+        """Drop every memoised object whose key ``doomed`` accepts.
+
+        Returns
+        -------
+        int
+            The number of objects dropped.
+        """
+        with self._lock:
+            keys = [key for key in self._built if doomed(key)]
+            for key in keys:
+                del self._built[key]
+            return len(keys)
 
     def __len__(self) -> int:
         return len(self._built)

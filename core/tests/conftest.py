@@ -1,9 +1,16 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+# ruff: file-ignore[private-member-access]
 import logging
-from collections.abc import Generator, Iterable
+import re
+from collections.abc import Callable, Generator, Iterable
 
 import pytest
 import pytest_mock
+from gain.gene_scores import gene_scores
+from gain.gene_sets import gene_set
+from gain.genomic_resources import fsspec_protocol, liftover_chain
+from gain.genomic_resources import testing as grr_testing
+from gain.genomic_resources.gene_models import gene_models_factory
 from gain.genomic_resources.genomic_context import (
     get_genomic_context,
 )
@@ -117,6 +124,53 @@ def clean_genomic_context(
     mocker.patch(
         "gain.genomic_resources.genomic_context._REGISTERED_CONTEXTS",
         [])
+
+
+def _names_a_path_under(root: str) -> Callable[[object], bool]:
+    """Return whether a memo key names ``root`` or a path below it."""
+    pattern = re.compile(re.escape(root) + r"(?=/|$)")
+
+    def under(key: object) -> bool:
+        parts = key if isinstance(key, tuple) else (key,)
+        return any(
+            isinstance(part, str) and pattern.search(part) is not None
+            for part in parts)
+
+    return under
+
+
+@pytest.fixture(autouse=True)
+def forget_what_was_built_under_tmp_path(
+    request: pytest.FixtureRequest,
+) -> Generator[None, None, None]:
+    """Evict the memoised objects built over this test's ``tmp_path``.
+
+    ``tmp_path_retention_policy = failed`` deletes the ``tmp_path`` of a
+    passed test at its teardown, so the next test whose name truncates to
+    the same prefix gets the very same path. The process-wide memos -- the
+    fsspec protocols, the faulty-protocol roots and the resource factories
+    -- are keyed on that path, and would hand the next test the object the
+    previous one built over a directory that no longer exists.
+    """
+    yield
+    tmp_path = request.node.funcargs.get("tmp_path")
+    if tmp_path is None:
+        return
+    under = _names_a_path_under(str(tmp_path))
+
+    with fsspec_protocol._FSSPEC_PROTOCOLS_GUARD:
+        for key in [k for k in fsspec_protocol._FSSPEC_PROTOCOLS if under(k)]:
+            del fsspec_protocol._FSSPEC_PROTOCOLS[key]
+    roots = grr_testing._FAULTY_TEST_PROTOCOL_ROOTS
+    roots.difference_update({root for root in roots if under(root)})
+    for memo in (
+            gene_models_factory._FILE_CACHE,
+            gene_models_factory._RESOURCE_CACHE,
+            gene_set._FILE_CACHE,
+            gene_set._RESOURCE_CACHE,
+            gene_scores._INMEMORY_CACHE,
+            liftover_chain._INMEMORY_CACHE):
+        memo.discard(under)
 
 
 @pytest.fixture(autouse=True)

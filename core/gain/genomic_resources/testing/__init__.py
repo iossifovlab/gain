@@ -406,9 +406,11 @@ def build_inmemory_test_protocol(
 
 
 #: Roots :func:`build_faulty_test_protocol` has already been asked for.
-#: Never evicted, and process-wide, because the protocol memo it guards
-#: is too -- a root released here would be answered by the memo, not
-#: rebuilt.
+#: Process-wide, because the protocol memo it guards is too. Nothing here
+#: evicts a root -- a root released alone would be answered by the memo,
+#: not rebuilt. The core test suite removes the roots under a test's
+#: ``tmp_path`` at its teardown, together with their protocol memo
+#: entries.
 _FAULTY_TEST_PROTOCOL_ROOTS: set[str] = set()
 
 
