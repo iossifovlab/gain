@@ -863,13 +863,8 @@ def _parent_transcript(
     )
 
 
-def parse_gtf_gene_models_format(
-    infile: IO,
-    gene_mapping: dict[str, str] | None = None,
-    nrows: int | None = None,
-) -> dict[str, TranscriptModel] | None:
-    """Parse GTF gene models file format."""
-    # pylint: disable=too-many-locals,too-many-branches,too-many-statements
+def _read_gtf_records(infile: IO, nrows: int | None) -> pd.DataFrame | None:
+    """Read the GTF columns, with or without a trailing comment column."""
     expected_columns = [
         "seqname",
         "source",
@@ -889,8 +884,132 @@ def parse_gtf_gene_models_format(
         expected_columns.append("comment")
         infile.seek(0)
         df = parse_raw(infile, expected_columns, nrows=nrows, comment="#")
-        if df is None:
-            return None
+    return df
+
+
+def _gtf_record_attributes(rec: dict) -> dict[str, str]:
+    """Parse the attributes column of a GTF record."""
+    # The scanner takes text, and this column does not always arrive
+    # as text: a column that is numeric throughout is inferred as a
+    # number, which would escape as an ``AttributeError`` naming a
+    # float and neither the record nor the file (gain#907). A blank
+    # column names the record; anything else is coerced and left to
+    # the scanner, which rejects it as the malformed attribute it is.
+    #
+    # Blankness is decided on the text rather than by ``pd.isna``:
+    # since gain#931 the read keeps a blank cell -- and a row that
+    # stops short of this column -- as ``''``, which ``pd.isna``
+    # does not report. Whitespace is deliberately not stripped here:
+    # a cell holding spaces went to the scanner before and still does.
+    attributes_column = rec["attributes"]
+    if not cell_text(attributes_column):
+        raise ValueError(
+            f"{_record_location(rec)} has an empty attributes column",
+        )
+    return _parse_gtf_attributes(str(attributes_column))
+
+
+def _gtf_transcript_model(
+    rec: dict,
+    tr_id: str,
+    attributes: dict[str, str],
+    gene_mapping: dict[str, str],
+) -> TranscriptModel:
+    """Build the transcript model of a transcript-level GTF record."""
+    # FlyBase labels genes with ``gene_symbol``; Ensembl and RefSeq
+    # with ``gene_name``. Both fall back to the accession. Spelled
+    # out rather than driven off a tuple of the three names:
+    # ``or`` steps past an empty label where membership would
+    # return it, so only the last spelling has to be there.
+    gene = (
+        attributes.get("gene_name")
+        or attributes.get("gene_symbol")
+        or attributes.get("gene_id")
+    )
+    if gene is None:
+        raise ValueError(
+            f"{_record_location(rec)} has no usable gene label; "
+            "expected gene_name, gene_symbol or gene_id",
+        )
+    gene = gene_mapping.get(gene, gene)
+
+    return TranscriptModel(
+        gene=gene,
+        tr_id=tr_id,
+        tr_name=tr_id,
+        chrom=rec["seqname"],
+        strand=rec["strand"],
+        tx=(rec["start"], rec["end"]),
+        cds=(rec["end"], rec["start"]),
+        attributes=attributes,
+    )
+
+
+def _apply_gtf_child_record(
+    rec: dict,
+    tr_id: str,
+    transcript_models: dict[str, TranscriptModel],
+    skipped_transcripts: dict[str, str],
+) -> None:
+    """Apply an exon, coding or site record to its parent transcript."""
+    feature = rec["feature"]
+    if feature in GTF_EXON_FEATURES:
+        transcript_model = _parent_transcript(
+            transcript_models, feature, tr_id, skipped_transcripts)
+        exon = Exon(
+            rec["start"], rec["end"], frame=-1,
+        )
+        transcript_model.exons.append(exon)
+        return
+    if feature in GTF_CODON_FEATURES or feature in GTF_CDS_FEATURES:
+        transcript_model = _parent_transcript(
+            transcript_models, feature, tr_id, skipped_transcripts)
+        cds = transcript_model.cds
+        transcript_model.cds = \
+            (min(cds[0], rec["start"]), max(cds[1], rec["end"]))
+        return
+    if feature in GTF_SELENOCYSTEINE_FEATURES:
+        # Called for the parent check alone; nothing to record.
+        _parent_transcript(
+            transcript_models, feature, tr_id, skipped_transcripts)
+        return
+
+    raise ValueError(
+        f"unknown feature {feature} found in gtf gene models")
+
+
+def _drop_exonless_transcripts(
+    transcript_models: dict[str, TranscriptModel],
+) -> None:
+    """Drop each transcript model that has no exon records."""
+    parsed = len(transcript_models)
+    exonless = [
+        tr_id
+        for tr_id, transcript_model in transcript_models.items()
+        if not transcript_model.exons
+    ]
+    for tr_id in exonless:
+        dropped = transcript_models.pop(tr_id)
+        logger.warning(
+            "dropping transcript %s at %s: it has no exon records",
+            tr_id, dropped.chrom,
+        )
+    if exonless:
+        logger.warning(
+            "dropped %d of %d transcripts with no exon records",
+            len(exonless), parsed,
+        )
+
+
+def parse_gtf_gene_models_format(
+    infile: IO,
+    gene_mapping: dict[str, str] | None = None,
+    nrows: int | None = None,
+) -> dict[str, TranscriptModel] | None:
+    """Parse GTF gene models file format."""
+    df = _read_gtf_records(infile, nrows)
+    if df is None:
+        return None
 
     if gene_mapping is None:
         gene_mapping = {}
@@ -901,24 +1020,7 @@ def parse_gtf_gene_models_format(
         feature = rec["feature"]
         if feature in GTF_IGNORED_FEATURES:
             continue
-        # The scanner takes text, and this column does not always arrive
-        # as text: a column that is numeric throughout is inferred as a
-        # number, which would escape as an ``AttributeError`` naming a
-        # float and neither the record nor the file (gain#907). A blank
-        # column names the record; anything else is coerced and left to
-        # the scanner, which rejects it as the malformed attribute it is.
-        #
-        # Blankness is decided on the text rather than by ``pd.isna``:
-        # since gain#931 the read keeps a blank cell -- and a row that
-        # stops short of this column -- as ``''``, which ``pd.isna``
-        # does not report. Whitespace is deliberately not stripped here:
-        # a cell holding spaces went to the scanner before and still does.
-        attributes_column = rec["attributes"]
-        if not cell_text(attributes_column):
-            raise ValueError(
-                f"{_record_location(rec)} has an empty attributes column",
-            )
-        attributes = _parse_gtf_attributes(str(attributes_column))
+        attributes = _gtf_record_attributes(rec)
         if feature in GTF_EXONLESS_TRANSCRIPT_FEATURES:
             skipped_tr_id = attributes.get("transcript_id")
             if skipped_tr_id is not None:
@@ -937,59 +1039,13 @@ def parse_gtf_gene_models_format(
                 raise ValueError(
                     f"{tr_id} of {feature} already in transcript models",
                 )
-            # FlyBase labels genes with ``gene_symbol``; Ensembl and RefSeq
-            # with ``gene_name``. Both fall back to the accession. Spelled
-            # out rather than driven off a tuple of the three names:
-            # ``or`` steps past an empty label where membership would
-            # return it, so only the last spelling has to be there.
-            gene = (
-                attributes.get("gene_name")
-                or attributes.get("gene_symbol")
-                or attributes.get("gene_id")
-            )
-            if gene is None:
-                raise ValueError(
-                    f"{_record_location(rec)} has no usable gene label; "
-                    "expected gene_name, gene_symbol or gene_id",
-                )
-            gene = gene_mapping.get(gene, gene)
-
-            transcript_model = TranscriptModel(
-                gene=gene,
-                tr_id=tr_id,
-                tr_name=tr_id,
-                chrom=rec["seqname"],
-                strand=rec["strand"],
-                tx=(rec["start"], rec["end"]),
-                cds=(rec["end"], rec["start"]),
-                attributes=attributes,
-            )
+            transcript_model = _gtf_transcript_model(
+                rec, tr_id, attributes, gene_mapping)
             assert transcript_model.tr_id not in transcript_models
             transcript_models[transcript_model.tr_id] = transcript_model
             continue
-        if feature in GTF_EXON_FEATURES:
-            transcript_model = _parent_transcript(
-                transcript_models, feature, tr_id, skipped_transcripts)
-            exon = Exon(
-                rec["start"], rec["end"], frame=-1,
-            )
-            transcript_model.exons.append(exon)
-            continue
-        if feature in GTF_CODON_FEATURES or feature in GTF_CDS_FEATURES:
-            transcript_model = _parent_transcript(
-                transcript_models, feature, tr_id, skipped_transcripts)
-            cds = transcript_model.cds
-            transcript_model.cds = \
-                (min(cds[0], rec["start"]), max(cds[1], rec["end"]))
-            continue
-        if feature in GTF_SELENOCYSTEINE_FEATURES:
-            # Called for the parent check alone; nothing to record.
-            _parent_transcript(
-                transcript_models, feature, tr_id, skipped_transcripts)
-            continue
-
-        raise ValueError(
-            f"unknown feature {feature} found in gtf gene models")
+        _apply_gtf_child_record(
+            rec, tr_id, transcript_models, skipped_transcripts)
 
     # Known only now: a transcript's exons arrive as separate records,
     # so "this one has none" cannot be decided until the whole file has
@@ -1008,23 +1064,7 @@ def parse_gtf_gene_models_format(
     # at all unless its format was declared.
     parsed_whole_file = nrows is None
     if parsed_whole_file:
-        parsed = len(transcript_models)
-        exonless = [
-            tr_id
-            for tr_id, transcript_model in transcript_models.items()
-            if not transcript_model.exons
-        ]
-        for tr_id in exonless:
-            dropped = transcript_models.pop(tr_id)
-            logger.warning(
-                "dropping transcript %s at %s: it has no exon records",
-                tr_id, dropped.chrom,
-            )
-        if exonless:
-            logger.warning(
-                "dropped %d of %d transcripts with no exon records",
-                len(exonless), parsed,
-            )
+        _drop_exonless_transcripts(transcript_models)
 
     for transcript_model in transcript_models.values():
         transcript_model.exons = sorted(

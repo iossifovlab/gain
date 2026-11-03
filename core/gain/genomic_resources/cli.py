@@ -1017,41 +1017,86 @@ def _run_stats_graph(
     return False
 
 
-def _run_stats_core(
-        repo: GenomicResourceRepo,
-        proto: ReadWriteRepositoryProtocol,
-        resources: Sequence[GenomicResource], *,
-        dry_run: bool, force: bool, use_dvc: bool, region_size: int,
-        task_graph_args: Mapping[str, Any]) -> CommandResult:
-    """Build the selected resources' statistics and refresh their manifests.
+@dataclasses.dataclass
+class _StatsSelection:
+    """What the per-resource pass of ``_run_stats_core`` found and did."""
 
-    Writes inside the selected resources' directories (and task logs
-    under the repository's ``.task-log``); publishing the
-    repository-global artifacts is its callers' decision.
-    """
-    if dry_run and force:
-        logger.warning("please choose one of 'dry_run' and 'force' options")
-        return CommandResult(repo_failed=True)
-
-    outcome = _run_repo_manifest_command_internal(
-        proto, resources, dry_run=dry_run, force=force, use_dvc=use_dvc)
-    updates_needed = outcome.updates_needed
-
-    graph = TaskGraph()
-
-    needs_update = 0
-    schema_stale = 0
+    failed: set[str]
+    graph: TaskGraph = dataclasses.field(default_factory=TaskGraph)
+    needs_update: int = 0
+    schema_stale: int = 0
     # Out of date, but with a payload this checkout does not have: a
     # dry run counts them apart, a real run leaves them for a checkout
     # that has it.
-    not_buildable = 0
-    failed: set[str] = set(outcome.failed)
-    stats_resources: list[GenomicResource] = []
+    not_buildable: int = 0
+    stats_resources: list[GenomicResource] = dataclasses.field(
+        default_factory=list)
     # Resources whose derived files alone were rewritten: no task ran for
     # them, but their manifests have new content to record all the same.
-    derived_resources: list[GenomicResource] = []
+    derived_resources: list[GenomicResource] = dataclasses.field(
+        default_factory=list)
+
+
+def _select_resource_stats(
+        selection: _StatsSelection,
+        repo: GenomicResourceRepo,
+        proto: ReadWriteRepositoryProtocol,
+        res: GenomicResource, updates_needed: Mapping[str, bool], *,
+        dry_run: bool, force: bool, region_size: int) -> None:
+    """Decide, and on a real run start, the statistics work of one resource.
+
+    Five operations -- building the implementation, looking up the
+    manifest update, comparing the statistics hash, checking the derived
+    files and collecting the statistics tasks -- run here under the one
+    ``try`` of the caller, so its message names none of them and
+    carries the cause instead (gain#364).
+    """
+    impl = build_resource_implementation(res)
+    manifest_updated = updates_needed[res.resource_id]
+    needs_rebuild = manifest_updated or _stats_need_rebuild(proto, impl)
+    # A second gate, beside the hash's and independent of it: a
+    # file the kind derives at repair from inputs the hash must
+    # not learn about (a score's chromosome lengths from its
+    # `reference_genome` label).  Stale on its own, it is
+    # rewritten on its own -- never at the price of a rebuild,
+    # which rewrites it anyway -- and one whose payload is not
+    # here is left alone: the kind says so, and this loop
+    # decides nothing about DVC (gain#1576).
+    derived = impl.derived_files_state(repo)
+    if dry_run:
+        if needs_rebuild or derived is not DerivedFilesState.CURRENT:
+            logger.info(
+                "Statistics of <%s> needs update", res.resource_id)
+            selection.needs_update += 1
+        if derived is DerivedFilesState.PAYLOAD_ABSENT:
+            selection.not_buildable += 1
+    elif force or needs_rebuild:
+        _collect_impl_stats_tasks(
+            selection.graph, proto, impl, repo,
+            region_size=region_size)
+        selection.stats_resources.append(res)
+    elif derived is DerivedFilesState.STALE:
+        impl.rebuild_derived_files(repo)
+        selection.derived_resources.append(res)
+    # A third state, reported and never acted on: the hash is
+    # current, so nothing rebuilds the statistics -- a derived
+    # file's rewrite does not touch them -- and a file behind
+    # the schema stays behind it (gain#1586).
+    if not (needs_rebuild or force) \
+            and _report_schema_stale_statistics(impl):
+        selection.schema_stale += 1
+
+
+def _select_stats(
+        repo: GenomicResourceRepo,
+        proto: ReadWriteRepositoryProtocol,
+        resources: Sequence[GenomicResource],
+        outcome: ManifestOutcome, *,
+        dry_run: bool, force: bool, region_size: int) -> _StatsSelection:
+    """Run the per-resource pass of ``_run_stats_core``."""
+    selection = _StatsSelection(failed=set(outcome.failed))
     for res in resources:
-        if res.resource_id in failed:
+        if res.resource_id in selection.failed:
             # Its manifest could not be built, so there is nothing to
             # certify the statistics against -- and rebuilding them would
             # write new files into a resource the run is already failing on.
@@ -1059,68 +1104,44 @@ def _run_stats_core(
                 "not building the statistics of <%s>: "
                 "it already failed in this run", res.resource_id)
             continue
-        # Five operations under one `try` -- building the implementation,
-        # looking up the manifest update, comparing the statistics hash,
-        # checking the derived files and collecting the statistics tasks
-        # -- so the message names none of them and carries the cause
-        # instead (gain#364).
         try:
-            impl = build_resource_implementation(res)
-            manifest_updated = updates_needed[res.resource_id]
-            needs_rebuild = manifest_updated or _stats_need_rebuild(proto, impl)
-            # A second gate, beside the hash's and independent of it: a
-            # file the kind derives at repair from inputs the hash must
-            # not learn about (a score's chromosome lengths from its
-            # `reference_genome` label).  Stale on its own, it is
-            # rewritten on its own -- never at the price of a rebuild,
-            # which rewrites it anyway -- and one whose payload is not
-            # here is left alone: the kind says so, and this loop
-            # decides nothing about DVC (gain#1576).
-            derived = impl.derived_files_state(repo)
-            if dry_run:
-                if needs_rebuild or derived is not DerivedFilesState.CURRENT:
-                    logger.info(
-                        "Statistics of <%s> needs update", res.resource_id)
-                    needs_update += 1
-                if derived is DerivedFilesState.PAYLOAD_ABSENT:
-                    not_buildable += 1
-            elif force or needs_rebuild:
-                _collect_impl_stats_tasks(
-                    graph, proto, impl, repo,
-                    region_size=region_size)
-                stats_resources.append(res)
-            elif derived is DerivedFilesState.STALE:
-                impl.rebuild_derived_files(repo)
-                derived_resources.append(res)
-            # A third state, reported and never acted on: the hash is
-            # current, so nothing rebuilds the statistics -- a derived
-            # file's rewrite does not touch them -- and a file behind
-            # the schema stays behind it (gain#1586).
-            if not (needs_rebuild or force) \
-                    and _report_schema_stale_statistics(impl):
-                schema_stale += 1
+            _select_resource_stats(
+                selection, repo, proto, res, outcome.updates_needed,
+                dry_run=dry_run, force=force, region_size=region_size)
         except Exception as err:  # ruff: ignore[blind-except]
             # Collected, not raised: the resources after this one in the
             # repository are still repaired.
             report_resource_failure(
                 err, "skipping statistics for", res.resource_id)
-            failed.add(res.resource_id)
+            selection.failed.add(res.resource_id)
+    return selection
 
-    if dry_run:
-        _warn_schema_stale(schema_stale)
-        # A resource that could not even be checked is certainly not up to
-        # date, so it counts towards the "how many need an update" status a
-        # dry run exits with -- that keeps the status a COUNT rather than
-        # collapsing it to a bare 1 (gain#364).
-        needs_update += len(failed)
-        if needs_update:
-            logger.info(
-                "%d resources need update, %d of them not buildable here",
-                needs_update, not_buildable)
-        return CommandResult(
-            needs_update=needs_update, failed=frozenset(failed))
 
-    repo_failed = _run_stats_graph(graph, proto, task_graph_args)
+def _dry_run_stats_result(selection: _StatsSelection) -> CommandResult:
+    """Report what a dry run of ``_run_stats_core`` found."""
+    _warn_schema_stale(selection.schema_stale)
+    # A resource that could not even be checked is certainly not up to
+    # date, so it counts towards the "how many need an update" status a
+    # dry run exits with -- that keeps the status a COUNT rather than
+    # collapsing it to a bare 1 (gain#364).
+    needs_update = selection.needs_update + len(selection.failed)
+    if needs_update:
+        logger.info(
+            "%d resources need update, %d of them not buildable here",
+            needs_update, selection.not_buildable)
+    return CommandResult(
+        needs_update=needs_update, failed=frozenset(selection.failed))
+
+
+def _build_selected_stats(
+        selection: _StatsSelection,
+        proto: ReadWriteRepositoryProtocol,
+        outcome: ManifestOutcome,
+        task_graph_args: Mapping[str, Any]) -> CommandResult:
+    """Run the collected statistics tasks and refresh the manifests."""
+    failed = selection.failed
+    stats_resources = selection.stats_resources
+    repo_failed = _run_stats_graph(selection.graph, proto, task_graph_args)
 
     if stats_resources:
         # Run unconditionally, not only when the graph reported failure: a
@@ -1133,7 +1154,7 @@ def _run_stats_core(
             # the per-resource list does not say better.
             repo_failed = False
 
-    written = [*stats_resources, *derived_resources]
+    written = [*stats_resources, *selection.derived_resources]
     if written:
         # Rebuilding the statistics (or the derived files alone) wrote new
         # files into these resources, so their manifests have to be
@@ -1154,10 +1175,36 @@ def _run_stats_core(
             dry_run=False, force=True, use_dvc=True)
         failed |= set(stats_manifest_outcome.failed)
 
-    _warn_schema_stale(schema_stale)
+    _warn_schema_stale(selection.schema_stale)
     return CommandResult(
         failed=frozenset(failed), repo_failed=repo_failed,
         wrote=outcome.wrote or bool(written))
+
+
+def _run_stats_core(
+        repo: GenomicResourceRepo,
+        proto: ReadWriteRepositoryProtocol,
+        resources: Sequence[GenomicResource], *,
+        dry_run: bool, force: bool, use_dvc: bool, region_size: int,
+        task_graph_args: Mapping[str, Any]) -> CommandResult:
+    """Build the selected resources' statistics and refresh their manifests.
+
+    Writes inside the selected resources' directories (and task logs
+    under the repository's ``.task-log``); publishing the
+    repository-global artifacts is its callers' decision.
+    """
+    if dry_run and force:
+        logger.warning("please choose one of 'dry_run' and 'force' options")
+        return CommandResult(repo_failed=True)
+
+    outcome = _run_repo_manifest_command_internal(
+        proto, resources, dry_run=dry_run, force=force, use_dvc=use_dvc)
+    selection = _select_stats(
+        repo, proto, resources, outcome,
+        dry_run=dry_run, force=force, region_size=region_size)
+    if dry_run:
+        return _dry_run_stats_result(selection)
+    return _build_selected_stats(selection, proto, outcome, task_graph_args)
 
 
 def _publish_repository_contents(
