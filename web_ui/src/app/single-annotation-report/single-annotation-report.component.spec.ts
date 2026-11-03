@@ -61,9 +61,9 @@ describe('SingleAnnotationReportComponent', () => {
       new Annotatable('chr14', 204000100, 'A', 'AA', 'ins', null, null),
       [
         new Annotator(new AnnotatorDetails('allele_score', 'desc', [new Resource('resourceId', 'resourceUrl')]), [
-          new Attribute('attr1', 'desc1', 'AF', null, {value: 'true', histogramLink: null} as Result, true),
-          new Attribute('attr2', 'desc2', 'AF', null, {value: 'false', histogramLink: null} as Result, true),
-          new Attribute('attr3', 'desc3', 'AF', null, {value: 0, histogramLink: null} as Result, true),
+          new Attribute('attr1', 'desc1', 'AF', null, {value: 'true', histogramLink: null}, true),
+          new Attribute('attr2', 'desc2', 'AF', null, {value: 'false', histogramLink: null}, true),
+          new Attribute('attr3', 'desc3', 'AF', null, {value: 0, histogramLink: null}, true),
         ])
       ],
     );
@@ -86,10 +86,10 @@ describe('SingleAnnotationReportComponent', () => {
         new Annotator(new AnnotatorDetails('allele_score', 'desc', [new Resource('resourceId', 'resourceUrl')]), [
           // true: aggregated value stays in the score domain -> histogram shown.
           new Attribute('attrTrue', 'desc', 'AF', 'max',
-            {value: 0.5, histogramLink: 'histograms/res?score_id=a'} as Result, true),
+            {value: 0.5, histogramLink: 'histograms/res?score_id=a'}, true),
           // false: aggregated output is not a score in the domain -> hidden.
           new Attribute('attrFalse', 'desc', 'AF', 'count',
-            {value: 3, histogramLink: 'histograms/res?score_id=c'} as Result, false),
+            {value: 3, histogramLink: 'histograms/res?score_id=c'}, false),
         ])
       ],
     );
@@ -200,12 +200,12 @@ describe('SingleAnnotationReportComponent', () => {
       new Annotatable('chr14', 204000100, 'A', 'AA', 'ins', null, null),
       [
         new Annotator(new AnnotatorDetails('allele_score', 'desc', [new Resource('resourceId', 'resourceUrl')]), [
-          new Attribute('attr1', 'desc1\nblabla1\n', 'AF', null, {value: 'true', histogramLink: null} as Result, true),
-          new Attribute('attr2', 'desc2\nblabla2\n', 'AF', null, {value: 13, histogramLink: null} as Result, true),
+          new Attribute('attr1', 'desc1\nblabla1\n', 'AF', null, {value: 'true', histogramLink: null}, true),
+          new Attribute('attr2', 'desc2\nblabla2\n', 'AF', null, {value: 13, histogramLink: null}, true),
           new Attribute('attr3', 'desc3\nblabla3\n', 'AF', null,
-            {value: 'mock_value', histogramLink: null} as Result, true),
+            {value: 'mock_value', histogramLink: null}, true),
           new Attribute('attr4', 'desc4\nblabla4\n', 'AF', null,
-            {value: new Map<string, number>([['fo', 5], ['po', 3]]), histogramLink: null} as Result, true
+            {value: new Map<string, number>([['fo', 5], ['po', 3]]), histogramLink: null}, true
           ),
         ])
       ],
@@ -286,7 +286,7 @@ describe('SingleAnnotationReportComponent', () => {
       [
         new Annotator(new AnnotatorDetails('score', 'desc', [new Resource('rid', 'rurl')]), [
           new Attribute('effects', 'effect list', 'AF', null,
-            {value: ['missense', 'synonymous'], histogramLink: null} as Result, true),
+            {value: ['missense', 'synonymous'], histogramLink: null}, true),
         ]),
       ],
     );
@@ -306,7 +306,7 @@ describe('SingleAnnotationReportComponent', () => {
       [
         new Annotator(new AnnotatorDetails('score', 'desc', [new Resource('rid', 'rurl')]), [
           new Attribute('score', 'score desc', 'AF', null,
-            {value: null, histogramLink: null} as Result, true),
+            {value: null, histogramLink: null}, true),
         ]),
       ],
     );
