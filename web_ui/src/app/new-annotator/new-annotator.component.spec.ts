@@ -256,7 +256,8 @@ describe('NewAnnotatorComponent', () => {
       configurable: true
     });
 
-    window.IntersectionObserver = jest.fn() as unknown as typeof IntersectionObserver;
+    // eslint-disable-next-line jest/prefer-spy-on -- jsdom has no IntersectionObserver for jest.spyOn to wrap
+    window.IntersectionObserver = jest.fn();
 
     jest.spyOn(window, 'IntersectionObserver').mockImplementation(() => {
       return {
@@ -1104,7 +1105,8 @@ describe('Annotator created by resource', () => {
       configurable: true
     });
 
-    window.IntersectionObserver = jest.fn() as unknown as typeof IntersectionObserver;
+    // eslint-disable-next-line jest/prefer-spy-on -- jsdom has no IntersectionObserver for jest.spyOn to wrap
+    window.IntersectionObserver = jest.fn();
 
     jest.spyOn(window, 'IntersectionObserver').mockImplementation((cb: IntersectionObserverCallback) => {
       mockObserverCallback = cb;

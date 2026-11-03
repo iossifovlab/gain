@@ -522,7 +522,7 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
         defaultAggregator: null,
         selectedAggregator: null,
         parameterValue: null,
-      } as AnnotatorAttribute));
+      }));
 
 
     this.editorService.getAnnotatorYml(
@@ -684,7 +684,7 @@ export class NewAnnotatorComponent implements OnInit, AfterViewInit, OnDestroy {
         defaultAggregator: res.find(r => r.source === selected.source).defaultAggregator ?? null,
         selectedAggregator: res.find(r => r.source === selected.source).selectedAggregator ?? null,
         parameterValue: res.find(r => r.source === selected.source).parameterValue ?? null
-      } as AnnotatorAttribute));
+      }));
       this.stepper.next();
     });
   }
