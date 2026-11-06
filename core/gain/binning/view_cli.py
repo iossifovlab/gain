@@ -65,10 +65,18 @@ def _build_argument_parser() -> argparse.ArgumentParser:
 
 
 def _check_options(args: argparse.Namespace) -> None:
+    _check_axes(args)
+    _check_dependent_options(args)
+
+
+def _check_axes(args: argparse.Namespace) -> None:
     if not (args.tracks or args.bins or args.matrix):
         raise ViewError("choose at least one of --tracks, --bins, --matrix")
     if args.tracks and (args.bins or args.matrix):
         raise ViewError(_AXES_DIFFER)
+
+
+def _check_dependent_options(args: argparse.Namespace) -> None:
     if args.region and args.tracks:
         raise ViewError("--region needs --bins or --matrix")
     if args.track and not (args.tracks or args.matrix):
