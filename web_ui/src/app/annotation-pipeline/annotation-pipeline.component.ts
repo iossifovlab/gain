@@ -149,6 +149,14 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     ).subscribe(() => this.isConfigValid());
   private reconnectionSubscription: Subscription = new Subscription();
   public pipelineInfo: PipelineInfo;
+  // True while a pipeline_status request for the current pipeline is in
+  // flight. pipelineInfo is also null for an empty or a failed pipeline, so
+  // it cannot tell "not loaded yet" from "no counts".
+  public pipelineInfoLoading = false;
+  // Sequence number of the latest pipeline_status request. Two requests can
+  // be in flight for the same id (an auto-save refetches), so the id alone
+  // cannot tell the latest response from an older one.
+  private pipelineInfoRequestSeq = 0;
   public disableActions: boolean;
   public invalidPipelineName = false;
   public pipelinesLoaded = false;
@@ -682,6 +690,8 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   }
 
   private getPipelineInfo(): void {
+    const seq = ++this.pipelineInfoRequestSeq;
+    this.pipelineInfoLoading = false;
     this.pipelineInfo = null;
     this.pipelineStateService.pipelineInfo.set(null);
     const tempId = this.pipelineStateService.currentTemporaryPipelineId();
@@ -690,6 +700,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     if (!id) {
       return;
     }
+    this.pipelineInfoLoading = true;
     this.annotationPipelineService.getPipelineInfo(id).pipe(
       take(1)
     ).subscribe({
@@ -699,9 +710,11 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
         // request can still be in flight when the user clears (New pipeline) or
         // switches pipelines. Without this guard the late response overwrites
         // the freshly-cleared status bar, leaving stale counts (e.g. 13->0->13).
-        if (this.currentPipelineInfoId() !== id) {
+        if (this.currentPipelineInfoId() !== id
+          || seq !== this.pipelineInfoRequestSeq) {
           return;
         }
+        this.pipelineInfoLoading = false;
         this.pipelineInfo = res;
         this.pipelineStateService.pipelineInfo.set(res);
         // A 200 from the blocking pipeline_status endpoint means the GRR build
@@ -721,9 +734,11 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
       error: () => {
         // Same staleness guard: a late failure for a superseded pipeline must
         // not wipe the current pipeline's info.
-        if (this.currentPipelineInfoId() !== id) {
+        if (this.currentPipelineInfoId() !== id
+          || seq !== this.pipelineInfoRequestSeq) {
           return;
         }
+        this.pipelineInfoLoading = false;
         this.pipelineInfo = null;
         this.pipelineStateService.pipelineInfo.set(null);
       }
@@ -828,6 +843,9 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   }
 
   public doClear(): void {
+    // A request in flight is now stale and its response is dropped, so the
+    // loading state ends here.
+    this.pipelineInfoLoading = false;
     this.pipelineInfo = null;
     this.pipelineStateService.pipelineInfo.set(null);
     this.selectedPipeline = null;

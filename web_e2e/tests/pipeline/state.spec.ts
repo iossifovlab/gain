@@ -275,7 +275,10 @@ test.describe('Annotation pipeline state on browser refresh', () => {
     const editor = new PipelineEditor(page);
     const defaultName = await editor.pipelineInput.inputValue();
     // Wait for the default pipeline info to populate the status bar, then capture it.
-    await expect(editor.statusItem(0)).not.toHaveText('menu0 annotators');
+    // Match only a real, non-zero count: while pipeline_status loads, the item
+    // reads 'menu… annotators', and capturing that placeholder would let the
+    // check after the reload pass with no real count.
+    await expect(editor.statusItem(0)).toHaveText(/^menu[1-9]\d* annotators$/);
     const defaultAnnotators = await editor.statusItem(0).textContent() ?? '';
     const defaultAttributes = await editor.statusItem(1).textContent() ?? '';
 

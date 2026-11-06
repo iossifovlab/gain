@@ -2000,6 +2000,146 @@ describe('AnnotationPipelineComponent', () => {
     expect(pipelineStateService.pipelineInfo()).toBeNull();
   });
 
+  describe('status bar while pipeline_status loads', () => {
+    // The status bar items render as "<icon ligature><count> <label>", for
+    // example "menu13 annotators".
+    function statusItems(): string[] {
+      fixture.detectChanges();
+      const items = (fixture.nativeElement as HTMLElement).querySelectorAll('#status-bar .status-item');
+      return Array.from(items, item => item.textContent ?? '');
+    }
+
+    // Selects the pipeline and lets the component's effect send the
+    // pipeline_status request, which answers with `response$`.
+    function requestPipelineInfo(id: string, response$: Observable<PipelineInfo>): void {
+      const getPipelineInfo = jest.spyOn(annotationPipelineServiceMock, 'getPipelineInfo')
+        .mockReturnValueOnce(response$);
+      pipelineStateService.currentTemporaryPipelineId.set('');
+      pipelineStateService.selectedPipelineId.set(id);
+      fixture.detectChanges();
+      expect(getPipelineInfo).toHaveBeenLastCalledWith(id);
+    }
+
+    const placeholders = ['menu… annotators', 'menu_open… attributes', 'edit_note… annotatables', 'grain… gene list'];
+    const zeros = ['menu0 annotators', 'menu_open0 attributes', 'edit_note0 annotatables', 'grain0 gene list'];
+
+    it('shows a placeholder for each count until the response arrives', () => {
+      const info$ = new Subject<PipelineInfo>();
+      requestPipelineInfo('idA', info$);
+
+      expect(statusItems()).toStrictEqual(placeholders);
+
+      info$.next(new PipelineInfo(23, 13, ['a'], ['g']));
+
+      expect(statusItems()).toStrictEqual(
+        ['menu13 annotators', 'menu_open23 attributes', 'edit_note1 annotatables', 'grain1 gene list']
+      );
+    });
+
+    it('shows zeros at once when the pipeline is cleared during a request', () => {
+      const info$ = new Subject<PipelineInfo>();
+      requestPipelineInfo('idA', info$);
+      expect(statusItems()).toStrictEqual(placeholders);
+
+      component.doClear();
+      info$.next(new PipelineInfo(23, 13, ['a'], ['g']));
+
+      expect(statusItems()).toStrictEqual(zeros);
+    });
+
+    it.each([
+      ['response', (stale$: Subject<PipelineInfo>): void => stale$.next(new PipelineInfo(1, 2, [], []))],
+      ['error', (stale$: Subject<PipelineInfo>): void => stale$.error(new Error('stale'))],
+    ])('keeps the placeholder on a stale %s for a superseded pipeline', (_kind, settleStale) => {
+      const infoA$ = new Subject<PipelineInfo>();
+      const infoB$ = new Subject<PipelineInfo>();
+      requestPipelineInfo('idA', infoA$);
+      requestPipelineInfo('idB', infoB$);
+
+      settleStale(infoA$);
+
+      expect(statusItems()).toStrictEqual(placeholders);
+
+      infoB$.next(new PipelineInfo(7, 5, ['a', 'b'], ['g', 'h', 'i']));
+
+      expect(statusItems()).toStrictEqual(
+        ['menu5 annotators', 'menu_open7 attributes', 'edit_note2 annotatables', 'grain3 gene list']
+      );
+    });
+
+    // An auto-save sends a second pipeline_status request for the same
+    // temporary pipeline while the first one is still in flight. The older
+    // answer is for a stale config, so it must not end the loading state,
+    // fill the counts or mark the temporary pipeline loaded.
+    it.each([
+      ['response', (older$: Subject<PipelineInfo>): void => older$.next(new PipelineInfo(1, 2, [], []))],
+      ['error', (older$: Subject<PipelineInfo>): void => older$.error(new Error('older'))],
+    ])('keeps the placeholder on an older %s for the same pipeline', (_kind, settleOlder) => {
+      const older$ = new Subject<PipelineInfo>();
+      const newer$ = new Subject<PipelineInfo>();
+      const getPipelineInfo = jest.spyOn(annotationPipelineServiceMock, 'getPipelineInfo')
+        .mockReturnValueOnce(older$)
+        .mockReturnValueOnce(newer$);
+      pipelineStateService.selectedPipelineId.set('');
+      pipelineStateService.currentTemporaryPipelineId.set('tmpA');
+      fixture.detectChanges();
+      component.currentTemporaryPipelineStatus = 'loading';
+      jest.spyOn(jobsServiceMock, 'validatePipelineConfig').mockReturnValue(of(''));
+      jest.spyOn(component, 'isPipelineChanged').mockReturnValue(true);
+      jest.spyOn(component, 'autoSave').mockReturnValue(of('tmpA'));
+      component.currentPipelineText = 'edited config';
+      component.pipelinesLoaded = true;
+      component.isConfigValid();
+      expect(getPipelineInfo.mock.calls).toStrictEqual([['tmpA'], ['tmpA']]);
+
+      settleOlder(older$);
+
+      expect(statusItems()).toStrictEqual(placeholders);
+      expect(component.currentTemporaryPipelineStatus).toBe('loading');
+
+      newer$.next(new PipelineInfo(7, 5, ['a', 'b'], ['g', 'h', 'i']));
+
+      expect(statusItems()).toStrictEqual(
+        ['menu5 annotators', 'menu_open7 attributes', 'edit_note2 annotatables', 'grain3 gene list']
+      );
+      expect(component.currentTemporaryPipelineStatus).toBe('loaded');
+    });
+
+    it('shows zeros when the request fails', () => {
+      requestPipelineInfo('idA', throwError(() => new Error('error')));
+
+      expect(statusItems()).toStrictEqual(zeros);
+    });
+
+    it('shows zeros when no pipeline is current', () => {
+      // Select a pipeline first, so that the next change of the id re-runs
+      // the effect inside this test, after the spy is installed.
+      requestPipelineInfo('idA', of(new PipelineInfo(23, 13, ['a'], ['g'])));
+      const getPipelineInfo = jest.spyOn(annotationPipelineServiceMock, 'getPipelineInfo');
+      getPipelineInfo.mockClear();
+      pipelineStateService.selectedPipelineId.set('');
+
+      // This change detection runs the effect, which finds no id.
+      const items = statusItems();
+
+      expect(getPipelineInfo).not.toHaveBeenCalled();
+      expect(items).toStrictEqual(zeros);
+    });
+
+    it('shows zeros when the selection is dropped during a request without a clear', () => {
+      const info$ = new Subject<PipelineInfo>();
+      requestPipelineInfo('idA', info$);
+      expect(statusItems()).toStrictEqual(placeholders);
+
+      // unselectPublicPipeline() and clearSelection() drop the id without doClear().
+      pipelineStateService.selectedPipelineId.set('');
+      fixture.detectChanges();
+      info$.next(new PipelineInfo(23, 13, ['a'], ['g']));
+
+      expect(statusItems()).toStrictEqual(zeros);
+    });
+  });
+
   it('marks the temporary pipeline loaded when the status fetch succeeds even if the WS frame was missed', () => {
     // Simulate: temp pipeline saved, GRR build pending, and the one-shot WS
     // 'pipeline_status: loaded' frame was missed (#160) -- the editor is stuck
