@@ -307,65 +307,6 @@ class GenomicScore(ScoreResource[GenomicScoreDef]):
         """
         return self.config
 
-    def get_default_annotation_attributes(self) -> list[Any]:
-        """Return the default annotation attributes of the resource.
-
-        Returns
-        -------
-        list[Any]
-            The ``default_annotation`` entries of the config. When the config
-            has none, one entry ``{"source": id, "name": id}`` for each score.
-
-        Raises
-        ------
-        TypeError
-            If ``default_annotation`` of the config is not a list.
-
-        :meta private:
-        """
-        default_annotation = self.get_config().get("default_annotation")
-        if default_annotation is None:
-            return [
-                {"source": attr, "name": attr}
-                for attr in self.score_definitions
-            ]
-
-        if not isinstance(default_annotation, list):
-            raise TypeError(
-                "The default_annotation in the "
-                f"{self.resource_id} resource is not a list.")
-        return default_annotation
-
-    def get_default_annotation_attribute(self, score_id: str) -> str | None:
-        """Return the default annotation attribute name of a score.
-
-        Parameters
-        ----------
-        score_id : str
-            The id of a score of the resource.
-
-        Returns
-        -------
-        str | None
-            The attribute name that the default annotation gives to the
-            score. Several attributes of one score are joined by a comma.
-            ``None`` if the default annotation does not include the score.
-
-        :meta private:
-        """
-        attributes = self.get_default_annotation_attributes()
-        result = []
-        for attr in attributes:
-            if attr["source"] != score_id:
-                continue
-            dst = score_id
-            if "name" in attr:
-                dst = attr["name"]
-            result.append(dst)
-        if result:
-            return ",".join(result)
-        return None
-
     # A score has one owner: every factory in ``genomic_scores.builders``
     # returns a fresh instance, so closing it affects nobody else, and no method
     # of this class synchronises anything.  gain-web-api's

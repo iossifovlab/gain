@@ -476,3 +476,126 @@ def test_an_unfolded_gene_score_stays_an_object(
     attribute = annotator.attributes[0]
 
     assert attribute.get_value_type(aggregated=False) == "object"
+
+
+def _gene_score_repo(
+    default_annotation: str,
+) -> GenomicResourceRepo:
+    """One gene score resource ``GS`` with two scores and the given entries.
+
+    ``default_annotation`` is the yaml text of the ``default_annotation``
+    list, indented to sit under the key.
+    """
+    config = textwrap.dedent("""
+        type: gene_score
+        filename: scores.csv
+        default_annotation:
+        {default_annotation}
+        scores:
+          - id: score1
+            desc: first score
+          - id: score2
+            desc: second score
+        """).format(default_annotation=default_annotation)
+    return build_inmemory_test_repository({
+        "GS": {
+            GR_CONF_FILE_NAME: config,
+            "scores.csv": textwrap.dedent("""
+                gene,score1,score2
+                G1,1,10
+                G2,5,20
+                G3,3,30
+            """),
+        },
+    })
+
+
+def _gene_score_annotator(
+    repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+    attributes: list[AttributeConfig] | None = None,
+) -> GeneScoreAnnotator:
+    return GeneScoreAnnotator(
+        None,
+        AnnotatorInfo(
+            "gene_score_annotator", attributes or [],
+            {"work_dir": str(tmp_path)}),
+        repo.get_resource("GS"),
+        "gene_list",
+    )
+
+
+def test_a_resource_default_aggregator_folds_the_gene_values(
+    tmp_path: pathlib.Path,
+) -> None:
+    repo = _gene_score_repo("  - {source: score1, aggregator: max}")
+    annotator = _gene_score_annotator(repo, tmp_path)
+
+    result = annotator.annotate(
+        _DUMMY_ANNOTATABLE, {"gene_list": ["G1", "G2", "G3"]})
+
+    assert result == {"score1": 5}
+
+
+def test_a_resource_default_name_names_the_attribute(
+    tmp_path: pathlib.Path,
+) -> None:
+    repo = _gene_score_repo("  - {source: score1, name: first}")
+    annotator = _gene_score_annotator(repo, tmp_path)
+
+    result = annotator.annotate(_DUMMY_ANNOTATABLE, {"gene_list": ["G1"]})
+
+    assert result == {"first": {"G1": 1}}
+
+
+def test_a_resource_default_parameter_is_a_parameter_of_the_attribute(
+    tmp_path: pathlib.Path,
+) -> None:
+    repo = _gene_score_repo(
+        "  - {source: score1, none_value_replacement: -1}")
+    annotator = _gene_score_annotator(repo, tmp_path)
+
+    (attribute,) = annotator.attributes
+
+    assert attribute.parameters.get("none_value_replacement") == -1
+
+
+def test_a_resource_default_internal_applies_to_a_listed_gene_attribute(
+    tmp_path: pathlib.Path,
+) -> None:
+    repo = _gene_score_repo("  - {source: score1, internal: true}")
+    annotator = _gene_score_annotator(
+        repo, tmp_path, [AttributeConfig("score1", "score1")])
+
+    (attribute,) = annotator.attributes
+
+    assert attribute.internal is True
+
+
+def test_the_pipeline_config_wins_over_the_resource_defaults(
+    tmp_path: pathlib.Path,
+) -> None:
+    repo = _gene_score_repo(
+        "  - {source: score1, name: first, internal: true,"
+        " aggregator: max}")
+    annotator = _gene_score_annotator(
+        repo, tmp_path,
+        [AttributeConfig(
+            "mine", "score1", internal=False, aggregator="min")])
+
+    result = annotator.annotate(
+        _DUMMY_ANNOTATABLE, {"gene_list": ["G1", "G2", "G3"]})
+
+    (attribute,) = annotator.attributes
+    assert attribute.internal is False
+    assert result == {"mine": 1}
+
+
+def test_an_unknown_default_source_of_a_gene_score_is_refused(
+    tmp_path: pathlib.Path,
+) -> None:
+    repo = _gene_score_repo("  - {source: nonexistent}")
+
+    with pytest.raises(
+            ValueError, match=r"'nonexistent'.*'GS'"):
+        _gene_score_annotator(repo, tmp_path)

@@ -51,6 +51,9 @@ ALLOWED_PUBLIC_METHODS = {
     # The shared histogram config-schema fragment, contributed into both
     # families' ``get_schema()`` -- a catalogue-plane concern, not lifecycle.
     "histogram_schema",
+    # The raw ``default_annotation`` entries of either family; the
+    # annotation layer parses them (gain#310).
+    "get_default_annotation_attributes",
 }
 
 # Names that must NEVER appear on the base -- they encode the false is-a.

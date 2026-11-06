@@ -4,8 +4,13 @@ import textwrap
 
 import pytest
 from gain.annotation.annotatable import Position, VCFAllele
-from gain.annotation.annotation_config import AnnotationConfigurationError
+from gain.annotation.annotation_config import (
+    AnnotationConfigurationError,
+    AnnotatorInfo,
+)
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
+from gain.annotation.annotation_pipeline import AnnotationPipeline
+from gain.annotation.position_score_annotator import PositionScoreAnnotator
 from gain.genomic_resources.genomic_scores import (
     PositionScore,
 )
@@ -598,3 +603,76 @@ def test_bigwig_annotation(
         annotatable = Position(*allele)
         result = work_pipeline.annotate(annotatable)
         assert result.get("score_one") == pytest.approx(expected)
+
+
+def _position_score_repo(default_annotation: str) -> GenomicResourceRepo:
+    """One position score resource ``PS`` with the given entries.
+
+    ``default_annotation`` is the yaml text of the ``default_annotation``
+    list, indented to sit under the key.
+    """
+    config = textwrap.dedent("""
+        type: position_score
+        table:
+            filename: data.mem
+        scores:
+        - id: s1
+          type: float
+          desc: "score one"
+          name: s1
+        - id: s2
+          type: float
+          desc: "score two"
+          name: s2
+        default_annotation:
+        {default_annotation}
+        """).format(default_annotation=default_annotation)
+    return build_inmemory_test_repository({
+        "PS": {
+            "genomic_resource.yaml": config,
+            "data.mem": """
+                chrom  pos_begin  pos_end  s1   s2
+                1      10         19       1.0  10.0
+                1      20         29       2.0  20.0
+            """,
+        },
+    })
+
+
+def test_a_resource_default_description_is_on_the_attribute_spec() -> None:
+    repo = _position_score_repo(
+        "  - {source: s1, description: the resource description}")
+    pipeline = load_pipeline_from_yaml(
+        "- position_score: PS", repo)
+
+    (attribute,) = pipeline.annotators[0].attributes
+
+    assert attribute.spec is not None
+    assert attribute.spec.description == "the resource description"
+
+
+def test_a_resource_default_internal_applies_to_a_listed_position_attribute(
+) -> None:
+    repo = _position_score_repo("  - {source: s1, internal: true}")
+    pipeline = load_pipeline_from_yaml(textwrap.dedent("""
+        - position_score:
+            resource_id: PS
+            attributes:
+            - source: s1
+        """), repo)
+
+    (attribute,) = pipeline.annotators[0].attributes
+
+    assert attribute.internal is True
+
+
+def test_an_unknown_default_source_of_a_position_score_is_refused(
+    tmp_path: pathlib.Path,
+) -> None:
+    repo = _position_score_repo("  - {source: nonexistent}")
+    info = AnnotatorInfo(
+        "position_score", [],
+        {"resource_id": "PS", "work_dir": str(tmp_path)})
+
+    with pytest.raises(ValueError, match=r"'nonexistent'.*'PS'"):
+        PositionScoreAnnotator(AnnotationPipeline(repo), info)
