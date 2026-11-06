@@ -155,8 +155,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # spliceai-environment.yml from the workspace pyprojects with
 # scripts/conda_env.py and compares them with the committed files (#1639,
 # #1640, #1643), and holds each rattler-build recipe's run list to its
-# pyproject (#1641; the core recipe arrives with core/). Copied after both
-# syncs: none of these files is an input to them.
+# pyproject (#1641; the core recipe arrives with core/). It also holds the
+# pytest pin of core/conda-integration/run.sh (copied with core/) to the
+# uv.lock copied above (#2057). Copied after both syncs: none of these
+# files is an input to them.
 COPY environment.yml dev-environment.yml ./
 COPY spliceai_annotator/spliceai-environment.yml ./spliceai_annotator/
 COPY web_api/pyproject.toml ./web_api/
