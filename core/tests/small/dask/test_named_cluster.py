@@ -2,7 +2,6 @@
 import copy
 import logging
 import pathlib
-import re
 import textwrap
 from collections.abc import Iterator
 from typing import Any
@@ -536,8 +535,7 @@ def test_old_key_warning_asks_to_move_the_entries_not_delete_the_file(
         record.getMessage() for record in caplog.records
         if "dae_named_cluster" in record.getMessage()]
     assert "generated" not in warning
-    assert not re.search(
-        r"delete[^.]*named_cluster\.yaml", warning, re.IGNORECASE)
+    assert "named_cluster.yaml" not in warning
     assert "gain_named_cluster" in warning
 
 
