@@ -293,6 +293,51 @@ def test_an_unknown_binner_kind_is_a_parse_error_listing_the_known_kinds(
     assert "position_score_binner" in message
 
 
+@pytest.mark.parametrize("binners", [
+    {},
+    {"binners": []},
+    {"binners": {"position_score_binner": {"resource_query": "scores/one"}}},
+])
+def test_binners_missing_or_empty_is_a_parse_error(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+    binners: dict[str, Any],
+) -> None:
+    config = {"bins": {"bin_size": 10}, **binners}
+
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_run_definition(config, repo, genome)
+
+    assert str(excinfo.value) == (
+        "binners must be a non-empty list of binner entries")
+
+
+@pytest.mark.parametrize("entry", [
+    "position_score_binner",
+    {
+        "position_score_binner": {"resource_query": "scores/one"},
+        "fragment_score_binner": {"resource_query": "scores/one"},
+    },
+    {},
+])
+def test_an_entry_that_is_not_a_one_key_mapping_is_a_parse_error(
+    repo: GenomicResourceRepo, genome: ReferenceGenome, entry: Any,
+) -> None:
+    config = {
+        "bins": {"bin_size": 10},
+        "binners": [
+            {"position_score_binner": {"resource_query": "scores/one"}},
+            entry,
+        ],
+    }
+
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_run_definition(config, repo, genome)
+
+    assert str(excinfo.value) == (
+        "binners[1]: an entry is a one-key mapping of binner kind to its "
+        "configuration")
+
+
 STUB_KIND = "stub_binner"
 
 
