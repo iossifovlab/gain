@@ -519,6 +519,26 @@ def test_old_key_is_translated_to_the_named_clusters(
     assert "2026.11.0" in warnings[0]
 
 
+def test_old_key_warning_asks_to_move_the_entries_not_delete_the_file(
+    tmp_path: pathlib.Path,
+    restored_dask_config: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A live dae_named_cluster comes from a file that the user uncommented
+    # or wrote: dask writes its copy of the bundled file commented out.
+    _load_user_config(tmp_path, OLD_SHAPE)
+
+    with caplog.at_level(logging.WARNING, logger="gain.dask.config"):
+        gain.dask.config.translate_legacy_named_cluster()
+
+    [warning] = [
+        record.getMessage() for record in caplog.records
+        if "dae_named_cluster" in record.getMessage()]
+    assert "generated" not in warning
+    assert "named_cluster.yaml" not in warning
+    assert "gain_named_cluster" in warning
+
+
 def test_old_key_keeps_the_bundled_distributed_values(
     tmp_path: pathlib.Path,
     restored_dask_config: None,
