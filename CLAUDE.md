@@ -1,6 +1,6 @@
 # GAIn Monorepo — Agent Guide
 
-GAIn (Genomic Annotation Infrastructure) is the annotation engine and genomic resource framework used by GPF (Genotypes and Phenotypes in Families): a Python 3.12 uv workspace whose members are `core` (package `gain`), `web_api`, and the `demo_annotator` / `vep_annotator` / `spliceai_annotator` plugins. Stack: DuckDB 1.5, dask, pandas 2.2, numpy 2.2, pyarrow ≥18, pysam 0.23, pydantic 2.8, lark 1.2 (GRR search grammar), fsspec / s3fs; dev: ruff 0.16, mypy 1.15, pylint, pytest + pytest-xdist, pytestarch.
+GAIn (Genomic Annotation Infrastructure) is the annotation engine and genomic resource framework used by GPF (Genotypes and Phenotypes in Families): a Python 3.12 uv workspace whose members are `core` (package `gain`), `web_api`, and the `demo_annotator` / `vep_annotator` / `spliceai_annotator` plugins. Stack: DuckDB 1.5, dask, pandas 3.1, numpy 2.2, pyarrow ≥18, pysam 0.23, pydantic 2.8, lark 1.2 (GRR search grammar), fsspec / s3fs; dev: ruff 0.16, mypy 1.15, pylint, pytest + pytest-xdist, pytestarch.
 
 ## Project map
 
