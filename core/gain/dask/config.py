@@ -251,11 +251,13 @@ def translate_legacy_named_cluster() -> ValueError | None:
     logger.warning(
         "The dask config key '%s' is deprecated and GAIn "
         "%s stops reading it. GAIn read it as the new key '%s' for this run. "
-        "Delete the generated named_cluster.yaml in the dask config "
-        "directory (for example ~/.config/dask/), or move its entries to "
-        "the new shape. See %s",
+        "In your files in the dask config directory (for example "
+        "~/.config/dask/), move the entries of '%s' to '%s' in the new "
+        "shape. Delete only the entries that you do not need. See %s",
         LEGACY_NAMED_CLUSTER_KEY,
         LEGACY_NAMED_CLUSTER_REMOVAL_RELEASE,
+        NAMED_CLUSTER_KEY,
+        LEGACY_NAMED_CLUSTER_KEY,
         NAMED_CLUSTER_KEY,
         NAMED_CLUSTERS_DOCS_URL,
     )
