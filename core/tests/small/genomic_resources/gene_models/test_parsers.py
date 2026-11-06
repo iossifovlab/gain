@@ -11,6 +11,7 @@ from gain.genomic_resources.gene_models import parsers
 from gain.genomic_resources.gene_models.parsers import (
     SUPPORTED_GENE_MODELS_FILE_FORMATS,
     _parse_gtf_attributes,
+    _scan_gtf_attributes,
     get_parser,
     infer_gene_models_format,
     load_gene_mapping,
@@ -643,3 +644,29 @@ def test_parse_gtf_with_nrows() -> None:
     # Only first transcript should be parsed
     assert len(result) == 1
     assert "ENST001" in result
+
+
+def test_scan_gtf_attributes_of_an_empty_column() -> None:
+    assert _scan_gtf_attributes("") == {}
+
+
+def test_scan_gtf_attributes_keeps_a_separator_inside_quotes() -> None:
+    result = _scan_gtf_attributes('gene_id g1; note "a;b";')
+
+    assert result == {"gene_id": "g1", "note": "a;b"}
+
+
+def test_scan_gtf_attributes_keeps_an_embedded_quote() -> None:
+    result = _scan_gtf_attributes('product "5" end"; gene_id "g1";')
+
+    assert result == {"product": '5" end', "gene_id": "g1"}
+
+
+def test_scan_gtf_attributes_rejects_a_fragment_without_a_value() -> None:
+    with pytest.raises(ValueError, match="expected a 'key value' pair"):
+        _scan_gtf_attributes('gene_id "g1"; orphan;')
+
+
+def test_scan_gtf_attributes_rejects_an_unterminated_quote() -> None:
+    with pytest.raises(ValueError, match="unterminated quote"):
+        _scan_gtf_attributes('gene_id "g1')

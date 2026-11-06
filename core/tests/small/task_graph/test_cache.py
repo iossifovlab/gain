@@ -245,3 +245,95 @@ def _is_task_descendant(
             graph_tasks[dep], parent_task)
         for dep in child_task.deps
     )
+
+
+def _set_mtime(filename: str, mtime: float) -> None:
+    Path(filename).touch()
+    os.utime(filename, (mtime, mtime))
+
+
+def _record_after_compute(
+    tmp_path: Path, *,
+    input_files: list[str] | None = None,
+    output_files: list[str] | None = None,
+    intermediate_output_files: list[str] | None = None,
+    flag_mtime: float | None = None,
+) -> CacheRecord:
+    cache = FileTaskCache(cache_dir=str(tmp_path / "cache"))
+    graph = TaskGraph()
+    task = graph.create_task(
+        "Task", noop, args=[], deps=[],
+        input_files=input_files,
+        output_files=output_files,
+        intermediate_output_files=intermediate_output_files,
+    )
+    cache.cache(task, is_error=False, result="done")
+    if flag_mtime is not None:
+        flag_fn = cache._get_flag_filename(task)
+        os.utime(flag_fn, (flag_mtime, flag_mtime))
+    with graph:
+        task_desc = graph.get_task_desc(task)
+    return cache.get_record(task_desc)
+
+
+def test_get_record_keeps_output_files_without_input_files(
+    tmp_path: Path,
+) -> None:
+    output_fn = str(tmp_path / "output")
+    _set_mtime(output_fn, 1_000_000)
+
+    record = _record_after_compute(tmp_path, output_files=[output_fn])
+
+    assert record.type == CacheRecordType.COMPUTED
+
+
+def test_get_record_recomputes_intermediate_output_older_than_input(
+    tmp_path: Path,
+) -> None:
+    input_fn = str(tmp_path / "input")
+    intermediate_fn = str(tmp_path / "intermediate")
+    _set_mtime(intermediate_fn, 1_000_000)
+    _set_mtime(input_fn, 1_000_001)
+
+    record = _record_after_compute(
+        tmp_path,
+        input_files=[input_fn],
+        intermediate_output_files=[intermediate_fn],
+    )
+
+    assert record.type == CacheRecordType.NEEDS_COMPUTE
+
+
+def test_get_record_keeps_intermediate_output_newer_than_input(
+    tmp_path: Path,
+) -> None:
+    input_fn = str(tmp_path / "input")
+    intermediate_fn = str(tmp_path / "intermediate")
+    _set_mtime(input_fn, 1_000_000)
+    _set_mtime(intermediate_fn, 1_000_001)
+
+    # The flag is older than the input, so the phase-3 fallback would
+    # recompute: only the phase-2 check of the intermediate output keeps it.
+    record = _record_after_compute(
+        tmp_path,
+        input_files=[input_fn],
+        intermediate_output_files=[intermediate_fn],
+        flag_mtime=999_999,
+    )
+
+    assert record.type == CacheRecordType.COMPUTED
+
+
+def test_get_record_recomputes_intermediate_output_with_missing_input(
+    tmp_path: Path,
+) -> None:
+    intermediate_fn = str(tmp_path / "intermediate")
+    _set_mtime(intermediate_fn, 1_000_000)
+
+    record = _record_after_compute(
+        tmp_path,
+        input_files=[str(tmp_path / "missing-input")],
+        intermediate_output_files=[intermediate_fn],
+    )
+
+    assert record.type == CacheRecordType.NEEDS_COMPUTE

@@ -2,10 +2,15 @@
 import contextlib
 import logging
 import pathlib
+import sys
 
 import pytest
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.draw_score_histograms import main
+from gain.genomic_resources.fsspec_protocol import (
+    FsspecReadOnlyProtocol,
+    build_fsspec_protocol,
+)
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
     NullHistogram,
@@ -637,3 +642,59 @@ def test_names_every_resource_it_could_not_draw(
     assert len(summary) == 1
     assert "future/one" in summary[0]
     assert "future/two" in summary[0]
+
+
+def test_reads_its_arguments_from_the_command_line(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    a_grr().with_resource(
+        "scores/pos", a_position_score_with_one_histogram(),
+    ).build_repo(tmp_path)
+    image = tmp_path / "scores/pos/statistics/histogram_phastCons.png"
+    build_statistics_without_images(tmp_path, "scores/pos")
+    monkeypatch.setattr(
+        sys, "argv",
+        ["draw_score_histograms", "-R", str(tmp_path), "-r", "scores/pos"])
+
+    main()
+
+    assert image.exists()
+
+
+def test_exits_naming_the_working_directory_without_a_repository(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    not_a_repository = tmp_path / "not-a-repository"
+    not_a_repository.mkdir()
+    monkeypatch.chdir(not_a_repository)
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(["-r", "scores/pos"])
+
+    assert excinfo.value.code != 0
+    assert str(not_a_repository) in capsys.readouterr().out
+
+
+def test_refuses_a_read_only_repository_protocol(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    a_grr().with_resource(
+        "scores/pos", a_position_score_with_one_histogram(),
+    ).build_repo(tmp_path)
+
+    def read_only_proto(repo_url: str) -> FsspecReadOnlyProtocol:
+        proto = build_fsspec_protocol(
+            proto_id="read-only", root_url=repo_url, read_only=True)
+        assert isinstance(proto, FsspecReadOnlyProtocol)
+        return proto
+
+    monkeypatch.setattr(
+        "gain.genomic_resources.draw_score_histograms._create_proto",
+        read_only_proto)
+
+    with pytest.raises(TypeError, match="read only"):
+        main(["-R", str(tmp_path), "-r", "scores/pos"])
