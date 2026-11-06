@@ -686,6 +686,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   }
 
   private getPipelineInfo(): void {
+    this.pipelineInfoLoading = false;
     this.pipelineInfo = null;
     this.pipelineStateService.pipelineInfo.set(null);
     const tempId = this.pipelineStateService.currentTemporaryPipelineId();
