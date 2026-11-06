@@ -2083,6 +2083,19 @@ describe('AnnotationPipelineComponent', () => {
       expect(getPipelineInfo).not.toHaveBeenCalled();
       expect(statusItems()).toStrictEqual(zeros);
     });
+
+    it('shows zeros when the selection is dropped during a request without a clear', () => {
+      const info$ = new Subject<PipelineInfo>();
+      requestPipelineInfo('idA', info$);
+      expect(statusItems()).toStrictEqual(placeholders);
+
+      // unselectPublicPipeline() and clearSelection() drop the id without doClear().
+      pipelineStateService.selectedPipelineId.set('');
+      fixture.detectChanges();
+      info$.next(new PipelineInfo(23, 13, ['a'], ['g']));
+
+      expect(statusItems()).toStrictEqual(zeros);
+    });
   });
 
   it('marks the temporary pipeline loaded when the status fetch succeeds even if the WS frame was missed', () => {
