@@ -94,19 +94,7 @@ class GeneScore(ScoreResource[GeneScoreDef]):
 
         super().__init__(resource)
         self.filename = self.config["filename"]
-
-        compression = False
-        data_filename = self.filename
-        if data_filename.endswith(".gz"):
-            compression = True
-            data_filename = data_filename[:-len(".gz")]
-
-        with resource.open_raw_file(
-                self.filename, compression=compression) as file:
-            sep = self.config.get("separator", None)
-            if sep is None:
-                sep = "\t" if data_filename.endswith(".tsv") else ","
-            self.df = pd.read_csv(file, sep=sep)
+        self.df = _read_gene_score_frame(resource, self.config)
 
         gene_column = self.config.get("gene_column", "gene")
         if gene_column != "gene":
@@ -115,41 +103,8 @@ class GeneScore(ScoreResource[GeneScoreDef]):
         self.score_definitions: dict[str, GeneScoreDef] = {}
 
         for score_conf in self.config["scores"]:
-            score_id = score_conf["id"]
-            deprecated_name = score_conf.get("name", None)
-            if deprecated_name is not None:
-                logger.warning(
-                    "The 'name' field in gene score definitions is "
-                    "deprecated. Please use 'column_name' instead. "
-                    "Resource: %s, score id: %s",
-                    self.resource.resource_id, score_id)
-                score_name = deprecated_name
-            else:
-                score_name = score_conf.get("column_name", score_id)
-            hist_conf = build_histogram_config(score_conf)
-            if hist_conf is None:
-                hist_conf = build_default_histogram_conf(
-                    score_conf.get("type", "float"))
-
-            if not isinstance(
-                    hist_conf,
-                    NumberHistogramConfig | CategoricalHistogramConfig
-                    | NullHistogramConfig):
-                raise TypeError(
-                    f"Missing histogram config for {score_id} in "
-                    f"{self.resource.resource_id}")
-
-            self.score_definitions[score_conf["id"]] = GeneScoreDef(
-                score_id=score_conf["id"],
-                column_name=score_name,
-                value_type=score_conf.get("type", "float"),
-
-                desc=score_conf.get("desc", ""),
-
-                hist_conf=hist_conf,
-                small_values_desc=score_conf.get("small_values_desc"),
-                large_values_desc=score_conf.get("large_values_desc"),
-            )
+            self.score_definitions[score_conf["id"]] = _build_gene_score_def(
+                score_conf, self.resource.resource_id)
 
         # Refused BEFORE any number histogram is auto-ranged below: the
         # min/max pass reads the column through ``float()``, and over a
@@ -163,13 +118,7 @@ class GeneScore(ScoreResource[GeneScoreDef]):
             for score_def in self.score_definitions.values()
         })
 
-        for score_def in self.score_definitions.values():
-            hist_conf = score_def.hist_conf
-            if isinstance(hist_conf, NumberHistogramConfig) and \
-                    not hist_conf.has_view_range():
-                min_value = self.get_min(score_def.score_id)
-                max_value = self.get_max(score_def.score_id)
-                hist_conf.view_range = (min_value, max_value)
+        _fill_number_histogram_view_ranges(self)
 
         records = self.df.to_dict(orient="records")
 
@@ -577,6 +526,79 @@ class GeneScore(ScoreResource[GeneScoreDef]):
                 },
             }},
         }
+
+
+def _read_gene_score_frame(
+    resource: GenomicResource, config: dict[str, Any],
+) -> pd.DataFrame:
+    """Read the data file of a gene score resource into a data frame."""
+    filename = config["filename"]
+    compression = False
+    data_filename = filename
+    if data_filename.endswith(".gz"):
+        compression = True
+        data_filename = data_filename[:-len(".gz")]
+
+    with resource.open_raw_file(filename, compression=compression) as file:
+        sep = config.get("separator")
+        if sep is None:
+            sep = "\t" if data_filename.endswith(".tsv") else ","
+        return pd.read_csv(file, sep=sep)
+
+
+def _build_gene_score_def(
+    score_conf: dict[str, Any], resource_id: str,
+) -> GeneScoreDef:
+    """Build the definition of one entry of the ``scores:`` block."""
+    score_id = score_conf["id"]
+    deprecated_name = score_conf.get("name")
+    if deprecated_name is not None:
+        logger.warning(
+            "The 'name' field in gene score definitions is "
+            "deprecated. Please use 'column_name' instead. "
+            "Resource: %s, score id: %s",
+            resource_id, score_id)
+        score_name = deprecated_name
+    else:
+        score_name = score_conf.get("column_name", score_id)
+    hist_conf = build_histogram_config(score_conf)
+    if hist_conf is None:
+        hist_conf = build_default_histogram_conf(
+            score_conf.get("type", "float"))
+
+    if not isinstance(
+            hist_conf,
+            NumberHistogramConfig | CategoricalHistogramConfig
+            | NullHistogramConfig):
+        raise TypeError(
+            f"Missing histogram config for {score_id} in "
+            f"{resource_id}")
+
+    return GeneScoreDef(
+        score_id=score_conf["id"],
+        column_name=score_name,
+        value_type=score_conf.get("type", "float"),
+
+        desc=score_conf.get("desc", ""),
+
+        hist_conf=hist_conf,
+        small_values_desc=score_conf.get("small_values_desc"),
+        large_values_desc=score_conf.get("large_values_desc"),
+    )
+
+
+def _fill_number_histogram_view_ranges(gene_score: GeneScore) -> None:
+    """Set the view range of each number histogram that has none.
+
+    The range is the minimum and the maximum of the score column.
+    """
+    for score_def in gene_score.score_definitions.values():
+        hist_conf = score_def.hist_conf
+        if isinstance(hist_conf, NumberHistogramConfig) and \
+                not hist_conf.has_view_range():
+            min_value = gene_score.get_min(score_def.score_id)
+            max_value = gene_score.get_max(score_def.score_id)
+            hist_conf.view_range = (min_value, max_value)
 
 
 _INMEMORY_CACHE: Memo[tuple[str, str, str], GeneScore] = Memo()
