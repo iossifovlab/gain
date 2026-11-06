@@ -222,78 +222,20 @@ class AnnotatorBase(Annotator):
         self, pipeline: AnnotationPipeline | None,
         info: AnnotatorInfo,
     ):
-        self.attribute_specs: dict[str, AttributeSpec] = {}
-        for source, spec in self.get_attribute_specs().items():
-            if isinstance(spec, AttributeSpec):
-                self.attribute_specs[source] = spec
-            else:
-                raise TypeError(
-                    f"Invalid attribute spec for source '{source}'"
-                    f" in annotator {info.type}")
+        self.attribute_specs: dict[str, AttributeSpec] = \
+            _checked_attribute_specs(self.get_attribute_specs(), info)
 
         if not info.attributes:
-            for source, spec in self.attribute_specs.items():
-                if spec.is_default:
-                    defaults = self.get_attribute_defaults(spec)
-                    info.attributes.append(AttributeConfig(
-                        name=source,
-                        source=source,
-                        internal=None,
-                        aggregator=defaults.get("aggregator"),
-                        parameters={
-                            k: v for k, v in defaults.items()
-                            if k != "aggregator"
-                        },
-                    ))
+            _add_default_attributes(
+                info, self.attribute_specs, self.get_attribute_defaults)
 
         self._attributes: list[Attribute] = []
         for attr_config in info.attributes:
-            if attr_config.source not in self.attribute_specs:
-                raise ValueError(
-                    f"The attribute source '{attr_config.source}'"
-                    " is not supported for the annotator"
-                    f" {info.type}")
-            spec = self.attribute_specs[attr_config.source]
-            internal = (
-                attr_config.internal
-                if attr_config.internal is not None
-                else spec.internal_default
-            )
-            defaults = self.get_attribute_defaults(spec)
-            default_aggregator = defaults.get("aggregator")
-            parameters = ParamsUsageMonitor({
-                **{k: v for k, v in defaults.items() if k != "aggregator"},
-                **attr_config.parameters,
-            })
-            aggregator = (
-                attr_config.aggregator
-                if attr_config.aggregator is not None
-                else default_aggregator
-            )
-            attr = Attribute(
-                name=attr_config.name,
-                source=attr_config.source,
-                internal=internal,
-                aggregator=aggregator,
-                spec=spec,
-                parameters=parameters,
-            )
-            if aggregator is not None:
-                if spec is not None and not spec.supports_aggregation:
-                    raise ValueError(
-                        f"Attribute '{attr.source}' in annotator"
-                        f" {info.type} does not support aggregation.")
-                validate_aggregator(
-                    aggregator,
-                    self._aggregator_value_type(attr),
-                )
-            self._attributes.append(attr)
+            self._attributes.append(_build_attribute(
+                attr_config, info, self.attribute_specs,
+                self.get_attribute_defaults, self._aggregator_value_type))
 
-        work_dir = info.parameters.get("work_dir")
-        if work_dir is None:
-            raise ValueError(
-                f"Missing a 'work_dir' parameter in annotator {info}.")
-        self.work_dir: Path = Path(work_dir)
+        self.work_dir: Path = _work_dir(info)
         super().__init__(pipeline, info)
 
     @property
@@ -497,3 +439,94 @@ class AnnotatorBase(Annotator):
         return self._do_batch_annotate(
             annotatables, contexts, batch_work_dir=batch_work_dir,
         )
+
+
+def _checked_attribute_specs(
+    specs: Mapping[str, Any], info: AnnotatorInfo,
+) -> dict[str, AttributeSpec]:
+    """Refuse a spec that is not an :class:`AttributeSpec`."""
+    checked: dict[str, AttributeSpec] = {}
+    for source, spec in specs.items():
+        if not isinstance(spec, AttributeSpec):
+            raise TypeError(
+                f"Invalid attribute spec for source '{source}'"
+                f" in annotator {info.type}")
+        checked[source] = spec
+    return checked
+
+
+def _add_default_attributes(
+    info: AnnotatorInfo,
+    attribute_specs: Mapping[str, AttributeSpec],
+    get_attribute_defaults: Callable[[AttributeSpec], dict[str, Any]],
+) -> None:
+    """Append an attribute to ``info`` for each default spec, in place."""
+    for source, spec in attribute_specs.items():
+        if spec.is_default:
+            defaults = get_attribute_defaults(spec)
+            info.attributes.append(AttributeConfig(
+                name=source,
+                source=source,
+                internal=None,
+                aggregator=defaults.get("aggregator"),
+                parameters={
+                    k: v for k, v in defaults.items()
+                    if k != "aggregator"
+                },
+            ))
+
+
+def _build_attribute(
+    attr_config: AttributeConfig,
+    info: AnnotatorInfo,
+    attribute_specs: Mapping[str, AttributeSpec],
+    get_attribute_defaults: Callable[[AttributeSpec], dict[str, Any]],
+    aggregator_value_type: Callable[[Attribute], str | None],
+) -> Attribute:
+    """Resolve one configured attribute against its spec and defaults."""
+    if attr_config.source not in attribute_specs:
+        raise ValueError(
+            f"The attribute source '{attr_config.source}'"
+            " is not supported for the annotator"
+            f" {info.type}")
+    spec = attribute_specs[attr_config.source]
+    internal = (
+        attr_config.internal
+        if attr_config.internal is not None
+        else spec.internal_default
+    )
+    defaults = get_attribute_defaults(spec)
+    default_aggregator = defaults.get("aggregator")
+    parameters = ParamsUsageMonitor({
+        **{k: v for k, v in defaults.items() if k != "aggregator"},
+        **attr_config.parameters,
+    })
+    aggregator = (
+        attr_config.aggregator
+        if attr_config.aggregator is not None
+        else default_aggregator
+    )
+    attr = Attribute(
+        name=attr_config.name,
+        source=attr_config.source,
+        internal=internal,
+        aggregator=aggregator,
+        spec=spec,
+        parameters=parameters,
+    )
+    if aggregator is not None:
+        if spec is not None and not spec.supports_aggregation:
+            raise ValueError(
+                f"Attribute '{attr.source}' in annotator"
+                f" {info.type} does not support aggregation.")
+        validate_aggregator(aggregator, aggregator_value_type(attr))
+    return attr
+
+
+def _work_dir(info: AnnotatorInfo) -> Path:
+    """The ``work_dir`` parameter of ``info``; refuse a missing one."""
+    work_dir = info.parameters.get("work_dir")
+    if work_dir is None:
+        raise ValueError(
+            f"Missing a 'work_dir' parameter in annotator {info}.")
+    return Path(work_dir)

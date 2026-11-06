@@ -201,34 +201,19 @@ def _printf_output_bound(fmt: str, arg_magnitude: float) -> float:
 def _bound(node: ast.AST) -> _Bound:
     """Return a conservative :class:`_Bound` for ``node``."""
     if isinstance(node, ast.Constant):
-        value = node.value
-        if isinstance(value, str):
-            return _Bound(len(value), len(value), 0, may_num=False)
-        if isinstance(value, bool) or value is None:
-            return _scalar()
-        if isinstance(value, (int, float)):
-            return _scalar(abs(value))
-        return _Bound(0, 1, 0, may_num=False)
+        return _bound_constant(node)
 
     if isinstance(node, ast.Name):
-        if node.id == VALUE_NAME:
-            # A bounded, trusted score: no attacker-grounded content, but its
-            # own text is at most MAX_STRING_LENGTH.
-            return _Bound(0, MAX_STRING_LENGTH, MAX_NUMBER, may_num=True)
-        return _scalar(math.inf)
+        return _bound_name(node)
 
     if isinstance(node, ast.BinOp):
         return _bound_binop(node)
 
     if isinstance(node, ast.UnaryOp):
-        if isinstance(node.op, ast.Not):
-            return _scalar()
-        return _bound(node.operand)
+        return _bound_unaryop(node)
 
     if isinstance(node, (ast.BoolOp, ast.IfExp)):
-        parts = node.values if isinstance(node, ast.BoolOp) \
-            else [node.body, node.orelse]
-        return _combine(_bound(part) for part in parts)
+        return _bound_branches(node)
 
     if isinstance(node, ast.Compare):
         return _scalar()
@@ -238,6 +223,38 @@ def _bound(node: ast.AST) -> _Bound:
 
     # Unreachable: the validator has already rejected every other construct.
     return _UNBOUNDED
+
+
+def _bound_constant(node: ast.Constant) -> _Bound:
+    value = node.value
+    if isinstance(value, str):
+        return _Bound(len(value), len(value), 0, may_num=False)
+    if isinstance(value, bool) or value is None:
+        return _scalar()
+    if isinstance(value, (int, float)):
+        return _scalar(abs(value))
+    return _Bound(0, 1, 0, may_num=False)
+
+
+def _bound_name(node: ast.Name) -> _Bound:
+    if node.id == VALUE_NAME:
+        # A bounded, trusted score: no attacker-grounded content, but its
+        # own text is at most MAX_STRING_LENGTH.
+        return _Bound(0, MAX_STRING_LENGTH, MAX_NUMBER, may_num=True)
+    return _scalar(math.inf)
+
+
+def _bound_unaryop(node: ast.UnaryOp) -> _Bound:
+    if isinstance(node.op, ast.Not):
+        return _scalar()
+    return _bound(node.operand)
+
+
+def _bound_branches(node: ast.BoolOp | ast.IfExp) -> _Bound:
+    """Bound a result that is one of the branches of ``node``."""
+    parts = node.values if isinstance(node, ast.BoolOp) \
+        else [node.body, node.orelse]
+    return _combine(_bound(part) for part in parts)
 
 
 def _combine(bounds: Any) -> _Bound:
@@ -255,17 +272,7 @@ def _bound_binop(node: ast.BinOp) -> _Bound:
     right = _bound(node.right)
 
     if isinstance(node.op, ast.Mult):
-        # Repetition: a sequence (``str_len > 0``) scaled by a numeric count.
-        # Either operand may play either role, so take the larger result.
-        grounded = [0.0]
-        str_len = [0.0]
-        for seq, count in ((left, right), (right, left)):
-            if seq.str_len > 0 and count.may_num:
-                grounded.append(seq.grounded_size * count.magnitude)
-                str_len.append(seq.str_len * count.magnitude)
-        return _Bound(
-            max(grounded), max(str_len), left.magnitude * right.magnitude,
-            may_num=left.may_num and right.may_num)
+        return _bound_mult(left, right)
 
     if isinstance(node.op, ast.Add):
         return _Bound(
@@ -275,18 +282,38 @@ def _bound_binop(node: ast.BinOp) -> _Bound:
             may_num=left.may_num and right.may_num)
 
     if isinstance(node.op, ast.Mod):
-        if isinstance(node.left, ast.Constant) \
-                and isinstance(node.left.value, str):
-            size = _printf_output_bound(node.left.value, right.magnitude)
-            return _Bound(size, size, 0, may_num=False)
-        if left.grounded_size > 0:
-            # A non-constant string format has an unbounded runtime width.
-            return _Bound(math.inf, math.inf, math.inf, may_num=False)
-        # Numeric modulo: the remainder is smaller than the divisor.
-        return _scalar(right.magnitude)
+        return _bound_mod(node.left, left, right)
 
     # Sub / Div / FloorDiv: numeric, never grows a sequence.
     return _scalar(left.magnitude + right.magnitude)
+
+
+def _bound_mult(left: _Bound, right: _Bound) -> _Bound:
+    """Bound ``left * right``, numeric product or sequence repetition."""
+    # Repetition: a sequence (``str_len > 0``) scaled by a numeric count.
+    # Either operand may play either role, so take the larger result.
+    grounded = [0.0]
+    str_len = [0.0]
+    for seq, count in ((left, right), (right, left)):
+        if seq.str_len > 0 and count.may_num:
+            grounded.append(seq.grounded_size * count.magnitude)
+            str_len.append(seq.str_len * count.magnitude)
+    return _Bound(
+        max(grounded), max(str_len), left.magnitude * right.magnitude,
+        may_num=left.may_num and right.may_num)
+
+
+def _bound_mod(left_node: ast.expr, left: _Bound, right: _Bound) -> _Bound:
+    """Bound ``left % right``, printf formatting or numeric modulo."""
+    if isinstance(left_node, ast.Constant) \
+            and isinstance(left_node.value, str):
+        size = _printf_output_bound(left_node.value, right.magnitude)
+        return _Bound(size, size, 0, may_num=False)
+    if left.grounded_size > 0:
+        # A non-constant string format has an unbounded runtime width.
+        return _Bound(math.inf, math.inf, math.inf, may_num=False)
+    # Numeric modulo: the remainder is smaller than the divisor.
+    return _scalar(right.magnitude)
 
 
 def _bound_call(node: ast.Call) -> _Bound:
@@ -308,16 +335,21 @@ def _bound_call(node: ast.Call) -> _Bound:
         # literal repeated by such a count (``seq * int(...)``).
         return _scalar(math.inf)
     if name == "str":
-        # The result is concrete text, so its whole length becomes grounded.
-        digits = len(str(int(first.magnitude))) + 2 \
-            if first.may_num and math.isfinite(first.magnitude) else 0.0
-        length = max(first.str_len, digits)
-        return _Bound(length, length, 0, may_num=False)
+        return _bound_str(first)
     if name in ("min", "max"):
         return _combine(args) if args else _scalar()
 
     # Unreachable: the validator allows no other call target.
     return _UNBOUNDED
+
+
+def _bound_str(first: _Bound) -> _Bound:
+    """Bound ``str(arg)`` given the bound ``first`` of its argument."""
+    # The result is concrete text, so its whole length becomes grounded.
+    digits = len(str(int(first.magnitude))) + 2 \
+        if first.may_num and math.isfinite(first.magnitude) else 0.0
+    length = max(first.str_len, digits)
+    return _Bound(length, length, 0, may_num=False)
 
 
 def _check_result_size(node: ast.AST, expr: str) -> None:
