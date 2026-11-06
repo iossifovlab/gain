@@ -120,6 +120,13 @@ cutoff. The effect annotator has a cutoff of the same name that answers a
 coarse CNV effect instead.
 _Avoid_: region cutoff, length limit, maximum region length
 
+**Grouped attribute**:
+An attribute of a fragment score annotator that has a **grouping**. It gives
+one value for each **group** of its resource, and each value is named
+`<attribute name>:<group>`. A fragment that is in no group adds to no value.
+_Avoid_: per-group column, track (a track is a column of the `binning_tool`
+output)
+
 ### Searching
 
 **Search term**:
@@ -399,17 +406,19 @@ kind and the resources that it reads, and it makes one or more **tracks**.
 _Avoid_: binner (the kind that reads an entry), job, task
 
 **Group**:
-The fragments that one fragment **track** reduces. The name of the group is
-the **selector** of the track.
+The fragments that one fragment **track**, or one value of a **grouped
+attribute**, reduces. The name of the group is the **selector** of the track,
+or the part of the attribute name after the `:`.
 _Avoid_: class (a cell class is one source of groups), cluster
 
 **Grouping**:
-The rule that puts each fragment of an **entry** into a **group**. A *cell
-grouping* finds the group of the cell barcode of the fragment in a cell
-metadata table. A *value grouping* uses the value of a text score of the
-fragment as the group. A *constant group* puts every fragment into one named
-group. When an entry gives no grouping, the labels of its resources select a
-cell grouping or the constant group `all`.
+The rule that puts each fragment of an **entry**, or of a fragment score
+annotator, into a **group**. A *cell grouping* finds the group of the cell
+barcode of the fragment in a cell metadata table. A *value grouping* uses the
+value of a text score of the fragment as the group. A *constant group* puts
+every fragment into one named group. When an entry gives no grouping, the
+labels of its resources select a cell grouping or the constant group `all`. A
+fragment score annotator that gives no grouping does not group.
 _Avoid_: classification, cell typing
 
 **Contribution**:
