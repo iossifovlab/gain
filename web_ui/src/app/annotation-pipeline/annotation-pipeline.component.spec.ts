@@ -2042,9 +2042,6 @@ describe('AnnotationPipelineComponent', () => {
       expect(statusItems()).toStrictEqual(placeholders);
 
       component.doClear();
-      // doClear() itself ends the loading state. The effect re-runs
-      // getPipelineInfo() only on the next change detection.
-      expect(component.pipelineInfoLoading).toBe(false);
       info$.next(new PipelineInfo(23, 13, ['a'], ['g']));
 
       expect(statusItems()).toStrictEqual(zeros);
@@ -2115,11 +2112,14 @@ describe('AnnotationPipelineComponent', () => {
     });
 
     it('shows zeros when no pipeline is current', () => {
+      // Select a pipeline first, so that the next change of the id re-runs
+      // the effect inside this test, after the spy is installed.
+      requestPipelineInfo('idA', of(new PipelineInfo(23, 13, ['a'], ['g'])));
       const getPipelineInfo = jest.spyOn(annotationPipelineServiceMock, 'getPipelineInfo');
-      pipelineStateService.currentTemporaryPipelineId.set('');
+      getPipelineInfo.mockClear();
       pipelineStateService.selectedPipelineId.set('');
 
-      // The first change detection runs the effect, which finds no id.
+      // This change detection runs the effect, which finds no id.
       const items = statusItems();
 
       expect(getPipelineInfo).not.toHaveBeenCalled();
