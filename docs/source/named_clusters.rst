@@ -160,9 +160,10 @@ the new shape for the run and logs a warning. The values of the old key win
 over every ``gain_named_cluster`` value: the bundled values and the values in
 your own config files too. Thus a full copy of ``named_cluster.yaml`` that
 you uncommented or wrote in the old shape overrides an entry in the new shape
-in another file, for example ``gain.yaml``. A key that the old key lacks keeps its ``gain_named_cluster``
-value. An old cluster definition replaces the cluster definition of the same
-name whole, as the old list replaced the bundled list in earlier releases.
+in another file, for example ``gain.yaml``. A key that the old key lacks keeps
+its ``gain_named_cluster`` value. An old cluster definition replaces the
+cluster definition of the same name whole, as the old list replaced the
+bundled list in earlier releases.
 When the old key has the wrong shape, GAIn refuses the named clusters when
 it reads them, for example for ``-N``. A run with ``-c`` still works.
 GAIn stops reading ``dae_named_cluster`` in release 2026.11.0. Move the
