@@ -10,6 +10,7 @@ from .record import (
     POS_BEGIN,
     POS_END,
     Record,
+    TabularParser,
     build_tabular_parser,
     sort_key,
 )
@@ -139,20 +140,8 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
             clmn_sep, strip_chars, space_replacement = \
                 InmemoryGenomicPositionTable.FORMAT_DEF[self.format]
             if self.header_mode == "file":
-                hcs = None
-                try:
-                    for row in self.str_stream:
-                        row = row.strip(strip_chars)
-                        if not row:
-                            continue
-                        hcs = row.split(clmn_sep)
-                        break
-                except UnicodeDecodeError as exc:
-                    raise self._not_text_error() from exc
-                if not hcs:
-                    raise ValueError("No header found")
-
-                self.header = tuple(hcs)
+                self.header = self._read_header(
+                    self.str_stream, clmn_sep, strip_chars)
             col_number = len(self.header) if self.header else None
 
             self._set_core_column_keys()
@@ -169,25 +158,9 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
             # for an in-memory table the transient buffer is harmless (a list
             # of row pointers, freed on return, leaving only records_by_chr
             # live).  The tabix migration must NOT buffer -- see #236-#238.
-            raw_rows: list[tuple[str, ...]] = []
-            seen_chromosomes: set[str] = set()
-            try:
-                for row in self.str_stream:
-                    row = row.strip(strip_chars)
-                    if not row:
-                        continue
-                    columns = tuple(row.split(clmn_sep))
-                    if col_number and len(columns) != col_number:
-                        raise ValueError("Inconsistent number of columns")
-
-                    col_number = len(columns)
-                    if space_replacement:
-                        columns = tuple(
-                            "" if v == "EMPTY" else v for v in columns)
-                    raw_rows.append(columns)
-                    seen_chromosomes.add(columns[self.chrom_key])
-            except UnicodeDecodeError as exc:
-                raise self._not_text_error() from exc
+            raw_rows, seen_chromosomes = self._scan_rows(
+                self.str_stream, clmn_sep, strip_chars, col_number,
+                space_replacement=space_replacement)
 
             self._scanned_chromosomes = sorted(seen_chromosomes)
             self._build_chrom_mapping()
@@ -201,22 +174,57 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
                 self.rev_chrom_map,
                 zero_based=self.zero_based,
             )
-
-            records_by_chr: dict[str, list[Record]] = \
-                collections.defaultdict(list)
-            for columns in raw_rows:
-                record = parser(columns)
-                if record is None:
-                    # contig absent from the chromosome map -- dropped,
-                    # exactly as the transform does today
-                    continue
-                records_by_chr[record[CHROM]].append(record)
-
-            self.records_by_chr = {
-                c: sorted(recs, key=sort_key)
-                for c, recs in records_by_chr.items()
-            }
+            self.records_by_chr = _parse_records_by_chrom(parser, raw_rows)
         return self
+
+    def _read_header(
+        self, stream: IO, clmn_sep: str | None, strip_chars: str,
+    ) -> tuple[str, ...]:
+        """Read the header off the first non-blank line of the stream."""
+        hcs = None
+        try:
+            for row in stream:
+                row = row.strip(strip_chars)
+                if not row:
+                    continue
+                hcs = row.split(clmn_sep)
+                break
+        except UnicodeDecodeError as exc:
+            raise self._not_text_error() from exc
+        if not hcs:
+            raise ValueError("No header found")
+        return tuple(hcs)
+
+    def _scan_rows(
+        self,
+        stream: IO,
+        clmn_sep: str | None,
+        strip_chars: str,
+        col_number: int | None,
+        *,
+        space_replacement: bool,
+    ) -> tuple[list[tuple[str, ...]], set[str]]:
+        """Buffer the data rows and collect the file contigs they name."""
+        raw_rows: list[tuple[str, ...]] = []
+        seen_chromosomes: set[str] = set()
+        try:
+            for row in stream:
+                row = row.strip(strip_chars)
+                if not row:
+                    continue
+                columns = tuple(row.split(clmn_sep))
+                if col_number and len(columns) != col_number:
+                    raise ValueError("Inconsistent number of columns")
+
+                col_number = len(columns)
+                if space_replacement:
+                    columns = tuple(
+                        "" if v == "EMPTY" else v for v in columns)
+                raw_rows.append(columns)
+                seen_chromosomes.add(columns[self.chrom_key])
+        except UnicodeDecodeError as exc:
+            raise self._not_text_error() from exc
+        return raw_rows, seen_chromosomes
 
     def _load_file_chromosomes(self) -> list[str]:
         """Return the contigs ``open()`` scanned out of the rows.
@@ -334,3 +342,23 @@ class InmemoryGenomicPositionTable(GenomicPositionTable):
         self.records_by_chr = {}
         # Scanned off the rows by open(), and re-scanned by the next one.
         self._scanned_chromosomes = []
+
+
+def _parse_records_by_chrom(
+    parser: TabularParser,
+    raw_rows: list[tuple[str, ...]],
+) -> dict[str, list[Record]]:
+    """Parse the buffered rows into sorted records for each contig."""
+    records_by_chr: dict[str, list[Record]] = collections.defaultdict(list)
+    for columns in raw_rows:
+        record = parser(columns)
+        if record is None:
+            # contig absent from the chromosome map -- dropped,
+            # exactly as the transform does today
+            continue
+        records_by_chr[record[CHROM]].append(record)
+
+    return {
+        c: sorted(recs, key=sort_key)
+        for c, recs in records_by_chr.items()
+    }
