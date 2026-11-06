@@ -2042,6 +2042,9 @@ describe('AnnotationPipelineComponent', () => {
       expect(statusItems()).toStrictEqual(placeholders);
 
       component.doClear();
+      // doClear() itself ends the loading state. The effect re-runs
+      // getPipelineInfo() only on the next change detection.
+      expect(component.pipelineInfoLoading).toBe(false);
       info$.next(new PipelineInfo(23, 13, ['a'], ['g']));
 
       expect(statusItems()).toStrictEqual(zeros);
@@ -2067,6 +2070,44 @@ describe('AnnotationPipelineComponent', () => {
       );
     });
 
+    // An auto-save sends a second pipeline_status request for the same
+    // temporary pipeline while the first one is still in flight. The older
+    // answer is for a stale config, so it must not end the loading state,
+    // fill the counts or mark the temporary pipeline loaded.
+    it.each([
+      ['response', (older$: Subject<PipelineInfo>): void => older$.next(new PipelineInfo(1, 2, [], []))],
+      ['error', (older$: Subject<PipelineInfo>): void => older$.error(new Error('older'))],
+    ])('keeps the placeholder on an older %s for the same pipeline', (_kind, settleOlder) => {
+      const older$ = new Subject<PipelineInfo>();
+      const newer$ = new Subject<PipelineInfo>();
+      const getPipelineInfo = jest.spyOn(annotationPipelineServiceMock, 'getPipelineInfo')
+        .mockReturnValueOnce(older$)
+        .mockReturnValueOnce(newer$);
+      pipelineStateService.selectedPipelineId.set('');
+      pipelineStateService.currentTemporaryPipelineId.set('tmpA');
+      fixture.detectChanges();
+      component.currentTemporaryPipelineStatus = 'loading';
+      jest.spyOn(jobsServiceMock, 'validatePipelineConfig').mockReturnValue(of(''));
+      jest.spyOn(component, 'isPipelineChanged').mockReturnValue(true);
+      jest.spyOn(component, 'autoSave').mockReturnValue(of('tmpA'));
+      component.currentPipelineText = 'edited config';
+      component.pipelinesLoaded = true;
+      component.isConfigValid();
+      expect(getPipelineInfo.mock.calls).toStrictEqual([['tmpA'], ['tmpA']]);
+
+      settleOlder(older$);
+
+      expect(statusItems()).toStrictEqual(placeholders);
+      expect(component.currentTemporaryPipelineStatus).toBe('loading');
+
+      newer$.next(new PipelineInfo(7, 5, ['a', 'b'], ['g', 'h', 'i']));
+
+      expect(statusItems()).toStrictEqual(
+        ['menu5 annotators', 'menu_open7 attributes', 'edit_note2 annotatables', 'grain3 gene list']
+      );
+      expect(component.currentTemporaryPipelineStatus).toBe('loaded');
+    });
+
     it('shows zeros when the request fails', () => {
       requestPipelineInfo('idA', throwError(() => new Error('error')));
 
@@ -2078,10 +2119,11 @@ describe('AnnotationPipelineComponent', () => {
       pipelineStateService.currentTemporaryPipelineId.set('');
       pipelineStateService.selectedPipelineId.set('');
 
-      component['getPipelineInfo']();
+      // The first change detection runs the effect, which finds no id.
+      const items = statusItems();
 
       expect(getPipelineInfo).not.toHaveBeenCalled();
-      expect(statusItems()).toStrictEqual(zeros);
+      expect(items).toStrictEqual(zeros);
     });
 
     it('shows zeros when the selection is dropped during a request without a clear', () => {
