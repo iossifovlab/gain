@@ -862,6 +862,38 @@ def test_parse_preamble_rejects_a_non_string_genome_id(
         """)
 
 
+def test_parse_preamble_rejects_an_unknown_key() -> None:
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        AnnotationConfigParser.parse_str("""
+            preamble:
+              summary: a summary
+              author: someone
+            annotators:
+              - sample_annotator
+        """)
+
+    assert str(excinfo.value) == "Invalid preamble keys"
+
+
+@pytest.mark.parametrize("preamble_line, message", [
+    ("summary: 42", "preamble summary must be a string!"),
+    ("description: [a, b]", "preamble description must be a string!"),
+    ("metadata: [a, b]", "preamble metadata must be a dictionary!"),
+])
+def test_parse_preamble_rejects_a_field_of_the_wrong_type(
+    preamble_line: str, message: str,
+) -> None:
+    with pytest.raises(TypeError) as excinfo:
+        AnnotationConfigParser.parse_str(f"""
+            preamble:
+              {preamble_line}
+            annotators:
+              - sample_annotator
+        """)
+
+    assert str(excinfo.value) == message
+
+
 def test_parse_preamble_no_preamble() -> None:
     preamble, _ = AnnotationConfigParser.parse_str("""
         - annotator:
@@ -948,6 +980,30 @@ def test_a_preamble_that_is_not_a_mapping_is_refused(
             annotators:
               - sample_annotator
         """)
+
+
+@pytest.mark.parametrize("config, message", [
+    pytest.param(
+        "preamble: text\n",
+        r"'annotators' section .* is required",
+        id="missing-annotators",
+    ),
+    pytest.param(
+        "preamble: text\nannotators: aaaa\n",
+        r"'annotators' section .* must be a list, not str",
+        id="scalar-annotators",
+    ),
+])
+def test_the_annotators_checks_fire_before_the_preamble_check(
+    config: str, message: str,
+) -> None:
+    """A config with a bad preamble and bad annotators names the annotators.
+
+    The parser checks the ``annotators`` key and its list type first, and
+    only then the type of the preamble.
+    """
+    with pytest.raises(AnnotationConfigurationError, match=message):
+        AnnotationConfigParser.parse_str(config)
 
 
 def test_wildcard_in_complete_syntax(test_grr: GenomicResourceRepo) -> None:
@@ -1180,3 +1236,33 @@ def test_parse_raw_attribute_config_reads_a_deprecated_aggregator(
     assert attribute == AttributeConfig(
         name="score", source="score", aggregator="max")
     assert f"'{old_name}' is deprecated" in caplog.text
+
+
+@pytest.mark.parametrize("attribute_config, error, message", [
+    pytest.param(
+        {"source": "score", "internal": "yes"},
+        TypeError, "is not a boolean",
+        id="internal-not-a-boolean",
+    ),
+    pytest.param(
+        {"name": 5, "source": "score"},
+        TypeError, "should be a string",
+        id="name-not-a-string",
+    ),
+])
+def test_the_name_and_internal_checks_fire_before_the_aggregator_conflict(
+    attribute_config: dict[str, Any], error: type[Exception], message: str,
+) -> None:
+    """An attribute with two aggregators and a bad field names the field.
+
+    The ``Cannot specify both 'aggregator' and ...`` error comes after the
+    checks of the name and of ``internal``.
+    """
+    config = {
+        **attribute_config,
+        "aggregator": "max",
+        "position_aggregator": "mean",
+    }
+
+    with pytest.raises(error, match=message):
+        AnnotationConfigParser.parse_raw_attribute_config(config)
