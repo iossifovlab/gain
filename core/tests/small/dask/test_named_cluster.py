@@ -961,3 +961,34 @@ def test_translation_refuses_a_non_mapping_new_key_next_to_the_old_key(
     assert isinstance(error, ValueError)
     assert "'gain_named_cluster' must be a mapping" in str(error)
     assert "dae_named_cluster" not in config.config
+
+
+def test_translation_returns_the_first_refusal_of_two(
+    restored_dask_config: None,
+) -> None:
+    config.config.clear()
+    config.config.update({
+        "gain_named_cluster": ["local"],
+        "dae_named_cluster": {"clusters": {"x": {}}},
+    })
+
+    error = gain.dask.config.translate_legacy_named_cluster()
+
+    assert isinstance(error, ValueError)
+    assert "'dae_named_cluster.clusters' must be a list" in str(error)
+
+
+def test_translation_keeps_the_old_clusters_next_to_a_refused_new_key(
+    restored_dask_config: None,
+) -> None:
+    config.config.clear()
+    config.config.update({
+        "gain_named_cluster": ["local"],
+        "dae_named_cluster": {
+            "clusters": [{"name": "my_sge", "type": "sge"}]},
+    })
+
+    gain.dask.config.translate_legacy_named_cluster()
+
+    assert config.config["gain_named_cluster"] == {
+        "clusters": {"my_sge": {"type": "sge"}}}

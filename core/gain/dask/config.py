@@ -184,6 +184,74 @@ def _mapping_shape_error(key: str, value: Any) -> ValueError:
         f"{_DICT_SHAPE_EXAMPLE}")
 
 
+def _collect_legacy_named_cluster(
+    config: dict[str, Any], keys: list[str],
+) -> tuple[dict[str, Any], ValueError | None]:
+    """Pop each spelling of the old key and merge the mapping values.
+
+    Return the merged old values and the first refusal of a value that is
+    not a mapping.
+    """
+    error: ValueError | None = None
+    legacy: dict[str, Any] = {}
+    for key in keys:
+        value = config.pop(key) or {}
+        if not isinstance(value, Mapping):
+            error = error or _mapping_shape_error(
+                LEGACY_NAMED_CLUSTER_KEY, value)
+            continue
+        legacy = dask.config.merge(legacy, value)  # pyright: ignore
+    return legacy, error
+
+
+def _translate_legacy_named_cluster(
+    legacy: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], ValueError | None]:
+    """Translate the fields and the clusters of the old key.
+
+    Return the ``default`` and ``distributed`` fields, the clusters keyed by
+    name, and the refusal of the old ``clusters`` value.
+    """
+    translated: dict[str, Any] = {
+        field: legacy[field]
+        for field in ("default", "distributed")
+        if field in legacy
+    }
+    try:
+        clusters = _legacy_clusters(legacy.get("clusters"))
+    except ValueError as refusal:
+        return translated, {}, refusal
+    return translated, clusters, None
+
+
+def _merge_into_named_cluster(
+    config: dict[str, Any],
+    translated: dict[str, Any],
+    clusters: dict[str, Any],
+) -> ValueError | None:
+    """Merge the translated values over the new key in the dask config.
+
+    Return the refusal of a new key value that is not a mapping.
+    """
+    error: ValueError | None = None
+    target = next(
+        iter(_spellings(config, NAMED_CLUSTER_KEY)), NAMED_CLUSTER_KEY)
+    current = config.get(target) or {}
+    if not isinstance(current, Mapping):
+        error = _mapping_shape_error(NAMED_CLUSTER_KEY, current)
+        current = {}
+    merged = dask.config.merge(current, translated)  # pyright: ignore
+    if clusters:
+        # Merge at the level of the clusters mapping, not inside each
+        # cluster definition: before the new key, the old list replaced the
+        # bundled list whole. A deep merge would bring back bundled keys
+        # that the user removed, for example a number_of_workers next to the
+        # user's adapt_params.
+        merged["clusters"] = {**(merged.get("clusters") or {}), **clusters}
+    config[target] = merged
+    return error
+
+
 def translate_legacy_named_cluster() -> ValueError | None:
     """Translate the old named cluster key in the dask config.
 
@@ -211,42 +279,10 @@ def translate_legacy_named_cluster() -> ValueError | None:
     if not keys:
         return None
 
-    error: ValueError | None = None
-    legacy: dict[str, Any] = {}
-    for key in keys:
-        value = config.pop(key) or {}
-        if not isinstance(value, Mapping):
-            error = error or _mapping_shape_error(
-                LEGACY_NAMED_CLUSTER_KEY, value)
-            continue
-        legacy = dask.config.merge(legacy, value)  # pyright: ignore
-
-    translated: dict[str, Any] = {
-        field: legacy[field]
-        for field in ("default", "distributed")
-        if field in legacy
-    }
-    try:
-        clusters = _legacy_clusters(legacy.get("clusters"))
-    except ValueError as refusal:
-        error = error or refusal
-        clusters = {}
-
-    target = next(
-        iter(_spellings(config, NAMED_CLUSTER_KEY)), NAMED_CLUSTER_KEY)
-    current = config.get(target) or {}
-    if not isinstance(current, Mapping):
-        error = error or _mapping_shape_error(NAMED_CLUSTER_KEY, current)
-        current = {}
-    merged = dask.config.merge(current, translated)  # pyright: ignore
-    if clusters:
-        # Merge at the level of the clusters mapping, not inside each
-        # cluster definition: before the new key, the old list replaced the
-        # bundled list whole. A deep merge would bring back bundled keys
-        # that the user removed, for example a number_of_workers next to the
-        # user's adapt_params.
-        merged["clusters"] = {**(merged.get("clusters") or {}), **clusters}
-    config[target] = merged
+    legacy, error = _collect_legacy_named_cluster(config, keys)
+    translated, clusters, translate_error = _translate_legacy_named_cluster(
+        legacy)
+    merge_error = _merge_into_named_cluster(config, translated, clusters)
 
     logger.warning(
         "The dask config key '%s' is deprecated and GAIn "
@@ -259,7 +295,7 @@ def translate_legacy_named_cluster() -> ValueError | None:
         NAMED_CLUSTER_KEY,
         NAMED_CLUSTERS_DOCS_URL,
     )
-    return error
+    return error or translate_error or merge_error
 
 
 reconfigure()

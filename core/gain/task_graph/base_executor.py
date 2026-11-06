@@ -64,6 +64,79 @@ def _descendants_of_all(
     return reached
 
 
+def _read_task_cache(
+    task_cache: TaskCache, task_descs: dict[Task, TaskDesc],
+) -> tuple[dict[Task, CacheRecord], set[Task], dict[str, list[Task]]]:
+    """Read the cache record of each task and index the producers.
+
+    Return the cache record of each task, the tasks whose record is not
+    computed, and the tasks that declare each file as an output.
+    """
+    cached_tasks: dict[Task, CacheRecord] = {}
+    uncomputed_tasks: set[Task] = set()
+    # {file: every task declaring it as an output}, built once so a
+    # consumer with many missing inputs looks each one up instead of
+    # walking its ancestors per file (gain#1213). A list, because two
+    # tasks may declare the same file and both must be invalidated.
+    producers: dict[str, list[Task]] = defaultdict(list)
+    for task, task_desc in task_descs.items():
+        record = task_cache.get_record(task_desc)
+        if record.type != CacheRecordType.COMPUTED:
+            uncomputed_tasks.add(task)
+        cached_tasks[task] = record
+        for output_file in (
+            task_desc.output_files
+            + task_desc.intermediate_output_files
+        ):
+            producers[output_file].append(task)
+    return cached_tasks, uncomputed_tasks, producers
+
+
+def _invalidate_producers_of_missing_inputs(
+    di_graph: networkx.DiGraph,
+    task_descs: dict[Task, TaskDesc],
+    cached_tasks: dict[Task, CacheRecord],
+    uncomputed_tasks: set[Task],
+    producers: dict[str, list[Task]],
+) -> set[Task]:
+    """Invalidate the producers of the missing inputs of uncomputed tasks.
+
+    Only a producer that is an ancestor of the consumer is invalidated.
+    Return the invalidated producers.
+    """
+    intermediates_needing_recompute: set[Task] = set()
+    for task in uncomputed_tasks:
+        candidates = [
+            producer
+            for input_file in task_descs[task].input_files
+            if not os.path.exists(input_file)
+            for producer in producers.get(input_file, ())
+            if producer not in uncomputed_tasks
+            and producer not in intermediates_needing_recompute
+        ]
+        if not candidates:
+            continue
+        # Only a producer the consumer depends on is invalidated.
+        ancestors = networkx.ancestors(di_graph, task)
+        for producer in candidates:
+            if producer in ancestors:
+                cached_tasks[producer] = \
+                    cached_tasks[producer].invalidate()
+                intermediates_needing_recompute.add(producer)
+    return intermediates_needing_recompute
+
+
+def _invalidate_descendants(
+    di_graph: networkx.DiGraph,
+    cached_tasks: dict[Task, CacheRecord],
+    uncomputed_tasks: set[Task],
+) -> None:
+    """Invalidate the cache record of each descendant of uncomputed tasks."""
+    for descendant_task in _descendants_of_all(di_graph, uncomputed_tasks):
+        cached_tasks[descendant_task] = \
+            cached_tasks[descendant_task].invalidate()
+
+
 class TaskGraphExecutorBase(TaskGraphExecutor):
     """The base of the task executors of GAIn.
 
@@ -221,55 +294,16 @@ class TaskGraphExecutorBase(TaskGraphExecutor):
         """
         if self._force:
             return
-        cached_tasks: dict[Task, CacheRecord] = {}
-        uncomputed_tasks: set[Task] = set()
-        # {file: every task declaring it as an output}, built once so a
-        # consumer with many missing inputs looks each one up instead of
-        # walking its ancestors per file (gain#1213). A list, because two
-        # tasks may declare the same file and both must be invalidated.
-        producers: dict[str, list[Task]] = defaultdict(list)
-
         with graph as tasks:
             di_graph = graph.as_directed_graph()
             task_descs = {task: graph.get_task_desc(task) for task in tasks}
-            for task, task_desc in task_descs.items():
-                record = self._task_cache.get_record(task_desc)
-                if record.type != CacheRecordType.COMPUTED:
-                    uncomputed_tasks.add(task)
-                cached_tasks[task] = record
-                for output_file in (
-                    task_desc.output_files
-                    + task_desc.intermediate_output_files
-                ):
-                    producers[output_file].append(task)
-
-            intermediates_needing_recompute: set[Task] = set()
-            for task in uncomputed_tasks:
-                candidates = [
-                    producer
-                    for input_file in task_descs[task].input_files
-                    if not os.path.exists(input_file)
-                    for producer in producers.get(input_file, ())
-                    if producer not in uncomputed_tasks
-                    and producer not in intermediates_needing_recompute
-                ]
-                if not candidates:
-                    continue
-                # Only a producer the consumer depends on is invalidated.
-                ancestors = networkx.ancestors(di_graph, task)
-                for producer in candidates:
-                    if producer in ancestors:
-                        cached_tasks[producer] = \
-                            cached_tasks[producer].invalidate()
-                        intermediates_needing_recompute.add(producer)
-
-            uncomputed_tasks.update(intermediates_needing_recompute)
-
-            for descendant_task in _descendants_of_all(
-                di_graph, uncomputed_tasks,
-            ):
-                cached_tasks[descendant_task] = \
-                    cached_tasks[descendant_task].invalidate()
+            cached_tasks, uncomputed_tasks, producers = _read_task_cache(
+                self._task_cache, task_descs)
+            uncomputed_tasks.update(_invalidate_producers_of_missing_inputs(
+                di_graph, task_descs, cached_tasks, uncomputed_tasks,
+                producers,
+            ))
+            _invalidate_descendants(di_graph, cached_tasks, uncomputed_tasks)
 
         completed_tasks = {
             task: record.result_or_error
@@ -277,8 +311,7 @@ class TaskGraphExecutorBase(TaskGraphExecutor):
             if record.type == CacheRecordType.COMPUTED
         }
 
-        for task, result in completed_tasks.items():
-            yield task, result
+        yield from completed_tasks.items()
 
     def execute(
         self, graph: TaskGraph,
