@@ -976,3 +976,57 @@ def test_prepared_quoted_csv_annotates_with_decoded_values(
         ["chr1", "23", "a, b", "0.1"],
         ["chr1", "24", '"x", y', "0.2"],
     ]
+
+
+# --- refusals and early exits of the cli (#2177) ------------------------
+
+
+def test_cli_version_prints_the_version_and_exits(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    missing = tmp_path / "missing.tsv"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli([str(missing), "--version"])
+
+    assert exc_info.value.code == 0
+    assert capsys.readouterr().out.startswith("GAIn version: ")
+
+
+def test_cli_missing_input_raises_file_not_found(
+    tmp_path: pathlib.Path,
+) -> None:
+    missing = tmp_path / "missing.tsv"
+
+    with pytest.raises(FileNotFoundError, match=r"missing\.tsv"):
+        cli([str(missing), "-o", str(tmp_path / "out.tsv.gz")])
+
+
+def test_cli_output_without_a_bgzip_suffix_is_refused(
+    tmp_path: pathlib.Path,
+) -> None:
+    in_file = tmp_path / "in.tsv"
+    in_file.write_text("chrom\tpos\n1\t10\n")
+    out_dir = tmp_path / "newdir"
+    out_file = out_dir / "out.tsv"
+
+    with pytest.raises(
+            ValueError, match=r"--output must end with \.bgz or \.gz"):
+        cli([str(in_file), "-o", str(out_file)])
+
+    assert not out_dir.exists()
+    assert list(tmp_path.iterdir()) == [in_file]
+
+
+def test_cli_indirect_input_without_data_rows_is_refused(
+    tmp_path: pathlib.Path,
+) -> None:
+    in_file = tmp_path / "in.tsv"
+    in_file.write_text("vcf_like\tscore\n\n")
+    out_file = tmp_path / "out.tsv.gz"
+
+    with pytest.raises(ValueError, match="has no data rows"):
+        cli([str(in_file), "-o", str(out_file)])
+
+    assert not out_file.exists()
