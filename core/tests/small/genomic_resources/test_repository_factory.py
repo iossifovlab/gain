@@ -937,3 +937,27 @@ def test_read_only_filesystem_repo(
     assert isinstance(repo_ro, GenomicResourceProtocolRepo)
     assert isinstance(repo_ro.proto, FsspecRepositoryProtocol)
     assert isinstance(repo_ro.proto, FsspecReadOnlyProtocol)
+
+
+def test_a_definition_and_a_file_name_together_are_rejected(
+    tmp_path: pathlib.Path,
+) -> None:
+    definition = {"id": "empty", "type": "embedded", "content": {}}
+    file_name = tmp_path / "grr_definition.yaml"
+    file_name.write_text(yaml.safe_dump(definition))
+
+    with pytest.raises(
+            ValueError,
+            match="only one of the definition and file_name parameters"):
+        build_genomic_resource_repository(
+            definition, file_name=str(file_name))
+
+
+def test_an_empty_definition_file_is_rejected(
+    tmp_path: pathlib.Path,
+) -> None:
+    file_name = tmp_path / "grr_definition.yaml"
+    file_name.write_text("")
+
+    with pytest.raises(ValueError, match="can't find GRR definition"):
+        build_genomic_resource_repository(file_name=str(file_name))
