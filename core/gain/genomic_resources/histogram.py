@@ -456,6 +456,81 @@ class NullHistogramConfig:
         )
 
 
+def _check_number_histogram_config(
+        config: NumberHistogramConfig) -> tuple[float, float]:
+    """Refuse a log scale without ``x_min_log`` and an unset view edge.
+
+    Returns
+    -------
+    tuple[float, float]
+        The low and the high edge of the view range.
+
+    Raises
+    ------
+    ValueError
+        If a log scale has no ``x_min_log``, or if the view range has an
+        unset or NaN edge.
+    """
+    if config.x_log_scale and config.x_min_log is None:
+        raise ValueError(
+            "Invalid histogram configuration, missing x_min_log",
+        )
+    if config.view_range[0] is None or \
+            config.view_range[1] is None or \
+            np.isnan(config.view_range[0]) or \
+            np.isnan(config.view_range[1]):
+        logger.error(
+            "unexpected min/max value: [%s, %s]",
+            config.view_range[0], config.view_range[1])
+        raise ValueError(
+            "unexpected min/max value:"
+            f"[{config.view_range[0]}, "
+            f"{config.view_range[1]}]")
+    return (config.view_range[0], config.view_range[1])
+
+
+def _log_bin_edges(
+        config: NumberHistogramConfig,
+        view_range: tuple[float, float]) -> tuple[np.ndarray, float]:
+    """Return the bin edges of a log scale and the reverse of its step."""
+    assert config.x_min_log is not None
+    # ``power`` is not bit-reproducible across hosts, so round
+    # the edges. A 1 ulp difference then changes a stored edge
+    # only if the raw value sits within an ulp of a rounding
+    # tie: very unlikely, but not impossible.
+    bins = np.array([
+        view_range[0],
+        * (float(f"{edge:.{_LOG_EDGE_DIGITS - 1}e}")
+           for edge in np.logspace(
+               np.log10(config.x_min_log),
+               np.log10(view_range[1]),
+               config.number_of_bins,
+           ))])
+    rstep = (config.number_of_bins - 1) / \
+        (np.log10(view_range[1]) - np.log10(config.x_min_log))
+    return bins, rstep
+
+
+def _linear_bin_edges(
+        config: NumberHistogramConfig,
+        view_range: tuple[float, float]) -> tuple[np.ndarray, float]:
+    """Return the bin edges of a linear scale and the reverse of its step.
+
+    The step is 0 when the view range has no width.
+    """
+    bins = np.linspace(
+        view_range[0],
+        view_range[1],
+        config.number_of_bins + 1,
+    )
+    rstep: float
+    if (view_range[1] - view_range[0]) <= 0:
+        rstep = 0
+    else:
+        rstep = config.number_of_bins / (view_range[1] - view_range[0])
+    return bins, rstep
+
+
 class NumberHistogram(Statistic):
     """A histogram of numeric values in bins.
 
@@ -523,57 +598,28 @@ class NumberHistogram(Statistic):
         if self.config.x_log_scale:
             self.choose_bin_index = self.choose_bin_log
 
-        if self.config.x_log_scale and self.config.x_min_log is None:
-            raise ValueError(
-                "Invalid histogram configuration, missing x_min_log",
-            )
-        if self.config.view_range[0] is None or \
-                self.config.view_range[1] is None or \
-                np.isnan(self.config.view_range[0]) or \
-                np.isnan(self.config.view_range[1]):
-            logger.error(
-                "unexpected min/max value: [%s, %s]",
-                self.config.view_range[0], self.config.view_range[1])
-            raise ValueError(
-                "unexpected min/max value:"
-                f"[{self.config.view_range[0]}, "
-                f"{self.config.view_range[1]}]")
+        self.view_range: tuple[float, float] = \
+            _check_number_histogram_config(self.config)
 
-        self.view_range: tuple[float, float] = (
-            self.config.view_range[0], self.config.view_range[1])
+        self._set_bins_and_bars(bins, bars)
 
+    def _set_bins_and_bars(
+            self, bins: np.ndarray | None, bars: np.ndarray | None) -> None:
+        """Take the given bins and bars, or build empty ones from the config.
+
+        A call with only ``bins`` or only ``bars`` reads ``self.bins``
+        before it is set.
+        """
         if bins is not None and bars is not None:
             self.bins = bins
             self.bars = bars
         elif bins is None and bars is None:
             if self.config.x_log_scale:
-                assert self.config.x_min_log is not None
-                # ``power`` is not bit-reproducible across hosts, so round
-                # the edges. A 1 ulp difference then changes a stored edge
-                # only if the raw value sits within an ulp of a rounding
-                # tie: very unlikely, but not impossible.
-                self.bins = np.array([
-                    self.config.view_range[0],
-                    * (float(f"{edge:.{_LOG_EDGE_DIGITS - 1}e}")
-                       for edge in np.logspace(
-                           np.log10(self.config.x_min_log),
-                           np.log10(self.config.view_range[1]),
-                           self.config.number_of_bins,
-                       ))])
-                self._rstep = (self.config.number_of_bins - 1) / \
-                    (np.log10(self.view_max())
-                     - np.log10(self.config.x_min_log))
+                self.bins, self._rstep = _log_bin_edges(
+                    self.config, self.view_range)
             else:
-                self.bins = np.linspace(
-                    self.config.view_range[0],
-                    self.config.view_range[1],
-                    self.config.number_of_bins + 1,
-                )
-                if (self.view_max() - self.view_min()) <= 0:
-                    self._rstep = 0
-                else:
-                    self._rstep = self.config.number_of_bins / \
-                        (self.view_max() - self.view_min())
+                self.bins, self._rstep = _linear_bin_edges(
+                    self.config, self.view_range)
             self.bars = np.zeros(self.config.number_of_bins, dtype=np.int64)
             assert not np.any(np.isnan(self.bins)), ("nan bins", self.config)
         elif self.bins is None or self.bars is None:
@@ -1250,6 +1296,78 @@ class NullHistogram(Statistic):
         return NullHistogram.from_dict(data)
 
 
+def _values_in_given_order(
+        counter: Counter[str | int],
+        value_order: list[str | int]) -> dict[str | int, int]:
+    """Return the counts of ``value_order``, in that order.
+
+    Raises
+    ------
+    ValueError
+        If the order leaves out a counted value.
+    """
+    values: dict[str | int, int] = {}
+    for key in value_order:
+        values[key] = counter[key]
+    if len(values) < len(counter):
+        raise ValueError(
+            "misconfigured categorical histogram value_order",
+            f"{value_order} < {counter.keys()}")
+    return values
+
+
+def _values_up_to_percent(
+        counter: Counter[str | int],
+        displayed_percent: float) -> dict[str | int, int]:
+    """Return the most common counts until they pass ``displayed_percent``.
+
+    The rest of the counts go under the key ``Other``.
+    """
+    values: dict[str | int, int] = {}
+    total = sum(counter.values())
+    displayed = 0
+    other = 0
+    for key, count in counter.most_common():
+        if 100.0 * displayed / total < displayed_percent:
+            values[key] = count
+            displayed += count
+        else:
+            other += count
+    if other > 0:
+        values["Other"] = other
+    return values
+
+
+def _values_up_to_count(
+        counter: Counter[str | int],
+        displayed_count: int | None, *,
+        natural_order: bool) -> dict[str | int, int]:
+    """Return the first ``displayed_count`` counts, by count or by value.
+
+    The rest of the counts go under the key ``Other``.
+    """
+    values: dict[str | int, int] = {}
+    ordering: list[str | int]
+    if natural_order:
+        ordering = sorted(
+            counter, key=lambda x: (isinstance(x, str), x))
+    else:
+        ordering = [key for key, _ in counter.most_common()]
+
+    for key in ordering[:displayed_count]:
+        values[key] = counter[key]
+
+    if displayed_count is not None and \
+            len(counter) > displayed_count:
+        other = 0
+        for key in ordering[displayed_count:]:
+            other += counter[key]
+        if other > 0:
+            values["Other"] = other
+
+    return values
+
+
 class CategoricalHistogram(Statistic):
     """A histogram that counts each distinct value of a score.
 
@@ -1506,50 +1624,15 @@ class CategoricalHistogram(Statistic):
         # percentages and orderings against the wrong totals.
         if self.truncated:
             return dict(self._counter)
-        values = {}
         if self.config.value_order:
-            for key in self.config.value_order:
-                values[key] = self._counter[key]
-            if len(values) < len(self._counter):
-                raise ValueError(
-                    "misconfigured categorical histogram value_order",
-                    f"{self.config.value_order} < {self._counter.keys()}")
-            return values
-
+            return _values_in_given_order(
+                self._counter, self.config.value_order)
         if self.config.displayed_values_percent is not None:
-            total = sum(self._counter.values())
-            displayed = 0
-            other = 0
-            displayed_percent = self.config.displayed_values_percent
-            for key, count in self._counter.most_common():
-                if 100.0 * displayed / total < displayed_percent:
-                    values[key] = count
-                    displayed += count
-                else:
-                    other += count
-            if other > 0:
-                values["Other"] = other
-            return values
-
-        ordering = None
-        if self.config.natural_order:
-            ordering = sorted(
-                self._counter, key=lambda x: (isinstance(x, str), x))
-        else:
-            ordering = [key for key, _ in self._counter.most_common()]
-
-        for key in ordering[:self.config.displayed_values_count]:
-            values[key] = self._counter[key]
-
-        if self.config.displayed_values_count is not None and \
-                len(self._counter) > self.config.displayed_values_count:
-            other = 0
-            for key in ordering[self.config.displayed_values_count:]:
-                other += self._counter[key]
-            if other > 0:
-                values["Other"] = other
-
-        return values
+            return _values_up_to_percent(
+                self._counter, self.config.displayed_values_percent)
+        return _values_up_to_count(
+            self._counter, self.config.displayed_values_count,
+            natural_order=self.config.natural_order)
 
     def moments_summary(self) -> None:
         """Return ``None``, because a categorical value has no mean.

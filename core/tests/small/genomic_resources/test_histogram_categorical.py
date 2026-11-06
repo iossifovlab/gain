@@ -298,6 +298,19 @@ def test_percent_config_sidecar_carries_the_displayed_values() -> None:
     assert displayed_by_full <= set(sidecar.raw_values)
 
 
+def test_percent_config_checks_the_threshold_before_each_value() -> None:
+    config = CategoricalHistogramConfig(
+        displayed_values_count=None, displayed_values_percent=50.0)
+    hist = CategoricalHistogram(config)
+    hist.add_value("a", count=50)
+    hist.add_value("b", count=30)
+    hist.add_value("c", count=20)
+
+    values = hist.display_values
+
+    assert values == {"a": 50, "Other": 50}
+
+
 def test_truncated_histogram_display_values_are_not_recomputed() -> None:
     config = CategoricalHistogramConfig(
         displayed_values_count=None, displayed_values_percent=95.0)
@@ -330,3 +343,41 @@ def test_full_histogram_serialization_has_no_truncation_fields() -> None:
     data = json.loads(hist.serialize())
 
     assert set(data) == {"config", "values"}
+
+
+def test_natural_order_shows_numbers_before_text_in_value_order() -> None:
+    hist = CategoricalHistogram(
+        CategoricalHistogramConfig(natural_order=True))
+    counts: list[tuple[str | int, int]] = [
+        ("b", 5), (2, 1), ("a", 9), (1, 3)]
+    for value, count in counts:
+        hist.add_value(value, count=count)
+
+    assert list(hist.display_values.items()) == [
+        (1, 3), (2, 1), ("a", 9), ("b", 5)]
+
+
+def test_natural_order_sums_the_values_past_the_count_as_other() -> None:
+    hist = CategoricalHistogram(CategoricalHistogramConfig(
+        natural_order=True, displayed_values_count=2))
+    counts: list[tuple[str | int, int]] = [
+        ("b", 5), (2, 1), ("a", 9), (1, 3)]
+    for value, count in counts:
+        hist.add_value(value, count=count)
+
+    assert list(hist.display_values.items()) == [
+        (1, 3), (2, 1), ("Other", 14)]
+
+
+def test_value_order_that_leaves_out_a_counted_value_raises() -> None:
+    hist = CategoricalHistogram(
+        CategoricalHistogramConfig(value_order=["a"]))
+    hist.add_value("a")
+    hist.add_value("b")
+
+    with pytest.raises(ValueError) as excinfo:
+        _ = hist.display_values
+
+    assert len(excinfo.value.args) == 2
+    assert excinfo.value.args[0] == (
+        "misconfigured categorical histogram value_order")
