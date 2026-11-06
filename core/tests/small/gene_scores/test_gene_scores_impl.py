@@ -974,6 +974,31 @@ def test_calc_statistics_hash_changes_when_data_changes() -> None:
     assert impl1.calc_statistics_hash() != impl2.calc_statistics_hash()
 
 
+def test_calc_statistics_hash_carries_correctly_rounded_data_min(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A score with no view_range takes its range from the data, so the
+    # hash carries the parsed minimum; a pandas parser that is not
+    # correctly rounded reads this literal one ULP off (gain#2201).
+    literal = "0.005897617362585515"
+    res = (
+        a_gene_score()
+        .with_score("s")
+        .with_data(f"""
+            gene s
+            G1   {literal}
+            G2   100.0
+        """)
+        .build_resource(tmp_path)
+    )
+
+    parsed = json.loads(
+        GeneScoreImplementation(res).calc_statistics_hash().decode())
+
+    view_range = parsed["score_config"][0]["hist_conf"]["view_range"]
+    assert view_range["min"] == float(literal)
+
+
 def test_calc_statistics_hash_deterministic(
     inmemory_repo: GenomicResourceRepo,
 ) -> None:
