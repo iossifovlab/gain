@@ -16,7 +16,7 @@ from the score layer.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from gain import logging
 from gain.genomic_resources.genomic_position_table.record import (
@@ -354,47 +354,96 @@ def extract_vcf_value(
     payload = record[PAYLOAD]
     value = payload[INFO].get(key)
     if isinstance(value, tuple):
-        allele_index = payload[ALLELE_INDEX]
-        meta = payload[INFO_META].get(key)
-        number = meta.number
-        if number == "A":
-            if allele_index is None:
-                return None
-            _check_number_arity(record, score_def, number, len(value))
-            if allele_index >= len(value):
-                return None
-            value = value[allele_index]
-            if value is None and _reports_empty_elements(meta):
-                _report_empty_element(record, score_def)
-        elif number == "R":
-            _check_number_arity(record, score_def, number, len(value))
-            # Get reference allele value if ALT is '.'
-            index = allele_index + 1 if allele_index is not None else 0
-            if index >= len(value):
-                return None
-            value = value[index]
-            if value is None and _reports_empty_elements(meta):
-                _report_empty_element(record, score_def)
-        elif number in (0, 1):
-            # Declared scalar, arrived as a tuple (#1257): refused before
-            # any drop, join or parse sees it.
-            _check_number_arity(record, score_def, number, len(value))
-            return None
-        else:
-            # Not per-allele: every element of this tuple contributes to one
-            # joined value, so an empty one has to go before either join sees
-            # it.
-            value = _drop_empty_elements(record, score_def, value, meta)
-            if not value:
-                # Nothing left to join, and a join of nothing is ``''`` --
-                # a present, aggregatable, bin-able value.  A field carrying
-                # no value at all reads as the null an absent key does.
-                if _reports_empty_elements(meta):
-                    _report_no_value(record, score_def)
-                return None
-            if number == "." and meta.type == "String":
-                value = "|".join(value)
+        return _extract_tuple_value(record, score_def, payload, key, value)
     return score_def.parse_value(value)
+
+
+def _extract_tuple_value(
+    record: Record, score_def: GenomicScoreDef, payload: Any, key: str,
+    value: tuple,
+) -> ScoreValue:
+    """Read a score whose INFO value pysam decoded as a tuple.
+
+    Only the tuple branch of :func:`extract_vcf_value` calls this, so the
+    allele index and the metadata lookup are paid for a tuple value only.
+    The declared ``Number`` picks the shape.
+    """
+    allele_index = payload[ALLELE_INDEX]
+    meta = payload[INFO_META].get(key)
+    number = meta.number
+    if number == "A":
+        return _extract_alt_allele_value(
+            record, score_def, meta, allele_index, value)
+    if number == "R":
+        return _extract_any_allele_value(
+            record, score_def, meta, allele_index, value)
+    if number in (0, 1):
+        # Declared scalar, arrived as a tuple (#1257): refused before
+        # any drop, join or parse sees it.
+        _check_number_arity(record, score_def, number, len(value))
+        return None
+    return _extract_joined_value(record, score_def, meta, number, value)
+
+
+def _extract_alt_allele_value(
+    record: Record, score_def: GenomicScoreDef, meta: Any,
+    allele_index: int | None, value: tuple,
+) -> ScoreValue:
+    """Read the ``Number=A`` element of this record's ALT allele."""
+    if allele_index is None:
+        return None
+    return _extract_allele_element(
+        record, score_def, meta, "A", allele_index, value)
+
+
+def _extract_any_allele_value(
+    record: Record, score_def: GenomicScoreDef, meta: Any,
+    allele_index: int | None, value: tuple,
+) -> ScoreValue:
+    """Read the ``Number=R`` element of this record's allele.
+
+    The reference occupies offset 0, so a record with no ALT reads it.
+    """
+    index = allele_index + 1 if allele_index is not None else 0
+    return _extract_allele_element(
+        record, score_def, meta, "R", index, value)
+
+
+def _extract_allele_element(
+    record: Record, score_def: GenomicScoreDef, meta: Any,
+    number: str, index: int, value: tuple,
+) -> ScoreValue:
+    """Read element ``index`` of a per-allele tuple; past the end reads None."""
+    _check_number_arity(record, score_def, number, len(value))
+    if index >= len(value):
+        return None
+    element = value[index]
+    if element is None and _reports_empty_elements(meta):
+        _report_empty_element(record, score_def)
+    return score_def.parse_value(element)
+
+
+def _extract_joined_value(
+    record: Record, score_def: GenomicScoreDef, meta: Any,
+    number: str | int, value: tuple,
+) -> ScoreValue:
+    """Read a tuple whose every element contributes to one joined value.
+
+    An empty element has to go before either join sees it.
+    """
+    value = _drop_empty_elements(record, score_def, value, meta)
+    if not value:
+        # Nothing left to join, and a join of nothing is ``''`` --
+        # a present, aggregatable, bin-able value.  A field carrying
+        # no value at all reads as the null an absent key does.
+        if _reports_empty_elements(meta):
+            _report_no_value(record, score_def)
+        return None
+    if number == "." and meta.type == "String":
+        return score_def.parse_value("|".join(value))
+    # The ``converter`` that ``parse_vcf_scoredefs`` installed joins the
+    # tuple; ``parse_value`` declares only the scalar types it returns.
+    return score_def.parse_value(cast(Any, value))
 
 
 # How a score's value is read off a record: chosen once per opened score by

@@ -388,6 +388,91 @@ def _iter_processed_rows(
                 yield encoder.encode(cols)
 
 
+def _write_bgzip(
+    output_path: str, header_bytes: bytes, body_iter: Iterable[bytes],
+) -> None:
+    """Write the header and then each body chunk to a bgzip output."""
+    with BGZFile(output_path, "wb", index=None) as bgz:
+        bgz.write(header_bytes)
+        for chunk in body_iter:
+            bgz.write(chunk)
+
+
+def _sort_rows_into_bgzip(
+    *,
+    sort_cmd: list[str],
+    rows: Iterable[bytes],
+    output_path: str,
+    header_bytes: bytes,
+    rank_prefix: bool,
+) -> subprocess.Popen[bytes]:
+    """Feed ``rows`` to the native ``sort`` and write its output to bgzip.
+
+    The caller waits for the returned process. When ``rank_prefix`` is
+    on, the leading rank column is stripped from each sorted line on the
+    way to the bgzip stream.
+    """
+    sep_bytes = _OUTPUT_SEPARATOR.encode()
+    env = {**os.environ, "LC_ALL": "C"}
+    # long-lived: stdin/stdout are driven manually below and the
+    # process is wait()-ed by the caller, so a `with` block won't fit.
+    sort_proc = subprocess.Popen(  # pylint: disable=consider-using-with
+        sort_cmd,
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env,
+    )
+    assert sort_proc.stdin is not None
+    assert sort_proc.stdout is not None
+    try:
+        # Feed all input to sort. GNU sort drains stdin into its
+        # internal --temporary-directory before emitting output,
+        # so no deadlock on a synchronous write-then-read loop.
+        for row in rows:
+            sort_proc.stdin.write(row)
+    finally:
+        sort_proc.stdin.close()
+
+    def stripped_sort_output() -> Iterable[bytes]:
+        assert sort_proc.stdout is not None
+        if rank_prefix:
+            for line in sort_proc.stdout:
+                idx = line.index(sep_bytes)
+                yield line[idx + len(sep_bytes):]
+        else:
+            yield from sort_proc.stdout
+
+    _write_bgzip(output_path, header_bytes, stripped_sort_output())
+    return sort_proc
+
+
+def _remove_if_exists(path: str) -> None:
+    if os.path.exists(path):
+        os.remove(path)
+
+
+def _wait_for_sort(
+    sort_proc: subprocess.Popen[bytes], sort_cmd: list[str], output_path: str,
+) -> None:
+    """Wait for the native sort and refuse its output on a failure."""
+    rc = sort_proc.wait()
+    if rc != 0:
+        _remove_if_exists(output_path)
+        raise RuntimeError(
+            f"native sort failed with exit code {rc}: "
+            f"{' '.join(sort_cmd)}")
+
+
+def _warn_unknown_chroms(unknown_chroms: dict[str, int]) -> None:
+    """Log the chromosomes that the reference genome does not list."""
+    if unknown_chroms:
+        logger.warning(
+            "%d chromosome name(s) not found in the reference genome were "
+            "sorted to the end of the file: %s",
+            len(unknown_chroms),
+            ", ".join(
+                f"{c}({n})" for c, n in sorted(unknown_chroms.items())[:10]),
+        )
+
+
 def _stream_input_to_bgzip(
     *,
     input_path: str,
@@ -410,19 +495,14 @@ def _stream_input_to_bgzip(
     """
     rank_prefix = chrom_rank is not None and not skip_sort
     unknown_chroms: dict[str, int] = {}
-    sep_bytes = _OUTPUT_SEPARATOR.encode()
     header_bytes = _RowEncoder().encode(plan.output_header)
-
-    def write_header_and(body_iter: Iterable[bytes]) -> None:
-        with BGZFile(output_path, "wb", index=None) as bgz:
-            bgz.write(header_bytes)
-            for chunk in body_iter:
-                bgz.write(chunk)
+    sort_cmd: list[str] = []
+    sort_proc: subprocess.Popen[bytes] | None = None
 
     try:
         if skip_sort:
             logger.info("--skip-sort set; streaming input straight to bgzip")
-            write_header_and(_iter_processed_rows(
+            _write_bgzip(output_path, header_bytes, _iter_processed_rows(
                 input_path=input_path, plan=plan,
                 input_separator=input_separator,
                 chrom_rank=None, unknown_chroms=unknown_chroms,
@@ -433,60 +513,25 @@ def _stream_input_to_bgzip(
                 separator=_OUTPUT_SEPARATOR,
                 work_dir=work_dir, threads=threads, buffer=buffer)
             logger.info("sort command: %s", " ".join(sort_cmd))
-            env = {**os.environ, "LC_ALL": "C"}
-            # long-lived: stdin/stdout are driven manually below and the
-            # process is wait()-ed at the end, so a `with` block won't fit.
-            sort_proc = subprocess.Popen(  # pylint: disable=consider-using-with
-                sort_cmd,
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env,
+            sort_proc = _sort_rows_into_bgzip(
+                sort_cmd=sort_cmd,
+                rows=_iter_processed_rows(
+                    input_path=input_path, plan=plan,
+                    input_separator=input_separator,
+                    chrom_rank=chrom_rank,
+                    unknown_chroms=unknown_chroms),
+                output_path=output_path,
+                header_bytes=header_bytes,
+                rank_prefix=rank_prefix,
             )
-            assert sort_proc.stdin is not None
-            assert sort_proc.stdout is not None
-            try:
-                # Feed all input to sort. GNU sort drains stdin into its
-                # internal --temporary-directory before emitting output,
-                # so no deadlock on a synchronous write-then-read loop.
-                for row in _iter_processed_rows(
-                        input_path=input_path, plan=plan,
-                        input_separator=input_separator,
-                        chrom_rank=chrom_rank,
-                        unknown_chroms=unknown_chroms):
-                    sort_proc.stdin.write(row)
-            finally:
-                sort_proc.stdin.close()
-
-            def stripped_sort_output() -> Iterable[bytes]:
-                assert sort_proc.stdout is not None
-                if rank_prefix:
-                    for line in sort_proc.stdout:
-                        idx = line.index(sep_bytes)
-                        yield line[idx + len(sep_bytes):]
-                else:
-                    yield from sort_proc.stdout
-
-            write_header_and(stripped_sort_output())
     except BaseException:
-        if os.path.exists(output_path):
-            os.remove(output_path)
+        _remove_if_exists(output_path)
         raise
 
-    if not skip_sort:
-        rc = sort_proc.wait()
-        if rc != 0:
-            if os.path.exists(output_path):
-                os.remove(output_path)
-            raise RuntimeError(
-                f"native sort failed with exit code {rc}: "
-                f"{' '.join(sort_cmd)}")
+    if sort_proc is not None:
+        _wait_for_sort(sort_proc, sort_cmd, output_path)
 
-    if unknown_chroms:
-        logger.warning(
-            "%d chromosome name(s) not found in the reference genome were "
-            "sorted to the end of the file: %s",
-            len(unknown_chroms),
-            ", ".join(
-                f"{c}({n})" for c, n in sorted(unknown_chroms.items())[:10]),
-        )
+    _warn_unknown_chroms(unknown_chroms)
 
 
 @dataclass(frozen=True)
@@ -626,8 +671,8 @@ def _get_reference_genome(args: dict[str, Any]) -> ReferenceGenome | None:
     return context.get_reference_genome()
 
 
-def cli(argv: list[str] | None = None) -> None:
-    """Entry point for the prepare_tabular tool."""
+def _parse_cli_args(argv: list[str] | None) -> dict[str, Any]:
+    """Parse the arguments; ``--version`` exits before the verbosity is set."""
     if not argv:
         argv = sys.argv[1:]
 
@@ -639,7 +684,20 @@ def cli(argv: list[str] | None = None) -> None:
         sys.exit(0)
 
     VerbosityConfiguration.set(args)
+    return args
 
+
+@dataclass(frozen=True)
+class _CliPaths:
+    """The checked input and output of a ``prepare_tabular`` run."""
+    input_path: str
+    input_separator: str
+    output_path: str
+    output_dir: str
+
+
+def _check_cli_paths(args: dict[str, Any]) -> _CliPaths:
+    """Check the input, the separator and the output, then make the dir."""
     input_path = args["input"]
     if not os.path.exists(input_path):
         raise FileNotFoundError(input_path)
@@ -661,72 +719,108 @@ def cli(argv: list[str] | None = None) -> None:
 
     output_dir = os.path.dirname(os.path.abspath(output_path)) or "."
     os.makedirs(output_dir, exist_ok=True)
+    return _CliPaths(
+        input_path=input_path,
+        input_separator=input_separator,
+        output_path=output_path,
+        output_dir=output_dir,
+    )
 
-    ref_genome = _get_reference_genome(args)
-    chrom_rank: dict[str, int] | None = None
-    if ref_genome is not None:
-        ref_genome.open()
-        chrom_rank = {c: i for i, c in enumerate(ref_genome.chromosomes)}
-        logger.info(
-            "using reference genome %s for chromosome order (%d chromosomes)",
-            ref_genome.resource_id, len(chrom_rank))
-    else:
+
+def _open_chrom_rank(
+    ref_genome: ReferenceGenome | None,
+) -> dict[str, int] | None:
+    """Open the reference genome and map each chromosome to its rank."""
+    if ref_genome is None:
         logger.info(
             "no reference genome in genomic context; "
             "sorting chromosomes lexicographically")
+        return None
+    ref_genome.open()
+    chrom_rank = {c: i for i, c in enumerate(ref_genome.chromosomes)}
+    logger.info(
+        "using reference genome %s for chromosome order (%d chromosomes)",
+        ref_genome.resource_id, len(chrom_rank))
+    return chrom_rank
+
+
+def _build_cli_sort_plan(
+    args: dict[str, Any],
+    paths: _CliPaths,
+    ref_genome: ReferenceGenome | None,
+) -> _SortPlan:
+    """Build the sort plan from the header and the ``--col-*`` options."""
+    header = _read_header(paths.input_path, paths.input_separator)
+    columns_args = {
+        f"col_{c}": args[f"col_{c}"]
+        for cols in RECORD_TO_ANNOTATABLE_CONFIGURATION
+        for c in cols
+    }
+    r2a = build_record_to_annotatable(
+        columns_args, set(header), ref_genome)
+
+    if isinstance(r2a, _DIRECT_R2A_TYPES):
+        return _build_direct_sort_plan(r2a, header)
+    first_row = _read_first_data_row(
+        paths.input_path, paths.input_separator, header)
+    if first_row is None:
+        raise ValueError(
+            f"input file {paths.input_path} has no data rows")
+    return _build_indirect_sort_plan(r2a, header, first_row)
+
+
+def _run_sort_and_index(
+    args: dict[str, Any],
+    paths: _CliPaths,
+    plan: _SortPlan,
+    chrom_rank: dict[str, int] | None,
+) -> None:
+    """Stream, sort and tabix-index into a staged output, then publish it."""
+    provided_work_dir = args.get("work_dir")
+    with (
+        tempfile.TemporaryDirectory(
+            prefix="prepare_tabular_",
+            dir=provided_work_dir or paths.output_dir) as work_dir,
+        _staged_output(paths.output_path, paths.output_dir) as staged,
+    ):
+        _stream_input_to_bgzip(
+            input_path=paths.input_path,
+            output_path=staged.data_path,
+            plan=plan,
+            input_separator=paths.input_separator,
+            chrom_rank=chrom_rank,
+            skip_sort=args["skip_sort"],
+            work_dir=work_dir,
+            threads=args.get("sort_threads"),
+            buffer=args.get("sort_buffer"),
+        )
+
+        logger.info(
+            "tabix indexing %s (seq_col=%d, start_col=%d, end_col=%d)",
+            paths.output_path,
+            plan.tabix_seq_col, plan.tabix_start_col, plan.tabix_end_col)
+        tabix_index(
+            staged.data_path,
+            seq_col=plan.tabix_seq_col,
+            start_col=plan.tabix_start_col,
+            end_col=plan.tabix_end_col,
+            line_skip=1,
+            index=staged.index_path,
+            force=True,
+        )
+
+
+def cli(argv: list[str] | None = None) -> None:
+    """Entry point for the prepare_tabular tool."""
+    args = _parse_cli_args(argv)
+    paths = _check_cli_paths(args)
+
+    ref_genome = _get_reference_genome(args)
+    chrom_rank = _open_chrom_rank(ref_genome)
 
     try:
-        header = _read_header(input_path, input_separator)
-        columns_args = {
-            f"col_{c}": args[f"col_{c}"]
-            for cols in RECORD_TO_ANNOTATABLE_CONFIGURATION
-            for c in cols
-        }
-        r2a = build_record_to_annotatable(
-            columns_args, set(header), ref_genome)
-
-        if isinstance(r2a, _DIRECT_R2A_TYPES):
-            plan = _build_direct_sort_plan(r2a, header)
-        else:
-            first_row = _read_first_data_row(
-                input_path, input_separator, header)
-            if first_row is None:
-                raise ValueError(
-                    f"input file {input_path} has no data rows")
-            plan = _build_indirect_sort_plan(r2a, header, first_row)
-
-        provided_work_dir = args.get("work_dir")
-        with (
-            tempfile.TemporaryDirectory(
-                prefix="prepare_tabular_",
-                dir=provided_work_dir or output_dir) as work_dir,
-            _staged_output(output_path, output_dir) as staged,
-        ):
-            _stream_input_to_bgzip(
-                input_path=input_path,
-                output_path=staged.data_path,
-                plan=plan,
-                input_separator=input_separator,
-                chrom_rank=chrom_rank,
-                skip_sort=args["skip_sort"],
-                work_dir=work_dir,
-                threads=args.get("sort_threads"),
-                buffer=args.get("sort_buffer"),
-            )
-
-            logger.info(
-                "tabix indexing %s (seq_col=%d, start_col=%d, end_col=%d)",
-                output_path,
-                plan.tabix_seq_col, plan.tabix_start_col, plan.tabix_end_col)
-            tabix_index(
-                staged.data_path,
-                seq_col=plan.tabix_seq_col,
-                start_col=plan.tabix_start_col,
-                end_col=plan.tabix_end_col,
-                line_skip=1,
-                index=staged.index_path,
-                force=True,
-            )
+        plan = _build_cli_sort_plan(args, paths, ref_genome)
+        _run_sort_and_index(args, paths, plan, chrom_rank)
     finally:
         if ref_genome is not None:
             ref_genome.close()

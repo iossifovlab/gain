@@ -523,6 +523,13 @@ def _build_ann_data_content(builder: AnnDataBuilder) -> dict[str, Any]:
     (``GRRBuilder``) annotates it with the resource id, so messages here
     stay id-free.
     """
+    _check_layout_options(builder)
+    content = _render_data_files(builder)
+    return {GR_CONF_FILE_NAME: _render_resource_config(builder), **content}
+
+
+def _check_layout_options(builder: AnnDataBuilder) -> None:
+    """Refuse a combination of layout options that cannot be realized."""
     if builder.legacy_layout and builder.uncompressed_layout:
         raise ResourceValidationError(
             "with_legacy_layout and with_uncompressed_layout are two "
@@ -536,18 +543,23 @@ def _build_ann_data_content(builder: AnnDataBuilder) -> dict[str, Any]:
             f"describe the 10x matrix-market triple; {builder.file_format} "
             "realizes a single file, which has none of them")
 
-    if builder.file_format == "h5ad":
-        content: dict[str, Any] = {_realized_filename(builder): _render_h5ad(
-            builder)}
-    elif builder.file_format == "10x_h5":
-        content = {_realized_filename(builder): _render_10x_h5(builder)}
-    else:
-        content = _render_10x_triple(builder)
-        if builder.filename is not None:
-            raise ResourceValidationError(
-                "with_file renames a single realized file, but a 10x "
-                "resource is a triple addressed by prefix; use with_prefix")
 
+def _render_data_files(builder: AnnDataBuilder) -> dict[str, Any]:
+    """Render the data files of the resource in the format of ``builder``."""
+    if builder.file_format == "h5ad":
+        return {_realized_filename(builder): _render_h5ad(builder)}
+    if builder.file_format == "10x_h5":
+        return {_realized_filename(builder): _render_10x_h5(builder)}
+    content = _render_10x_triple(builder)
+    if builder.filename is not None:
+        raise ResourceValidationError(
+            "with_file renames a single realized file, but a 10x "
+            "resource is a triple addressed by prefix; use with_prefix")
+    return content
+
+
+def _render_resource_config(builder: AnnDataBuilder) -> str:
+    """Render the ``genomic_resource.yaml`` text of the resource."""
     config = "type: ann_data\n"
     if not builder.omit_file_key:
         config += f"file: {_realized_filename(builder)}\n"
@@ -559,8 +571,7 @@ def _build_ann_data_content(builder: AnnDataBuilder) -> dict[str, Any]:
             {"parameters": builder.parameters},
             default_flow_style=False, sort_keys=False)
     config += builder.render_meta()
-
-    return {GR_CONF_FILE_NAME: config, **content}
+    return config
 
 
 def an_ann_data() -> AnnDataBuilder:

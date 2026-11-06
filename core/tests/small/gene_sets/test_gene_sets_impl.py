@@ -6,6 +6,10 @@ import textwrap
 import pytest
 from gain.gene_sets.implementations.gene_sets_impl import GeneSetCollectionImpl
 from gain.genomic_resources.cli import cli_manage
+from gain.genomic_resources.histogram import (
+    CategoricalHistogram,
+    NumberHistogram,
+)
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GenomicResourceRepo,
@@ -180,3 +184,118 @@ def test_statistics_hash_skips_a_file_the_manifest_does_not_carry(
     result = json.loads(impl.calc_statistics_hash().decode())
 
     assert sorted(result["files_md5"]) == ["test-map.txt"]
+
+
+def _build_impl_with_histograms(
+    tmp_path: pathlib.Path,
+    histograms_yaml: str,
+) -> GeneSetCollectionImpl:
+    setup_directories(tmp_path, {
+        "numbers": {
+            GR_CONF_FILE_NAME: textwrap.dedent("""
+                type: gene_set_collection
+                id: numbers
+                format: map
+                filename: test-map.txt
+            """) + textwrap.dedent(histograms_yaml),
+            "test-map.txt": (
+                "#geneNS\tsym\n"
+                "POGZ\ttest:01 test:02\n"
+                "CHD8\ttest:02 test:03\n"
+            ),
+        },
+    })
+    repo = build_filesystem_test_repository(tmp_path)
+    resource = repo.get_resource("numbers")
+    assert resource is not None
+    impl = GeneSetCollectionImpl(resource)
+    impl.gene_set_collection.load()
+    return impl
+
+
+def test_genes_per_gene_set_number_hist_computes_the_view_range(
+    tmp_path: pathlib.Path,
+) -> None:
+    impl = _build_impl_with_histograms(tmp_path, """
+        histograms:
+          genes_per_gene_set:
+            type: number
+            number_of_bins: 2
+    """)
+
+    hist = impl._calc_genes_per_gene_set_hist()
+
+    assert isinstance(hist, NumberHistogram)
+    assert hist.view_range == (1, 2)
+    assert hist.bars.tolist() == [2, 1]
+
+
+def test_genes_per_gene_set_number_hist_uses_the_configured_view_range(
+    tmp_path: pathlib.Path,
+) -> None:
+    impl = _build_impl_with_histograms(tmp_path, """
+        histograms:
+          genes_per_gene_set:
+            type: number
+            number_of_bins: 4
+            view_range:
+              min: 0
+              max: 4
+    """)
+
+    hist = impl._calc_genes_per_gene_set_hist()
+
+    assert isinstance(hist, NumberHistogram)
+    assert hist.view_range == (0, 4)
+    assert hist.bars.tolist() == [0, 2, 1, 0]
+
+
+def test_gene_sets_per_gene_number_hist_computes_the_view_range(
+    tmp_path: pathlib.Path,
+) -> None:
+    impl = _build_impl_with_histograms(tmp_path, """
+        histograms:
+          gene_sets_per_gene:
+            type: number
+            number_of_bins: 2
+    """)
+
+    hist = impl._calc_gene_sets_per_gene_hist()
+
+    assert isinstance(hist, NumberHistogram)
+    assert hist.view_range == (0, 2)
+    assert hist.bars.tolist() == [0, 2]
+
+
+def test_gene_sets_per_gene_number_hist_uses_the_configured_view_range(
+    tmp_path: pathlib.Path,
+) -> None:
+    impl = _build_impl_with_histograms(tmp_path, """
+        histograms:
+          gene_sets_per_gene:
+            type: number
+            number_of_bins: 4
+            view_range:
+              min: 0
+              max: 4
+    """)
+
+    hist = impl._calc_gene_sets_per_gene_hist()
+
+    assert isinstance(hist, NumberHistogram)
+    assert hist.view_range == (0, 4)
+    assert hist.bars.tolist() == [0, 0, 2, 0]
+
+
+def test_histograms_without_config_are_categorical(
+    tmp_path: pathlib.Path,
+) -> None:
+    impl = _build_impl_with_histograms(tmp_path, "")
+
+    genes_per_gene_set = impl._calc_genes_per_gene_set_hist()
+    gene_sets_per_gene = impl._calc_gene_sets_per_gene_hist()
+
+    assert isinstance(genes_per_gene_set, CategoricalHistogram)
+    assert isinstance(gene_sets_per_gene, CategoricalHistogram)
+    assert genes_per_gene_set.raw_values == {1: 2, 2: 1}
+    assert gene_sets_per_gene.raw_values == {2: 2}

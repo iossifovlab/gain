@@ -61,6 +61,7 @@ import re
 from collections.abc import (
     Callable,
     Generator,
+    Iterable,
     Iterator,
     Mapping,
     Sequence,
@@ -1844,6 +1845,39 @@ def _resource_query_condition(
     return f"{_MATCH_ID_FUNCTION}(id)", deferred
 
 
+def _search_index_statement(
+    conn: apsw.Connection,
+    search_term: str,
+    accepted: tuple[str, ...],
+    parsed_query: ResourceQuery | None,
+) -> tuple[str, list[Any], list[LabelClause]]:
+    """Build the search statement over the ``contents`` index.
+
+    Return the statement, its parameters and the label clauses that the
+    caller checks against the live labels of each resource.
+    """
+    query = "SELECT full_id FROM contents "
+    # A term is what routes a search here, so it is always one of
+    # the conditions -- there is no reaching this with none.
+    conditions = ["contents MATCH ?"]
+    params: list[Any] = [search_term]
+    if accepted:
+        # The type predicate has to be applied HERE rather than in
+        # a caller: it is applied in SQL, so no Python-side
+        # filtering downstream can recover a row this query never
+        # returned.
+        placeholders = ", ".join("?" * len(accepted))
+        conditions.append(f"type IN ({placeholders})")
+        params.extend(accepted)
+    deferred: list[LabelClause] = []
+    if parsed_query is not None:
+        id_condition, deferred = _resource_query_condition(
+            conn, parsed_query)
+        conditions.append(id_condition)
+    query += " WHERE " + " AND ".join(conditions)
+    return query, params, deferred
+
+
 def _reject_unparsable_search_term(
     conn: apsw.Connection, search_term: str,
 ) -> None:
@@ -2111,82 +2145,92 @@ class ReadOnlyRepositoryProtocol(abc.ABC):
             equivalent_resource_types(resource_type) if resource_type else ()
         )
         if search_term is None:
-            # Asked of each resource, because only a term needs the index
-            # (gain#1212). The docstring above says why.
-            for res in self.get_all_resources():
-                if accepted and res.get_type() not in accepted:
-                    continue
-                if parsed_query is not None and not parsed_query.match(res):
-                    continue
-                yield res
+            yield from self._search_resources_without_index(
+                accepted, parsed_query)
             return
 
         conn = self.open_repository_metadata()
+        # The ``with`` block stays open while the rows are yielded.
         with conn:
             cursor = conn.cursor()
-            if not cursor.execute(
-                "SELECT 1 FROM sqlite_master "
-                "WHERE type = 'table' AND name = 'contents'",
-            ).fetchone():
-                # The index has no contents table when it was built with no
-                # resource in it -- an empty repository, or one whose every
-                # resource the index build had to skip (gain#464).  Raised
-                # rather than answered with zero rows: this repository has
-                # not applied the filter, and yielding nothing would be
-                # indistinguishable from having applied it and matched
-                # nothing. A group needs that distinction to tell "nothing
-                # matched" from "nothing was searched" (ADR 0012).
-                raise SearchIndexUnavailableError(
-                    self.get_id(),
-                    "the search index holds no contents; no resource could "
-                    "be indexed -- check the repair report for the "
-                    "resources it skipped")
-            query = "SELECT full_id FROM contents "
+            self._check_search_index_has_contents(cursor)
             # Ahead of the statement below, and independent of whether
             # that statement ends up asking FTS5 to read the term at all.
             _reject_unparsable_search_term(conn, search_term)
-            # A term is what routes a search here, so it is always one of
-            # the conditions -- there is no reaching this with none.
-            conditions = ["contents MATCH ?"]
-            params: list[Any] = [search_term]
-            if accepted:
-                # The type predicate has to be applied HERE rather than in
-                # a caller: it is applied in SQL, so no Python-side
-                # filtering downstream can recover a row this query never
-                # returned.
-                placeholders = ", ".join("?" * len(accepted))
-                conditions.append(f"type IN ({placeholders})")
-                params.extend(accepted)
-            deferred: list[LabelClause] = []
-            if parsed_query is not None:
-                id_condition, deferred = _resource_query_condition(
-                    conn, parsed_query)
-                conditions.append(id_condition)
-            query += " WHERE " + " AND ".join(conditions)
+            query, params, deferred = _search_index_statement(
+                conn, search_term, accepted, parsed_query)
             rows = cursor.execute(query, params)
-            all_resources = self.get_all_resources_dict()
-            for row in rows:
-                resource = all_resources.get(row[0])
-                if resource is None:
-                    # The index is a separate artefact of the repository
-                    # and can name a resource the ``.CONTENTS`` loader did
-                    # not build -- a stale index, or one published by an
-                    # untrusted GRR alongside a poisoned id that was
-                    # dropped. Resolving it used to raise ``KeyError`` and
-                    # take the whole search down with it (gain#467).
-                    logger.warning(
-                        "repo %s: index names resource <%s>, which the "
-                        "repository contents do not; skipping it",
-                        self.proto_id, escape_unsafe_characters(row[0]))
-                    continue
-                # Asked of the resource rather than of the index, whose
-                # columns record what the labels were when it was built.
-                if not all(
-                    clause.matches_in(resource.get_labels())
-                    for clause in deferred
-                ):
-                    continue
-                yield resource
+            yield from self._resources_of_index_rows(rows, deferred)
+
+    def _search_resources_without_index(
+            self,
+            accepted: tuple[str, ...],
+            parsed_query: ResourceQuery | None,
+    ) -> Generator[GenomicResource, None, None]:
+        """Match the type and the query against each resource in Python.
+
+        Asked of each resource, because only a term needs the index
+        (gain#1212). The docstring of ``search_resources`` says why.
+        """
+        for res in self.get_all_resources():
+            if accepted and res.get_type() not in accepted:
+                continue
+            if parsed_query is not None and not parsed_query.match(res):
+                continue
+            yield res
+
+    def _check_search_index_has_contents(
+            self, cursor: apsw.Cursor) -> None:
+        """Raise ``SearchIndexUnavailableError`` for an index with no rows.
+
+        The index has no contents table when it was built with no
+        resource in it -- an empty repository, or one whose every
+        resource the index build had to skip (gain#464).  Raised rather
+        than answered with zero rows: this repository has not applied the
+        filter, and yielding nothing would be indistinguishable from
+        having applied it and matched nothing. A group needs that
+        distinction to tell "nothing matched" from "nothing was searched"
+        (ADR 0012).
+        """
+        if not cursor.execute(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'contents'",
+        ).fetchone():
+            raise SearchIndexUnavailableError(
+                self.get_id(),
+                "the search index holds no contents; no resource could "
+                "be indexed -- check the repair report for the "
+                "resources it skipped")
+
+    def _resources_of_index_rows(
+            self,
+            rows: Iterable[Any],
+            deferred: list[LabelClause],
+    ) -> Generator[GenomicResource, None, None]:
+        """Yield the memoized resource that each index row names."""
+        all_resources = self.get_all_resources_dict()
+        for row in rows:
+            resource = all_resources.get(row[0])
+            if resource is None:
+                # The index is a separate artefact of the repository
+                # and can name a resource the ``.CONTENTS`` loader did
+                # not build -- a stale index, or one published by an
+                # untrusted GRR alongside a poisoned id that was
+                # dropped. Resolving it used to raise ``KeyError`` and
+                # take the whole search down with it (gain#467).
+                logger.warning(
+                    "repo %s: index names resource <%s>, which the "
+                    "repository contents do not; skipping it",
+                    self.proto_id, escape_unsafe_characters(row[0]))
+                continue
+            # Asked of the resource rather than of the index, whose
+            # columns record what the labels were when it was built.
+            if not all(
+                clause.matches_in(resource.get_labels())
+                for clause in deferred
+            ):
+                continue
+            yield resource
 
     def get_resource(
             self, resource_id: str,

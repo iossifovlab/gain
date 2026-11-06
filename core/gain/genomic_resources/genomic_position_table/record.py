@@ -161,48 +161,98 @@ def build_tabular_parser(
     check is data-dependent and cannot be hoisted at all.
     """
     if rev_chrom_map is not None and zero_based:
-        def parse_zero_based_mapped(raw: TabularRow) -> Record | None:
-            rchrom = rev_chrom_map.get(raw[chrom_key])
-            if rchrom is None:
-                return None
-            pos_begin = int(raw[pos_begin_key])
-            pos_end = int(raw[pos_end_key])
-            if pos_begin == pos_end:
-                pos_end += 1
-            pos_begin += 1
-            return (
-                rchrom, pos_begin, pos_end,
-                raw[ref_key] if ref_key is not None else None,
-                raw[alt_key] if alt_key is not None else None,
-                raw)
-        return parse_zero_based_mapped
-
+        return _zero_based_mapped_parser(
+            chrom_key, pos_begin_key, pos_end_key, ref_key, alt_key,
+            rev_chrom_map)
     if rev_chrom_map is not None:
-        def parse_mapped(raw: TabularRow) -> Record | None:
-            rchrom = rev_chrom_map.get(raw[chrom_key])
-            if rchrom is None:
-                return None
-            return (
-                rchrom, int(raw[pos_begin_key]), int(raw[pos_end_key]),
-                raw[ref_key] if ref_key is not None else None,
-                raw[alt_key] if alt_key is not None else None,
-                raw)
-        return parse_mapped
-
+        return _mapped_parser(
+            chrom_key, pos_begin_key, pos_end_key, ref_key, alt_key,
+            rev_chrom_map)
     if zero_based:
-        def parse_zero_based(raw: TabularRow) -> Record | None:
-            pos_begin = int(raw[pos_begin_key])
-            pos_end = int(raw[pos_end_key])
-            if pos_begin == pos_end:
-                pos_end += 1
-            pos_begin += 1
-            return (
-                raw[chrom_key], pos_begin, pos_end,
-                raw[ref_key] if ref_key is not None else None,
-                raw[alt_key] if alt_key is not None else None,
-                raw)
-        return parse_zero_based
+        return _zero_based_parser(
+            chrom_key, pos_begin_key, pos_end_key, ref_key, alt_key)
+    return _identity_parser(
+        chrom_key, pos_begin_key, pos_end_key, ref_key, alt_key)
 
+
+# The four specialisations of ``build_tabular_parser``.  Each factory builds
+# one closure over the resolved keys; the closure body stays fully inlined,
+# so a row pays no helper call and no intermediate tuple.
+
+
+def _zero_based_mapped_parser(
+    chrom_key: int,
+    pos_begin_key: int,
+    pos_end_key: int,
+    ref_key: int | None,
+    alt_key: int | None,
+    rev_chrom_map: dict[str, str],
+) -> TabularParser:
+    def parse_zero_based_mapped(raw: TabularRow) -> Record | None:
+        rchrom = rev_chrom_map.get(raw[chrom_key])
+        if rchrom is None:
+            return None
+        pos_begin = int(raw[pos_begin_key])
+        pos_end = int(raw[pos_end_key])
+        if pos_begin == pos_end:
+            pos_end += 1
+        pos_begin += 1
+        return (
+            rchrom, pos_begin, pos_end,
+            raw[ref_key] if ref_key is not None else None,
+            raw[alt_key] if alt_key is not None else None,
+            raw)
+    return parse_zero_based_mapped
+
+
+def _mapped_parser(
+    chrom_key: int,
+    pos_begin_key: int,
+    pos_end_key: int,
+    ref_key: int | None,
+    alt_key: int | None,
+    rev_chrom_map: dict[str, str],
+) -> TabularParser:
+    def parse_mapped(raw: TabularRow) -> Record | None:
+        rchrom = rev_chrom_map.get(raw[chrom_key])
+        if rchrom is None:
+            return None
+        return (
+            rchrom, int(raw[pos_begin_key]), int(raw[pos_end_key]),
+            raw[ref_key] if ref_key is not None else None,
+            raw[alt_key] if alt_key is not None else None,
+            raw)
+    return parse_mapped
+
+
+def _zero_based_parser(
+    chrom_key: int,
+    pos_begin_key: int,
+    pos_end_key: int,
+    ref_key: int | None,
+    alt_key: int | None,
+) -> TabularParser:
+    def parse_zero_based(raw: TabularRow) -> Record | None:
+        pos_begin = int(raw[pos_begin_key])
+        pos_end = int(raw[pos_end_key])
+        if pos_begin == pos_end:
+            pos_end += 1
+        pos_begin += 1
+        return (
+            raw[chrom_key], pos_begin, pos_end,
+            raw[ref_key] if ref_key is not None else None,
+            raw[alt_key] if alt_key is not None else None,
+            raw)
+    return parse_zero_based
+
+
+def _identity_parser(
+    chrom_key: int,
+    pos_begin_key: int,
+    pos_end_key: int,
+    ref_key: int | None,
+    alt_key: int | None,
+) -> TabularParser:
     def parse_identity(raw: TabularRow) -> Record | None:
         return (
             raw[chrom_key], int(raw[pos_begin_key]), int(raw[pos_end_key]),

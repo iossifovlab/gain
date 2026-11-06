@@ -305,6 +305,27 @@ def test_the_triple_only_options_are_refused(
         builder.build_resource(tmp_path)
 
 
+def test_the_legacy_and_the_uncompressed_layouts_together_are_refused(
+    tmp_path: pathlib.Path,
+) -> None:
+    builder = (
+        an_ann_data().with_format("10x_mtx")
+        .with_legacy_layout().with_uncompressed_layout()
+    )
+
+    with pytest.raises(ResourceValidationError, match="two different"):
+        builder.build_resource(tmp_path)
+
+
+def test_with_file_on_the_10x_triple_is_refused(
+    tmp_path: pathlib.Path,
+) -> None:
+    builder = an_ann_data().with_format("10x_mtx").with_file("x.mtx.gz")
+
+    with pytest.raises(ResourceValidationError, match="use with_prefix"):
+        builder.build_resource(tmp_path)
+
+
 def test_an_authored_na_interval_is_realized_verbatim(
     tmp_path: pathlib.Path,
 ) -> None:

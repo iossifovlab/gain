@@ -622,68 +622,28 @@ class FragmentScoreBinner:
         cls, entry: _Entry, resources: list[GenomicResource], *, base: str,
     ) -> FragmentBinningJob:
         """Resolve the defaults and the grouping of one job's resources."""
-        label, meta = entry.label, entry.meta
+        resource_ids = tuple(r.resource_id for r in resources)
+        if entry.group.value_score is not None:
+            value_grouping, value_groups = _value_score_grouping(
+                entry, resources)
+            return cls._job_of(
+                resource_ids, entry, value_grouping, value_groups,
+                base=base, warnings=())
         constant, cell_keys = entry.group.constant, entry.group.cell_keys
         warnings: list[str] = []
-        if entry.group.value_score is not None:
-            if meta is not None:
-                raise RunDefinitionError(
-                    f"{label}: meta maps cells to groups, and is not given "
-                    f"with a group of {VALUE_GROUP_KEY}, whose values are "
-                    f"the groups, for "
-                    f"{_quoted(r.resource_id for r in resources)}")
-            value_grouping, groups = _resolve_value_grouping(
-                label, entry.group.value_score, entry.value, resources,
-                pool=entry.pool)
-            return cls._job_of(
-                tuple(r.resource_id for r in resources), entry,
-                value_grouping, groups, base=base, warnings=())
         if constant is None and cell_keys is None:
-            # No group given: the label tier decides (F8).
-            labelled, unlabelled = _partition(resources, _is_labelled)
-            if labelled and unlabelled:
-                raise RunDefinitionError(
-                    f"{label}: the pooled resources disagree on the label "
-                    f"{CELL_META_RESOURCE_ID_LABEL!r} that decides their "
-                    f"grouping: {_quoted(labelled)} carry it and "
-                    f"{_quoted(unlabelled)} do not; give group, or "
-                    f"pool: false")
-            if labelled:
-                cell_keys = dict(CELL_GROUP_DEFAULTS)
-            else:
-                constant = DEFAULT_GROUP
-                warnings.extend(
-                    f"resource {r.resource_id!r} has {CELL_SCORE!r} and "
-                    f"{COUNT_SCORE!r} scores but no "
-                    f"{CELL_META_RESOURCE_ID_LABEL!r} label; it is binned "
-                    f"as the single {DEFAULT_GROUP!r} track"
-                    for r in resources if _is_single_cell(r))
-        grouping = None
+            constant, cell_keys = _label_tier(
+                entry.label, resources, warnings)
+        grouping: CellGrouping | None = None
         if cell_keys is None:
             assert constant is not None
-            if meta is not None:
-                raise RunDefinitionError(
-                    f"{label}: meta maps cells to groups, and is given only "
-                    f"with a group of cell_score_id, cell_meta_column and "
-                    f"group_meta_column, or with no group on a resource "
-                    f"labelled {CELL_META_RESOURCE_ID_LABEL!r}")
-            groups = [constant]
+            groups = _constant_groups(entry, constant)
         else:
-            grouping, groups_of = _resolve_grouping(
-                label, cell_keys, meta or CONVENTION_META, resources,
-                entry.tables)
-            groups = sorted(set[str]().union(*groups_of.values()))
-            if not groups:
-                raise RunDefinitionError(
-                    f"{label}: the meta rows selected for "
-                    f"{', '.join(groups_of)} name no group")
-            if grouping.table.is_local:
-                warnings.append(
-                    f"the cell metadata table {grouping.table.name!r} is a "
-                    f"local file; the run is not reproducible elsewhere")
+            grouping, groups = _cell_grouping(
+                entry, cell_keys, resources, warnings)
         return cls._job_of(
-            tuple(r.resource_id for r in resources), entry, grouping,
-            groups, base=base, warnings=tuple(warnings))
+            resource_ids, entry, grouping, groups, base=base,
+            warnings=tuple(warnings))
 
     @classmethod
     def _job_of(
@@ -746,3 +706,80 @@ class FragmentScoreBinner:
         return FragmentScoreBinding(
             job, [FragmentScore(resource) for resource in resources],
             track_maps)
+
+
+def _value_score_grouping(
+    entry: _Entry, resources: list[GenomicResource],
+) -> tuple[ValueGrouping, list[str]]:
+    """Resolve a job grouped by the values of a score."""
+    assert entry.group.value_score is not None
+    if entry.meta is not None:
+        raise RunDefinitionError(
+            f"{entry.label}: meta maps cells to groups, and is not given "
+            f"with a group of {VALUE_GROUP_KEY}, whose values are "
+            f"the groups, for "
+            f"{_quoted(r.resource_id for r in resources)}")
+    return _resolve_value_grouping(
+        entry.label, entry.group.value_score, entry.value, resources,
+        pool=entry.pool)
+
+
+def _label_tier(
+    label: str, resources: list[GenomicResource], warnings: list[str],
+) -> tuple[str | None, dict[str, str] | None]:
+    """Decide a job's grouping by its resources' label tier (F8).
+
+    Returns the constant group or the cell keys, and adds a warning for
+    each single-cell resource without the label.
+    """
+    labelled, unlabelled = _partition(resources, _is_labelled)
+    if labelled and unlabelled:
+        raise RunDefinitionError(
+            f"{label}: the pooled resources disagree on the label "
+            f"{CELL_META_RESOURCE_ID_LABEL!r} that decides their "
+            f"grouping: {_quoted(labelled)} carry it and "
+            f"{_quoted(unlabelled)} do not; give group, or "
+            f"pool: false")
+    if labelled:
+        return None, dict(CELL_GROUP_DEFAULTS)
+    warnings.extend(
+        f"resource {r.resource_id!r} has {CELL_SCORE!r} and "
+        f"{COUNT_SCORE!r} scores but no "
+        f"{CELL_META_RESOURCE_ID_LABEL!r} label; it is binned "
+        f"as the single {DEFAULT_GROUP!r} track"
+        for r in resources if _is_single_cell(r))
+    return DEFAULT_GROUP, None
+
+
+def _constant_groups(entry: _Entry, constant: str) -> list[str]:
+    """Return the one group of a constant grouping."""
+    if entry.meta is not None:
+        raise RunDefinitionError(
+            f"{entry.label}: meta maps cells to groups, and is given only "
+            f"with a group of cell_score_id, cell_meta_column and "
+            f"group_meta_column, or with no group on a resource "
+            f"labelled {CELL_META_RESOURCE_ID_LABEL!r}")
+    return [constant]
+
+
+def _cell_grouping(
+    entry: _Entry, cell_keys: dict[str, str],
+    resources: list[GenomicResource], warnings: list[str],
+) -> tuple[CellGrouping, list[str]]:
+    """Resolve a cell grouping and its sorted groups.
+
+    Adds a warning when the cell metadata table is a local file.
+    """
+    grouping, groups_of = _resolve_grouping(
+        entry.label, cell_keys, entry.meta or CONVENTION_META, resources,
+        entry.tables)
+    groups = sorted(set[str]().union(*groups_of.values()))
+    if not groups:
+        raise RunDefinitionError(
+            f"{entry.label}: the meta rows selected for "
+            f"{', '.join(groups_of)} name no group")
+    if grouping.table.is_local:
+        warnings.append(
+            f"the cell metadata table {grouping.table.name!r} is a "
+            f"local file; the run is not reproducible elsewhere")
+    return grouping, groups

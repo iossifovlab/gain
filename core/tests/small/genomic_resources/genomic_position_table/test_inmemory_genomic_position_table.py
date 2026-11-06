@@ -384,3 +384,47 @@ def test_get_chromosome_length_on_a_closed_table_says_it_is_not_open(
         tab.get_chromosome_length("kept")
     assert "no records" not in str(err.value), (
         "a closed table reported a populated contig as having no records")
+
+
+def test_open_refuses_a_file_with_no_header_row(
+    tmp_path: pathlib.Path,
+) -> None:
+    setup_directories(tmp_path, {
+        "genomic_resource.yaml": """
+            table:
+                filename: data.tsv""",
+        "data.tsv": "\n\n"})
+    res = build_filesystem_test_resource(tmp_path)
+    assert res.config is not None
+    tab = build_genomic_position_table(res, res.config["table"])
+
+    with pytest.raises(ValueError, match="No header found"):
+        tab.open()
+
+
+@pytest.mark.parametrize(("table_config", "header_row"), [
+    pytest.param("", "chrom pos_begin pos2  c2\n", id="file_header"),
+    pytest.param("""
+                header_mode: none
+                chrom:
+                    index: 0
+                pos_begin:
+                    index: 1""", "", id="no_header"),
+])
+def test_open_refuses_a_row_with_a_different_number_of_columns(
+    tmp_path: pathlib.Path, table_config: str, header_row: str,
+) -> None:
+    setup_directories(tmp_path, {
+        "genomic_resource.yaml": f"""
+            table:
+                filename: data.tsv{table_config}""",
+        "data.tsv": convert_to_tab_separated(header_row + """
+            1     10        12    3.14
+            1     11        11
+        """)})
+    res = build_filesystem_test_resource(tmp_path)
+    assert res.config is not None
+    tab = build_genomic_position_table(res, res.config["table"])
+
+    with pytest.raises(ValueError, match="Inconsistent number of columns"):
+        tab.open()

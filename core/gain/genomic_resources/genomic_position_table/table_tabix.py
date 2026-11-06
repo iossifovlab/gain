@@ -655,23 +655,8 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         what lets the buffer and the read cascade below treat all records alike.
         """
         self.stats["calls"] += 1
-
-        if not self.has_chromosome(chrom):
-            logger.error(
-                "chromosome %s not found in the tabix file "
-                "from %s; %s",
-                chrom, self.genomic_resource.resource_id, self.definition)
-            raise ValueError(
-                f"The chromosome {chrom} is not part of the table.")
-
-        buffering = True
-        if pos_begin is None:
-            pos_begin = 1
-        if pos_end is None or pos_end - pos_begin > self.BUFFER_MAXSIZE:
-            buffering = False
-            self.stats["without buffering"] += 1
-        else:
-            self.stats["with buffering"] += 1
+        self._check_chromosome(chrom)
+        pos_begin, buffering = self._buffering_decision(pos_begin, pos_end)
 
         prev_call_chrom, prev_call_begin, prev_call_end = self._last_call
         self._last_call = chrom, pos_begin, pos_end
@@ -741,19 +726,15 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         #
         # ``_prune_if_current`` rather than a bare prune, because the caller
         # also controls *when* the close happens: see there.
-        if buffering and len(self.buffer) > 0 \
-                and prev_call_chrom == chrom \
-                and pos_begin >= prev_call_begin:
+        if self._buffer_gate(
+                chrom, pos_begin, prev_call_chrom, prev_call_begin,
+                buffering=buffering):
 
             try:
-                first = self.buffer.peek_first()
                 assert pos_end is not None
-                if first[CHROM] == chrom \
-                   and prev_call_end is not None \
-                   and pos_begin > prev_call_end \
-                   and pos_end < first[POS_BEGIN]:
-
-                    assert first[CHROM] == prev_call_chrom
+                if self._is_provably_empty_gap(
+                        chrom, pos_begin, pos_end,
+                        prev_call_chrom, prev_call_end):
                     self.stats["not found"] += 1
                     return
 
@@ -798,6 +779,67 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         # too, appending nothing at all.
         self.line_iterator = self.get_line_iterator(chrom, pos_begin - 1)
         yield from self._gen_from_tabix(chrom, pos_end, buffering=buffering)
+
+    def _check_chromosome(self, chrom: str) -> None:
+        """Refuse a region query on a contig the table does not have."""
+        if not self.has_chromosome(chrom):
+            logger.error(
+                "chromosome %s not found in the tabix file "
+                "from %s; %s",
+                chrom, self.genomic_resource.resource_id, self.definition)
+            raise ValueError(
+                f"The chromosome {chrom} is not part of the table.")
+
+    def _buffering_decision(
+        self, pos_begin: int | None, pos_end: int | None,
+    ) -> tuple[int, bool]:
+        """Resolve the query's start and decide whether to buffer the read.
+
+        An open start reads from position 1.  An open end, or a query wider
+        than ``BUFFER_MAXSIZE``, reads unbuffered.  Returns the resolved
+        start and the decision, and counts the decision in ``stats``.
+        """
+        if pos_begin is None:
+            pos_begin = 1
+        if pos_end is None or pos_end - pos_begin > self.BUFFER_MAXSIZE:
+            self.stats["without buffering"] += 1
+            return pos_begin, False
+        self.stats["with buffering"] += 1
+        return pos_begin, True
+
+    def _buffer_gate(
+        self, chrom: str, pos_begin: int,
+        prev_call_chrom: str, prev_call_begin: int,
+        *, buffering: bool,
+    ) -> bool:
+        """Say whether the buffered paths may serve the query.
+
+        They may when the read is buffered, the buffer holds records, and
+        the query starts on the previous query's contig at or after the
+        previous query's start.
+        """
+        return buffering and len(self.buffer) > 0 \
+            and prev_call_chrom == chrom \
+            and pos_begin >= prev_call_begin
+
+    def _is_provably_empty_gap(
+        self, chrom: str, pos_begin: int, pos_end: int,
+        prev_call_chrom: str, prev_call_end: int | None,
+    ) -> bool:
+        """Say whether the query lies in a gap the buffer proves empty.
+
+        The query starts after the previous query's end and ends before the
+        first buffered record, on the same contig.  Call this only on a
+        non-empty buffer.
+        """
+        first = self.buffer.peek_first()
+        if first[CHROM] == chrom \
+           and prev_call_end is not None \
+           and pos_begin > prev_call_end \
+           and pos_end < first[POS_BEGIN]:
+            assert first[CHROM] == prev_call_chrom
+            return True
+        return False
 
     def _prune_if_current(
         self, chrom: str, pos_begin: int, pos_end: int | None,
@@ -924,11 +966,7 @@ class TabixGenomicPositionTable(GenomicPositionTable):
             contig and the query region.
         """
         assert isinstance(self.pysam_file, pysam.TabixFile)
-        fchrom = self.unmap_chromosome(chrom)
-        if fchrom is None:
-            raise ValueError(
-                f"error in mapping chromosome {chrom} to file contigs: "
-                f"{self.get_file_chromosomes()}")
+        fchrom = self._file_contig(chrom)
 
         columns = list(value_columns)
         fetch_start = None if start is None else start - 1
@@ -945,43 +983,18 @@ class TabixGenomicPositionTable(GenomicPositionTable):
                 return
             exhausted = len(rows) < batch_size
 
-            # A negative index counts from the last field, as ``row[k]``
-            # does in the per-record read; ``read_csv`` needs it resolved.
-            width = len(rows[0])
             region = f"{chrom}:{start}-{end}"
-            index: dict[int, int] = {}
-            for key in (*columns, self.pos_begin_key, self.pos_end_key):
-                resolved = key + width if key < 0 else key
-                if not 0 <= resolved < width:
-                    raise ValueError(
-                        f"column {key} is out of range for the tabix rows "
-                        f"of {width} fields in the region {region}")
-                index[key] = resolved
-            pos_begin_key = index[self.pos_begin_key]
-            pos_end_key = index[self.pos_end_key]
+            index = self._resolve_columns(
+                (*columns, self.pos_begin_key, self.pos_end_key),
+                len(rows[0]), region)
 
-            # Every column is parsed as raw ``str`` text. The positions are
-            # converted by ``int()``, the same as in the per-record read.
+            # Every column is parsed as raw ``str`` text.
             frame = self._parse_batch(rows, set(index.values()), region)
-            try:
-                pos_begin = frame[pos_begin_key].to_numpy(
-                    dtype=object).astype(np.int64)
-                pos_end = frame[pos_end_key].to_numpy(
-                    dtype=object).astype(np.int64)
-            except ValueError as ex:
-                raise ValueError(
-                    f"cannot parse the positions of the tabix rows in "
-                    f"the region {region}: {ex}") from ex
-            if self.zero_based:
-                single_base = pos_begin == pos_end
-                pos_end = pos_end + single_base
-                pos_begin = pos_begin + 1
+            pos_begin, pos_end = self._parse_positions(
+                frame, index[self.pos_begin_key], index[self.pos_end_key],
+                region)
 
-            cut = len(rows)
-            if end is not None:
-                past_end = pos_begin > end
-                if bool(past_end.any()):
-                    cut = int(np.argmax(past_end))
+            cut = self._cut_at_end(pos_begin, end, len(rows))
             truncated = cut < len(rows)
 
             cols = {
@@ -992,6 +1005,76 @@ class TabixGenomicPositionTable(GenomicPositionTable):
 
             if truncated or exhausted:
                 return
+
+    def _file_contig(self, chrom: str) -> str:
+        """Map a reference contig to the file's contig, or raise."""
+        fchrom = self.unmap_chromosome(chrom)
+        if fchrom is None:
+            raise ValueError(
+                f"error in mapping chromosome {chrom} to file contigs: "
+                f"{self.get_file_chromosomes()}")
+        return fchrom
+
+    @staticmethod
+    def _resolve_columns(
+        keys: Iterable[int], width: int, region: str,
+    ) -> dict[int, int]:
+        """Map each column key to a non-negative index into a row.
+
+        A negative key counts from the last field, as ``row[k]`` does in the
+        per-record read; ``read_csv`` needs it resolved.  A key out of range
+        for rows of ``width`` fields raises ``ValueError``.
+        """
+        index: dict[int, int] = {}
+        for key in keys:
+            resolved = key + width if key < 0 else key
+            if not 0 <= resolved < width:
+                raise ValueError(
+                    f"column {key} is out of range for the tabix rows "
+                    f"of {width} fields in the region {region}")
+            index[key] = resolved
+        return index
+
+    def _parse_positions(
+        self, frame: pd.DataFrame, pos_begin_key: int, pos_end_key: int,
+        region: str,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Convert a batch's position cells to one-based ``int64`` arrays.
+
+        The cells are converted by ``int()``, the same as in the per-record
+        read, and a zero-based table is transformed as
+        :func:`build_tabular_parser` transforms it.  A cell that ``int()``
+        refuses raises ``ValueError``.
+        """
+        try:
+            pos_begin = frame[pos_begin_key].to_numpy(
+                dtype=object).astype(np.int64)
+            pos_end = frame[pos_end_key].to_numpy(
+                dtype=object).astype(np.int64)
+        except ValueError as ex:
+            raise ValueError(
+                f"cannot parse the positions of the tabix rows in "
+                f"the region {region}: {ex}") from ex
+        if self.zero_based:
+            single_base = pos_begin == pos_end
+            pos_end = pos_end + single_base
+            pos_begin = pos_begin + 1
+        return pos_begin, pos_end
+
+    @staticmethod
+    def _cut_at_end(
+        pos_begin: np.ndarray, end: int | None, n_rows: int,
+    ) -> int:
+        """Count the leading rows of a batch that begin at or before ``end``.
+
+        The first row that begins past ``end`` and every row after it are
+        cut.  An open ``end``, or no row past it, keeps all ``n_rows``.
+        """
+        if end is not None:
+            past_end = pos_begin > end
+            if bool(past_end.any()):
+                return int(np.argmax(past_end))
+        return n_rows
 
     @staticmethod
     def _parse_batch(

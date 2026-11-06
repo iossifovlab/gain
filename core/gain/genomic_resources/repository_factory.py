@@ -8,7 +8,7 @@ import os
 import pathlib
 import re
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Annotated, Any, Literal, cast
 from urllib.parse import urlparse
 
@@ -666,11 +666,96 @@ def _build_cached_repository(
     return GenomicResourceCachedRepo(repo, f"file://{cache_dir}")
 
 
+def _build_directory_repository(
+        repo_id: str, kwargs: dict[str, Any]) -> GenomicResourceRepo:
+    """Build a ``file``, ``dir`` or ``directory`` repository.
+
+    The function pops ``directory`` from ``kwargs`` and passes the rest
+    of ``kwargs`` to the protocol.
+    """
+    root_url = kwargs.pop("directory")
+
+    if root_url is None:
+        raise ValueError("missing root url for a file/dir repository")
+
+    if not os.path.isabs(root_url):
+        logger.error(
+            "for directory/file resources repository we expects an "
+            "absolute directory name: %s",
+            _redact_url_userinfo(root_url))
+        raise ValueError(
+            "not an absolute directory name: "
+            f"{_redact_url_userinfo(root_url)}")
+    root_url = f"file://{root_url}"
+    protocol = build_fsspec_protocol(repo_id, root_url, **kwargs)
+    return GenomicResourceProtocolRepo(protocol)
+
+
+def _build_url_repository(
+        repo_id: str, kwargs: dict[str, Any]) -> GenomicResourceRepo:
+    """Build a ``url`` repository: an http, https or s3 root url."""
+    root_url = kwargs.pop("url")
+    parsed = urlparse(root_url)
+    if parsed.scheme not in {"http", "https", "s3"}:
+        raise ValueError(
+            "unexpected GRR protocol scheme "
+            f"{_redact_url_userinfo(root_url)}")
+    protocol = build_fsspec_protocol(repo_id, root_url, **kwargs)
+    return GenomicResourceProtocolRepo(protocol)
+
+
+def _build_http_repository(
+        repo_id: str, kwargs: dict[str, Any]) -> GenomicResourceRepo:
+    """Build an ``http`` repository: an http or https root url."""
+    root_url = kwargs.pop("url")
+
+    if urlparse(root_url).scheme not in {"http", "https"}:
+        raise ValueError(
+            "not an http(s) root url: "
+            f"{_redact_url_userinfo(root_url)}")
+    protocol = build_fsspec_protocol(repo_id, root_url, **kwargs)
+    return GenomicResourceProtocolRepo(protocol)
+
+
+def _build_s3_repository(
+        repo_id: str, kwargs: dict[str, Any]) -> GenomicResourceRepo:
+    """Build an ``s3`` repository: an s3 root url."""
+    root_url = kwargs.pop("url")
+
+    if urlparse(root_url).scheme != "s3":
+        raise ValueError(
+            "not an s3 root url: "
+            f"{_redact_url_userinfo(root_url)}")
+    protocol = build_fsspec_protocol(repo_id, root_url, **kwargs)
+    return GenomicResourceProtocolRepo(protocol)
+
+
+def _build_embedded_repository(
+        repo_id: str, kwargs: dict[str, Any]) -> GenomicResourceRepo:
+    """Build an ``embedded`` or ``memory`` repository from ``content``."""
+    root_url = tempfile.mkdtemp(prefix="memory", suffix=repo_id)
+    content = kwargs.get("content", {})
+    protocol = build_inmemory_protocol(repo_id, root_url, content)
+    return GenomicResourceProtocolRepo(protocol)
+
+
+_PROTOCOL_REPOSITORY_BUILDERS: dict[
+    str, Callable[[str, dict[str, Any]], GenomicResourceRepo]] = {
+    "file": _build_directory_repository,
+    "dir": _build_directory_repository,
+    "directory": _build_directory_repository,
+    "url": _build_url_repository,
+    "http": _build_http_repository,
+    "s3": _build_s3_repository,
+    "embedded": _build_embedded_repository,
+    "memory": _build_embedded_repository,
+}
+
+
 def _build_real_repository(
         proto_type: str = "",
         repo_id: str = "",
         **kwargs: Any) -> GenomicResourceRepo:
-    # pylint: disable=too-many-branches
     # Validate ``cache_dir`` BEFORE building anything: a ``directory``
     # repository creates its root on disk when its protocol is built, so
     # checking the cache only on the way out would let a refused definition
@@ -684,63 +769,13 @@ def _build_real_repository(
     if proto_type == "group":
         repo = _build_group_repository(
             repo_id=repo_id, **kwargs)
-
-    elif proto_type in {"file", "dir", "directory"}:
-        root_url = kwargs.pop("directory")
-
-        if root_url is None:
-            raise ValueError("missing root url for a file/dir repository")
-
-        if not os.path.isabs(root_url):
-            logger.error(
-                "for directory/file resources repository we expects an "
-                "absolute directory name: %s",
-                _redact_url_userinfo(root_url))
-            raise ValueError(
-                "not an absolute directory name: "
-                f"{_redact_url_userinfo(root_url)}")
-        root_url = f"file://{root_url}"
-        protocol = build_fsspec_protocol(repo_id, root_url, **kwargs)
-        repo = GenomicResourceProtocolRepo(protocol)
-
-    elif proto_type == "url":
-        root_url = kwargs.pop("url")
-        parsed = urlparse(root_url)
-        if parsed.scheme not in {"http", "https", "s3"}:
-            raise ValueError(
-                "unexpected GRR protocol scheme "
-                f"{_redact_url_userinfo(root_url)}")
-        protocol = build_fsspec_protocol(repo_id, root_url, **kwargs)
-        repo = GenomicResourceProtocolRepo(protocol)
-
-    elif proto_type == "http":
-        root_url = kwargs.pop("url")
-
-        if urlparse(root_url).scheme not in {"http", "https"}:
-            raise ValueError(
-                "not an http(s) root url: "
-                f"{_redact_url_userinfo(root_url)}")
-        protocol = build_fsspec_protocol(repo_id, root_url, **kwargs)
-        repo = GenomicResourceProtocolRepo(protocol)
-
-    elif proto_type == "s3":
-        root_url = kwargs.pop("url")
-
-        if urlparse(root_url).scheme != "s3":
-            raise ValueError(
-                "not an s3 root url: "
-                f"{_redact_url_userinfo(root_url)}")
-        protocol = build_fsspec_protocol(repo_id, root_url, **kwargs)
-        repo = GenomicResourceProtocolRepo(protocol)
-
-    elif proto_type in {"embedded", "memory"}:
-        root_url = tempfile.mkdtemp(prefix="memory", suffix=repo_id)
-        content = kwargs.get("content", {})
-        protocol = build_inmemory_protocol(repo_id, root_url, content)
-        repo = GenomicResourceProtocolRepo(protocol)
-
     else:
-        raise ValueError(f"unexpected GRR protocol type {proto_type}")
+        builder = _PROTOCOL_REPOSITORY_BUILDERS.get(proto_type)
+        if builder is None:
+            raise ValueError(f"unexpected GRR protocol type {proto_type}")
+        # The builder pops its root from ``kwargs`` and passes the rest,
+        # ``cache_dir`` included, to the protocol.
+        repo = builder(repo_id, kwargs)
 
     if "cache_dir" not in kwargs:
         return repo

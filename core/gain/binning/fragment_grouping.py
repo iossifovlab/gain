@@ -934,61 +934,110 @@ def _resolve_value_grouping(
     group_label = f"{label}.group"
     prefixes = [""] * len(resources)
     if pool:
-        sample_ids = [
-            None if isinstance(value, list) else _as_text(value)
-            for value in (
-                r.get_labels().get(SAMPLE_ID_LABEL) for r in resources)]
-        unlabelled = [
-            r.resource_id
-            for r, sample_id in zip(resources, sample_ids, strict=True)
-            if sample_id is None]
-        if unlabelled:
-            raise RunDefinitionError(
-                f"{group_label}: a pooled {VALUE_GROUP_KEY} grouping "
-                f"prefixes each group with the resource's "
-                f"{SAMPLE_ID_LABEL!r} label, which {_quoted(unlabelled)} "
-                f"do not carry as one value; label them, or give "
-                f"pool: false")
-        coloned = [
-            f"{r.resource_id!r} ({sample_id!r})"
-            for r, sample_id in zip(resources, sample_ids, strict=True)
-            if sample_id is not None and ":" in sample_id]
-        if coloned:
-            raise RunDefinitionError(
-                f"{group_label}: a pooled {VALUE_GROUP_KEY} grouping "
-                f"names each group <{SAMPLE_ID_LABEL}>:<value>, so the "
-                f"{SAMPLE_ID_LABEL!r} label may not contain ':'; "
-                f"{', '.join(coloned)} does; relabel it, or give "
-                f"pool: false")
-        sharing: dict[str, list[str]] = {}
-        for resource, sample_id in zip(resources, sample_ids, strict=True):
-            assert sample_id is not None
-            sharing.setdefault(sample_id, []).append(resource.resource_id)
-        shared = [
-            f"{_quoted(ids)} ({sample_id!r})"
-            for sample_id, ids in sharing.items() if len(ids) > 1]
-        if shared:
-            raise RunDefinitionError(
-                f"{group_label}: a pooled {VALUE_GROUP_KEY} grouping "
-                f"keeps samples apart by their {SAMPLE_ID_LABEL!r} label, "
-                f"and {'; '.join(shared)} share one, which would merge "
-                f"their cells into the same tracks; label each resource "
-                f"with its own sample, or give pool: false")
-        prefixes = [f"{sample_id}:" for sample_id in sample_ids]
-    values = []
-    for resource in resources:
-        if score_id == fragment_value.score_id:
-            raise RunDefinitionError(
-                f"{group_label}: resource {resource.resource_id!r} score "
-                f"{score_id!r} is the aggregated score; group by another "
-                f"score")
-        value_type = _score_type(group_label, resource, score_id)
-        if value_type != "str":
-            raise RunDefinitionError(
-                f"{group_label}: resource {resource.resource_id!r} score "
-                f"{score_id!r} is of type {value_type!r}; only a str "
-                f"score's values group")
-        values.append(tuple(_value_groups(group_label, resource, score_id)))
+        prefixes = _pooled_prefixes(group_label, resources)
+    values = [
+        _resource_value_groups(
+            group_label, resource, score_id, fragment_value)
+        for resource in resources]
+    groups = _union_groups(
+        group_label, score_id, resources, prefixes, values)
+    return (
+        ValueGrouping(score_id, tuple(prefixes), tuple(values)),
+        groups)
+
+
+def _pooled_prefixes(
+    group_label: str, resources: list[GenomicResource],
+) -> list[str]:
+    """Check the pooled resources' sample labels; prefix each with its own."""
+    sample_ids = [
+        None if isinstance(value, list) else _as_text(value)
+        for value in (
+            r.get_labels().get(SAMPLE_ID_LABEL) for r in resources)]
+    _refuse_unlabelled_samples(group_label, resources, sample_ids)
+    _refuse_coloned_samples(group_label, resources, sample_ids)
+    _refuse_shared_samples(group_label, resources, sample_ids)
+    return [f"{sample_id}:" for sample_id in sample_ids]
+
+
+def _refuse_unlabelled_samples(
+    group_label: str, resources: list[GenomicResource],
+    sample_ids: list[str | None],
+) -> None:
+    unlabelled = [
+        r.resource_id
+        for r, sample_id in zip(resources, sample_ids, strict=True)
+        if sample_id is None]
+    if unlabelled:
+        raise RunDefinitionError(
+            f"{group_label}: a pooled {VALUE_GROUP_KEY} grouping "
+            f"prefixes each group with the resource's "
+            f"{SAMPLE_ID_LABEL!r} label, which {_quoted(unlabelled)} "
+            f"do not carry as one value; label them, or give "
+            f"pool: false")
+
+
+def _refuse_coloned_samples(
+    group_label: str, resources: list[GenomicResource],
+    sample_ids: list[str | None],
+) -> None:
+    coloned = [
+        f"{r.resource_id!r} ({sample_id!r})"
+        for r, sample_id in zip(resources, sample_ids, strict=True)
+        if sample_id is not None and ":" in sample_id]
+    if coloned:
+        raise RunDefinitionError(
+            f"{group_label}: a pooled {VALUE_GROUP_KEY} grouping "
+            f"names each group <{SAMPLE_ID_LABEL}>:<value>, so the "
+            f"{SAMPLE_ID_LABEL!r} label may not contain ':'; "
+            f"{', '.join(coloned)} does; relabel it, or give "
+            f"pool: false")
+
+
+def _refuse_shared_samples(
+    group_label: str, resources: list[GenomicResource],
+    sample_ids: list[str | None],
+) -> None:
+    sharing: dict[str, list[str]] = {}
+    for resource, sample_id in zip(resources, sample_ids, strict=True):
+        assert sample_id is not None
+        sharing.setdefault(sample_id, []).append(resource.resource_id)
+    shared = [
+        f"{_quoted(ids)} ({sample_id!r})"
+        for sample_id, ids in sharing.items() if len(ids) > 1]
+    if shared:
+        raise RunDefinitionError(
+            f"{group_label}: a pooled {VALUE_GROUP_KEY} grouping "
+            f"keeps samples apart by their {SAMPLE_ID_LABEL!r} label, "
+            f"and {'; '.join(shared)} share one, which would merge "
+            f"their cells into the same tracks; label each resource "
+            f"with its own sample, or give pool: false")
+
+
+def _resource_value_groups(
+    group_label: str, resource: GenomicResource, score_id: str,
+    fragment_value: _FragmentValue,
+) -> tuple[str, ...]:
+    """Check one resource's grouping score; read the values it lists."""
+    if score_id == fragment_value.score_id:
+        raise RunDefinitionError(
+            f"{group_label}: resource {resource.resource_id!r} score "
+            f"{score_id!r} is the aggregated score; group by another "
+            f"score")
+    value_type = _score_type(group_label, resource, score_id)
+    if value_type != "str":
+        raise RunDefinitionError(
+            f"{group_label}: resource {resource.resource_id!r} score "
+            f"{score_id!r} is of type {value_type!r}; only a str "
+            f"score's values group")
+    return tuple(_value_groups(group_label, resource, score_id))
+
+
+def _union_groups(
+    group_label: str, score_id: str, resources: list[GenomicResource],
+    prefixes: list[str], values: list[tuple[str, ...]],
+) -> list[str]:
+    """Return the sorted union of every resource's prefixed groups."""
     groups = {
         prefix + value
         for prefix, of_resource in zip(prefixes, values, strict=True)
@@ -997,6 +1046,4 @@ def _resolve_value_grouping(
         raise RunDefinitionError(
             f"{group_label}: the {score_id!r} histograms of "
             f"{_quoted(r.resource_id for r in resources)} list no value")
-    return (
-        ValueGrouping(score_id, tuple(prefixes), tuple(values)),
-        sorted(groups))
+    return sorted(groups)

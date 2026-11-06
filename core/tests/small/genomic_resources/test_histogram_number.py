@@ -446,3 +446,35 @@ def test_default_histogram_conf_refuses_an_unknown_keyword() -> None:
         build_default_histogram_conf(  # pylint: disable=unexpected-keyword-arg
             "float",
             min_max=MinMaxValue("score", 0, 1))  # type: ignore[call-arg]
+
+
+def test_number_histogram_log_scale_without_x_min_log_raises() -> None:
+    config = NumberHistogramConfig(
+        view_range=(0.0, 10.0), x_log_scale=True, x_min_log=None)
+
+    with pytest.raises(ValueError, match="missing x_min_log"):
+        NumberHistogram(config)
+
+
+@pytest.mark.parametrize("view_range", [
+    (None, 10.0),
+    (0.0, None),
+    (np.nan, 10.0),
+    (0.0, np.nan),
+])
+def test_number_histogram_refuses_an_unset_or_nan_view_edge(
+        view_range: tuple[float | None, float | None]) -> None:
+    config = NumberHistogramConfig(view_range=view_range)
+
+    with pytest.raises(ValueError, match="unexpected min/max value"):
+        NumberHistogram(config)
+
+
+def test_number_histogram_zero_width_view_bins_its_edge_value_first() -> None:
+    hist = NumberHistogram(NumberHistogramConfig(
+        view_range=(5.0, 5.0), number_of_bins=4))
+
+    hist.add_value(5.0)
+
+    assert list(hist.bars) == [1, 0, 0, 0]
+    assert hist.out_of_range_bins == [0, 0]
