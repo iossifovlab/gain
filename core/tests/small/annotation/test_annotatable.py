@@ -181,3 +181,26 @@ def test_annotatable_from_string_cnv(
 )
 def test_annotatable_to_dict(annotatable: Annotatable, expected: dict) -> None:
     assert annotatable.to_dict() == expected
+
+
+@pytest.mark.parametrize("type_name,expected", [
+    ("position", Annotatable.Type.POSITION),
+    ("Region", Annotatable.Type.REGION),
+    ("SUBSTITUTION", Annotatable.Type.SUBSTITUTION),
+    ("small_insertion", Annotatable.Type.SMALL_INSERTION),
+    ("Small_Deletion", Annotatable.Type.SMALL_DELETION),
+    ("complex", Annotatable.Type.COMPLEX),
+    ("LARGE_DUPLICATION", Annotatable.Type.LARGE_DUPLICATION),
+    ("large_deletion", Annotatable.Type.LARGE_DELETION),
+])
+def test_annotatable_type_from_string_ignores_case(
+    type_name: str,
+    expected: Annotatable.Type,
+) -> None:
+    assert Annotatable.Type.from_string(type_name) is expected
+
+
+def test_annotatable_type_from_string_rejects_an_unknown_name() -> None:
+    with pytest.raises(
+            ValueError, match="unexpected annotatable type: insertion"):
+        Annotatable.Type.from_string("insertion")

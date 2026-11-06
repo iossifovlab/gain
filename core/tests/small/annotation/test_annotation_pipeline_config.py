@@ -1139,3 +1139,44 @@ def test_boolean_internal() -> None:
     assert pipeline_config[0].attributes[0].internal is True
     assert pipeline_config[0].attributes[1].name == "att2"
     assert pipeline_config[0].attributes[1].internal is False
+
+
+def test_parse_raw_attribute_config_renames_destination_to_name(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    attribute = AnnotationConfigParser.parse_raw_attribute_config(
+        {"destination": "score_a", "source": "score"})
+
+    assert attribute == AttributeConfig(name="score_a", source="score")
+    assert "usage of 'destination'" in caplog.text
+
+
+def test_parse_raw_attribute_config_needs_a_name_or_a_source() -> None:
+    with pytest.raises(ValueError, match="has neigther name nor source"):
+        AnnotationConfigParser.parse_raw_attribute_config({"internal": True})
+
+
+def test_parse_raw_attribute_config_refuses_a_name_that_is_no_string(
+) -> None:
+    with pytest.raises(TypeError, match="should be a string"):
+        AnnotationConfigParser.parse_raw_attribute_config(
+            {"name": 5, "source": "score"})
+
+
+@pytest.mark.parametrize("old_name", [
+    "position_aggregator",
+    "allele_aggregator",
+    "nucleotide_aggregator",
+    "gene_list_aggregator",
+    "gene_aggregator",
+])
+def test_parse_raw_attribute_config_reads_a_deprecated_aggregator(
+    old_name: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    attribute = AnnotationConfigParser.parse_raw_attribute_config(
+        {"source": "score", old_name: "max"})
+
+    assert attribute == AttributeConfig(
+        name="score", source="score", aggregator="max")
+    assert f"'{old_name}' is deprecated" in caplog.text

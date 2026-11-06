@@ -22,6 +22,13 @@ from gain.genomic_resources.testing import (
     setup_directories,
     setup_gzip,
 )
+from gain.genomic_resources.testing.builders import (
+    a_grr,
+    a_reference_genome,
+)
+from gain.genomic_resources.testing.liftover_chain_builder import (
+    a_liftover_chain,
+)
 
 from tests.small.annotation.conftest import assert_refuses_empty_resource_id
 
@@ -285,3 +292,44 @@ def test_liftover_annotator_null_genome_parameter_reads_as_absent(
         "genomeB",
         "dummyChain",
     }
+
+
+@pytest.fixture
+def unlabeled_chain_grr(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> GenomicResourceRepo:
+    """A chain resource with no ``source_genome`` or ``target_genome``."""
+    return a_grr() \
+        .with_resource("genomeA", a_reference_genome()) \
+        .with_resource("unlabeledChain", a_liftover_chain()) \
+        .build_repo(tmp_path_factory.mktemp("unlabeled_chain_grr"))
+
+
+def test_build_liftover_annotator_requires_a_target_genome(
+    unlabeled_chain_grr: GenomicResourceRepo,
+) -> None:
+    pipeline = AnnotationPipeline(unlabeled_chain_grr)
+    info = AnnotatorInfo(
+        "liftover_annotator",
+        [],
+        {"chain": "unlabeledChain", "source_genome": "genomeA"},
+    )
+
+    with pytest.raises(
+            ValueError, match="requires a 'target_genome' parameter"):
+        build_liftover_annotator(pipeline, info)
+
+
+def test_build_liftover_annotator_requires_a_source_genome(
+    unlabeled_chain_grr: GenomicResourceRepo,
+) -> None:
+    pipeline = AnnotationPipeline(unlabeled_chain_grr)
+    info = AnnotatorInfo(
+        "liftover_annotator",
+        [],
+        {"chain": "unlabeledChain", "target_genome": "genomeA"},
+    )
+
+    with pytest.raises(
+            ValueError, match="requires a 'source_genome' parameter"):
+        build_liftover_annotator(pipeline, info)
