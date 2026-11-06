@@ -5,7 +5,10 @@ The environment files are rendered by ``scripts/conda_env.py``; the guard
 below fails whenever a committed file is stale. The rattler-build recipes
 stay hand-written, and a second guard fails whenever a recipe's run list
 differs from its pyproject's dependencies under the same name mapping.
-The remaining tests pin both sets of rules on a throwaway workspace.
+A third guard reads the pytest version from the repo-root ``uv.lock`` and
+fails unless ``core/conda-integration/run.sh`` asks the solver for exactly
+that version. The remaining tests pin the first two sets of rules on a
+throwaway workspace.
 """
 import importlib.util
 import pathlib
@@ -13,6 +16,7 @@ import re
 import subprocess
 import sys
 import textwrap
+import tomllib
 from collections.abc import Iterable
 from types import ModuleType
 
@@ -460,6 +464,41 @@ def test_leftover_file_of_a_plugin_that_adds_nothing_is_stale(
     assert leftover.exists()
     assert conda_env.main([], root=root) == 0
     assert not leftover.exists()
+
+
+CONDA_INTEGRATION_RUN = REPO_ROOT / "core" / "conda-integration" / "run.sh"
+
+
+def _locked_version(lock: pathlib.Path, name: str) -> str:
+    with lock.open("rb") as infile:
+        packages = tomllib.load(infile)["package"]
+    versions = [p["version"] for p in packages if p["name"] == name]
+    assert len(versions) == 1, f"{lock} locks {name} {len(versions)} times"
+    return str(versions[0])
+
+
+def _solver_specs(run_sh: pathlib.Path) -> list[str]:
+    match = re.search(r"^specs=\((.*?)\)$", run_sh.read_text(),
+                      re.MULTILINE | re.DOTALL)
+    assert match is not None, f"{run_sh} has no specs=(...) array"
+    return re.findall(r'"([^"]*)"', match.group(1))
+
+
+def test_conda_integration_pins_the_locked_pytest() -> None:
+    lock = REPO_ROOT / "uv.lock"
+    for path in (lock, CONDA_INTEGRATION_RUN):
+        if not path.exists():
+            pytest.fail(f"{path} is missing; the CI image must copy it")
+    locked = _locked_version(lock, "pytest")
+
+    pytest_specs = [
+        spec for spec in _solver_specs(CONDA_INTEGRATION_RUN)
+        if re.match(r"pytest(?![\w-])", spec)]
+
+    assert pytest_specs == [f"pytest=={locked}"], (
+        f"{CONDA_INTEGRATION_RUN} asks the solver for {pytest_specs}, "
+        f"but uv.lock pins pytest {locked}; pin pytest=={locked} in "
+        "the specs=(...) array")
 
 
 RECIPE_PACKAGES = ("core", *PLUGINS)

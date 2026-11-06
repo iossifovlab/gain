@@ -115,8 +115,12 @@ test -f "$CHANNEL/noarch/repodata.json" \
 # in. pytest-xdist for the small tier's -n 5; fonttools + brotli because
 # the vendored-fonts tests decode WOFF2 directly; scanpy for the
 # integration tier's reader-drift tests. pytestarch is deliberately
-# absent: test_architecture.py is excluded below.
-specs=("gain-core==$VERSION" "pytest>=9" "pytest-mock" "pytest-xdist"
+# absent: test_architecture.py is excluded below. pytest is pinned to
+# the version uv.lock pins, so a red here reproduces in a local uv venv;
+# Python stays unpinned to see what a user's `mamba create` sees, but
+# no user installs pytest. tests/test_conda_deps.py fails the uv gate
+# when the two versions differ (#2057).
+specs=("gain-core==$VERSION" "pytest==9.2.0" "pytest-mock" "pytest-xdist"
        "fonttools" "brotli" "scanpy")
 if [ -n "$PYTHON_VERSION" ]; then
     specs+=("python=$PYTHON_VERSION")
@@ -189,8 +193,9 @@ cd "$TESTBED"
 # package next to tests/, which this test bed deliberately lacks), so it
 # is excluded here; the root pipeline keeps running it from the source.
 # test_conda_deps.py is excluded for the same reason: it compares the
-# repo-root environment.yml with the workspace pyprojects, and this test
-# bed has no repo checkout to read them from.
+# repo-root environment.yml with the workspace pyprojects, and the pytest
+# pin of this script with the repo-root uv.lock, and this test bed has no
+# repo checkout to read them from.
 #
 # --enable-http-testing / --enable-s3-testing make the conftest generate
 # the http/s3 scheme parametrizations the root's run has (#1571); the
