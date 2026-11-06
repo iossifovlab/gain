@@ -149,6 +149,10 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     ).subscribe(() => this.isConfigValid());
   private reconnectionSubscription: Subscription = new Subscription();
   public pipelineInfo: PipelineInfo;
+  // True while a pipeline_status request for the current pipeline is in
+  // flight. pipelineInfo is also null for an empty or a failed pipeline, so
+  // it cannot tell "not loaded yet" from "no counts".
+  public pipelineInfoLoading = false;
   public disableActions: boolean;
   public invalidPipelineName = false;
   public pipelinesLoaded = false;
@@ -690,6 +694,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
     if (!id) {
       return;
     }
+    this.pipelineInfoLoading = true;
     this.annotationPipelineService.getPipelineInfo(id).pipe(
       take(1)
     ).subscribe({
@@ -702,6 +707,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
         if (this.currentPipelineInfoId() !== id) {
           return;
         }
+        this.pipelineInfoLoading = false;
         this.pipelineInfo = res;
         this.pipelineStateService.pipelineInfo.set(res);
         // A 200 from the blocking pipeline_status endpoint means the GRR build
@@ -724,6 +730,7 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
         if (this.currentPipelineInfoId() !== id) {
           return;
         }
+        this.pipelineInfoLoading = false;
         this.pipelineInfo = null;
         this.pipelineStateService.pipelineInfo.set(null);
       }
@@ -828,6 +835,9 @@ export class AnnotationPipelineComponent implements OnInit, OnDestroy, AfterView
   }
 
   public doClear(): void {
+    // A request in flight is now stale and its response is dropped, so the
+    // loading state ends here.
+    this.pipelineInfoLoading = false;
     this.pipelineInfo = null;
     this.pipelineStateService.pipelineInfo.set(null);
     this.selectedPipeline = null;
