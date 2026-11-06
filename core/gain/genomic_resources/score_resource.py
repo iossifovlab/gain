@@ -152,6 +152,35 @@ class ScoreResource[ScoreDefT: ScoreDef](ResourceConfigValidationMixin):
         self.config = self.validate_and_normalize_schema(
             resource.get_config(), resource)
 
+    def get_default_annotation_attributes(self) -> list[Any]:
+        """Return the default annotation attributes of the resource.
+
+        Returns
+        -------
+        list[Any]
+            The ``default_annotation`` entries of the config. When the config
+            has none, one entry ``{"source": id, "name": id}`` for each score.
+
+        Raises
+        ------
+        TypeError
+            If ``default_annotation`` of the config is not a list.
+
+        :meta private:
+        """
+        default_annotation = self.config.get("default_annotation")
+        if default_annotation is None:
+            return [
+                {"source": attr, "name": attr}
+                for attr in self.score_definitions
+            ]
+
+        if not isinstance(default_annotation, list):
+            raise TypeError(
+                "The default_annotation in the "
+                f"{self.resource.resource_id} resource is not a list.")
+        return default_annotation
+
     def get_all_scores(self) -> list[str]:
         return list(self.score_definitions)
 

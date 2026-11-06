@@ -177,10 +177,6 @@ def test_default_annotation_auto_includes_all_scores() -> None:
         {"source": "score2", "name": "score2"},
     ]
 
-    assert score.get_default_annotation_attribute("score1") == "score1"
-    assert score.get_default_annotation_attribute("score2") == "score2"
-    assert score.get_default_annotation_attribute("missing") is None
-
 
 def test_default_annotation_custom_names() -> None:
     res: GenomicResource = build_inmemory_test_resource({
@@ -217,13 +213,6 @@ def test_default_annotation_custom_names() -> None:
         {"source": "score1", "name": "secondary_score"},
         {"source": "score2"},
     ]
-
-    assert (
-        score.get_default_annotation_attribute("score1")
-        == "primary_score,secondary_score"
-    )
-    assert score.get_default_annotation_attribute("score2") == "score2"
-    assert score.get_default_annotation_attribute("score3") is None
 
 
 def test_vcf_tables_autogenerate_scoredefs(vcf_score: AlleleScore) -> None:

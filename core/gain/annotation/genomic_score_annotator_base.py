@@ -12,22 +12,20 @@ Both kinds resolve their ``resource_id`` through
 which reads the types they accept off ``ACCEPTED_RESOURCE_TYPES``.
 """
 import abc
-from typing import Any
 
 from gain import logging
 from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import (
-    AnnotationConfigParser,
     AnnotatorInfo,
     Attribute,
-    AttributeConfig,
 )
 from gain.annotation.annotation_pipeline import (
     AnnotationPipeline,
     Annotator,
     AttributeSpec,
 )
-from gain.annotation.annotator_base import AnnotatedValues, AnnotatorBase
+from gain.annotation.annotator_base import AnnotatedValues
+from gain.annotation.score_annotator_base import ScoreAnnotatorBase
 from gain.genomic_resources.aggregators import (
     AggregatorSource,
     aggregator_name,
@@ -38,49 +36,13 @@ from gain.templates import get_template
 logger = logging.getLogger(__name__)
 
 
-class GenomicScoreAnnotatorBase(AnnotatorBase):
+class GenomicScoreAnnotatorBase(ScoreAnnotatorBase[GenomicScore]):
     """Genomic score base annotator."""
 
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo,
                  score: GenomicScore):
-        self.score = score
-        self._resource_attr_params: dict[str, dict[str, Any]] = {}
         info.resources.append(score.resource)
-
-        default_annotation = self.score.get_config().get("default_annotation")
-        if default_annotation is not None:
-            score_defs = self.score.score_definitions
-            parsed_defaults = [
-                AnnotationConfigParser.parse_raw_attribute_config(attr)
-                for attr in default_annotation
-            ]
-            for parsed in parsed_defaults:
-                if parsed.source not in score_defs:
-                    raise ValueError(
-                        f"Default annotation attribute '{parsed.source}' is "
-                        "not defined in the score resource!")
-                params = {
-                    k: v for k, v in parsed.parameters.items()
-                    if k != "description"
-                }
-                if parsed.aggregator is not None:
-                    params["aggregator"] = parsed.aggregator
-                if params:
-                    self._resource_attr_params[parsed.source] = params
-            if not info.attributes:
-                defaults_by_source = {p.source: p for p in parsed_defaults}
-                for source in score_defs:
-                    if source not in defaults_by_source:
-                        continue
-                    parsed = defaults_by_source[source]
-                    info.attributes.append(AttributeConfig(
-                        name=parsed.name or parsed.source,
-                        source=parsed.source,
-                        internal=parsed.internal,
-                        aggregator=parsed.aggregator,
-                    ))
-
-        super().__init__(pipeline, info)
+        super().__init__(pipeline, info, score)
         # A count of bases, read through the accessor that says so: it is
         # compared against an annotatable's length, and anything that is
         # not a whole non-negative number is refused here, as the
@@ -140,30 +102,13 @@ class GenomicScoreAnnotatorBase(AnnotatorBase):
         self.score.close()
         super().close()
 
-    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
-        default_annotation = self.score.get_config().get("default_annotation")
-        specs = {
-            attr_source: AttributeSpec(
-                source=attr_def.score_id,
-                value_type=attr_def.value_type,
-                description=attr_def.desc,
-                is_default=default_annotation is None,
-                internal_default=False,
-            )
-            for attr_source, attr_def in self.score.score_definitions.items()
-        }
-        if default_annotation is not None:
-            for attr in default_annotation:
-                parsed = \
-                    AnnotationConfigParser.parse_raw_attribute_config(attr)
-                if parsed.source in specs:
-                    specs[parsed.source].is_default = True
-        return specs
-
-    def get_attribute_defaults(
-        self, spec: AttributeSpec,
-    ) -> dict[str, Any]:
-        return dict(self._resource_attr_params.get(spec.source, {}))
+    def _score_attribute_spec(self, score_id: str) -> AttributeSpec:
+        score_def = self.score.score_definitions[score_id]
+        return AttributeSpec(
+            source=score_def.score_id,
+            value_type=score_def.value_type,
+            description=score_def.desc,
+        )
 
     def _build_score_aggregator_documentation(
         self, attr: Attribute,

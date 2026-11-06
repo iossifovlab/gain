@@ -5,7 +5,6 @@ from typing import Any
 from gain import logging
 from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import (
-    AnnotationConfigParser,
     AnnotatorInfo,
     Attribute,
 )
@@ -14,8 +13,12 @@ from gain.annotation.annotation_pipeline import (
     Annotator,
     AttributeSpec,
 )
-from gain.annotation.annotator_base import AnnotatedValues, AnnotatorBase
-from gain.gene_scores.gene_scores import build_gene_score_from_resource
+from gain.annotation.annotator_base import AnnotatedValues
+from gain.annotation.score_annotator_base import ScoreAnnotatorBase
+from gain.gene_scores.gene_scores import (
+    GeneScore,
+    build_gene_score_from_resource,
+)
 from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.resource_types import GENE_SCORE_TYPE
 
@@ -36,7 +39,7 @@ def build_gene_score_annotator(pipeline: AnnotationPipeline,
                               gene_score_resource, input_gene_list)
 
 
-class GeneScoreAnnotator(AnnotatorBase):
+class GeneScoreAnnotator(ScoreAnnotatorBase[GeneScore]):
     """Gene score annotator class."""
 
     ACCEPTED_RESOURCE_TYPES = (GENE_SCORE_TYPE,)
@@ -47,53 +50,21 @@ class GeneScoreAnnotator(AnnotatorBase):
                  input_gene_list: str):
 
         self.gene_score_resource = gene_score_resource
-        self.score = build_gene_score_from_resource(self.gene_score_resource)
         info.resources += [gene_score_resource]
         self.input_gene_list = input_gene_list
-        super().__init__(pipeline, info)
+        super().__init__(
+            pipeline, info,
+            build_gene_score_from_resource(self.gene_score_resource))
 
-    def get_attribute_specs(self) -> dict[str, AttributeSpec]:
-        specs: dict[str, AttributeSpec] = {}
-        for score_id, score_def in self.score.score_definitions.items():
-            specs[score_id] = AttributeSpec(
-                source=score_id,
-                value_type="object",
-                description=score_def.desc,
-                supports_aggregation=True,
-                folded_value_type=score_def.value_type,
-            )
-
-        default_annotation = self.score.config.get("default_annotation")
-        if default_annotation is not None:
-            for source in list(specs):
-                specs[source] = AttributeSpec(
-                    source=specs[source].source,
-                    value_type="object",
-                    description=specs[source].description,
-                    is_default=False,
-                    internal_default=specs[source].internal_default,
-                    supports_aggregation=True,
-                    attribute_type=specs[source].attribute_type,
-                    folded_value_type=specs[source].folded_value_type,
-                )
-            for attr in default_annotation:
-                default_attr = \
-                    AnnotationConfigParser.parse_raw_attribute_config(attr)
-                if default_attr.source not in specs:
-                    raise ValueError(
-                        f"Default annotation attribute "
-                        f"'{default_attr.source}' is not defined in the "
-                        f"{self.gene_score_resource.get_id()} gene score "
-                        "resource!")
-                desc_override = default_attr.parameters.get("description")
-                if desc_override:
-                    specs[default_attr.source].description = desc_override
-                specs[default_attr.source].is_default = True
-                if default_attr.internal is not None:
-                    specs[default_attr.source].internal_default = \
-                        default_attr.internal
-
-        return specs
+    def _score_attribute_spec(self, score_id: str) -> AttributeSpec:
+        score_def = self.score.score_definitions[score_id]
+        return AttributeSpec(
+            source=score_id,
+            value_type="object",
+            description=score_def.desc,
+            supports_aggregation=True,
+            folded_value_type=score_def.value_type,
+        )
 
     def _aggregator_value_type(self, attr: Attribute) -> str | None:  # ruff: ignore[unused-method-argument]
         return None

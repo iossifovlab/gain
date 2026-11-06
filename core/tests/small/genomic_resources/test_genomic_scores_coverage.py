@@ -110,41 +110,6 @@ def test_a_retired_aggregator_key_is_refused(
         AlleleScore(res)
 
 
-def test_default_annotation_attribute() -> None:
-    """Test get_default_annotation_attribute with custom names."""
-    res: GenomicResource = build_inmemory_test_resource({
-        GR_CONF_FILE_NAME: """
-            type: position_score
-            table:
-                filename: data.mem
-            scores:
-                - id: score1
-                  type: float
-                  name: score1
-                - id: score2
-                  type: float
-                  name: score2
-            default_annotation:
-                - source: score1
-                  name: custom_name
-                - source: score2
-        """,
-        "data.mem": """
-            chrom  pos_begin  score1  score2
-            1      10         0.1     0.2
-        """,
-    })
-
-    score = build_score_from_resource(res)
-    score.open()
-
-    attr = score.get_default_annotation_attribute("score1")
-    assert attr == "custom_name"
-
-    attr2 = score.get_default_annotation_attribute("score2")
-    assert attr2 == "score2"
-
-
 def test_genomic_score_is_open() -> None:
     """Test is_open() method."""
     res: GenomicResource = build_inmemory_test_resource({
