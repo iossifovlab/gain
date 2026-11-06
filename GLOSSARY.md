@@ -422,10 +422,23 @@ fragment score annotator that gives no grouping does not group.
 _Avoid_: classification, cell typing
 
 **Contribution**:
-What one fragment adds to its bin of a fragment **track**: the value of a
-numeric score of the fragment, or a constant, which is 1 when the **entry**
-gives none. The `value` key of an entry sets it.
+What one fragment adds to its bin of a fragment **track**, or to an attribute
+of a fragment score annotator: the value of a numeric score of the fragment,
+or a constant, which is 1 when the **entry** gives none. The `value` key of an
+entry sets it. An annotator attribute sets it by its source, and the source
+`constant` adds 1.
 _Avoid_: value (a score value is any value of a score), weight
+
+**Fragment mode**:
+The rule that decides which fragments reach a bin of a fragment **track**, or
+the region of a fragment score annotator, and how much each one weighs.
+`fragment_start` takes the fragments that start in it. `fragment_length`
+takes the fragments that overlap it, each weighted by the overlap in base
+pairs. `coverage_profile` takes the depth at each of its bases, and an
+uncovered base adds the uncovered value. `fragment_overlap` takes each
+overlapping fragment once, and only the annotator has it, as its default. The
+`mode` of an allele score annotator is a different setting.
+_Avoid_: region mode, aggregate mode
 
 ### Task graph
 
