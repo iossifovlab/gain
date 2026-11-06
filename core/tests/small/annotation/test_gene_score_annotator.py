@@ -9,6 +9,9 @@ from gain.annotation.annotation_config import (
     AnnotatorInfo,
     AttributeConfig,
 )
+from gain.annotation.annotation_factory import (
+    check_for_unused_attribute_parameters,
+)
 from gain.annotation.annotation_pipeline import AnnotationPipeline
 from gain.annotation.gene_score_annotator import (
     GeneScoreAnnotator,
@@ -558,6 +561,43 @@ def test_a_resource_default_parameter_is_a_parameter_of_the_attribute(
     (attribute,) = annotator.attributes
 
     assert attribute.parameters.get("none_value_replacement") == -1
+
+
+def test_a_resource_default_parameter_is_not_refused_as_unused(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The gene score annotator reads no attribute parameter.  A key of the
+    # resource entry is the resource author's, so a pipeline that loads
+    # the resource is not refused for it.
+    repo = _gene_score_repo(
+        "  - {source: score1, none_value_replacement: -1}")
+    annotator = _gene_score_annotator(repo, tmp_path)
+
+    check_for_unused_attribute_parameters(annotator)
+
+
+def test_a_pipeline_parameter_the_annotator_does_not_read_is_refused(
+    tmp_path: pathlib.Path,
+) -> None:
+    repo = _gene_score_repo(
+        "  - {source: score1, none_value_replacement: -1}")
+    annotator = _gene_score_annotator(
+        repo, tmp_path,
+        [AttributeConfig(
+            "score1", "score1",
+            parameters={"none_value_replacement": -2})])
+
+    with pytest.raises(ValueError, match="none_value_replacement"):
+        check_for_unused_attribute_parameters(annotator)
+
+
+def test_a_dict_default_annotation_of_a_gene_score_is_refused(
+    tmp_path: pathlib.Path,
+) -> None:
+    repo = _gene_score_repo("  source: score1")
+
+    with pytest.raises(TypeError, match="default_annotation"):
+        _gene_score_annotator(repo, tmp_path)
 
 
 def test_a_resource_default_internal_applies_to_a_listed_gene_attribute(

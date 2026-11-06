@@ -2,7 +2,8 @@
 
 ``ScoreAnnotatorBase`` gives the ``default_annotation`` list of a score
 resource one parser and one meaning, whether the resource is a gene score
-or a position, allele or CNV score (gain#310).  Each entry of the list is
+or a position or allele score (gain#310).  The fragment score annotator
+reads no ``default_annotation``.  Each entry of the list is
 parsed like an attribute of a pipeline config, and its keys mean:
 
 - ``source``: the score the entry makes a default attribute.  A source
@@ -60,6 +61,24 @@ class ScoreAnnotatorBase[ScoreT: ScoreResource[Any]](AnnotatorBase):
                 for entry in self._default_entries.values()
             )
         super().__init__(pipeline, info)
+        self._mark_resource_parameters_used(info)
+
+    def _mark_resource_parameters_used(self, info: AnnotatorInfo) -> None:
+        """Keep a resource parameter default out of the unused check.
+
+        A key of a ``default_annotation`` entry is the resource author's,
+        and a subclass may read none of them.  The pipeline author cannot
+        remove such a key, so it does not refuse the pipeline.  A key that
+        the pipeline config sets itself stays subject to the check.
+        """
+        for attr_config, attr in zip(
+                info.attributes, self.attributes, strict=True):
+            entry = self._default_entries.get(attr.source)
+            if entry is None:
+                continue
+            for key in entry.parameters:
+                if key != "description" and key not in attr_config.parameters:
+                    attr.parameters.get(key)
 
     @staticmethod
     def _parse_default_annotation(
