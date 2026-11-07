@@ -747,13 +747,7 @@ class AnnotationMixin:
         assert isinstance(request.data, QueryDict)
         assert isinstance(request.FILES, MultiValueDict)
 
-        try:
-            reference_genome = self.get_genome(request.data)
-        except ValueError as e:
-            return Response(
-                {"reason": str(e)},
-                status=views.status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+        reference_genome = self.get_genome(request.data)
 
         try:
             input_dir, result_dir = (

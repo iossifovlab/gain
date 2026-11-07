@@ -193,8 +193,6 @@ class UserPipeline(AnnotationBaseView):
         if "config" not in request.FILES:
             return missing_upload_response("config")
 
-        config_filename = f"{pipeline_name}.yaml"
-
         if pipeline_id:  # Update
             pipeline = request.user.get_temporary_pipeline(pipeline_id)
             if pipeline is None:
@@ -214,6 +212,7 @@ class UserPipeline(AnnotationBaseView):
                         status=views.status.HTTP_400_BAD_REQUEST,
                     )
                 base = str(user_dir)
+                config_filename = f"{pipeline_name}.yaml"
                 try:
                     candidate = os.path.realpath(
                         os.path.join(base, config_filename))
@@ -245,7 +244,7 @@ class UserPipeline(AnnotationBaseView):
                 config_path = Path(
                     settings.ANNOTATION_CONFIG_STORAGE_DIR,
                     "temporary",
-                    config_filename,
+                    f"pipeline-{request.user.session_id}.yaml",
                 )
                 pipeline, _ = TemporaryPipeline.objects.get_or_create(
                     session_id=request.user.session_id,
@@ -254,6 +253,7 @@ class UserPipeline(AnnotationBaseView):
                         "config_path": str(config_path),
                     },
                 )
+                config_path = Path(str(pipeline.config_path))
 
         pipeline_or_response = self._save_user_pipeline(
             request, config_path,
