@@ -2543,47 +2543,98 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
             dvc_entry = None
 
         if verify_content:
-            state = self.build_resource_file_state(
-                resource, entry.name,
-                size=entry.size, change_token=change_token)
-            if dvc_entry is not None:
-                if dvc_entry.md5 != state.md5:
-                    return DvcContentDrift(
-                        entry.name, state.md5, cast(str, dvc_entry.md5))
-                if state.size != dvc_entry.size:
-                    # Sidecar wins both fields; no state (#373).
-                    self._warn_dvc_size_mismatch(
-                        resource, entry.name, dvc_entry.size, state.size)
-                    entry.md5 = dvc_entry.md5
-                    entry.size = dvc_entry.size
-                    return None
-            if save_state:
-                self.save_resource_file_state(resource, state)
-            entry.md5 = state.md5
-            entry.size = state.size
-            return None
+            return self._verify_manifest_entry(
+                resource, entry, dvc_entry,
+                change_token=change_token, save_state=save_state)
 
-        pre_state = self.load_resource_file_state(resource, entry.name)
-        if pre_state is not None:
-            if self._state_describes_stored_file(
-                    resource, pre_state, timestamp_tolerance=1e-2,
-                    size=entry.size, change_token=change_token):
-                entry.md5 = pre_state.md5
-                entry.size = pre_state.size
-                return None
-            logger.debug(
-                "%s in %s no longer matches its recorded state; "
-                "recomputing md5...",
-                entry.name, resource.resource_id)
+        if self._entry_from_recorded_state(
+                resource, entry, change_token=change_token):
+            return None
 
         if dvc_entry is not None:
-            if entry.size != dvc_entry.size:
-                self._warn_dvc_size_mismatch(
-                    resource, entry.name, dvc_entry.size, entry.size)
-            entry.md5 = dvc_entry.md5
-            entry.size = dvc_entry.size
+            self._entry_from_dvc_sidecar(resource, entry, dvc_entry)
             return None
 
+        self._entry_from_file_content(
+            resource, entry, change_token=change_token, save_state=save_state)
+        return None
+
+    def _verify_manifest_entry(
+            self, resource: GenomicResource, entry: ManifestEntry,
+            dvc_entry: ManifestEntry | None, *,
+            change_token: str | Unread | None,
+            save_state: bool) -> DvcContentDrift | None:
+        """Hash the file of ``entry`` and check it against its sidecar.
+
+        The ``verify_content`` mode of
+        :meth:`_update_manifest_entry_and_state`. ``dvc_entry`` is the
+        sidecar entry with an md5 sum, or ``None``.
+        """
+        state = self.build_resource_file_state(
+            resource, entry.name,
+            size=entry.size, change_token=change_token)
+        if dvc_entry is not None:
+            if dvc_entry.md5 != state.md5:
+                return DvcContentDrift(
+                    entry.name, state.md5, cast(str, dvc_entry.md5))
+            if state.size != dvc_entry.size:
+                # Sidecar wins both fields; no state (#373).
+                self._warn_dvc_size_mismatch(
+                    resource, entry.name, dvc_entry.size, state.size)
+                entry.md5 = dvc_entry.md5
+                entry.size = dvc_entry.size
+                return None
+        if save_state:
+            self.save_resource_file_state(resource, state)
+        entry.md5 = state.md5
+        entry.size = state.size
+        return None
+
+    def _entry_from_recorded_state(
+            self, resource: GenomicResource, entry: ManifestEntry, *,
+            change_token: str | Unread | None) -> bool:
+        """Fill in ``entry`` from a recorded state that describes the file.
+
+        Return ``True`` when the recorded state still describes the file,
+        and ``False`` when no state is recorded or the state is stale.
+        """
+        pre_state = self.load_resource_file_state(resource, entry.name)
+        if pre_state is None:
+            return False
+        if self._state_describes_stored_file(
+                resource, pre_state, timestamp_tolerance=1e-2,
+                size=entry.size, change_token=change_token):
+            entry.md5 = pre_state.md5
+            entry.size = pre_state.size
+            return True
+        logger.debug(
+            "%s in %s no longer matches its recorded state; "
+            "recomputing md5...",
+            entry.name, resource.resource_id)
+        return False
+
+    def _entry_from_dvc_sidecar(
+            self, resource: GenomicResource, entry: ManifestEntry,
+            dvc_entry: ManifestEntry) -> None:
+        """Fill in ``entry`` from the sidecar entry ``dvc_entry``.
+
+        A size on disk that differs from the size of the sidecar logs a
+        warning, and the sidecar still wins both fields.
+        """
+        if entry.size != dvc_entry.size:
+            self._warn_dvc_size_mismatch(
+                resource, entry.name, dvc_entry.size, entry.size)
+        entry.md5 = dvc_entry.md5
+        entry.size = dvc_entry.size
+
+    def _entry_from_file_content(
+            self, resource: GenomicResource, entry: ManifestEntry, *,
+            change_token: str | Unread | None,
+            save_state: bool) -> None:
+        """Hash the file of ``entry``, fill in the entry, record the state.
+
+        With ``save_state`` off, the function records no state.
+        """
         state = self.build_resource_file_state(
             resource, entry.name,
             size=entry.size, change_token=change_token)
@@ -2592,7 +2643,6 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
 
         entry.md5 = state.md5
         entry.size = state.size
-        return None
 
     def _merge_unscanned_dvc_entries(
         self,

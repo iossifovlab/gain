@@ -21,7 +21,14 @@ evidence="$run_dir/evidence/grr-browse"
 [[ ! -e "$evidence" ]] || verify_die "drive: $evidence already exists; launch a new run"
 mkdir -p "$evidence"
 cp "$scratch/grr-http.yaml" "$evidence/grr-http.yaml"
-cp "$http_dir/grr/.CONTENTS.json" "$evidence/contents.json"
+# A GRR can ship only .CONTENTS.json.gz (mini-GRR does): decompress it then.
+if [[ -f "$http_dir/grr/.CONTENTS.json" ]]; then
+    cp "$http_dir/grr/.CONTENTS.json" "$evidence/contents.json"
+elif [[ -f "$http_dir/grr/.CONTENTS.json.gz" ]]; then
+    gzip -dc "$http_dir/grr/.CONTENTS.json.gz" > "$evidence/contents.json"
+else
+    verify_die "drive: $http_dir/grr has no .CONTENTS.json(.gz)"
+fi
 
 verify_drive "$scratch" "$evidence" \
     "$APP_VENV_BIN/grr_browse" -g "$scratch/grr-http.yaml"

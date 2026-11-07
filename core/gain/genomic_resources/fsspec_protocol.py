@@ -2040,22 +2040,9 @@ class FsspecReadWriteProtocol(
             part for part in resource_path.split("/") if part
         ] + path_array
 
-        # Read the .gitignore in the current directory and add its spec,
-        # anchored at this directory's depth.
-        current_specs = ancestor_specs
-        spec = self._load_gitignore_spec(os.path.join(url, ".gitignore"))
-        if spec is not None:
-            current_specs = [*ancestor_specs, (len(full_parts), spec)]
-
-        raw_names = []
-        for direntry in self.filesystem.ls(url, detail=False):
-            if self.netloc and direntry.startswith(self.netloc):
-                direntry = direntry[len(self.netloc):]
-
-            name = os.path.relpath(direntry, path)
-            if name.startswith("."):
-                continue
-            raw_names.append(name)
+        current_specs = self._directory_gitignore_specs(
+            url, full_parts, ancestor_specs)
+        raw_names = self._list_visible_names(url, path)
 
         # `dvc add <file>` writes `/<file>` into .gitignore and drops a
         # sibling `<file>.dvc` pointer; the real data file must stay in the
@@ -2068,27 +2055,56 @@ class FsspecReadWriteProtocol(
         sibling_names = set(raw_names)
 
         for name in raw_names:
-            if self._is_gitignored(name, full_parts, current_specs):
-                # A gitignored leaf named by a genuine sibling `<name>.dvc`
-                # pointer is a `dvc add <file>` data file and must stay in
-                # the manifest -- regardless of WHICH gitignore rule ignored
-                # it. Being ignored by a coincidental ancestor pattern (e.g.
-                # root `*.tmp` matching `sub/x.tmp`) instead of the `/x.tmp`
-                # line dvc itself writes is still exactly the DVC situation:
-                # the pointer proves the data is DVC-managed, so keeping it
-                # is correct (gain#209).
-                if not self._is_dvc_managed_leaf(url, name, sibling_names):
-                    continue
-                yield from self._scan_resource_for_files(
-                    resource_path, [*path_array, name], current_specs)
-                continue
-
+            # A gitignored leaf named by a genuine sibling `<name>.dvc`
+            # pointer is a `dvc add <file>` data file and must stay in
+            # the manifest -- regardless of WHICH gitignore rule ignored
+            # it. Being ignored by a coincidental ancestor pattern (e.g.
+            # root `*.tmp` matching `sub/x.tmp`) instead of the `/x.tmp`
+            # line dvc itself writes is still exactly the DVC situation:
+            # the pointer proves the data is DVC-managed, so keeping it
+            # is correct (gain#209).
+            #
             # A file that is not gitignored is already in the scan, and no
             # `.dvc` sibling is consulted for it -- `_is_dvc_managed_leaf`
             # opens the sidecar, and a directory with nothing gitignored must
-            # open none (gain#209).
+            # open none (gain#209). The `and` keeps that order.
+            if self._is_gitignored(name, full_parts, current_specs) and \
+                    not self._is_dvc_managed_leaf(url, name, sibling_names):
+                continue
             yield from self._scan_resource_for_files(
                 resource_path, [*path_array, name], current_specs)
+
+    def _directory_gitignore_specs(
+        self, url: str, full_parts: list[str],
+        ancestor_specs: list[tuple[int, pathspec.PathSpec]],
+    ) -> list[tuple[int, pathspec.PathSpec]]:
+        """Return ``ancestor_specs`` plus the spec of this directory.
+
+        The ``.gitignore`` in the directory at ``url`` adds its spec,
+        anchored at the depth of the directory, ``len(full_parts)``.
+        Without such a spec the function returns ``ancestor_specs``.
+        """
+        spec = self._load_gitignore_spec(os.path.join(url, ".gitignore"))
+        if spec is None:
+            return ancestor_specs
+        return [*ancestor_specs, (len(full_parts), spec)]
+
+    def _list_visible_names(self, url: str, path: str) -> list[str]:
+        """Return the names in the directory at ``url`` without dot names.
+
+        ``path`` is the local path of the same directory. Each name is
+        relative to ``path``.
+        """
+        raw_names = []
+        for direntry in self.filesystem.ls(url, detail=False):
+            if self.netloc and direntry.startswith(self.netloc):
+                direntry = direntry[len(self.netloc):]
+
+            name = os.path.relpath(direntry, path)
+            if name.startswith("."):
+                continue
+            raw_names.append(name)
+        return raw_names
 
     def _is_dvc_managed_leaf(
         self, url: str, name: str, sibling_names: set[str],
