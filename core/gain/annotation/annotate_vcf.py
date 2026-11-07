@@ -328,10 +328,29 @@ class _VCFWriter(Filter):
             overflow_warned = set()
         buffers: list[list] = [[] for _ in attributes]
 
+        _VCFWriter._delete_attributes(vcf_var, attributes_to_delete)
+        _VCFWriter._fill_buffers(
+            vcf_var, allele_annotations, attributes, buffers,
+            overflow_warned)
+        _VCFWriter._write_buffers(vcf_var, attributes, buffers)
+
+    @staticmethod
+    def _delete_attributes(
+        vcf_var: VariantRecord,
+        attributes_to_delete: Sequence[str],
+    ) -> None:
         for col in attributes_to_delete:
             if col in vcf_var.info:
                 del vcf_var.info[col]
 
+    @staticmethod
+    def _fill_buffers(
+        vcf_var: VariantRecord,
+        allele_annotations: list[dict],
+        attributes: Sequence[Attribute],
+        buffers: list[list],
+        overflow_warned: set[str],
+    ) -> None:
         for annotation in allele_annotations:
             for buff, attribute in zip(buffers, attributes, strict=True):
                 value = annotation.get(attribute.name)
@@ -350,6 +369,13 @@ class _VCFWriter(Filter):
                             attribute.name, info_type, value)
                     value = converted
                 buff.append(value)
+
+    @staticmethod
+    def _write_buffers(
+        vcf_var: VariantRecord,
+        attributes: Sequence[Attribute],
+        buffers: list[list],
+    ) -> None:
         # If the all values for a given attribute are
         # empty (i.e. - "."), then that attribute has no
         # values to be written and will be skipped in the output

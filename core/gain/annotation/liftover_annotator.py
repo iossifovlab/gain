@@ -18,6 +18,7 @@ from gain.genomic_resources.reference_genome import (
     ReferenceGenome,
     build_reference_genome_from_resource,
 )
+from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.variant_utils import (
     maximally_extend_variant,
     normalize_variant,
@@ -37,35 +38,13 @@ def build_liftover_annotator(pipeline: AnnotationPipeline,
     chain_resource_id = configured_resource_id(info, "chain")
     if chain_resource_id is None:
         raise ValueError(f"The {info} requires a 'chain' parameter.")
-    chain_resource = pipeline.repository.get_resource(chain_resource_id)
-    if chain_resource is None:
-        raise ValueError(f"The {info} points to a resource "
-                         f"{chain_resource_id} that is unavailable.")
+    chain_resource = _get_resource(pipeline, info, chain_resource_id)
     chain = build_liftover_chain_from_resource(chain_resource)
 
-    resource_id = configured_resource_id(info, "target_genome") or \
-        chain.target_genome_id
-    if resource_id is None:
-        raise ValueError(
-            f"The {info} requires a 'target_genome' parameter.")
-    resource = pipeline.repository.get_resource(resource_id)
-    if resource is None:
-        raise ValueError(f"The {info} points to a resource "
-                         f"{resource_id} that is "
-                         "unavailable.")
-    target_genome = build_reference_genome_from_resource(resource)
-
-    resource_id = configured_resource_id(info, "source_genome") or \
-        chain.source_genome_id
-    if resource_id is None:
-        raise ValueError(
-            f"The {info} requires a 'source_genome' parameter.")
-    resource = pipeline.repository.get_resource(resource_id)
-    if resource is None:
-        raise ValueError(f"The {info} points to a resource "
-                         f"{resource_id} that is "
-                         "unavailable.")
-    source_genome = build_reference_genome_from_resource(resource)
+    target_genome = _build_genome(
+        pipeline, info, "target_genome", chain.target_genome_id)
+    source_genome = _build_genome(
+        pipeline, info, "source_genome", chain.source_genome_id)
     if info.type in {"liftover_annotator", "bcf_liftover_annotator"}:
         return BcfLiftoverAnnotator(
             pipeline, info, chain, source_genome, target_genome,
@@ -76,6 +55,33 @@ def build_liftover_annotator(pipeline: AnnotationPipeline,
         )
 
     raise ValueError(f"Unsupported liftover annotator type: {info.type}")
+
+
+def _get_resource(
+    pipeline: AnnotationPipeline,
+    info: AnnotatorInfo,
+    resource_id: str,
+) -> GenomicResource:
+    resource = pipeline.repository.get_resource(resource_id)
+    if resource is None:
+        raise ValueError(f"The {info} points to a resource "
+                         f"{resource_id} that is unavailable.")
+    return resource
+
+
+def _build_genome(
+    pipeline: AnnotationPipeline,
+    info: AnnotatorInfo,
+    parameter: str,
+    default_resource_id: str | None,
+) -> ReferenceGenome:
+    resource_id = configured_resource_id(info, parameter) or \
+        default_resource_id
+    if resource_id is None:
+        raise ValueError(
+            f"The {info} requires a '{parameter}' parameter.")
+    resource = _get_resource(pipeline, info, resource_id)
+    return build_reference_genome_from_resource(resource)
 
 
 class AbstractLiftoverAnnotator(AnnotatorBase):

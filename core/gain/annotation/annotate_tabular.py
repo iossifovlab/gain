@@ -813,9 +813,7 @@ def cli(argv: list[str] | None = None) -> None:
             emit_annotation_plan(args, pipeline, grr)
 
         if args.get("dry_run"):
-            pipeline.close()
-            if ref_genome is not None:
-                ref_genome.close()
+            _close_pipeline_and_genome(pipeline, ref_genome)
             maybe_remove_work_dir(args, result=True)
             return
 
@@ -826,42 +824,67 @@ def cli(argv: list[str] | None = None) -> None:
         }
 
         output_path = args["output"]
-        region_size = args["region_size"]
 
         task_graph = TaskGraph()
-        if tabix_index_filename(args["input"]) and region_size > 0:
-            _add_tasks_tabixed(
-                args,
-                task_graph,
-                output_path,
-                pipeline.raw,
-                grr.definition,
-                ref_genome_id,
-            )
-        else:
-            logger.info(
-                "input %s cannot be split into genomic regions; "
-                "forcing sequential execution (-j 1)",
-                args["input"])
-            args["jobs"] = 1
-            _add_tasks_plaintext(
-                args,
-                task_graph,
-                output_path,
-                pipeline.raw,
-                grr.definition,
-                ref_genome_id,
-            )
+        _add_tasks(
+            args,
+            task_graph,
+            output_path,
+            pipeline.raw,
+            grr.definition,
+            ref_genome_id,
+        )
 
         add_input_files_to_task_graph(args, task_graph)
         result = TaskGraphCli.process_graph(task_graph, **args)
 
+    _close_pipeline_and_genome(pipeline, ref_genome)
+
+    gc.collect()
+    maybe_remove_work_dir(args, result=result)
+
+
+def _close_pipeline_and_genome(
+    pipeline: AnnotationPipeline,
+    ref_genome: ReferenceGenome | None,
+) -> None:
     pipeline.close()
     if ref_genome is not None:
         ref_genome.close()
 
-    gc.collect()
-    maybe_remove_work_dir(args, result=result)
+
+def _add_tasks(
+    args: dict[str, Any],
+    task_graph: TaskGraph,
+    output_path: str,
+    pipeline_config: RawPipelineConfig,
+    grr_definition: dict[str, Any],
+    ref_genome_id: str | None,
+) -> None:
+    region_size = args["region_size"]
+    if tabix_index_filename(args["input"]) and region_size > 0:
+        _add_tasks_tabixed(
+            args,
+            task_graph,
+            output_path,
+            pipeline_config,
+            grr_definition,
+            ref_genome_id,
+        )
+    else:
+        logger.info(
+            "input %s cannot be split into genomic regions; "
+            "forcing sequential execution (-j 1)",
+            args["input"])
+        args["jobs"] = 1
+        _add_tasks_plaintext(
+            args,
+            task_graph,
+            output_path,
+            pipeline_config,
+            grr_definition,
+            ref_genome_id,
+        )
 
 
 def _annotate_tabular_helper(
