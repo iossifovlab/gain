@@ -38,12 +38,15 @@ def single_thread_onnx_models(onnx_backend: ModuleType) -> Iterator[list]:
     integration job, only for the load. `spliceai_load_models` keeps no
     cache, so these sessions are separate from those of `onnx_models`.
     """
+    # The load returns before the yield, so the tests see the env restored.
+    yield _load_single_thread_models(onnx_backend)
+    onnx_backend.spliceai_close()
+
+
+def _load_single_thread_models(onnx_backend: ModuleType) -> list:
     with pytest.MonkeyPatch.context() as patch:
         patch.setenv(onnx_backend.ONNX_INTRA_OP_THREADS_ENV, "1")
-        models = onnx_backend.spliceai_load_models()
-    # The yield stays outside the context, so the tests see the env restored.
-    yield models  # ruff: ignore[unnecessary-assign-before-yield]
-    onnx_backend.spliceai_close()
+        return onnx_backend.spliceai_load_models()
 
 
 @pytest.fixture(scope="module")
