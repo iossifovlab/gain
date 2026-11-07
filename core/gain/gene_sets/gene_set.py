@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from gain import logging
 from gain.gene_sets.gene_term import (
+    GeneTerms,
     read_ewa_set_file,
     read_gmt_file,
     read_mapping_file,
@@ -299,49 +300,63 @@ class GeneSetCollection(
         """
         assert self.resource is not None
         gene_sets = {}
-        collection_format = self.config.resource_format
         logger.debug("loading %s", self.collection_id)
 
-        if collection_format == "map":
-            filename = self.config.filename
-            assert filename is not None
-            names_filename = filename.removesuffix(".gz")[:-4] + "names.txt"
-            names_file = None
-            if self.resource.file_exists(names_filename):
-                names_file = self.resource.open_raw_file(names_filename)
-            map_file: IO[Any]
-            if filename.endswith(".gz"):
-                map_file = gzip.open(  # ruff: ignore[open-file-with-context-handler]
-                    self.resource.open_raw_file(filename, "rb"), "rt")
-            else:
-                map_file = self.resource.open_raw_file(filename)
-            gene_terms = read_mapping_file(map_file, names_file)
-        elif collection_format == "gmt":
-            filename = self.config.filename
-            assert filename is not None
-            gene_terms = read_gmt_file(self.resource.open_raw_file(filename))
-        elif collection_format == "directory":
-            directory = self.config.directory
-            assert directory is not None
-            filepaths = []
-            if directory == ".":
-                directory = ""  # Easier check with startswith
-            for filepath, _ in self.resource.get_manifest().get_files():
-                if filepath.startswith(directory) and \
-                        filepath.endswith(".txt"):
-                    filepaths.append(filepath)
-
-            files = [self.resource.open_raw_file(f) for f in filepaths]
-
-            gene_terms = read_ewa_set_file(files)
-        else:
-            raise ValueError("Invalid collection format type")
+        gene_terms = self._read_gene_terms()
 
         for key, value in gene_terms.t_desc.items():
             syms = list(gene_terms.t2g[key].keys())
             gene_set = GeneSet(key, value, syms)
             gene_sets[gene_set.name] = gene_set
         return gene_sets
+
+    def _read_gene_terms(self) -> GeneTerms:
+        """Read the gene terms in the format of the resource."""
+        assert self.resource is not None
+        collection_format = self.config.resource_format
+        if collection_format == "map":
+            return self._read_map_gene_terms()
+        if collection_format == "gmt":
+            filename = self.config.filename
+            assert filename is not None
+            return read_gmt_file(self.resource.open_raw_file(filename))
+        if collection_format == "directory":
+            return self._read_directory_gene_terms()
+        raise ValueError("Invalid collection format type")
+
+    def _read_map_gene_terms(self) -> GeneTerms:
+        """Read the gene terms of a "map" format resource."""
+        assert self.resource is not None
+        filename = self.config.filename
+        assert filename is not None
+        names_filename = filename.removesuffix(".gz")[:-4] + "names.txt"
+        names_file = None
+        if self.resource.file_exists(names_filename):
+            names_file = self.resource.open_raw_file(names_filename)
+        map_file: IO[Any]
+        if filename.endswith(".gz"):
+            map_file = gzip.open(  # ruff: ignore[open-file-with-context-handler]
+                self.resource.open_raw_file(filename, "rb"), "rt")
+        else:
+            map_file = self.resource.open_raw_file(filename)
+        return read_mapping_file(map_file, names_file)
+
+    def _read_directory_gene_terms(self) -> GeneTerms:
+        """Read the gene terms of a "directory" format resource."""
+        assert self.resource is not None
+        directory = self.config.directory
+        assert directory is not None
+        filepaths = []
+        if directory == ".":
+            directory = ""  # Easier check with startswith
+        for filepath, _ in self.resource.get_manifest().get_files():
+            if filepath.startswith(directory) and \
+                    filepath.endswith(".txt"):
+                filepaths.append(filepath)
+
+        files = [self.resource.open_raw_file(f) for f in filepaths]
+
+        return read_ewa_set_file(files)
 
     def get_gene_set(self, gene_set_id: str) -> GeneSet | None:
         """Return one gene set by its name.

@@ -750,3 +750,42 @@ chr	trID	gene	strand	tsBeg	txEnd	cdsStart	cdsEnd	exonStarts	exonEnds	exonFrames	
     assert regions[4].chrom == "1"
     assert regions[4].start == 315
     assert regions[4].stop == 350
+
+
+def _two_exon_transcript(strand: str) -> TranscriptModel:
+    res = build_inmemory_test_resource(
+        content={
+            "genomic_resource.yaml":
+                "{type: gene_models, filename: gene_model.txt}",
+            "gene_model.txt": convert_to_tab_separated(textwrap.dedent(f"""
+chr	trID	gene	strand	tsBeg	txEnd	cdsStart	cdsEnd	exonStarts	exonEnds	exonFrames	atts
+1	transcript_1	gene_1	{strand}	1000	1400	1060	1300	1000,1200	1150,1400	0,0	bin:1;cdsStartStat:cmpl;cdsEndStat:cmpl;exonCount:2;score:0
+""")),  # ruff: ignore[line-too-long]
+        })
+    gene_models = build_gene_models_from_resource(res)
+    gene_models.load()
+    transcript: TranscriptModel = \
+        gene_models.transcript_models["transcript_1"]
+    return transcript
+
+
+def test_all_regions_prom_extends_the_first_exon_on_plus_strand() -> None:
+    transcript = _two_exon_transcript("+")
+
+    regions = transcript.all_regions(prom=100)
+
+    assert [(r.chrom, r.start, r.stop) for r in regions] == [
+        ("1", 1000 - 100, 1150),
+        ("1", 1200, 1400),
+    ]
+
+
+def test_all_regions_prom_extends_the_last_exon_on_minus_strand() -> None:
+    transcript = _two_exon_transcript("-")
+
+    regions = transcript.all_regions(prom=100)
+
+    assert [(r.chrom, r.start, r.stop) for r in regions] == [
+        ("1", 1000, 1150),
+        ("1", 1200, 1400 + 100),
+    ]
