@@ -386,3 +386,19 @@ def test_build_chrom_mapping_mapping_parameterized(
     mapping_func = build_chrom_mapping(res, config=table_config)
     assert mapping_func is not None
     assert mapping_func(chrom) == expected
+
+
+def test_build_chrom_mapping_refuses_no_resource_and_no_config() -> None:
+    with pytest.raises(
+            ValueError,
+            match="Either resource or config must be provided"):
+        build_chrom_mapping(None)
+
+
+def test_build_chrom_mapping_refuses_a_filename_without_a_resource() -> None:
+    config = {"chrom_mapping": {"filename": "chrom_map.txt"}}
+
+    with pytest.raises(
+            ValueError,
+            match="Resource must be provided when filename is used"):
+        build_chrom_mapping(None, config=config)

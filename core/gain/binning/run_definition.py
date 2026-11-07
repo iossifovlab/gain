@@ -114,37 +114,48 @@ def _resolve_regions(
             "for every chromosome of the genome")
     resolved = []
     for index, notation in enumerate(regions):
-        try:
-            region = Region.from_str(str(notation))
-        except ValueError as err:
-            raise RunDefinitionError(
-                f"bins.regions[{index}]: {err}") from err
-        except AssertionError as err:
-            # A stand-in: a window whose end precedes its start is the
-            # one malformation the shared parser asserts rather than
-            # reports.  Once ``BedRegion`` raises ValueError for it, the
-            # clause above covers it and this one goes.
-            raise RunDefinitionError(
-                f"bins.regions[{index}]: {notation!r} ends before it "
-                f"starts") from err
-        if region.chrom not in genome.chromosomes:
-            raise RunDefinitionError(
-                f"bins.regions[{index}]: {notation!r} names chromosome "
-                f"{region.chrom!r}, which the genome "
-                f"<{genome.resource_id}> does not have")
-        length = genome.get_chrom_length(region.chrom)
-        if region.start is None:
-            resolved.append(BedRegion(region.chrom, 1, length))
-            continue
-        bed = region.to_bed_region()
-        if bed.start < 1 or bed.stop > length:
-            raise RunDefinitionError(
-                f"bins.regions[{index}]: {notation!r} lies outside "
-                f"{region.chrom}:1-{length}, the whole of chromosome "
-                f"{region.chrom!r} in genome <{genome.resource_id}>")
-        resolved.append(bed)
+        region = _parse_region(index, notation)
+        resolved.append(_genome_region(index, notation, region, genome))
     _refuse_overlapping_regions(regions, resolved)
     return resolved
+
+
+def _parse_region(index: int, notation: Any) -> Region:
+    """Parse the region notation ``bins.regions[index]``."""
+    try:
+        return Region.from_str(str(notation))
+    except ValueError as err:
+        raise RunDefinitionError(
+            f"bins.regions[{index}]: {err}") from err
+    except AssertionError as err:
+        # A stand-in: a window whose end precedes its start is the
+        # one malformation the shared parser asserts rather than
+        # reports.  Once ``BedRegion`` raises ValueError for it, the
+        # clause above covers it and this one goes.
+        raise RunDefinitionError(
+            f"bins.regions[{index}]: {notation!r} ends before it "
+            f"starts") from err
+
+
+def _genome_region(
+    index: int, notation: Any, region: Region, genome: ReferenceGenome,
+) -> BedRegion:
+    """``region`` within the genome; a bare chromosome is all of it."""
+    if region.chrom not in genome.chromosomes:
+        raise RunDefinitionError(
+            f"bins.regions[{index}]: {notation!r} names chromosome "
+            f"{region.chrom!r}, which the genome "
+            f"<{genome.resource_id}> does not have")
+    length = genome.get_chrom_length(region.chrom)
+    if region.start is None:
+        return BedRegion(region.chrom, 1, length)
+    bed = region.to_bed_region()
+    if bed.start < 1 or bed.stop > length:
+        raise RunDefinitionError(
+            f"bins.regions[{index}]: {notation!r} lies outside "
+            f"{region.chrom}:1-{length}, the whole of chromosome "
+            f"{region.chrom!r} in genome <{genome.resource_id}>")
+    return bed
 
 
 def _refuse_overlapping_regions(

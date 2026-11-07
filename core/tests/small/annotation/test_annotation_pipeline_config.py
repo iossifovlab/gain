@@ -524,6 +524,13 @@ def test_simple_annotator_simple() -> None:
     ]
 
 
+def test_annotator_info_does_not_compare_with_another_type() -> None:
+    info = AnnotatorInfo("annotator", [], {}, annotator_id="A0")
+
+    assert info.__eq__(5) is NotImplemented
+    assert info != "annotator"
+
+
 def test_short_annotator_config() -> None:
     _, pipeline_config = AnnotationConfigParser.parse_str("""
         - annotator: resource

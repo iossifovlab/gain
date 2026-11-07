@@ -231,6 +231,36 @@ def test_vcf_writes_one_value_per_alt_allele_of_a_multiallelic_record(
     ]
 
 
+def test_vcf_writes_to_stdout_without_an_output_file_name(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    t4c8_args: list[str],
+) -> None:
+    input_path = tmp_path / "in.vcf"
+    input_path.write_text(VCF_CONTENT)
+
+    run_entry_point(monkeypatch, "annotate_variant_effects_vcf", [
+        *t4c8_args, str(input_path)])
+
+    records = [
+        line.split("\t")
+        for line in capsys.readouterr().out.splitlines()
+        if not line.startswith("#")
+    ]
+    assert [(rec[1], rec[4], rec[7]) for rec in records] == [
+        ("14", "A", ";".join([
+            "WE=missense", "GE=t4:missense",
+            "ED=tx1:t4:missense:2/14(Glu->Lys)"])),
+        ("14", "T", ";".join([
+            "WE=nonsense", "GE=t4:nonsense",
+            "ED=tx1:t4:nonsense:2/14(Glu->End)"])),
+        ("99", "C", ";".join([
+            "WE=intergenic", "GE=intergenic:intergenic",
+            "ED=intergenic:intergenic:intergenic:intergenic"])),
+    ]
+
+
 def open_paths() -> set[pathlib.Path]:
     """Return the paths of the files that this process has open."""
     fd_dir = pathlib.Path("/proc/self/fd")

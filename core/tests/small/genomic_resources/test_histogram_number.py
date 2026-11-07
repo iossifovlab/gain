@@ -478,3 +478,20 @@ def test_number_histogram_zero_width_view_bins_its_edge_value_first() -> None:
 
     assert list(hist.bars) == [1, 0, 0, 0]
     assert hist.out_of_range_bins == [0, 0]
+
+
+@pytest.mark.parametrize("given", ["bins", "bars"])
+def test_number_histogram_refuses_only_bins_or_only_bars(given: str) -> None:
+    """Bins without bars, or bars without bins, build no histogram."""
+    config = NumberHistogramConfig.from_dict({
+        "type": "number",
+        "view_range": {"min": 0, "max": 10},
+        "number_of_bins": 10,
+    })
+    arrays = {
+        "bins": np.linspace(0, 10, 11),
+        "bars": np.zeros(10, dtype=np.int64),
+    }
+
+    with pytest.raises((AttributeError, ValueError)):
+        NumberHistogram(config, **{given: arrays[given]})

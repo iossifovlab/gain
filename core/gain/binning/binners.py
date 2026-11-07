@@ -306,10 +306,31 @@ def match_resources(
     one key that needs the index.  An entry matching nothing is an
     error, never an empty contribution.
     """
+    query = _resource_query(label, config)
+    search_term = _search_term(label, config)
+    matches = _search_matches(label, grr, query, search_term, resource_type)
+    if not matches:
+        # The one deliberate departure from the prototype, which
+        # silently produced no column for a query matching nothing.
+        narrowed = (
+            f" with search_term {search_term!r}" if search_term else "")
+        raise RunDefinitionError(
+            f"{label}: resource_query {query!r}{narrowed} matches no "
+            f"{resource_type} resource")
+    return matches
+
+
+def _resource_query(label: str, config: dict[str, Any]) -> str:
+    """The entry's required ``resource_query``."""
     query = config.get("resource_query")
     if not isinstance(query, str) or not query:
         raise RunDefinitionError(
             f"{label}: resource_query is required and must be a string")
+    return query
+
+
+def _search_term(label: str, config: dict[str, Any]) -> str | None:
+    """The entry's optional ``search_term``; a blank one is ``None``."""
     search_term = config.get("search_term")
     if search_term is not None and not isinstance(search_term, str):
         raise RunDefinitionError(
@@ -320,6 +341,14 @@ def match_resources(
     # so the search and the messages below agree.
     if search_term is not None and not search_term.strip():
         search_term = None
+    return search_term
+
+
+def _search_matches(
+    label: str, grr: GenomicResourceRepo, query: str,
+    search_term: str | None, resource_type: str,
+) -> list[GenomicResource]:
+    """The resources the search finds, ordered by resource id."""
     # The search is a generator: the query is checked when it is
     # made, but the term and the index are checked on the first
     # draw, so the consumption sits inside the same try.
@@ -327,7 +356,7 @@ def match_resources(
         found = grr.search_resources(
             search_term=search_term, resource_query=query,
             resource_type=resource_type)
-        matches = sorted(
+        return sorted(
             found, key=lambda resource: resource.resource_id)
     except (ResourceQueryParseError, SearchTermError) as err:
         raise RunDefinitionError(f"{label}: {err}") from err
@@ -337,15 +366,6 @@ def match_resources(
         raise RunDefinitionError(
             f"{label}: search_term {search_term!r} needs the "
             f"repository's full-text index: {err}") from err
-    if not matches:
-        # The one deliberate departure from the prototype, which
-        # silently produced no column for a query matching nothing.
-        narrowed = (
-            f" with search_term {search_term!r}" if search_term else "")
-        raise RunDefinitionError(
-            f"{label}: resource_query {query!r}{narrowed} matches no "
-            f"{resource_type} resource")
-    return matches
 
 
 def _missing_mask(

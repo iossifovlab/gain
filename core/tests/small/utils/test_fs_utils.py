@@ -201,3 +201,28 @@ def test_sign_presigns_an_s3_url_for_the_full_handle_lifetime(
 
 def test_sign_returns_a_filename_the_filesystem_cannot_sign_as_is() -> None:
     assert fs_utils.sign("/dir/data.txt.gz") == "/dir/data.txt.gz"
+
+
+def test_handle_env_variables_sets_the_s3_endpoint_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conf: dict = {}
+    monkeypatch.setattr("fsspec.config.conf", conf)
+
+    fs_utils._handle_env_variables({"S3_ENDPOINT_URL": "http://h:9000"})
+
+    assert conf["s3"]["client_kwargs"]["endpoint_url"] == "http://h:9000"
+
+
+def test_handle_env_variables_keeps_a_configured_s3_endpoint_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conf: dict = {
+        "s3": {"client_kwargs": {"endpoint_url": "http://configured:9000"}},
+    }
+    monkeypatch.setattr("fsspec.config.conf", conf)
+
+    fs_utils._handle_env_variables({"S3_ENDPOINT_URL": "http://h:9000"})
+
+    assert conf["s3"]["client_kwargs"]["endpoint_url"] == \
+        "http://configured:9000"

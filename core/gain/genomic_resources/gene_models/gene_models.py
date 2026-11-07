@@ -464,6 +464,19 @@ def create_regions_from_genes(
     if len(genes) == 0 or len(genes) > gene_regions_heuristic_cutoff:
         return regions
 
+    gene_regions = collapse(_raw_gene_regions(
+        gene_models, genes, gene_regions_heuristic_extend))
+    if not regions:
+        return gene_regions or None
+    return _intersect_gene_regions(gene_regions, regions)
+
+
+def _raw_gene_regions(
+    gene_models: GeneModels,
+    genes: list[str],
+    gene_regions_heuristic_extend: int,
+) -> list[Region]:
+    """Build the extended regions of the genes, before the collapse."""
     gene_regions = []
     for gene_name in genes:
         gene_model = gene_models.gene_models_by_gene_name(gene_name)
@@ -478,19 +491,20 @@ def create_regions_from_genes(
                     gm.tx[1] + 1 + gene_regions_heuristic_extend,
                 ),
             )
+    return gene_regions
 
-    gene_regions = collapse(gene_regions)
-    if not regions:
-        regions = gene_regions or None
-    else:
-        result = []
-        for gene_region in gene_regions:
-            for region in regions:
-                intersection = gene_region.intersection(region)
-                if intersection:
-                    result.append(intersection)
-        result = collapse(result)
-        logger.info("original regions: %s; result: %s", regions, result)
-        regions = result
 
-    return regions
+def _intersect_gene_regions(
+    gene_regions: list[Region],
+    regions: list[Region],
+) -> list[Region]:
+    """Intersect the gene regions with the regions and collapse them."""
+    result = []
+    for gene_region in gene_regions:
+        for region in regions:
+            intersection = gene_region.intersection(region)
+            if intersection:
+                result.append(intersection)
+    result = collapse(result)
+    logger.info("original regions: %s; result: %s", regions, result)
+    return result

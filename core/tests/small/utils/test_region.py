@@ -1,7 +1,10 @@
 # pylint: disable=W0621,C0114,C0116,C0117,W0212,W0613,C0121
 
+import logging
 import pathlib
 import textwrap
+from collections.abc import Iterator
+from typing import cast
 
 import pysam
 import pytest
@@ -231,6 +234,14 @@ def test_region_contains(
     assert reg1.contains(reg2) == expected
 
 
+def test_region_contains_refuses_a_region_on_another_chrom() -> None:
+    assert Region("1", 1, 10).contains(Region("2", 1, 10)) is False
+
+
+def test_closed_region_does_not_contain_a_region_without_a_start() -> None:
+    assert Region("1", 1, 10).contains(Region("1", None, 5)) is False
+
+
 @pytest.mark.parametrize(
     "reg1,reg2,expected",
     [
@@ -269,6 +280,10 @@ def test_region_intersects(
     reg1: Region, reg2: Region, expected: Region,
 ) -> None:
     assert reg1.intersects(reg2) == expected
+
+
+def test_region_does_not_intersect_a_region_on_another_chrom() -> None:
+    assert Region("1", 1, 10).intersects(Region("2", 1, 10)) is False
 
 
 @pytest.mark.parametrize(
@@ -321,6 +336,25 @@ def test_get_chromosome_length_tabix_avoid_infinite_loop(
 
     assert get_chromosome_length_tabix(
         pysam.TabixFile(str(in_file)), "chr2") is None
+
+
+class _EmptyFetchFile:
+    """A file stub whose every fetch finds no record."""
+
+    def fetch(self, chrom: str, start: int) -> Iterator[str]:
+        return iter([])
+
+
+def test_get_chromosome_length_tabix_gives_up_when_no_fetch_finds_records(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    stub = cast(pysam.TabixFile, _EmptyFetchFile())
+
+    with caplog.at_level(logging.WARNING):
+        length = get_chromosome_length_tabix(stub, "chr2")
+
+    assert length is None
+    assert "unable to find length of contig chr2" in caplog.text
 
 
 @pytest.fixture

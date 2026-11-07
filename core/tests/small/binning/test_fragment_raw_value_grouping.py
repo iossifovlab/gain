@@ -491,6 +491,46 @@ def test_a_truncated_histogram_is_refused(
     assert "histogram is truncated" in message
 
 
+def test_a_score_whose_stored_histogram_is_a_number_histogram_is_refused(
+    tmp_path: pathlib.Path, genome: ReferenceGenome,
+) -> None:
+    # load_histogram picks the class from the stored config.type, so a
+    # number histogram stored for the str score reads back as one.
+    repo = stats_grr(tmp_path, ("frags/s1", cells(sample_id="S1")))
+    statistics = tmp_path / "custom" / "frags/s1" / "statistics"
+    (statistics / "histogram_cell.json").write_text(
+        (statistics / "histogram_count.json").read_text())
+
+    message = refusal({"resource_query": "frags/s1", "group": BY_CELL},
+                      repo, genome)
+
+    assert "'frags/s1'" in message
+    assert "not the categorical histogram listing its values" in message
+
+
+def test_a_gzipped_null_histogram_past_the_default_cap_is_the_cap(
+    tmp_path: pathlib.Path, genome: ReferenceGenome,
+) -> None:
+    # The manifest lists the sidecar and the gzipped full histogram, so
+    # the full histogram is read from the .json.gz file.
+    stats_grr(tmp_path, ("frags/many", many_cells(categorical=False)))
+    root = tmp_path / "custom"
+    statistics = root / "frags/many" / "statistics"
+    null = (statistics / "histogram_cell.json").read_bytes()
+    (statistics / "histogram_cell.json.gz").write_bytes(gzip.compress(null))
+    (statistics / "truncated").mkdir()
+    (statistics / "truncated" / "histogram_cell.json").write_bytes(null)
+    cli_manage(["repo-manifest", "-R", str(root)])
+    repo = build_filesystem_test_repository(root)
+
+    message = refusal({"resource_query": "frags/many", "group": BY_CELL},
+                      repo, genome)
+
+    assert "'frags/many'" in message
+    assert ("more distinct values than the default categorical histogram "
+            "keeps") in message
+
+
 def test_a_value_outside_the_histogram_is_dropped_and_counted(
     tmp_path: pathlib.Path, genome: ReferenceGenome,
     caplog: pytest.LogCaptureFixture,

@@ -294,6 +294,18 @@ class Region:
         """Check if the region contains other region."""
         if self.chrom != other.chrom:
             return False
+        if self.start is None or self.stop is None:
+            return self._contains_open(other)
+
+        assert self.start is not None
+        assert self.stop is not None
+        if other.stop is None or other.start is None:
+            return False
+        return self.start <= other.start \
+            and other.stop <= self.stop
+
+    def _contains_open(self, other: Region) -> bool:
+        """Check if a region with a missing bound contains other region."""
         if self.start is None and self.stop is None:
             return True
         if self.start is None:
@@ -302,18 +314,11 @@ class Region:
                 assert other.stop is not None
                 return bool(other.stop <= self.stop)
             return False
-        if self.stop is None:
-            assert self.start is not None
-            if other.start is not None:
-                return other.start >= self.start
-            return False
 
         assert self.start is not None
-        assert self.stop is not None
-        if other.stop is None or other.start is None:
-            return False
-        return self.start <= other.start \
-            and other.stop <= self.stop
+        if other.start is not None:
+            return other.start >= self.start
+        return False
 
     def intersects(self, other: Region) -> bool:
         """Check if the region intersects another."""
@@ -323,6 +328,10 @@ class Region:
             if other.start is None or other.stop is None:
                 return other.intersects(self)
             return not (self.stop < other.start or self.start > other.stop)
+        return self._intersects_open(other)
+
+    def _intersects_open(self, other: Region) -> bool:
+        """Check if a region with a missing bound intersects another."""
         if self.stop is not None:
             return other.start is None or self.stop >= other.start
 
@@ -546,7 +555,7 @@ def intersection(
     s1_c.sort(key=lambda x: (x.chrom, x.start))
     s2_c.sort(key=lambda x: (x.chrom, x.start))
 
-    intersect = []
+    intersect: list[Region] = []
 
     k = 0
 
@@ -562,26 +571,38 @@ def intersection(
             if coalesce(i.start, 1) > coalesce(s1_c[k].stop, MAX_POSITION):
                 k += 1
                 continue
-            if coalesce(i.start, 1) <= coalesce(s1_c[k].start, 1):
-                if coalesce(i.stop, MAX_POSITION) >= \
-                        coalesce(s1_c[k].stop, MAX_POSITION):
-                    intersect.append(s1_c[k])
-                    k += 1
-                    continue
-                new_i = Region(i.chrom, s1_c[k].start, i.stop)
-                intersect.append(new_i)
+            k, done = _intersect_overlapping(i, s1_c[k], k, intersect)
+            if done:
                 break
-            if coalesce(i.start, 1) > coalesce(s1_c[k].start, 1):
-                if coalesce(i.stop, MAX_POSITION) <= \
-                        coalesce(s1_c[k].stop, MAX_POSITION):
-                    intersect.append(i)
-                    break
-                new_i = Region(i.chrom, i.start, s1_c[k].stop)
-                intersect.append(new_i)
-                k += 1
-                continue
 
     return intersect
+
+
+def _intersect_overlapping(
+    i: Region, s1_region: Region, k: int, intersect: list[Region],
+) -> tuple[int, bool]:
+    """Append the overlap of two overlapping regions to ``intersect``.
+
+    ``s1_region`` is the region ``k`` of the first list. Return the next
+    ``k`` and whether the scan of the first list for ``i`` is done.
+    """
+    if coalesce(i.start, 1) <= coalesce(s1_region.start, 1):
+        if coalesce(i.stop, MAX_POSITION) >= \
+                coalesce(s1_region.stop, MAX_POSITION):
+            intersect.append(s1_region)
+            return k + 1, False
+        new_i = Region(i.chrom, s1_region.start, i.stop)
+        intersect.append(new_i)
+        return k, True
+    if coalesce(i.start, 1) > coalesce(s1_region.start, 1):
+        if coalesce(i.stop, MAX_POSITION) <= \
+                coalesce(s1_region.stop, MAX_POSITION):
+            intersect.append(i)
+            return k, True
+        new_i = Region(i.chrom, i.start, s1_region.stop)
+        intersect.append(new_i)
+        return k + 1, False
+    return k, False
 
 
 def union(*r: list[Region]) -> list[Region]:

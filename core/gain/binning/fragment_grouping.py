@@ -465,25 +465,8 @@ class _Aggregate:
         :data:`COVERAGE_PROFILE` mode and ``None`` otherwise.  What one
         fragment adds is ``value``'s, and refused here.
         """
-        if isinstance(config, dict):
-            for key, value_key in MOVED_TO_VALUE.items():
-                if key in config:
-                    raise RunDefinitionError(
-                        f"{label}: {key} is not an aggregate key; what one "
-                        f"fragment adds is the entry's value key: give "
-                        f"value: {{{value_key}: {config[key]}}}")
-        check_keys(label, config, AGGREGATE_KEYS)
-        mode = config.get("mode", FRAGMENT_START)
-        if mode not in MODES:
-            raise RunDefinitionError(
-                f"{label}: mode {mode!r} is not supported; use one of "
-                f"{', '.join(MODES)}")
-        aggregator = _require_text(
-            label, "aggregator", config.get("aggregator", "sum"))
-        if aggregator not in EMPTY_BIN_VALUES:
-            raise RunDefinitionError(
-                f"{label}: aggregator {aggregator!r} does not produce a "
-                f"number; use one of {', '.join(sorted(EMPTY_BIN_VALUES))}")
+        _refuse_moved_to_value(label, config)
+        mode, aggregator = _aggregate_mode_and_aggregator(label, config)
         if mode == FRAGMENT_START:
             if "uncovered_value" in config:
                 raise RunDefinitionError(
@@ -513,6 +496,36 @@ class _Aggregate:
     def default(cls) -> _Aggregate:
         """The aggregate of an entry that states none: the sum."""
         return cls(mode=FRAGMENT_START, aggregator="sum")
+
+
+def _refuse_moved_to_value(label: str, config: Any) -> None:
+    """Refuse an ``aggregate`` key that belongs in the entry's ``value``."""
+    if isinstance(config, dict):
+        for key, value_key in MOVED_TO_VALUE.items():
+            if key in config:
+                raise RunDefinitionError(
+                    f"{label}: {key} is not an aggregate key; what one "
+                    f"fragment adds is the entry's value key: give "
+                    f"value: {{{value_key}: {config[key]}}}")
+
+
+def _aggregate_mode_and_aggregator(
+    label: str, config: Any,
+) -> tuple[str, str]:
+    """Check the ``aggregate`` keys; return its mode and its aggregator."""
+    check_keys(label, config, AGGREGATE_KEYS)
+    mode = config.get("mode", FRAGMENT_START)
+    if mode not in MODES:
+        raise RunDefinitionError(
+            f"{label}: mode {mode!r} is not supported; use one of "
+            f"{', '.join(MODES)}")
+    aggregator = _require_text(
+        label, "aggregator", config.get("aggregator", "sum"))
+    if aggregator not in EMPTY_BIN_VALUES:
+        raise RunDefinitionError(
+            f"{label}: aggregator {aggregator!r} does not produce a "
+            f"number; use one of {', '.join(sorted(EMPTY_BIN_VALUES))}")
+    return mode, aggregator
 
 
 def _uncovered_value(label: str, uncovered: Any) -> float | None:
@@ -785,6 +798,30 @@ def _resolve_grouping(
     same one.
     """
     meta_label = f"{label}.meta"
+    table, resource_ids = _pooled_meta_table(meta_label, meta, resources)
+    grouping = CellGrouping(table=table, filters=meta.filters, **cell_keys)
+    frame = tables.load(table, resource_ids)
+    _refuse_missing_columns(meta_label, grouping, frame, resource_ids)
+    prepared = grouping.prepare_filters(frame)
+    groups_of: dict[str, set[str]] = {}
+    for resource in resources:
+        _score_type(label, resource, grouping.cell_score_id)
+        _refuse_bad_filter_labels(meta_label, grouping, resource)
+        try:
+            mapping = grouping.groups_of(frame, resource, prepared)
+        except DuplicateBarcodeError as err:
+            raise RunDefinitionError(
+                f"{meta_label}: in the cell metadata table {table.name!r}, "
+                f"the rows of resource {resource.resource_id!r}: "
+                f"{err}") from err
+        groups_of[resource.resource_id] = set(mapping.values())
+    return grouping, groups_of
+
+
+def _pooled_meta_table(
+    meta_label: str, meta: _MetaSpec, resources: list[GenomicResource],
+) -> tuple[MetaTable, list[str]]:
+    """The one cell metadata table of the pooled resources, and their ids."""
     named: dict[MetaTable, list[str]] = defaultdict(list)
     for resource in resources:
         named[meta.table_of(meta_label, resource)].append(
@@ -799,46 +836,46 @@ def _resolve_grouping(
             f"give pool: false, one entry per study, or an explicit "
             f"shared meta: {{resource_id: ...}}")
     ((table, resource_ids),) = named.items()
-    grouping = CellGrouping(table=table, filters=meta.filters, **cell_keys)
-    frame = tables.load(table, resource_ids)
+    return table, resource_ids
+
+
+def _refuse_missing_columns(
+    meta_label: str, grouping: CellGrouping, frame: pd.DataFrame,
+    resource_ids: list[str],
+) -> None:
+    """Refuse a cell metadata table without a column the grouping reads."""
     columns = [
         grouping.cell_meta_column, grouping.group_meta_column,
         *(conjunct.column for conjunct in grouping.filters)]
     for column in columns:
         if column not in frame.columns:
             raise RunDefinitionError(
-                f"{meta_label}: the cell metadata table {table.name!r} of "
+                f"{meta_label}: the cell metadata table "
+                f"{grouping.table.name!r} of "
                 f"resource(s) {_quoted(resource_ids)} has no column "
                 f"{column!r}; its columns are "
                 f"{[str(c) for c in frame.columns]}")
-    prepared = grouping.prepare_filters(frame)
-    groups_of: dict[str, set[str]] = {}
-    for resource in resources:
-        _score_type(label, resource, grouping.cell_score_id)
-        for conjunct in grouping.filters:
-            if conjunct.label is None:
-                continue
-            value = resource.get_labels().get(conjunct.label)
-            if isinstance(value, list):
-                raise RunDefinitionError(
-                    f"{meta_label}.filter: resource "
-                    f"{resource.resource_id!r} label {conjunct.label!r} "
-                    f"is a list, {value!r}; a filter compares a column "
-                    f"to one value")
-            if conjunct.operand(resource) is None:
-                raise RunDefinitionError(
-                    f"{meta_label}.filter: resource "
-                    f"{resource.resource_id!r} has no label "
-                    f"{conjunct.label!r} to filter {conjunct.column!r} by")
-        try:
-            mapping = grouping.groups_of(frame, resource, prepared)
-        except DuplicateBarcodeError as err:
+
+
+def _refuse_bad_filter_labels(
+    meta_label: str, grouping: CellGrouping, resource: GenomicResource,
+) -> None:
+    """Refuse a resource whose label a filter compares by is unusable."""
+    for conjunct in grouping.filters:
+        if conjunct.label is None:
+            continue
+        value = resource.get_labels().get(conjunct.label)
+        if isinstance(value, list):
             raise RunDefinitionError(
-                f"{meta_label}: in the cell metadata table {table.name!r}, "
-                f"the rows of resource {resource.resource_id!r}: "
-                f"{err}") from err
-        groups_of[resource.resource_id] = set(mapping.values())
-    return grouping, groups_of
+                f"{meta_label}.filter: resource "
+                f"{resource.resource_id!r} label {conjunct.label!r} "
+                f"is a list, {value!r}; a filter compares a column "
+                f"to one value")
+        if conjunct.operand(resource) is None:
+            raise RunDefinitionError(
+                f"{meta_label}.filter: resource "
+                f"{resource.resource_id!r} has no label "
+                f"{conjunct.label!r} to filter {conjunct.column!r} by")
 
 
 def _stored_histogram_type(

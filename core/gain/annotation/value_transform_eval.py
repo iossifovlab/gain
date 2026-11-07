@@ -321,6 +321,20 @@ def _bound_call(node: ast.Call) -> _Bound:
     args = [_bound(arg) for arg in node.args]
     first = args[0] if args else _Bound(0, 0, 0, may_num=True)
 
+    scalar = _bound_scalar_call(name, first)
+    if scalar is not None:
+        return scalar
+    if name == "str":
+        return _bound_str(first)
+    if name in ("min", "max"):
+        return _combine(args) if args else _scalar()
+
+    # Unreachable: the validator allows no other call target.
+    return _UNBOUNDED
+
+
+def _bound_scalar_call(name: str, first: _Bound) -> _Bound | None:
+    """Bound a call that returns a scalar, or ``None`` for other names."""
     if name == "len":
         # A scalar; the argument's own size is still checked by the walk.
         return _scalar(first.str_len)
@@ -334,13 +348,7 @@ def _bound_call(node: ast.Call) -> _Bound:
         # magnitude unbounded; harmless alone, and it only over-rejects a
         # literal repeated by such a count (``seq * int(...)``).
         return _scalar(math.inf)
-    if name == "str":
-        return _bound_str(first)
-    if name in ("min", "max"):
-        return _combine(args) if args else _scalar()
-
-    # Unreachable: the validator allows no other call target.
-    return _UNBOUNDED
+    return None
 
 
 def _bound_str(first: _Bound) -> _Bound:

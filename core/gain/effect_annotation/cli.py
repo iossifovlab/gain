@@ -3,7 +3,7 @@ import contextlib
 import gzip
 import sys
 from collections.abc import Iterator
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from gain import logging
 from gain.effect_annotation.annotator import EffectAnnotator
@@ -31,6 +31,9 @@ from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
 from gain.utils.verbosity_configuration import VerbosityConfiguration
+
+if TYPE_CHECKING:
+    from pysam import VariantHeader
 
 logger = logging.getLogger(__name__)
 
@@ -385,6 +388,28 @@ def cli_columns() -> None:
             )
 
 
+def _add_effect_header(
+    header: "VariantHeader",
+    annotation_attributes: AnnotationAttributes,
+) -> None:
+    header.add_meta(
+        "variant_effect_annotation", "GPF variant effects annotation.",
+    )
+    header.add_meta(
+        "variant_effect_annotation_command", f'"{" ".join(sys.argv)}"',
+    )
+    source_attribute_description = {
+        "worst_effect": "The worst effect.",
+        "gene_effects": "Gene effects.",
+        "effect_details": "Detailed effects.",
+    }
+    for out_a, src_a in zip(
+            annotation_attributes.get_out_attributes(),
+            annotation_attributes.get_source_attributes(), strict=True):
+        header.info.add(out_a, "A", "String",
+                        source_attribute_description[src_a])
+
+
 def cli_vcf() -> None:
     """CLI interface for annotating variant effects in a VCF file."""
     # pylint: disable=C0415
@@ -406,22 +431,7 @@ def cli_vcf() -> None:
 
     # handling the header
     header = infile.header
-    header.add_meta(
-        "variant_effect_annotation", "GPF variant effects annotation.",
-    )
-    header.add_meta(
-        "variant_effect_annotation_command", f'"{" ".join(sys.argv)}"',
-    )
-    source_attribute_description = {
-        "worst_effect": "The worst effect.",
-        "gene_effects": "Gene effects.",
-        "effect_details": "Detailed effects.",
-    }
-    for out_a, src_a in zip(
-            annotation_attributes.get_out_attributes(),
-            annotation_attributes.get_source_attributes(), strict=True):
-        header.info.add(out_a, "A", "String",
-                        source_attribute_description[src_a])
+    _add_effect_header(header, annotation_attributes)
 
     print(str(header), file=outfile, end="")
 

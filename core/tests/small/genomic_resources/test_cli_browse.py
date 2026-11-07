@@ -154,3 +154,42 @@ def test_grr_browse_version_report(
 
     out, _err = capsys.readouterr()
     assert out.startswith("GAIn version: ")
+
+
+def test_cli_browse_summary_prints_summary_under_its_resource(
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """``--summary`` indents a summary below its row; no summary, no line."""
+    repo_path = tmp_path / "repo"
+    setup_directories(repo_path, {
+        "described": {
+            GR_CONF_FILE_NAME: textwrap.dedent("""
+                type: basic
+                meta:
+                  summary: A resource with a summary
+            """),
+        },
+        "plain": {
+            GR_CONF_FILE_NAME: "type: basic\n",
+        },
+    })
+    definition = tmp_path / ".grr_definition.yaml"
+    definition.write_text(textwrap.dedent(f"""
+        id: "test_grr"
+        type: "directory"
+        directory: "{repo_path!s}"
+    """))
+
+    cli_browse(["--grr", str(definition), "--summary"])
+    out, err = capsys.readouterr()
+
+    assert err == ""
+    lines = out.splitlines()
+    described = next(
+        i for i, line in enumerate(lines)
+        if line.endswith(" test_grr described"))
+    plain = next(
+        i for i, line in enumerate(lines) if line.endswith(" test_grr plain"))
+    assert lines[described + 1] == "  A resource with a summary"
+    assert not any(line.startswith(" ") for line in lines[plain + 1:])

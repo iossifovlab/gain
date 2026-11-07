@@ -84,24 +84,8 @@ def build_chrom_mapping(
     filename = chrom_mapping_config.get("filename")
 
     if filename is not None:
-        assert chrom_mapping_config.get("add_prefix") is None
-        assert chrom_mapping_config.get("del_prefix") is None
-        assert chrom_mapping_config.get("mapping") is None
-
-        if resource is None:
-            raise ValueError(
-                "Resource must be provided when filename is used")
-
-        mapping = {}
-        with resource.open_raw_file(filename) as f:
-            for line in f:
-                original, mapped = line.strip().split("\t")[:2]
-                mapping[original] = mapped
-
-        def map_chromosome(chrom: str) -> str | None:
-            return mapping.get(chrom)
-
-        return map_chromosome
+        return _build_chrom_mapping_from_file(
+            resource, chrom_mapping_config, filename)
 
     add_prefix = chrom_mapping_config.get("add_prefix")
     if add_prefix:
@@ -123,7 +107,7 @@ def build_chrom_mapping(
             return chrom
         return del_prefix_func
 
-    mapping = chrom_mapping_config.get("mapping")
+    mapping: dict[str, str] | None = chrom_mapping_config.get("mapping")
     if mapping:
         def chrom_mapping(chrom: str) -> str | None:
             return mapping.get(chrom)
@@ -133,3 +117,29 @@ def build_chrom_mapping(
     raise ValueError(
         f"Invalid chrom_mapping configuration: "
         f"{resource}; {chrom_mapping_config}")
+
+
+def _build_chrom_mapping_from_file(
+    resource: GenomicResource | None,
+    chrom_mapping_config: dict[str, Any],
+    filename: str,
+) -> Callable[[str], str | None]:
+    """Build the chromosome mapping function of a mapping file."""
+    assert chrom_mapping_config.get("add_prefix") is None
+    assert chrom_mapping_config.get("del_prefix") is None
+    assert chrom_mapping_config.get("mapping") is None
+
+    if resource is None:
+        raise ValueError(
+            "Resource must be provided when filename is used")
+
+    mapping = {}
+    with resource.open_raw_file(filename) as f:
+        for line in f:
+            original, mapped = line.strip().split("\t")[:2]
+            mapping[original] = mapped
+
+    def map_chromosome(chrom: str) -> str | None:
+        return mapping.get(chrom)
+
+    return map_chromosome

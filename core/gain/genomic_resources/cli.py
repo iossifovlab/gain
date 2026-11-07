@@ -1492,9 +1492,39 @@ def _build_manage_argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _resolve_resources(
+    command: str,
+    proto: ReadWriteRepositoryProtocol,
+    repo_url: str,
+    args: argparse.Namespace,
+) -> Sequence[GenomicResource]:
+    """Find the resources that ``command`` works on, or exit."""
+    resources: Sequence[GenomicResource]
+
+    if command in _REPO_COMMANDS:
+        resources = list(proto.get_all_resources())
+        if not resources:
+            # Noted, not acted on: an empty repository is the n=0 case of
+            # the normal path, and the command still publishes the
+            # globals it always publishes -- the index OF that emptiness
+            # (gain#782).
+            logger.info("repository <%s> has no resources", repo_url)
+    elif command in _RESOURCE_COMMANDS:
+        resources = _find_resources(proto, repo_url, resource=args.resource)
+        if not resources:
+            logger.error("resource not found...")
+            sys.exit(1)
+    else:
+        logger.error(
+            "Unknown command %s. The known commands are index, "
+            "list and histogram", command)
+        sys.exit(1)
+
+    return resources
+
+
 def cli_manage(cli_args: list[str] | None = None) -> None:
     """Provide CLI for repository management."""
-    # pylint: disable=too-many-branches,too-many-statements
     if cli_args is None:
         cli_args = sys.argv[1:]
     parser = _build_manage_argument_parser()
@@ -1527,26 +1557,7 @@ def cli_manage(cli_args: list[str] | None = None) -> None:
             f"resource management works with RW protocols; "
             f"{proto.proto_id} ({proto.scheme}) is read only")
 
-    resources: Sequence[GenomicResource]
-
-    if command in _REPO_COMMANDS:
-        resources = list(proto.get_all_resources())
-        if not resources:
-            # Noted, not acted on: an empty repository is the n=0 case of
-            # the normal path, and the command still publishes the
-            # globals it always publishes -- the index OF that emptiness
-            # (gain#782).
-            logger.info("repository <%s> has no resources", repo_url)
-    elif command in _RESOURCE_COMMANDS:
-        resources = _find_resources(proto, repo_url, resource=args.resource)
-        if not resources:
-            logger.error("resource not found...")
-            sys.exit(1)
-    else:
-        logger.error(
-            "Unknown command %s. The known commands are index, "
-            "list and histogram", command)
-        sys.exit(1)
+    resources = _resolve_resources(command, proto, repo_url, args)
 
     _exit_with(
         _run_management_command(repo, proto, resources, repo_url, **vars(args)),
@@ -1571,65 +1582,9 @@ def _run_management_command(
     """
     command = cast(str, kwargs["command"])
 
-    def manifest_options() -> dict[str, bool]:
-        return {
-            "dry_run": kwargs["dry_run"],
-            "force": kwargs["force"],
-            "use_dvc": kwargs["use_dvc"],
-        }
-
-    def stats_options() -> dict[str, Any]:
-        return {
-            **manifest_options(),
-            "region_size": kwargs["region_size"],
-            "task_graph_args": {
-                key: value for key, value in kwargs.items()
-                if key in _task_graph_options()
-            },
-        }
-
     try:
-        if command == "repo-index":
-            # Ahead of the dvc-directory refusal: that guard protects
-            # the writes a repair-style command makes inside resource
-            # directories, and repo-index makes none. A dvc-directory
-            # resource is published from its committed manifest like
-            # any other, or skipped-and-reported if it has none (#373).
-            return _run_repo_index_command(proto)
-        # Before anything is written: a resource GAIn cannot certify fails
-        # the command here, where failing it costs nothing, rather than
-        # part-way through a repository it has already started rewriting
-        # (#284).
-        refuse_dvc_directory_outputs(proto, resources)
-        # Dispatched by FULL command name, never by suffix: the repo- and
-        # resource-scoped variants of one verb differ in whether the
-        # repository-global artifacts are republished at the end, so a
-        # suffix match would silently hand one scope the other's contract.
-        if command == "repo-manifest":
-            return _run_repo_manifest_command(
-                proto, resources, **manifest_options())
-        if command == "resource-manifest":
-            return _run_resource_manifest_command(
-                proto, resources, **manifest_options())
-        if command == "repo-stats":
-            return _run_repo_stats_command(
-                repo, proto, resources, **stats_options())
-        if command == "resource-stats":
-            return _run_resource_stats_command(
-                repo, proto, resources, **stats_options())
-        # Repair is info plus nothing: the info commands already rebuild
-        # manifests and statistics on the way to the pages.
-        if command in ("repo-info", "repo-repair"):
-            return _run_repo_info_command(
-                repo, proto, resources, **stats_options())
-        if command in ("resource-info", "resource-repair"):
-            return _run_resource_info_command(
-                repo, proto, resources, **stats_options())
-        # Never fall through: repair is destructive, and a command name
-        # added to _REPO_COMMANDS/_RESOURCE_COMMANDS but not handled here
-        # would otherwise silently run a full repair.
-        logger.error("Unknown command %s.", command)
-        sys.exit(1)
+        return _dispatch_management_command(
+            command, repo, proto, resources, kwargs)
     except UnsupportedDvcDirectoryOutputError as ex:
         # A resource GAIn cannot verify: refuse it outright, loudly.
         logger.error("%s", ex)  # ruff: ignore[error-instead-of-exception]
@@ -1642,6 +1597,79 @@ def _run_management_command(
         logger.debug("repository %s is misconfigured", repo_url, exc_info=True)
         logger.warning("inconsistent GRR <%s> state", repo_url)
         sys.exit(1)
+
+
+def _manifest_options(kwargs: Mapping[str, Any]) -> dict[str, bool]:
+    """Pick the manifest options of a management command."""
+    return {
+        "dry_run": kwargs["dry_run"],
+        "force": kwargs["force"],
+        "use_dvc": kwargs["use_dvc"],
+    }
+
+
+def _stats_options(kwargs: Mapping[str, Any]) -> dict[str, Any]:
+    """Pick the statistics options of a management command."""
+    task_graph_options = _task_graph_options()
+    return {
+        **_manifest_options(kwargs),
+        "region_size": kwargs["region_size"],
+        "task_graph_args": {
+            key: value for key, value in kwargs.items()
+            if key in task_graph_options
+        },
+    }
+
+
+def _dispatch_management_command(
+    command: str,
+    repo: GenomicResourceRepo,
+    proto: ReadWriteRepositoryProtocol,
+    resources: Sequence[GenomicResource],
+    kwargs: Mapping[str, Any],
+) -> CommandResult:
+    """Run the command function that ``command`` names, or exit."""
+    if command == "repo-index":
+        # Ahead of the dvc-directory refusal: that guard protects
+        # the writes a repair-style command makes inside resource
+        # directories, and repo-index makes none. A dvc-directory
+        # resource is published from its committed manifest like
+        # any other, or skipped-and-reported if it has none (#373).
+        return _run_repo_index_command(proto)
+    # Before anything is written: a resource GAIn cannot certify fails
+    # the command here, where failing it costs nothing, rather than
+    # part-way through a repository it has already started rewriting
+    # (#284).
+    refuse_dvc_directory_outputs(proto, resources)
+    # Dispatched by FULL command name, never by suffix: the repo- and
+    # resource-scoped variants of one verb differ in whether the
+    # repository-global artifacts are republished at the end, so a
+    # suffix match would silently hand one scope the other's contract.
+    if command == "repo-manifest":
+        return _run_repo_manifest_command(
+            proto, resources, **_manifest_options(kwargs))
+    if command == "resource-manifest":
+        return _run_resource_manifest_command(
+            proto, resources, **_manifest_options(kwargs))
+    if command == "repo-stats":
+        return _run_repo_stats_command(
+            repo, proto, resources, **_stats_options(kwargs))
+    if command == "resource-stats":
+        return _run_resource_stats_command(
+            repo, proto, resources, **_stats_options(kwargs))
+    # Repair is info plus nothing: the info commands already rebuild
+    # manifests and statistics on the way to the pages.
+    if command in ("repo-info", "repo-repair"):
+        return _run_repo_info_command(
+            repo, proto, resources, **_stats_options(kwargs))
+    if command in ("resource-info", "resource-repair"):
+        return _run_resource_info_command(
+            repo, proto, resources, **_stats_options(kwargs))
+    # Never fall through: repair is destructive, and a command name
+    # added to _REPO_COMMANDS/_RESOURCE_COMMANDS but not handled here
+    # would otherwise silently run a full repair.
+    logger.error("Unknown command %s.", command)
+    sys.exit(1)
 
 
 def _exit_with(result: CommandResult, repo_url: str) -> None:

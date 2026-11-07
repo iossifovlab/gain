@@ -5,6 +5,7 @@ The gene models have three genes. ``G1`` has two overlapping transcripts
 on ``chr1``, ``G2`` has one transcript on ``chr2``, and ``G3`` has one
 transcript near the start of ``chr1``.
 """
+import logging
 import pathlib
 
 import pytest
@@ -19,6 +20,8 @@ from gain.genomic_resources.testing.gene_models_builder import a_gene_models
 from gain.utils.regions import Region
 
 pytestmark = pytest.mark.usefixtures("clean_gene_models_cache")
+
+_LOGGER = "gain.genomic_resources.gene_models.gene_models"
 
 
 @pytest.fixture(name="gene_models")
@@ -166,3 +169,36 @@ def test_returns_an_empty_list_when_no_gene_is_found_and_regions_are_given(
         gene_models, ["NOPE"], [Region("chr1", 1, 1000)])
 
     assert result == []
+
+
+def test_warns_for_a_gene_that_is_not_found(
+    gene_models: GeneModels,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger=_LOGGER):
+        create_regions_from_genes(gene_models, ["NOPE", "G2"], None)
+
+    assert [
+        (r.levelno, r.getMessage()) for r in caplog.records
+        if r.name == _LOGGER
+    ] == [(logging.WARNING, "gene model for NOPE not found")]
+
+
+def test_logs_the_given_regions_and_the_collapsed_result(
+    gene_models: GeneModels,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    regions = [Region("chr1", 250, 500), Region("chr1", 120, 260)]
+
+    with caplog.at_level(logging.INFO, logger=_LOGGER):
+        result = create_regions_from_genes(
+            gene_models, ["G1"], regions, gene_regions_heuristic_extend=0)
+
+    assert [
+        (r.levelno, r.getMessage()) for r in caplog.records
+        if r.name == _LOGGER
+    ] == [(
+        logging.INFO,
+        f"original regions: {regions}; result: {result}",
+    )]
+    assert result == [Region("chr1", 120, 301)]
