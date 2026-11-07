@@ -37,8 +37,11 @@ one.
 """
 
 import pathlib
+import subprocess
+import sys
 import textwrap
-import tracemalloc
+import threading
+import time
 
 import pytest
 from gain.annotation.annotatable import Region
@@ -218,23 +221,20 @@ def _repo_of_overlapping_fragments(
     )
 
 
-def _peak_bytes_annotating(
-    repo: GenomicResourceRepo, region: Region,
-) -> int:
-    """Peak bytes allocated by ONE annotate call over ``region``.
+_MEASURE_PEAK = textwrap.dedent("""
+    import pathlib
+    import sys
+    import tracemalloc
 
-    The pipeline is loaded, opened and annotated once before measuring, so
-    what is measured is a steady-state annotate rather than the one-off
-    allocation of the pipeline, the score and the table behind it.  That
-    warm-up is the whole of the setup: ``tracemalloc`` traces only blocks
-    allocated after ``start()``, so collecting garbage first would change
-    nothing about the peak of the traced set.
-    """
-    with _pipeline(repo, """
-        - source: v
-          name: as_max
-          aggregator: max
-    """) as pipeline:
+    from gain.annotation.annotatable import Region
+    from gain.annotation.annotation_factory import load_pipeline_from_yaml
+    from gain.genomic_resources.testing import (
+        build_filesystem_test_repository,
+    )
+
+    repo = build_filesystem_test_repository(pathlib.Path(sys.argv[1]))
+    region = Region(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]))
+    with load_pipeline_from_yaml(sys.argv[5], repo) as pipeline:
         pipeline.annotate(region)
 
         tracemalloc.start()
@@ -243,7 +243,60 @@ def _peak_bytes_annotating(
             peak = tracemalloc.get_traced_memory()[1]
         finally:
             tracemalloc.stop()
-    return peak
+    print(peak)
+""")
+"""The script that ``_peak_bytes_annotating`` runs in a new interpreter."""
+
+
+def _peak_bytes_annotating(root: pathlib.Path, region: Region) -> int:
+    """Peak bytes allocated by ONE annotate call over ``region``.
+
+    ``root`` holds the GRR of ``_repo_of_overlapping_fragments``.  The
+    pipeline is loaded, opened and annotated once before measuring, so
+    what is measured is a steady-state annotate rather than the one-off
+    allocation of the pipeline, the score and the table behind it.  That
+    warm-up is the whole of the setup: ``tracemalloc`` traces only blocks
+    allocated after ``start()``, so collecting garbage first would change
+    nothing about the peak of the traced set.
+
+    ``tracemalloc`` traces every thread of a process, and earlier tests
+    leave threads that allocate.  The measurement therefore runs in a new
+    interpreter, which has none of those threads.
+    """
+    config = textwrap.dedent("""
+        - fragment_score:
+            resource_id: fragments
+            attributes:
+            - source: v
+              name: as_max
+              aggregator: max
+    """)
+    result = subprocess.run(
+        [sys.executable, "-c", _MEASURE_PEAK, str(root),
+         region.chrom, str(region.pos), str(region.pos_end), config],
+        capture_output=True, text=True, check=False)
+    assert result.returncode == 0, (
+        f"the measuring interpreter exited {result.returncode}:\n"
+        f"{result.stderr}")
+    return int(result.stdout.strip().splitlines()[-1])
+
+
+def test_a_failing_peak_measurement_reports_the_traceback_of_the_child(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The measuring interpreter's traceback reaches the test report.
+
+    A GRR without the ``fragments`` resource makes the child fail while
+    loading the pipeline.  Without its stderr the report would say only
+    that a subprocess exited non-zero.
+    """
+    (tmp_path / "empty").mkdir()
+
+    with pytest.raises(AssertionError) as failure:
+        _peak_bytes_annotating(
+            tmp_path / "empty", Region("chr1", 1, 10 ** 6))
+
+    assert "Traceback (most recent call last)" in str(failure.value)
 
 
 def test_peak_memory_does_not_grow_with_the_number_of_fragments(
@@ -270,10 +323,43 @@ def test_peak_memory_does_not_grow_with_the_number_of_fragments(
     7.5x the old path actually cost.
     """
     region = Region("chr1", 1, 10 ** 6)
-    small = _peak_bytes_annotating(
-        _repo_of_overlapping_fragments(tmp_path / "small", 200), region)
-    large = _peak_bytes_annotating(
-        _repo_of_overlapping_fragments(tmp_path / "large", 2000), region)
+    _repo_of_overlapping_fragments(tmp_path / "small", 200)
+    _repo_of_overlapping_fragments(tmp_path / "large", 2000)
+    small = _peak_bytes_annotating(tmp_path / "small", region)
+    large = _peak_bytes_annotating(tmp_path / "large", region)
 
     assert large < 3 * small, (
         f"peak grew from {small} to {large} bytes for 10x the fragments")
+
+
+def test_peak_measurement_ignores_allocations_of_other_threads(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A thread left running by an earlier test does not count as peak.
+
+    ``tracemalloc`` traces every thread.  The ``distributed`` clusters of
+    ``tests/small/task_graph`` leave ``Profile`` threads that wake every
+    10 ms and allocate, so the peak of the test above grew in a run of
+    the whole suite.  The thread here allocates 1 MB blocks without a
+    pause, far above what one annotate costs, so every measuring window
+    of an in-process measurement would overlap one of them.
+    """
+    _repo_of_overlapping_fragments(tmp_path, 2000)
+    region = Region("chr1", 1, 10 ** 6)
+    stop = threading.Event()
+
+    def allocate() -> None:
+        while not stop.is_set():
+            block = bytearray(10 ** 6)
+            time.sleep(0)
+            del block
+
+    noise = threading.Thread(target=allocate, daemon=True)
+    noise.start()
+    try:
+        peak = _peak_bytes_annotating(tmp_path, region)
+    finally:
+        stop.set()
+        noise.join()
+
+    assert peak < 10 ** 6

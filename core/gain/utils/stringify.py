@@ -31,14 +31,21 @@ def stringify(value: Any, *, vcf: bool = False) -> str:
         return "yes" if value else "no"
     if vcf is True and value == "":
         return "."
+    if isinstance(value, (list, tuple, dict)):
+        return _stringify_container(value, vcf=vcf)
+    return str(value)
+
+
+def _stringify_container(
+    value: list | tuple | dict, *, vcf: bool,
+) -> str:
+    """Format a list, a tuple or a dict for :func:`stringify`."""
     if isinstance(value, (list, tuple)):
         s = str(list(value))
         return urllib.parse.quote(s, safe="") if vcf else s
-    if isinstance(value, dict):
-        if vcf:
-            return urllib.parse.quote(str(value), safe="")
-        return ";".join(
-            f"{stringify(k, vcf=vcf)}:{stringify(v, vcf=vcf)}"
-            for k, v in value.items()
-        )
-    return str(value)
+    if vcf:
+        return urllib.parse.quote(str(value), safe="")
+    return ";".join(
+        f"{stringify(k, vcf=vcf)}:{stringify(v, vcf=vcf)}"
+        for k, v in value.items()
+    )

@@ -590,35 +590,56 @@ def union(*r: list[Region]) -> list[Region]:
     return collapse(r_sum)
 
 
+def _precedes(
+    reg_a: Region, regions_b: list[Region], k: int,
+) -> bool:
+    """Check if ``reg_a`` comes before the region ``k`` of ``regions_b``.
+
+    It also holds when ``regions_b`` has no region ``k``.
+    """
+    if k >= len(regions_b):
+        return True
+    if reg_a.chrom < regions_b[k].chrom:
+        return True
+    return coalesce(reg_a.stop, MAX_POSITION) < \
+        coalesce(regions_b[k].start, 1)
+
+
+def _subtract_contained(
+    reg_a: Region, regions_b: list[Region], k: int, result: list[Region],
+) -> tuple[int, int]:
+    """Cut the regions of ``regions_b`` that end inside ``reg_a``.
+
+    Append each piece of ``reg_a`` before such a region to ``result``.
+    Return the index of the next region of ``regions_b`` and the first
+    position of ``reg_a`` that is still left.
+    """
+    prev = coalesce(reg_a.start, 1)
+    while k < len(regions_b) \
+            and coalesce(regions_b[k].stop, MAX_POSITION) <= \
+            coalesce(reg_a.stop, MAX_POSITION) \
+            and regions_b[k].chrom == reg_a.chrom:
+        if prev < coalesce(regions_b[k].start, 1):
+            new_a = Region(
+                reg_a.chrom, prev,
+                coalesce(regions_b[k].start, 1) - 1)
+            result.append(new_a)
+        prev = coalesce(regions_b[k].stop, 1) + 1
+        k += 1
+    return k, prev
+
+
 def _diff(
     regions_a: list[Region], regions_b: list[Region],
 ) -> list[Region]:
-    result = []
+    result: list[Region] = []
     k = 0
 
     for reg_a in regions_a:
-        if k >= len(regions_b):
+        if _precedes(reg_a, regions_b, k):
             result.append(reg_a)
             continue
-        if reg_a.chrom < regions_b[k].chrom:
-            result.append(reg_a)
-            continue
-        if coalesce(reg_a.stop, MAX_POSITION) < \
-                coalesce(regions_b[k].start, 1):
-            result.append(reg_a)
-            continue
-        prev = coalesce(reg_a.start, 1)
-        while k < len(regions_b) \
-                and coalesce(regions_b[k].stop, MAX_POSITION) <= \
-                coalesce(reg_a.stop, MAX_POSITION) \
-                and regions_b[k].chrom == reg_a.chrom:
-            if prev < coalesce(regions_b[k].start, 1):
-                new_a = Region(
-                    reg_a.chrom, prev,
-                    coalesce(regions_b[k].start, 1) - 1)
-                result.append(new_a)
-            prev = coalesce(regions_b[k].stop, 1) + 1
-            k += 1
+        k, prev = _subtract_contained(reg_a, regions_b, k, result)
         if k < len(regions_b) and regions_b[k].chrom != reg_a.chrom:
             continue
         if prev <= coalesce(reg_a.stop, MAX_POSITION):
