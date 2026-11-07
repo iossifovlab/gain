@@ -34,11 +34,10 @@
         <tr class="score-definition">
             <td>{{ score_id }}</td>
             <td>{{ score.value_type }}</td>
-            {% set d_atts = [] %}
-            {% for entry in scores.get_default_annotation_attributes()
-                if (entry.source or entry.name) == score_id %}
-                {% set _ = d_atts.append(entry.name or score_id) %}
-            {% endfor %}
+            {% set d_atts = scores.get_default_annotation_attributes()
+                | selectattr("source", "equalto", score_id)
+                | map(attribute="name", default=score_id)
+                | list %}
             {% if d_atts %}
                 <td>
                     <p>{{ d_atts | join(",") }}</p>

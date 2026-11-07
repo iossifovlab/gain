@@ -2134,6 +2134,9 @@ def plot_histogram(
             plot_module_name, source_code)
         func = getattr(plot_module, plot_function_name)
 
+    # The import is local, as in the `plot` methods: a module-level import
+    # of pyplot would load pyplot and pick a backend on each import of
+    # this module.
     # pylint: disable=import-outside-toplevel
     import matplotlib.pyplot as plt
 
