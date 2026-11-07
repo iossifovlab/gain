@@ -2134,12 +2134,22 @@ def plot_histogram(
             plot_module_name, source_code)
         func = getattr(plot_module, plot_function_name)
 
-    image = rendered_png(lambda outfile: func(
-        outfile,
-        hist,
-        score_id,
-        small_values_desc,
-        large_values_desc,
-    ))
+    # pylint: disable=import-outside-toplevel
+    import matplotlib.pyplot as plt
+
+    # gain does not control the resource code, so it closes each figure
+    # that the plot function leaves open (gain#2202).
+    open_before = set(plt.get_fignums())
+    try:
+        image = rendered_png(lambda outfile: func(
+            outfile,
+            hist,
+            score_id,
+            small_values_desc,
+            large_values_desc,
+        ))
+    finally:
+        for num in set(plt.get_fignums()) - open_before:
+            plt.close(num)
     with res.open_raw_file(image_filename, mode="wb") as imagefile:
         imagefile.write(image)
