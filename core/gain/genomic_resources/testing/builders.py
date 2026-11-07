@@ -811,6 +811,14 @@ class _TableScoreBuilder(ExtraFilesMixin, MetaMixin):
                 f"score(s) {sorted(indexed)} address a column by "
                 f"column_index, which needs an authored header; use "
                 f"with_data instead of with_score_line")
+        row_dicts = [dict(row) for row in self.rows]
+        header = self._synthesize_header(scores, row_dicts)
+        return self._render_rows(header, row_dicts)
+
+    def _synthesize_header(
+        self, scores: tuple[ScoreSpec, ...], row_dicts: list[dict[str, str]],
+    ) -> list[str]:
+        """Lay out the header of the rows of :meth:`with_score_line`."""
         # A name-mapped position column is keyed -- and synthesized -- by
         # its mapped name.
         header_name = {
@@ -819,7 +827,6 @@ class _TableScoreBuilder(ExtraFilesMixin, MetaMixin):
             if address.column_name is not None
         }
         pos_end = header_name.get("pos_end", "pos_end")
-        row_dicts = [dict(row) for row in self.rows]
         uses_pos_end = any(pos_end in rd for rd in row_dicts)
         if uses_pos_end and not all(pos_end in rd for rd in row_dicts):
             raise ResourceValidationError(
@@ -836,7 +843,13 @@ class _TableScoreBuilder(ExtraFilesMixin, MetaMixin):
             if spec.column_name is not None
         )
         self._check_index_mappings_agree(header)
+        return header
 
+    @staticmethod
+    def _render_rows(
+        header: list[str], row_dicts: list[dict[str, str]],
+    ) -> str:
+        """Render ``header`` and the rows as a whitespace data block."""
         lines = ["  ".join(header)]
         header_set = set(header)
         for rd in row_dicts:
@@ -880,30 +893,8 @@ class _TableScoreBuilder(ExtraFilesMixin, MetaMixin):
         self, scores: tuple[ScoreSpec, ...], filename: str, data: str,
     ) -> str:
         header = _parse_header(data)
-        lines = [
-            f"type: {self.resource_type or self.SCORE_TYPE}",
-            "table:",
-            f"    filename: {filename}",
-        ]
-        if self.tabix:
-            lines.append("    format: tabix")
-        if self.index_filename is not None:
-            lines.append(f"    index_filename: {self.index_filename}")
-        if self.header_mode is not None and not self.omit_header_mode:
-            lines.append(f"    header_mode: {self.header_mode}")
-        if self.header_mode == "list":
-            lines.append("    header:")
-            lines.extend(f"    - {column}" for column in header)
-        if self.zero_based:
-            lines.append("    zero_based: true")
-        if self.chrom_mapping is not None:
-            lines.append("    chrom_mapping:")
-            mapping_yaml = yaml.safe_dump(
-                self.chrom_mapping, default_flow_style=False, sort_keys=False)
-            lines.extend(
-                f"        {mapping_line}"
-                for mapping_line in mapping_yaml.rstrip("\n").split("\n")
-            )
+        lines = self._render_config_head(filename, header)
+        lines.extend(self._render_config_tail())
         config = "\n".join(lines) + "\n"
         if self._effective_header_mode() == "none":
             # No header to match a column name against, so the base columns
@@ -919,6 +910,41 @@ class _TableScoreBuilder(ExtraFilesMixin, MetaMixin):
                 {"default_annotation": list(self.default_annotation)},
                 default_flow_style=False, sort_keys=False)
         return config + self.render_meta()
+
+    def _render_config_head(
+        self, filename: str, header: list[str],
+    ) -> list[str]:
+        """Render the config lines from ``type:`` through ``header:``."""
+        lines = [
+            f"type: {self.resource_type or self.SCORE_TYPE}",
+            "table:",
+            f"    filename: {filename}",
+        ]
+        if self.tabix:
+            lines.append("    format: tabix")
+        if self.index_filename is not None:
+            lines.append(f"    index_filename: {self.index_filename}")
+        if self.header_mode is not None and not self.omit_header_mode:
+            lines.append(f"    header_mode: {self.header_mode}")
+        if self.header_mode == "list":
+            lines.append("    header:")
+            lines.extend(f"    - {column}" for column in header)
+        return lines
+
+    def _render_config_tail(self) -> list[str]:
+        """Render the ``zero_based`` and the ``chrom_mapping`` lines."""
+        lines: list[str] = []
+        if self.zero_based:
+            lines.append("    zero_based: true")
+        if self.chrom_mapping is not None:
+            lines.append("    chrom_mapping:")
+            mapping_yaml = yaml.safe_dump(
+                self.chrom_mapping, default_flow_style=False, sort_keys=False)
+            lines.extend(
+                f"        {mapping_line}"
+                for mapping_line in mapping_yaml.rstrip("\n").split("\n")
+            )
+        return lines
 
     def _render_position_columns(self) -> str:
         """Render the explicit position mappings as ``table:`` entries."""

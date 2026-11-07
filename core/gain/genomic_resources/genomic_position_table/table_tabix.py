@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import itertools
+import math
 from collections import Counter
 from collections.abc import Generator, Iterable
 from typing import Any, ClassVar, Literal, cast
@@ -579,6 +580,19 @@ class TabixGenomicPositionTable(GenomicPositionTable):
         returned on -- it says nothing about the ones that follow it, whose
         ``pos_end`` need not be any smaller.
         """
+        upper = pos if pos is not None else math.inf
+        lower = from_pos if from_pos is not None else -math.inf
+        yield from self._gen_from_tabix_between(
+            chrom, upper, lower, buffering=buffering)
+
+    def _gen_from_tabix_between(
+            self, chrom: str, upper: float, lower: float, *,
+            buffering: bool) -> Generator[Record, None, None]:
+        """Read forward from the cursor, yielding records in the bounds.
+
+        The read stops at the first record that begins past ``upper``. A
+        record that ends before ``lower`` is skipped.
+        """
         try:
             assert self.line_iterator is not None
             while True:
@@ -593,9 +607,9 @@ class TabixGenomicPositionTable(GenomicPositionTable):
 
                 if record[CHROM] != chrom:
                     return
-                if pos is not None and record[POS_BEGIN] > pos:
+                if record[POS_BEGIN] > upper:
                     return
-                if from_pos is not None and record[POS_END] < from_pos:
+                if record[POS_END] < lower:
                     continue
 
                 self.stats["yield from tabix"] += 1

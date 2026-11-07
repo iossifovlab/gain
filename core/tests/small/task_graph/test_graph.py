@@ -193,3 +193,27 @@ def test_chain_first_task_gets_a_task_result_in_its_kwarg_named(
     results = dict(SequentialExecutor().execute(graph))
 
     assert results[Task("c")] == ("got", 5)
+
+
+def test_make_task_cuts_a_long_id_to_200_and_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    long_id = "x" * 250
+
+    with caplog.at_level("WARNING", logger="gain.task_graph.graph"):
+        desc = TaskGraph.make_task(long_id, print, args=[])
+
+    assert desc.task.task_id == "x" * 200
+    assert [r.getMessage() for r in caplog.records] == [
+        f"task id is too long 250: {long_id}",
+        "truncating task id to 200 symbols",
+    ]
+
+
+def test_make_task_takes_only_the_task_kwargs_as_deps() -> None:
+    dep = Task("dep")
+
+    desc = TaskGraph.make_task(
+        "t", print, args=[], kwargs={"task": dep, "value": 3})
+
+    assert desc.deps == [dep]

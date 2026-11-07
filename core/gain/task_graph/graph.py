@@ -412,6 +412,23 @@ class TaskGraph:
             The description. Its ``deps`` hold ``deps`` and each `Task`
             of ``args`` and ``kwargs``.
         """
+        task_id = TaskGraph._clip_task_id(task_id)
+        task = Task(task_id)
+
+        kwargs = kwargs if kwargs is not None else {}
+        return TaskDesc(
+            task, func, list(args),
+            kwargs,
+            TaskGraph._gather_make_task_deps(deps, args, kwargs),
+            list(input_files) if input_files is not None else [],
+            list(output_files) if output_files is not None else [],
+            list(intermediate_output_files)
+            if intermediate_output_files is not None else [],
+        )
+
+    @staticmethod
+    def _clip_task_id(task_id: str) -> str:
+        """Cut a task id longer than 200 characters to 200, with a warning."""
         # Coupled to the 200 char threshold in
         # ``gain.task_graph.logging.safe_task_id``: this truncation is what
         # keeps that function's shortening branch unreachable for every id
@@ -422,28 +439,25 @@ class TaskGraph:
             logger.warning("task id is too long %s: %s", len(task_id), task_id)
             logger.warning("truncating task id to 200 symbols")
             task_id = task_id[:200]
+        return task_id
 
-        task = Task(task_id)
-
+    @staticmethod
+    def _gather_make_task_deps(
+        deps: Sequence[Task] | None,
+        args: Sequence[Any],
+        kwargs: dict[str, Any],
+    ) -> list[Task]:
+        """Collect ``deps`` and each `Task` of ``args`` and ``kwargs``."""
         # tasks that use the output of other tasks as input should
         # have those other tasks as dependancies
         task_deps = set(deps) if deps is not None else set()
-        kwargs = kwargs if kwargs is not None else {}
         for arg in args:
             if isinstance(arg, Task):
                 task_deps.add(arg)
         for arg in kwargs.values():
             if isinstance(arg, Task):
                 task_deps.add(arg)
-        return TaskDesc(
-            task, func, list(args),
-            kwargs,
-            list(task_deps),
-            list(input_files) if input_files is not None else [],
-            list(output_files) if output_files is not None else [],
-            list(intermediate_output_files)
-            if intermediate_output_files is not None else [],
-        )
+        return list(task_deps)
 
     def add_task(self, task_desc: TaskDesc) -> Task:
         """Add a task description to the graph.
