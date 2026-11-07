@@ -2,6 +2,7 @@
 import copy
 import logging
 import pathlib
+import re
 import textwrap
 from collections.abc import Iterator
 from typing import Any
@@ -491,114 +492,6 @@ OLD_SHAPE = """\
     """
 
 
-def test_old_key_is_translated_to_the_named_clusters(
-    mocker: pytest_mock.MockerFixture,
-    tmp_path: pathlib.Path,
-    restored_dask_config: None,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    mocked_sge = mocker.patch("dask_jobqueue.SGECluster", autospec=True)
-    mocker.patch("gain.dask.named_cluster.Client", autospec=True)
-    _load_user_config(tmp_path, OLD_SHAPE)
-
-    with caplog.at_level(logging.WARNING, logger="gain.dask.config"):
-        gain.dask.config.translate_legacy_named_cluster()
-    _, cluster_config = setup_client("my_sge")
-
-    assert cluster_config == {
-        "type": "sge",
-        "number_of_workers": 7,
-        "params": {"memory": "3GB", "cores": 2},
-    }
-    assert mocked_sge.call_args.kwargs == {"memory": "3GB", "cores": 2}
-    assert config.get("gain_named_cluster.default") == "my_sge"
-    warnings = [
-        record.getMessage() for record in caplog.records
-        if "dae_named_cluster" in record.getMessage()]
-    assert len(warnings) == 1
-    assert "2026.11.0" in warnings[0]
-
-
-def test_old_key_warning_asks_to_move_the_entries_not_delete_the_file(
-    tmp_path: pathlib.Path,
-    restored_dask_config: None,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    # A live dae_named_cluster comes from a file that the user uncommented
-    # or wrote: dask writes its copy of the bundled file commented out.
-    _load_user_config(tmp_path, OLD_SHAPE)
-
-    with caplog.at_level(logging.WARNING, logger="gain.dask.config"):
-        gain.dask.config.translate_legacy_named_cluster()
-
-    [warning] = [
-        record.getMessage() for record in caplog.records
-        if "dae_named_cluster" in record.getMessage()]
-    assert "generated" not in warning
-    assert "named_cluster.yaml" not in warning
-    assert "gain_named_cluster" in warning
-
-
-def test_old_key_keeps_the_bundled_distributed_values(
-    tmp_path: pathlib.Path,
-    restored_dask_config: None,
-) -> None:
-    _load_user_config(tmp_path, OLD_SHAPE)
-
-    gain.dask.config.translate_legacy_named_cluster()
-
-    assert config.get(
-        "gain_named_cluster.distributed.scheduler.unknown-task-duration",
-        default=None,
-    ) == "10m"
-
-
-def test_old_key_is_translated_once(
-    tmp_path: pathlib.Path,
-    restored_dask_config: None,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    _load_user_config(tmp_path, OLD_SHAPE)
-
-    with caplog.at_level(logging.WARNING, logger="gain.dask.config"):
-        gain.dask.config.translate_legacy_named_cluster()
-        gain.dask.config.translate_legacy_named_cluster()
-
-    assert len([
-        record for record in caplog.records
-        if "dae_named_cluster" in record.getMessage()]) == 1
-    assert config.get("dae_named_cluster", default=None) is None
-
-
-def test_reconfigure_translates_the_old_key(
-    mocker: pytest_mock.MockerFixture,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: pathlib.Path,
-    restored_dask_config: None,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    # reconfigure() runs at the import of gain.dask. Point the dask config
-    # directory at tmp_path, so ensure_file() finds the old user file there
-    # and never writes to the real dask config directory.
-    monkeypatch.setattr(config, "PATH", str(tmp_path))
-    mocker.patch("dask_jobqueue.SGECluster", autospec=True)
-    mocker.patch("gain.dask.named_cluster.Client", autospec=True)
-    _load_user_config(tmp_path, OLD_SHAPE)
-
-    with caplog.at_level(logging.WARNING, logger="gain.dask.config"):
-        gain.dask.config.reconfigure()
-    _, cluster_config = setup_client("my_sge")
-
-    assert cluster_config == {
-        "type": "sge",
-        "number_of_workers": 7,
-        "params": {"memory": "3GB", "cores": 2},
-    }
-    assert len([
-        record for record in caplog.records
-        if "dae_named_cluster" in record.getMessage()]) == 1
-
-
 def _import_user_config(
     monkeypatch: pytest.MonkeyPatch,
     config_dir: pathlib.Path,
@@ -709,71 +602,6 @@ def test_user_number_of_threads_under_the_hyphenated_key_wins(
     assert mocked_slurm.return_value.scale.call_args.kwargs["n"] == 50
 
 
-def test_old_key_value_wins_over_the_bundled_value(
-    mocker: pytest_mock.MockerFixture,
-    tmp_path: pathlib.Path,
-    restored_dask_config: None,
-) -> None:
-    mocked_local = mocker.patch(
-        "dask.distributed.LocalCluster", autospec=True)
-    mocker.patch("gain.dask.named_cluster.Client", autospec=True)
-    _load_user_config(tmp_path, OLD_SHAPE)
-    assert config.get(
-        "gain_named_cluster.clusters.local.params.memory_limit") == "10GB"
-
-    gain.dask.config.translate_legacy_named_cluster()
-    setup_client("local")
-
-    assert mocked_local.call_args.kwargs["memory_limit"] == "1GB"
-
-
-def test_old_key_merges_into_the_hyphenated_new_key(
-    mocker: pytest_mock.MockerFixture,
-    tmp_path: pathlib.Path,
-    restored_dask_config: None,
-) -> None:
-    mocker.patch("dask.distributed.LocalCluster", autospec=True)
-    mocker.patch("gain.dask.named_cluster.Client", autospec=True)
-    (tmp_path / "named_cluster.yaml").write_text(textwrap.dedent("""\
-        gain-named-cluster:
-          clusters:
-            mine:
-              type: local
-        dae_named_cluster:
-          clusters:
-            - name: old
-              type: local
-        """))
-    # The order of an import of gain.dask: dask collects the user files,
-    # then reconfigure() merges the bundled defaults into the spelling
-    # that the user file uses. config.refresh() would respell the key.
-    bundled = yaml.safe_load(
-        (pathlib.Path(gain.dask.config.__file__).parent
-         / "named_cluster.yaml").read_text())
-    collected = config.collect(paths=[str(tmp_path)], env={})
-    config.update_defaults(bundled, config=collected, defaults=[])
-    config.update_defaults(
-        {"distributed": bundled["gain_named_cluster"]["distributed"]},
-        config=collected, defaults=[])
-    config.config.clear()
-    config.config.update(collected)
-
-    gain.dask.config.translate_legacy_named_cluster()
-
-    assert sorted(
-        key for key in config.config
-        if key.replace("-", "_") == "gain_named_cluster") == [
-        "gain-named-cluster"]
-    clusters = config.get("gain_named_cluster.clusters")
-    assert {"mine", "old", "local"} <= set(clusters)
-    assert config.get("gain_named_cluster.default") == "local"
-    assert config.get(
-        "gain_named_cluster.distributed.scheduler.unknown-task-duration",
-    ) == "10m"
-    _, cluster_config = setup_client("old")
-    assert cluster_config == {"type": "local"}
-
-
 def test_list_of_named_clusters_is_refused(
     mocker: pytest_mock.MockerFixture,
     named_cluster_config: dict[str, Any],
@@ -822,37 +650,6 @@ def test_unknown_named_cluster_is_refused_with_the_defined_names(
 
     assert "local, sge_big" in str(excinfo.value)
     assert mocked_client.call_count == 0
-
-
-def test_old_cluster_definition_replaces_the_bundled_one_of_that_name(
-    mocker: pytest_mock.MockerFixture,
-    tmp_path: pathlib.Path,
-    restored_dask_config: None,
-) -> None:
-    mocker.patch("dask_jobqueue.SGECluster", autospec=True)
-    mocker.patch("gain.dask.named_cluster.Client", autospec=True)
-    _load_user_config(tmp_path, """\
-        dae_named_cluster:
-          clusters:
-            - name: sge
-              type: sge
-              adapt_params:
-                minimum: 1
-                maximum: 50
-              params:
-                queue: all.q
-        """)
-    assert config.get(
-        "gain_named_cluster.clusters.sge.number_of_workers") == 150
-
-    gain.dask.config.translate_legacy_named_cluster()
-    _, cluster_config = setup_client("sge")
-
-    assert cluster_config == {
-        "type": "sge",
-        "adapt_params": {"minimum": 1, "maximum": 50},
-        "params": {"queue": "all.q"},
-    }
 
 
 def test_list_of_named_clusters_in_a_user_file_is_refused(
@@ -908,107 +705,138 @@ def test_non_mapping_new_key_in_a_user_file_is_refused(
     assert mocked_client.call_count == 0
 
 
-@pytest.mark.parametrize("legacy_clusters, message", [
-    ("\n    - type: sge", "has no 'name' key"),
-    ("\n    my_sge:\n      type: sge", "must be a list"),
-    ("\n    -", "must be a mapping"),
-])
-def test_malformed_old_key_is_refused_when_named_clusters_are_read(
+def _assert_old_key_refusal(refusal: BaseException) -> None:
+    message = str(refusal)
+    assert "dae_named_cluster" in message
+    assert "gain_named_cluster" in message
+    assert "no longer reads" in message
+    assert "dask config directory" in message
+    assert (
+        "move the entries of 'dae_named_cluster' to 'gain_named_cluster'"
+        in message)
+    assert gain.dask.config.NAMED_CLUSTERS_DOCS_URL in message
+    assert re.search(r"\d{4}\.\d+\.\d+", message) is None
+
+
+def test_old_key_is_refused_when_named_clusters_are_read(
     mocker: pytest_mock.MockerFixture,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: pathlib.Path,
     restored_dask_config: None,
-    legacy_clusters: str,
-    message: str,
 ) -> None:
-    # A malformed old key must not abort the import of gain.dask: a run
-    # with -c never reads the named clusters.
-    monkeypatch.setattr(config, "PATH", str(tmp_path))
     mocked_client = mocker.patch(
         "gain.dask.named_cluster.Client", autospec=True)
-    (tmp_path / "named_cluster.yaml").write_text(
-        "dae_named_cluster:\n  clusters:" + legacy_clusters + "\n")
-    config.refresh(paths=[str(tmp_path)])
+    _import_user_config(monkeypatch, tmp_path, OLD_SHAPE)
 
-    gain.dask.config.reconfigure()
-    with pytest.raises(ValueError, match=message) as excinfo:
+    with pytest.raises(ValueError, match="dae_named_cluster") as excinfo:
         setup_client("my_sge")
 
-    assert "dae_named_cluster.clusters" in str(excinfo.value)
+    _assert_old_key_refusal(excinfo.value)
+    assert config.get("gain_named_cluster.default") == "local"
     assert mocked_client.call_count == 0
 
 
-@pytest.mark.parametrize("content, message", [
-    ("dae_named_cluster:\n  - name: my_sge\n    type: sge\n",
-     "'dae_named_cluster' must be a mapping"),
-    ("dae_named_cluster: sge\n", "'dae_named_cluster' must be a mapping"),
+@pytest.mark.parametrize("content", [
+    pytest.param(
+        "dae-named-cluster:\n  clusters:\n    - name: my_sge\n"
+        "      type: sge\n",
+        id="hyphenated-spelling"),
+    pytest.param(
+        "dae_named_cluster:\n  clusters:\n    - type: sge\n",
+        id="entry-without-name"),
+    pytest.param(
+        "dae_named_cluster:\n  clusters:\n    my_sge:\n      type: sge\n",
+        id="clusters-not-a-list"),
+    pytest.param(
+        "dae_named_cluster:\n  clusters:\n    -\n",
+        id="entry-not-a-mapping"),
+    pytest.param(
+        "dae_named_cluster:\n  - name: my_sge\n    type: sge\n",
+        id="list-value"),
+    pytest.param("dae_named_cluster: sge\n", id="string-value"),
+    pytest.param("dae_named_cluster: {}\n", id="empty-mapping"),
+    pytest.param("dae_named_cluster: null\n", id="null"),
 ])
-def test_non_mapping_old_key_is_refused_when_named_clusters_are_read(
+def test_any_value_of_the_old_key_is_refused(
     mocker: pytest_mock.MockerFixture,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: pathlib.Path,
     restored_dask_config: None,
     content: str,
-    message: str,
 ) -> None:
-    # An old key that is not a mapping must not abort the import of
-    # gain.dask either.
-    monkeypatch.setattr(config, "PATH", str(tmp_path))
     mocked_client = mocker.patch(
         "gain.dask.named_cluster.Client", autospec=True)
-    (tmp_path / "named_cluster.yaml").write_text(content)
-    config.refresh(paths=[str(tmp_path)])
+    _import_user_config(monkeypatch, tmp_path, content)
 
-    gain.dask.config.reconfigure()
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(ValueError, match="dae_named_cluster") as excinfo:
         setup_client("my_sge")
 
+    _assert_old_key_refusal(excinfo.value)
     assert mocked_client.call_count == 0
 
 
-def test_translation_refuses_a_non_mapping_new_key_next_to_the_old_key(
+def test_malformed_new_key_is_refused_before_the_old_key(
+    mocker: pytest_mock.MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
     restored_dask_config: None,
 ) -> None:
-    config.config.clear()
-    config.config.update({
-        "gain_named_cluster": ["local"],
-        "dae_named_cluster": {
-            "clusters": [{"name": "my_sge", "type": "sge"}]},
-    })
+    mocker.patch("gain.dask.named_cluster.Client", autospec=True)
+    _import_user_config(monkeypatch, tmp_path, """\
+        gain_named_cluster: local
+        dae_named_cluster:
+          default: my_sge
+        """)
 
-    error = gain.dask.config.translate_legacy_named_cluster()
-
-    assert isinstance(error, ValueError)
-    assert "'gain_named_cluster' must be a mapping" in str(error)
-    assert "dae_named_cluster" not in config.config
+    with pytest.raises(
+            ValueError, match="'gain_named_cluster' must be a mapping"):
+        setup_client("local")
 
 
-def test_translation_returns_the_first_refusal_of_two(
+def test_old_key_does_not_stop_a_run_with_a_cluster_config(
+    mocker: pytest_mock.MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
     restored_dask_config: None,
 ) -> None:
-    config.config.clear()
-    config.config.update({
-        "gain_named_cluster": ["local"],
-        "dae_named_cluster": {"clusters": {"x": {}}},
-    })
+    mocked_local = mocker.patch(
+        "dask.distributed.LocalCluster", autospec=True)
+    mocked_client = mocker.patch(
+        "gain.dask.named_cluster.Client", autospec=True)
+    _import_user_config(monkeypatch, tmp_path, OLD_SHAPE)
+    assert gain.dask.config._deferred_error is not None
 
-    error = gain.dask.config.translate_legacy_named_cluster()
+    client, _ = setup_client_from_config({"type": "local"})
 
-    assert isinstance(error, ValueError)
-    assert "'dae_named_cluster.clusters' must be a list" in str(error)
+    assert client is mocked_client.return_value
+    assert mocked_local.call_count == 1
 
 
-def test_translation_keeps_the_old_clusters_next_to_a_refused_new_key(
+def test_old_key_logs_no_warning_and_keeps_the_user_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    restored_dask_config: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    user_file = tmp_path / "named_cluster.yaml"
+
+    with caplog.at_level(logging.DEBUG):
+        _import_user_config(monkeypatch, tmp_path, OLD_SHAPE)
+
+    assert not [
+        record for record in caplog.records
+        if "dae_named_cluster" in record.getMessage()]
+    assert user_file.read_bytes() == textwrap.dedent(OLD_SHAPE).encode()
+
+
+def test_config_without_the_old_key_is_not_refused(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
     restored_dask_config: None,
 ) -> None:
-    config.config.clear()
-    config.config.update({
-        "gain_named_cluster": ["local"],
-        "dae_named_cluster": {
-            "clusters": [{"name": "my_sge", "type": "sge"}]},
-    })
+    _import_user_config(monkeypatch, tmp_path, """\
+        gain_named_cluster:
+          default: sge
+        """)
 
-    gain.dask.config.translate_legacy_named_cluster()
-
-    assert config.config["gain_named_cluster"] == {
-        "clusters": {"my_sge": {"type": "sge"}}}
+    assert gain.dask.config._deferred_error is None
