@@ -310,3 +310,20 @@ chr1   15  .  A   T   .    .       A=2
     with build_genomic_position_table(res, res.config["table"]) as table:
         assert isinstance(table, VCFGenomicPositionTable)
         assert len(list(table.get_all_records())) == 2
+
+
+def test_an_unknown_explicit_format_is_refused(
+    tmp_path: pathlib.Path,
+) -> None:
+    setup_directories(tmp_path, {
+        "genomic_resource.yaml": """
+            table:
+                filename: data.txt
+                format: parquet""",
+        "data.txt": "chrom pos_begin pos_end c2\n1 10 12 3.14\n",
+    })
+    res = build_filesystem_test_resource(tmp_path)
+    assert res.config is not None
+
+    with pytest.raises(ValueError, match=r"^unknown table format parquet$"):
+        build_genomic_position_table(res, res.config["table"])

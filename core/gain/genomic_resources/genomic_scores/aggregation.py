@@ -351,6 +351,24 @@ EMPTY_BIN_VALUES: dict[str, float] = {
 }
 
 
+def _check_fold_inputs(aggregators: Sequence[str], bin_size: int) -> None:
+    """Refuse the inputs of :func:`fold_into_bins` that no record can fix.
+
+    The aggregator check runs first and the ``bin_size`` check second.
+    Both run before the fold reads its first record.
+    """
+    refused = [
+        name for name in aggregators if name not in EMPTY_BIN_VALUES]
+    if refused:
+        raise ValueError(
+            f"a binned fold cannot aggregate with {', '.join(refused)}: "
+            f"only {', '.join(EMPTY_BIN_VALUES)} answer a float per bin")
+    if bin_size < 1:
+        raise ValueError(
+            f"bins of size {bin_size} asked for; a bin holds at least one "
+            f"position")
+
+
 def fold_into_bins(
     records: Iterable[tuple[int, int, ScoreValue]],
     *,
@@ -391,16 +409,7 @@ def fold_into_bins(
     are whatever the aggregators accept -- numbers, or anything at all for
     ``count``.
     """
-    refused = [
-        name for name in aggregators if name not in EMPTY_BIN_VALUES]
-    if refused:
-        raise ValueError(
-            f"a binned fold cannot aggregate with {', '.join(refused)}: "
-            f"only {', '.join(EMPTY_BIN_VALUES)} answer a float per bin")
-    if bin_size < 1:
-        raise ValueError(
-            f"bins of size {bin_size} asked for; a bin holds at least one "
-            f"position")
+    _check_fold_inputs(aggregators, bin_size)
     first_bin = calc_bin_index(bin_size, start)
     n_bins = calc_bin_index(bin_size, end) - first_bin + 1
     block = np.empty((n_bins, len(aggregators)), dtype=np.float64)

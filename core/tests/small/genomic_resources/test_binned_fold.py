@@ -147,6 +147,27 @@ def test_a_bin_size_below_one_is_refused() -> None:
         fold_into_bins([], start=1, end=20, bin_size=0, aggregators=["count"])
 
 
+def test_a_bin_size_below_one_is_refused_unread() -> None:
+    """Refused before the first record is asked for."""
+    read: list[tuple[int, int, float]] = []
+
+    def records() -> Iterator[tuple[int, int, float]]:
+        read.append((5, 0, 1.0))
+        yield (5, 0, 1.0)
+
+    with pytest.raises(ValueError, match="at least one position"):
+        fold_into_bins(
+            records(), start=1, end=20, bin_size=0, aggregators=["count"])
+
+    assert not read
+
+
+def test_the_aggregator_refusal_comes_before_the_bin_size_refusal() -> None:
+    """With both inputs wrong, the aggregator is the one named."""
+    with pytest.raises(ValueError, match=r"list.*float"):
+        fold_into_bins([], start=1, end=20, bin_size=0, aggregators=["list"])
+
+
 @pytest.mark.parametrize("sign,expected", [(1, math.inf), (-1, -math.inf)])
 def test_an_int_result_past_the_float_range_is_a_signed_infinity(
     sign: int, expected: float,

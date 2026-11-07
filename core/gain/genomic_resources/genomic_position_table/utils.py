@@ -15,32 +15,53 @@ def build_genomic_position_table(
     resource: GenomicResource, table_definition: dict,
 ) -> GenomicPositionTable:
     """Instantiate a genome position table from a genomic resource."""
-    filename = table_definition["filename"]
+    default_format = _default_table_format(table_definition["filename"])
+    table_fmt = table_definition.get("format", default_format)
+    _warn_zero_based_default(resource, table_definition, table_fmt)
 
+    if table_fmt in ("mem", "csv", "tsv"):
+        return InmemoryGenomicPositionTable(resource, table_definition,
+                                            table_fmt)
+    if table_fmt == "tabix":
+        return TabixGenomicPositionTable(resource, table_definition)
+    if table_fmt == "vcf_info":
+        return _build_vcf_table(resource, table_definition)
+    if table_fmt.lower() in ("bw", "bigwig"):
+        _warn_inert_bigwig_keys(resource, table_definition)
+        return BigWigTable(resource, table_definition)
+
+    raise ValueError(f"unknown table format {table_fmt}")
+
+
+def _default_table_format(filename: str) -> str:
+    """Pick the table format that the suffix of ``filename`` implies."""
     # Matching is CASE-INSENSITIVE (`endswith_ci`), and the bigWig branch
-    # accepts the same two spellings the explicit `format:` branch below
-    # already does (`bw`/`bigwig` -- UCSC ships both).  The two branches
-    # decide the same thing from different inputs, so a vocabulary they do
-    # not share is a vocabulary they can disagree about:
+    # accepts the same two spellings the explicit `format:` branch of
+    # `build_genomic_position_table` already does (`bw`/`bigwig` -- UCSC
+    # ships both).  The two branches decide the same thing from different
+    # inputs, so a vocabulary they do not share is a vocabulary they can
+    # disagree about:
     # `hg38.phastCons7way.bigWig` with no `format:` used to miss every test
     # here, fall through to `mem`, and hand a binary file to the text parser
     # (gain#348).  One rule for every suffix rather than a bigWig special
     # case -- an upper-case `.CSV` was the same trap.
     if endswith_ci(filename, ".bgz"):
-        default_format = "tabix"
-    elif endswith_ci(filename, ".vcf.gz"):
-        default_format = "vcf_info"
-    elif endswith_ci(filename, (".txt", ".txt.gz", ".tsv", ".tsv.gz")):
-        default_format = "tsv"
-    elif endswith_ci(filename, (".csv", ".csv.gz")):
-        default_format = "csv"
-    elif endswith_ci(filename, (".bw", ".bigwig")):
-        default_format = "bw"
-    else:
-        default_format = "mem"
+        return "tabix"
+    if endswith_ci(filename, ".vcf.gz"):
+        return "vcf_info"
+    if endswith_ci(filename, (".txt", ".txt.gz", ".tsv", ".tsv.gz")):
+        return "tsv"
+    if endswith_ci(filename, (".csv", ".csv.gz")):
+        return "csv"
+    if endswith_ci(filename, (".bw", ".bigwig")):
+        return "bw"
+    return "mem"
 
-    table_fmt = table_definition.get("format", default_format)
 
+def _warn_zero_based_default(
+    resource: GenomicResource, table_definition: dict, table_fmt: str,
+) -> None:
+    """Warn when a table that honours ``zero_based`` omits the key."""
     # Only the in-memory (mem/csv/tsv) and tabix backends honour zero_based;
     # both default a missing key to False (1-based).  That default is a silent
     # off-by-one for a 0-based/BED-derived table whose config omits the flag --
@@ -59,24 +80,18 @@ def build_genomic_position_table(
             resource.get_full_id(),
         )
 
-    if table_fmt in ("mem", "csv", "tsv"):
-        return InmemoryGenomicPositionTable(resource, table_definition,
-                                            table_fmt)
-    if table_fmt == "tabix":
-        return TabixGenomicPositionTable(resource, table_definition)
-    if table_fmt == "vcf_info":
-        if "zero_based" in table_definition:
-            logger.warning(
-                "zero_based is not supported for VCF tables (a VCF is "
-                "always 1-based), ignoring it in %s",
-                resource.get_full_id(),
-            )
-        return VCFGenomicPositionTable(resource, table_definition)
-    if table_fmt.lower() in ("bw", "bigwig"):
-        _warn_inert_bigwig_keys(resource, table_definition)
-        return BigWigTable(resource, table_definition)
 
-    raise ValueError(f"unknown table format {table_fmt}")
+def _build_vcf_table(
+    resource: GenomicResource, table_definition: dict,
+) -> VCFGenomicPositionTable:
+    """Build a VCF table, and warn that a VCF ignores ``zero_based``."""
+    if "zero_based" in table_definition:
+        logger.warning(
+            "zero_based is not supported for VCF tables (a VCF is "
+            "always 1-based), ignoring it in %s",
+            resource.get_full_id(),
+        )
+    return VCFGenomicPositionTable(resource, table_definition)
 
 
 def _warn_inert_bigwig_keys(
