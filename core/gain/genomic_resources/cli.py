@@ -521,25 +521,64 @@ def _create_contents_db(
         proto.root_path, GR_SQLITE_META_FILE_NAME)
 
     current_md5 = proto.md5_contents()
-    if os.path.exists(gzip_sqlite_filepath):
-        try:
-            raw = gzip.decompress(
-                pathlib.Path(gzip_sqlite_filepath).read_bytes())
-            conn = apsw.Connection(":memory:")
-            conn.deserialize("main", raw)
-            row = conn.execute(
-                "SELECT value FROM contents_metadata "
-                "WHERE key = 'contents_md5'",
-            ).fetchone()
-            if row and row[0] == current_md5:
-                return frozenset()
-        except Exception:
-            logger.debug(
-                "Could not read existing contents db; rebuilding",
-                exc_info=True,
-            )
+    if _contents_db_is_current(gzip_sqlite_filepath, current_md5):
+        return frozenset()
 
-    collected: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
+    collected, failed, skipped = _collect_index_infos(proto, already_failed)
+    columns, index_infos = _merge_index_headers(collected, failed)
+    gz = _build_contents_db_image(
+        _index_contents_md5(current_md5, failed | skipped),
+        columns, index_infos)
+
+    # Published through the protocol's seam, not written at the live path:
+    # the index that is already there is replaced by a completed one in a
+    # single move, or not at all. It used to be deleted before the build
+    # even started, so an interrupted rebuild left the repository with no
+    # search index at all and nothing to roll back to (gain#948).
+    with proto.publish_repository_file(GR_SQLITE_META_FILE_NAME) as outfile:
+        outfile.write(gz)
+    return frozenset(failed)
+
+
+def _contents_db_is_current(
+    gzip_sqlite_filepath: str, current_md5: str,
+) -> bool:
+    """Return whether the existing index image records ``current_md5``."""
+    if not os.path.exists(gzip_sqlite_filepath):
+        return False
+    try:
+        raw = gzip.decompress(
+            pathlib.Path(gzip_sqlite_filepath).read_bytes())
+        conn = apsw.Connection(":memory:")
+        conn.deserialize("main", raw)
+        row = conn.execute(
+            "SELECT value FROM contents_metadata "
+            "WHERE key = 'contents_md5'",
+        ).fetchone()
+        if row and row[0] == current_md5:
+            return True
+    except Exception:
+        logger.debug(
+            "Could not read existing contents db; rebuilding",
+            exc_info=True,
+        )
+    return False
+
+
+_IndexInfo = tuple[str, tuple[str, ...], tuple[str, ...]]
+
+
+def _collect_index_infos(
+    proto: FsspecReadWriteProtocol,
+    already_failed: frozenset[str],
+) -> tuple[list[_IndexInfo], set[str], set[str]]:
+    """Collect the index info of each resource of the repository.
+
+    Returns the collected ``(resource_id, header, row)`` entries, the ids
+    of the resources that failed and the ids of the resources skipped
+    because they are in ``already_failed``.
+    """
+    collected: list[_IndexInfo] = []
     failed: set[str] = set()
     skipped: set[str] = set()
     for res in proto.get_all_resources():
@@ -561,7 +600,19 @@ def _create_contents_db(
             report_resource_failure(
                 err, "skipping FTS index for", res.resource_id)
             failed.add(res.resource_id)
+    return collected, failed, skipped
 
+
+def _merge_index_headers(
+    collected: list[_IndexInfo],
+    failed: set[str],
+) -> tuple[list[str], list[tuple[tuple[str, ...], tuple[str, ...]]]]:
+    """Merge the collected headers into the columns of the index table.
+
+    Adds the id of each resource that cannot join the union to ``failed``.
+    Returns the column spellings and the ``(header, row)`` entries of the
+    resources that joined.
+    """
     # The index table's columns are the union of the headers, and a header
     # that is sound on its own can still be unusable next to another
     # resource's -- SQLite compares column names case-insensitively, so
@@ -584,8 +635,20 @@ def _create_contents_db(
             failed.add(resource_id)
             continue
         index_infos.append((header, row))
-    columns = [spelling for spelling, _ in claimed.values()]
+    return [spelling for spelling, _ in claimed.values()], index_infos
 
+
+def _build_contents_db_image(
+    contents_md5: str,
+    columns: list[str],
+    index_infos: list[tuple[tuple[str, ...], tuple[str, ...]]],
+) -> bytes:
+    """Build the gzip image of the FTS SQLite index.
+
+    Each name in ``columns`` must already be a vetted SQL identifier, as
+    ``validate_index_columns`` and ``merge_index_columns`` produce: the
+    names are interpolated into the SQL, not bound.
+    """
     # Built in memory and serialized, rather than built into a file that
     # then has to be read back and cleaned up. The database used to be
     # made inside the repository and removed on the way out, so a build
@@ -600,18 +663,16 @@ def _create_contents_db(
         )
         conn.execute(
             "INSERT INTO contents_metadata (key, value) VALUES (?, ?)",
-            (
-                "contents_md5",
-                _index_contents_md5(current_md5, failed | skipped),
-            ),
+            ("contents_md5", contents_md5),
         )
 
         if columns:
-            # Every name here came out of validate_index_columns above, so it
-            # is a bare non-keyword SQL identifier and cannot carry anything
-            # else into these two statements (gain#464).  SQL identifiers
-            # cannot be bound as parameters, so interpolation is the only way
-            # to name a column -- vetting the names is what makes it safe.
+            # The caller passes only names that validate_index_columns
+            # vetted, so each is a bare non-keyword SQL identifier and cannot
+            # carry anything else into these two statements (gain#464).  SQL
+            # identifiers cannot be bound as parameters, so interpolation is
+            # the only way to name a column -- vetting the names is what
+            # makes it safe.
             cols_str = ", ".join(columns)
             conn.execute(
                 f"CREATE VIRTUAL TABLE contents USING fts5({cols_str})",
@@ -640,16 +701,7 @@ def _create_contents_db(
     # 0xff for cross-Python-distribution determinism — see the
     # matching note in fsspec_protocol.build_content_file.
     gz = gzip.compress(raw_data, mtime=0)
-    gz = gz[:9] + b"\xff" + gz[10:]
-
-    # Published through the protocol's seam, not written at the live path:
-    # the index that is already there is replaced by a completed one in a
-    # single move, or not at all. It used to be deleted before the build
-    # even started, so an interrupted rebuild left the repository with no
-    # search index at all and nothing to roll back to (gain#948).
-    with proto.publish_repository_file(GR_SQLITE_META_FILE_NAME) as outfile:
-        outfile.write(gz)
-    return frozenset(failed)
+    return gz[:9] + b"\xff" + gz[10:]
 
 
 def _configure_repo_index_subparser(
@@ -1064,20 +1116,12 @@ def _select_resource_stats(
     # decides nothing about DVC (gain#1576).
     derived = impl.derived_files_state(repo)
     if dry_run:
-        if needs_rebuild or derived is not DerivedFilesState.CURRENT:
-            logger.info(
-                "Statistics of <%s> needs update", res.resource_id)
-            selection.needs_update += 1
-        if derived is DerivedFilesState.PAYLOAD_ABSENT:
-            selection.not_buildable += 1
-    elif force or needs_rebuild:
-        _collect_impl_stats_tasks(
-            selection.graph, proto, impl, repo,
-            region_size=region_size)
-        selection.stats_resources.append(res)
-    elif derived is DerivedFilesState.STALE:
-        impl.rebuild_derived_files(repo)
-        selection.derived_resources.append(res)
+        _count_dry_run_stats(
+            selection, res, derived, needs_rebuild=needs_rebuild)
+    else:
+        _start_resource_stats(
+            selection, repo, proto, res, impl, derived,
+            rebuild=force or needs_rebuild, region_size=region_size)
     # A third state, reported and never acted on: the hash is
     # current, so nothing rebuilds the statistics -- a derived
     # file's rewrite does not touch them -- and a file behind
@@ -1085,6 +1129,43 @@ def _select_resource_stats(
     if not (needs_rebuild or force) \
             and _report_schema_stale_statistics(impl):
         selection.schema_stale += 1
+
+
+def _count_dry_run_stats(
+        selection: _StatsSelection,
+        res: GenomicResource,
+        derived: DerivedFilesState, *,
+        needs_rebuild: bool) -> None:
+    """Count the statistics work that a real run would do for ``res``."""
+    if needs_rebuild or derived is not DerivedFilesState.CURRENT:
+        logger.info(
+            "Statistics of <%s> needs update", res.resource_id)
+        selection.needs_update += 1
+    if derived is DerivedFilesState.PAYLOAD_ABSENT:
+        selection.not_buildable += 1
+
+
+def _start_resource_stats(
+        selection: _StatsSelection,
+        repo: GenomicResourceRepo,
+        proto: ReadWriteRepositoryProtocol,
+        res: GenomicResource,
+        impl: GenomicResourceImplementation,
+        derived: DerivedFilesState, *,
+        rebuild: bool, region_size: int) -> None:
+    """Start the statistics tasks, or the derived files rewrite, of ``res``.
+
+    ``rebuild`` is true on a forced run and when the statistics are out
+    of date.
+    """
+    if rebuild:
+        _collect_impl_stats_tasks(
+            selection.graph, proto, impl, repo,
+            region_size=region_size)
+        selection.stats_resources.append(res)
+    elif derived is DerivedFilesState.STALE:
+        impl.rebuild_derived_files(repo)
+        selection.derived_resources.append(res)
 
 
 def _select_stats(
