@@ -4,7 +4,7 @@ import os
 import time
 from concurrent.futures import Future
 from pathlib import Path
-from typing import ClassVar, TypeVar
+from typing import ClassVar, TypeVar, cast
 
 import yaml
 from asgiref.sync import sync_to_async
@@ -137,6 +137,24 @@ class UserPipeline(AnnotationBaseView):
             )
         return None
 
+    @staticmethod
+    def _update_target(
+        request: Request, pipeline_id: str,
+    ) -> Pipeline | TemporaryPipeline | None:
+        """Resolve an update id to a pipeline of the caller, or None.
+
+        A missing temporary row resolves to None and is not recreated: an
+        update never creates a pipeline.
+        """
+        user = cast(BaseUser, request.user)
+        temporary = user.get_temporary_pipeline(pipeline_id)
+        if temporary is not None:
+            return cast(TemporaryPipeline, temporary)
+        try:
+            return cast(Pipeline, user.get_pipeline(pipeline_id))
+        except PIPELINE_LOOKUP_ERRORS:
+            return None
+
     def post(  # pylint: disable=too-many-branches
         self, request: Request,
     ) -> Response:
@@ -196,9 +214,12 @@ class UserPipeline(AnnotationBaseView):
         config_filename = f"{pipeline_name}.yaml"
 
         if pipeline_id:  # Update
-            pipeline = request.user.get_temporary_pipeline(pipeline_id)
+            pipeline = self._update_target(request, pipeline_id)
             if pipeline is None:
-                pipeline = request.user.get_pipeline(pipeline_id)
+                return Response(
+                    {"reason": "Pipeline name not recognized!"},
+                    status=views.status.HTTP_400_BAD_REQUEST,
+                )
             config_path = Path(str(pipeline.config_path))
         else:  # Create
             assert pipeline_name is not None

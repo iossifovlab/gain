@@ -4,6 +4,8 @@
 GET and DELETE address saved pipelines only. Any other id -- anything an
 anonymous caller sends, a temporary pipeline id, a non-integer -- answers
 a JSON 400 on GET and a no-op 204 on DELETE, never a 500 (#1674).
+A POST update of an id that resolves to no pipeline of the caller answers
+the same JSON 400 as GET and changes nothing (#2251).
 """
 import pathlib
 from typing import Any
@@ -14,6 +16,7 @@ from django.core.files.base import ContentFile
 from django.test import Client
 from pytest_mock import MockerFixture
 
+from web_annotation.annotation_base_view import AnnotationBaseView
 from web_annotation.models import Pipeline, TemporaryPipeline, User
 from web_annotation.pipeline_cache import LRUPipelineCache
 
@@ -269,6 +272,77 @@ def test_update_of_a_saved_pipeline_with_a_legacy_name_succeeds(
     response = client.post("/api/pipelines/user", {
         "id": str(legacy.pk),
         "name": ".draft",
+        "config": ContentFile("- position_score: scores/pos2"),
+    })
+
+    assert response.status_code == 200
+    assert config_path.read_text() == "- position_score: scores/pos2"
+
+
+def _update_id(
+    clients: dict[str, Client], caller: str, target: str,
+) -> str:
+    """Build the update id of one refusal case of ``POST`` (#2251)."""
+    client = clients[caller]
+    if target == "own session, row gone":
+        session_id = _save_pipeline(client)
+        TemporaryPipeline.objects.filter(session_id=session_id).delete()
+        return session_id
+    if target == "another user's pipeline":
+        return _save_pipeline(clients["admin"], "admins_pipeline")
+    assert target == "no such pipeline"
+    return "999999"
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("patched_lru_cache")
+@pytest.mark.parametrize(("caller", "target"), [
+    ("anonymous", "own session, row gone"),
+    ("user", "own session, row gone"),
+    ("user", "no such pipeline"),
+    ("user", "another user's pipeline"),
+])
+def test_update_of_an_unresolvable_id_is_refused(
+    clients: dict[str, Client],
+    mocker: MockerFixture,
+    caller: str,
+    target: str,
+) -> None:
+    client = clients[caller]
+    pipeline_id = _update_id(clients, caller, target)
+    session_id = client.session.session_key
+    files_before = _config_files()
+    pipelines_before = Pipeline.objects.count()
+    put_pipeline = mocker.patch.object(AnnotationBaseView, "put_pipeline")
+
+    response = client.post("/api/pipelines/user", {
+        "id": pipeline_id,
+        "config": ContentFile("- position_score: scores/pos2"),
+    })
+
+    assert response.status_code == 400
+    assert response.json() == NOT_RECOGNIZED
+    assert _config_files() == files_before
+    assert not TemporaryPipeline.objects.filter(
+        session_id=session_id).exists()
+    assert Pipeline.objects.count() == pipelines_before
+    put_pipeline.assert_not_called()
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("patched_lru_cache")
+@pytest.mark.parametrize("caller", ["anonymous", "user"])
+def test_update_of_own_temporary_pipeline_succeeds(
+    clients: dict[str, Client],
+    caller: str,
+) -> None:
+    client = clients[caller]
+    session_id = _save_pipeline(client)
+    config_path = pathlib.Path(
+        TemporaryPipeline.objects.get(session_id=session_id).config_path)
+
+    response = client.post("/api/pipelines/user", {
+        "id": session_id,
         "config": ContentFile("- position_score: scores/pos2"),
     })
 
