@@ -5,10 +5,6 @@ from typing import Any
 import dask
 import yaml
 
-from gain import logging
-
-logger = logging.getLogger(__name__)
-
 #: The config key that holds the named clusters.
 NAMED_CLUSTER_KEY = "gain_named_cluster"
 
