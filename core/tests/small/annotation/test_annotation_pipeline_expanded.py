@@ -757,3 +757,22 @@ def test_value_transform_rejects_arbitrary_code() -> None:
 
     with pytest.raises(ValueError, match="disallowed"):
         ValueTransformAnnotatorDecorator.decorate(annotator)
+
+
+def test_print_lists_the_attributes_of_each_annotator_in_order(
+    basic_pipeline: AnnotationPipeline,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    basic_pipeline.add_annotator(DummyAnnotator(
+        attributes=[make_attr("score_b"), make_attr("score_a")]))
+    basic_pipeline.add_annotator(DummyAnnotator(
+        attributes=[make_attr("gene_list")]))
+
+    basic_pipeline.print()
+
+    assert capsys.readouterr().out == (
+        "NEW ATTRIBUTES -\n"
+        "    + score_b\n"
+        "    + score_a\n"
+        "    + gene_list\n"
+    )

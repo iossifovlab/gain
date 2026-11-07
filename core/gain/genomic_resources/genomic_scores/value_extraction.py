@@ -153,57 +153,83 @@ def resolve_score_indices(
     """
     kind = table.payload_kind
     if kind is PayloadKind.VARIANT:
-        # A VCF score has no column to resolve: it is addressed by INFO
-        # KEY, which is ``col_name``, and :func:`extract_vcf_value` reads
-        # that attribute directly.  All this enforces is that the key is
-        # actually there.
-        for score_def in score_definitions.values():
-            if score_def.col_name is None:
-                raise score_configuration_error(
-                    resource_id, score_def.score_id,
-                    "has no INFO key; a VCF score is addressed by name.")
+        _check_vcf_info_keys(score_definitions, resource_id=resource_id)
         return
 
     if kind is PayloadKind.VALUE:
-        # A bigWig has exactly one column -- the payload, which IS the
-        # value -- so there is nothing to resolve: the answer is 0, and it
-        # is the same 0 for the canonical config (which addresses no column
-        # at all) and for the deprecated ``index: 3`` that
-        # ``validate_bigwig_scoredefs`` has already warned about.  Only
-        # ``fetch_region_value_arrays`` reads it; the per-record path
-        # indexes nothing.
-        for score_def in score_definitions.values():
-            score_def.score_index = BIGWIG_VALUE_COLUMN
+        _set_bigwig_value_column(score_definitions)
         return
 
-    # Index first, because it needs nothing from the table.
     for score_def in score_definitions.values():
-        refuse = functools.partial(
-            score_configuration_error, resource_id, score_def.score_id)
-        if score_def.col_index is not None:
-            if score_def.col_name is not None:
-                raise refuse(
-                    f"configures both a column name "
-                    f"({score_def.col_name!r}) and a column index "
-                    f"({score_def.col_index}); they are mutually "
-                    f"exclusive.")
-            score_def.score_index = score_def.col_index
-        elif score_def.col_name is not None:
-            if table.header is None:
-                raise refuse(
-                    f"is addressed by column name "
-                    f"{score_def.col_name!r}, but its table has no "
-                    f"header to resolve that name against; address it "
-                    f"by column_index instead.")
-            if score_def.col_name not in table.header:
-                raise refuse(
-                    f"is addressed by column name "
-                    f"{score_def.col_name!r}, which the table's header "
-                    f"does not have; its columns are: "
-                    f"{', '.join(table.header)}.")
-            score_def.score_index = table.header.index(
-                score_def.col_name)
-        else:
+        _resolve_tabular_column(
+            score_def, table=table, resource_id=resource_id)
+
+
+def _check_vcf_info_keys(
+    score_definitions: dict[str, GenomicScoreDef],
+    *,
+    resource_id: str,
+) -> None:
+    """Refuse a VCF score definition that has no INFO key."""
+    # A VCF score has no column to resolve: it is addressed by INFO
+    # KEY, which is ``col_name``, and :func:`extract_vcf_value` reads
+    # that attribute directly.  All this enforces is that the key is
+    # actually there.
+    for score_def in score_definitions.values():
+        if score_def.col_name is None:
+            raise score_configuration_error(
+                resource_id, score_def.score_id,
+                "has no INFO key; a VCF score is addressed by name.")
+
+
+def _set_bigwig_value_column(
+    score_definitions: dict[str, GenomicScoreDef],
+) -> None:
+    """Set the one value column of a bigWig on each score definition."""
+    # A bigWig has exactly one column -- the payload, which IS the
+    # value -- so there is nothing to resolve: the answer is 0, and it
+    # is the same 0 for the canonical config (which addresses no column
+    # at all) and for the deprecated ``index: 3`` that
+    # ``validate_bigwig_scoredefs`` has already warned about.  Only
+    # ``fetch_region_value_arrays`` reads it; the per-record path
+    # indexes nothing.
+    for score_def in score_definitions.values():
+        score_def.score_index = BIGWIG_VALUE_COLUMN
+
+
+def _resolve_tabular_column(
+    score_def: GenomicScoreDef,
+    *,
+    table: GenomicPositionTable,
+    resource_id: str,
+) -> None:
+    """Resolve the column of one tabular score definition in place."""
+    refuse = functools.partial(
+        score_configuration_error, resource_id, score_def.score_id)
+    # Index first, because it needs nothing from the table.
+    if score_def.col_index is not None:
+        if score_def.col_name is not None:
             raise refuse(
-                "configures neither column_name nor column_index; one "
-                "is required.")
+                f"configures both a column name "
+                f"({score_def.col_name!r}) and a column index "
+                f"({score_def.col_index}); they are mutually "
+                f"exclusive.")
+        score_def.score_index = score_def.col_index
+    elif score_def.col_name is not None:
+        if table.header is None:
+            raise refuse(
+                f"is addressed by column name "
+                f"{score_def.col_name!r}, but its table has no "
+                f"header to resolve that name against; address it "
+                f"by column_index instead.")
+        if score_def.col_name not in table.header:
+            raise refuse(
+                f"is addressed by column name "
+                f"{score_def.col_name!r}, which the table's header "
+                f"does not have; its columns are: "
+                f"{', '.join(table.header)}.")
+        score_def.score_index = table.header.index(score_def.col_name)
+    else:
+        raise refuse(
+            "configures neither column_name nor column_index; one "
+            "is required.")

@@ -615,6 +615,16 @@ class AnnotationPreamble:
     metadata: dict[str, Any]
 
 
+#: The deprecated spellings of the ``aggregator`` key of an attribute.
+_DEPRECATED_AGGREGATOR_PARAMS = {
+    "position_aggregator",
+    "allele_aggregator",
+    "nucleotide_aggregator",
+    "gene_list_aggregator",
+    "gene_aggregator",
+}
+
+
 class AnnotationConfigParser:
     """Parser for annotation configuration."""
 
@@ -904,6 +914,109 @@ class AnnotationConfigParser:
         )
 
     @staticmethod
+    def _parse_mapping_form(
+        pipeline_raw_config: RawFullConfig,
+        grr: GenomicResourceRepo | None,
+    ) -> tuple[AnnotationPreamble | None, RawAnnotatorsConfig]:
+        """Check the mapping form, then parse its preamble."""
+        if "annotators" not in pipeline_raw_config:
+            raise AnnotationConfigurationError(
+                "The 'annotators' section of a pipeline configuration "
+                "is required when the configuration is a mapping.",
+            )
+        annotators = pipeline_raw_config["annotators"]
+        # Insist on a list. Every other iterable shape YAML can put here
+        # is iterated into nonsense rather than refused -- a string most
+        # of all, which yields one attempted annotator per character, so
+        # a few kilobytes of quoted text become tens of thousands of
+        # them. That also walks straight past a caller counting the
+        # declared annotators to bound the work (iossifovlab/gain#635).
+        if not isinstance(annotators, list):
+            raise AnnotationConfigurationError(
+                "The 'annotators' section of a pipeline configuration "
+                f"must be a list, not {type(annotators).__name__}.",
+            )
+        # ``preamble: null`` is not a way to omit the preamble; leaving
+        # the key out is (the stance ``_parse_preamble`` takes for the
+        # genome id).
+        preamble = None
+        if "preamble" in pipeline_raw_config:
+            raw_preamble = pipeline_raw_config["preamble"]
+            if not isinstance(raw_preamble, dict):
+                raise AnnotationConfigurationError(
+                    "The 'preamble' section of a pipeline "
+                    "configuration must be a mapping, not "
+                    f"{type(raw_preamble).__name__}.",
+                )
+            preamble = AnnotationConfigParser._parse_preamble(
+                raw_preamble, grr,
+            )
+        return preamble, annotators
+
+    @staticmethod
+    def _parse_top_level(
+        pipeline_raw_config: RawPipelineConfig,
+        grr: GenomicResourceRepo | None,
+    ) -> tuple[AnnotationPreamble | None, RawAnnotatorsConfig]:
+        """Dispatch on the type of the top level of a pipeline config."""
+        if isinstance(pipeline_raw_config, dict):
+            return AnnotationConfigParser._parse_mapping_form(
+                pipeline_raw_config, grr,
+            )
+        if isinstance(pipeline_raw_config, list):
+            return None, pipeline_raw_config
+        raise AnnotationConfigurationError(
+            "Raw pipeline configuration is not a list or dict.",
+        )
+
+    @staticmethod
+    def _parse_annotator_entry(
+        raw_cfg: Any, idx: int,
+        grr: GenomicResourceRepo | None,
+    ) -> list[AnnotatorInfo]:
+        """Parse one entry of the annotators list by its form."""
+        if isinstance(raw_cfg, str):
+            # the minimal annotator configuration form
+            return [AnnotationConfigParser.parse_minimal(raw_cfg, idx)]
+        if isinstance(raw_cfg, dict):
+            ann_details = next(iter(raw_cfg.values()))
+            if isinstance(ann_details, str):
+                # the short annotator configuation form
+                return AnnotationConfigParser.parse_short(
+                    raw_cfg, idx, grr,
+                )
+            if isinstance(ann_details, dict):
+                # the complete annotator configuration form
+                return AnnotationConfigParser.parse_complete(
+                    raw_cfg, idx, grr,
+                )
+        # ``raw_cfg`` is caller data, but line-safe without escaping:
+        # a str reaches parse_minimal above, so what lands here is a
+        # dict/list/scalar whose f-string rendering goes through
+        # ``repr`` (control characters escaped) or is a number
+        # (none). Switching this to interpolate a str field would
+        # reopen the log-forging hole (iossifovlab/gain#655).
+        raise AnnotationConfigurationError(dedent(f"""
+            Incorrect annotator configuation form: {raw_cfg}.
+            The allowed forms are:
+                * minimal
+                    - <annotator type>
+                * short
+                    - <annotator type>: <resource_id_pattern>
+                * complete without attributes
+                    - <annotator type>:
+                        <param1>: <value1>
+                        ...
+                * complete with attributes
+                    - <annotator type>:
+                        <param1>: <value1>
+                        ...
+                        attributes:
+                        - <att1 config>
+                        ....
+        """))
+
+    @staticmethod
     def parse_raw(
         pipeline_raw_config: RawPipelineConfig | None,
         grr: GenomicResourceRepo | None = None,
@@ -913,94 +1026,16 @@ class AnnotationConfigParser:
             logger.warning("empty annotation pipeline configuration")
             return None, []
 
-        if isinstance(pipeline_raw_config, dict):
-            if "annotators" not in pipeline_raw_config:
-                raise AnnotationConfigurationError(
-                    "The 'annotators' section of a pipeline configuration "
-                    "is required when the configuration is a mapping.",
-                )
-            annotators = pipeline_raw_config["annotators"]
-            # Insist on a list. Every other iterable shape YAML can put here
-            # is iterated into nonsense rather than refused -- a string most
-            # of all, which yields one attempted annotator per character, so
-            # a few kilobytes of quoted text become tens of thousands of
-            # them. That also walks straight past a caller counting the
-            # declared annotators to bound the work (iossifovlab/gain#635).
-            if not isinstance(annotators, list):
-                raise AnnotationConfigurationError(
-                    "The 'annotators' section of a pipeline configuration "
-                    f"must be a list, not {type(annotators).__name__}.",
-                )
-            # ``preamble: null`` is not a way to omit the preamble; leaving
-            # the key out is (the stance ``_parse_preamble`` takes for the
-            # genome id).
-            preamble = None
-            if "preamble" in pipeline_raw_config:
-                raw_preamble = pipeline_raw_config["preamble"]
-                if not isinstance(raw_preamble, dict):
-                    raise AnnotationConfigurationError(
-                        "The 'preamble' section of a pipeline "
-                        "configuration must be a mapping, not "
-                        f"{type(raw_preamble).__name__}.",
-                    )
-                preamble = AnnotationConfigParser._parse_preamble(
-                    raw_preamble, grr,
-                )
-        elif isinstance(pipeline_raw_config, list):
-            annotators = pipeline_raw_config
-            preamble = None
-        else:
-            raise AnnotationConfigurationError(
-                "Raw pipeline configuration is not a list or dict.",
-            )
-
+        preamble, annotators = AnnotationConfigParser._parse_top_level(
+            pipeline_raw_config, grr,
+        )
         result = []
         for idx, raw_cfg in enumerate(annotators):
-            if isinstance(raw_cfg, str):
-                # the minimal annotator configuration form
-                result.append(
-                    AnnotationConfigParser.parse_minimal(raw_cfg, idx),
-                )
-                continue
-            if isinstance(raw_cfg, dict):
-                ann_details = next(iter(raw_cfg.values()))
-                if isinstance(ann_details, str):
-                    # the short annotator configuation form
-                    result.extend(AnnotationConfigParser.parse_short(
-                        raw_cfg, idx, grr,
-                    ))
-                    continue
-                if isinstance(ann_details, dict):
-                    # the complete annotator configuration form
-                    result.extend(AnnotationConfigParser.parse_complete(
-                        raw_cfg, idx, grr,
-                    ))
-                    continue
-            # ``raw_cfg`` is caller data, but line-safe without escaping:
-            # a str reaches parse_minimal above, so what lands here is a
-            # dict/list/scalar whose f-string rendering goes through
-            # ``repr`` (control characters escaped) or is a number
-            # (none). Switching this to interpolate a str field would
-            # reopen the log-forging hole (iossifovlab/gain#655).
-            raise AnnotationConfigurationError(dedent(f"""
-                Incorrect annotator configuation form: {raw_cfg}.
-                The allowed forms are:
-                    * minimal
-                        - <annotator type>
-                    * short
-                        - <annotator type>: <resource_id_pattern>
-                    * complete without attributes
-                        - <annotator type>:
-                            <param1>: <value1>
-                            ...
-                    * complete with attributes
-                        - <annotator type>:
-                            <param1>: <value1>
-                            ...
-                            attributes:
-                            - <att1 config>
-                            ....
-            """))
+            result.extend(
+                AnnotationConfigParser._parse_annotator_entry(
+                    raw_cfg, idx, grr,
+                ),
+            )
         return preamble, result
 
     @staticmethod
@@ -1038,10 +1073,8 @@ class AnnotationConfigParser:
         return AnnotationConfigParser.parse_raw(pipeline_raw_config, grr=grr)
 
     @staticmethod
-    def parse_raw_attribute_config(
-            raw_attribute_config: dict[str, Any]) -> AttributeConfig:
-        """Parse annotation attribute raw configuration."""
-        attribute_config = copy.deepcopy(raw_attribute_config)
+    def _rename_destination(attribute_config: dict[str, Any]) -> None:
+        """Rename the deprecated ``destination`` key to ``name``."""
         if "destination" in attribute_config:
             logger.warning(
                 "usage of 'destination' in annotators attribute configuration "
@@ -1050,6 +1083,11 @@ class AnnotationConfigParser:
             attribute_config.pop("destination")
             attribute_config["name"] = name
 
+    @staticmethod
+    def _check_name_source_internal(
+        attribute_config: dict[str, Any],
+    ) -> tuple[str, Any, Any]:
+        """Check and return the name, the source and ``internal``."""
         name = attribute_config.get("name")
         source = attribute_config.get("source")
 
@@ -1079,16 +1117,15 @@ class AnnotationConfigParser:
             message = ("The name for in an attribute "
                        f"config {attribute_config} should be a string")
             raise TypeError(message)
+        return name, source, internal
 
-        deprecated_aggregator_params = {
-            "position_aggregator",
-            "allele_aggregator",
-            "nucleotide_aggregator",
-            "gene_list_aggregator",
-            "gene_aggregator",
-        }
+    @staticmethod
+    def _read_aggregator(
+        attribute_config: dict[str, Any], source: Any,
+    ) -> Any:
+        """Read ``aggregator``, or one of its deprecated keys."""
         aggregator = attribute_config.get("aggregator")
-        for old_name in deprecated_aggregator_params:
+        for old_name in _DEPRECATED_AGGREGATOR_PARAMS:
             if old_name not in attribute_config:
                 continue
             if aggregator is not None:
@@ -1100,10 +1137,23 @@ class AnnotationConfigParser:
                 "'%s' is deprecated in attribute config; use 'aggregator'",
                 old_name)
             aggregator = attribute_config[old_name]
+        return aggregator
+
+    @staticmethod
+    def parse_raw_attribute_config(
+            raw_attribute_config: dict[str, Any]) -> AttributeConfig:
+        """Parse annotation attribute raw configuration."""
+        attribute_config = copy.deepcopy(raw_attribute_config)
+        AnnotationConfigParser._rename_destination(attribute_config)
+        name, source, internal = \
+            AnnotationConfigParser._check_name_source_internal(
+                attribute_config)
+        aggregator = AnnotationConfigParser._read_aggregator(
+            attribute_config, source)
 
         excluded = (
             {"name", "source", "internal", "type", "aggregator"}
-            | deprecated_aggregator_params
+            | _DEPRECATED_AGGREGATOR_PARAMS
         )
         parameters = {
             k: v for k, v in attribute_config.items() if k not in excluded

@@ -312,25 +312,31 @@ class FileTaskCache(TaskCache):
             out_mtime = self._get_oldest_mod_time(task.output_files)
             if out_mtime is None:
                 return True  # missing final output → recompute
-            in_mtime = self._get_newest_mod_time(input_files)
-            if len(input_files) == 0:
-                return False  # no inputs, outputs exist
-            if in_mtime is None:
-                return True  # missing input file
-            return in_mtime > out_mtime
+            return self._inputs_newer_than(input_files, out_mtime)
 
         if task.intermediate_output_files:
             out_mtime = self._get_oldest_mod_time(
                 task.intermediate_output_files)
             if out_mtime is not None:
-                in_mtime = self._get_newest_mod_time(input_files)
-                if len(input_files) == 0:
-                    return False  # no inputs, outputs exist
-                if in_mtime is None:
-                    return True  # missing input file
-                return in_mtime > out_mtime
+                return self._inputs_newer_than(input_files, out_mtime)
             # files missing (consumed by downstream) → fall through
 
+        return self._flag_needs_recompute(task)
+
+    def _inputs_newer_than(
+        self, input_files: list[str], out_mtime: datetime.datetime,
+    ) -> bool:
+        """Compare the input files with the time of existing outputs."""
+        in_mtime = self._get_newest_mod_time(input_files)
+        if len(input_files) == 0:
+            return False  # no inputs, outputs exist
+        if in_mtime is None:
+            return True  # missing input file
+        return in_mtime > out_mtime
+
+    def _flag_needs_recompute(self, task: TaskDesc) -> bool:
+        """Compare the input files with the flag file of the task."""
+        input_files = task.input_files
         output_files = [self._get_flag_filename(task.task)]
         input_mtime = self._get_newest_mod_time(input_files)
         output_mtime = self._get_oldest_mod_time(output_files)

@@ -534,3 +534,20 @@ def test_rebuilding_an_unchanged_repository_republishes_nothing(
     assert index_path.read_bytes() == published
     assert index_path.stat().st_ino == identity
     assert _temp_leftovers(proto) == []
+
+
+def test_an_unreadable_published_index_is_rebuilt(
+    tmp_path: pathlib.Path,
+) -> None:
+    # The current-image check reads the published index to find its
+    # recorded contents md5. An index that cannot be read at all is not
+    # current: the build replaces it, rather than failing or skipping.
+    proto = _index_repository(tmp_path)
+    index_path = pathlib.Path(proto.root_path) / GR_SQLITE_META_FILE_NAME
+    index_path.write_bytes(b"not a gzip image")
+
+    failed = _create_contents_db(proto)
+
+    assert failed == frozenset()
+    assert index_path.read_bytes() != b"not a gzip image"
+    assert index_path.read_bytes()[:2] == b"\x1f\x8b"

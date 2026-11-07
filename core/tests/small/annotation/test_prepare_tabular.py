@@ -6,11 +6,14 @@ import os
 import pathlib
 import stat
 import textwrap
+from collections.abc import Mapping
 
 import pytest
 from gain.annotation.annotatable import (
     Annotatable,
     CNVAllele,
+    Position,
+    Region,
     VCFAllele,
 )
 from gain.annotation.annotate_tabular import cli as annotate_tabular_cli
@@ -26,6 +29,7 @@ from gain.annotation.prepare_tabular import (
     cli,
 )
 from gain.annotation.record_to_annotatable import (
+    RecordToAnnotable,
     RecordToCNVAllele,
     RecordToPosition,
     RecordToRegion,
@@ -141,6 +145,105 @@ def test_indirect_sort_plan_collision_errors() -> None:
     with pytest.raises(ValueError, match="cannot inject sort columns"):
         _build_indirect_sort_plan(
             r2a, header, {"vcf_like": "chr1:4:C:T", "chrom": "x"})
+
+
+class _UnlistedPosition(Position):
+    """A position subclass that has no injected sort columns."""
+
+
+class _ByKindRecordToAnnotable(RecordToAnnotable):
+    """Build the annotatable that the ``kind`` field of a record names."""
+
+    def __init__(self) -> None:
+        super().__init__(("kind",), None)
+        self.by_kind: dict[str, Annotatable] = {
+            "position": Position("chr1", 7),
+            "region": Region("chr1", 7, 9),
+            "unlisted": _UnlistedPosition("chr1", 7),
+        }
+
+    def _build(self, record: Mapping[str, object]) -> Annotatable:
+        return self.by_kind[str(record["kind"])]
+
+
+def test_indirect_sort_plan_position_injects_chrom_and_pos() -> None:
+    header = ["kind", "score"]
+    r2a = _ByKindRecordToAnnotable()
+
+    plan = _build_indirect_sort_plan(r2a, header, {"kind": "position"})
+
+    assert plan.output_header == ["kind", "score", "chrom", "pos"]
+    assert plan.chrom_col_idx == 2
+    assert plan.sort_keys == [(4, "n")]
+    assert (plan.tabix_seq_col, plan.tabix_start_col, plan.tabix_end_col) \
+        == (2, 3, 3)
+    assert plan.injected_count == 2
+    assert plan.expected_annotatable_type is Position
+    assert plan.inject is not None
+    assert plan.inject({"kind": "position", "score": "0.1"}) == ["chr1", "7"]
+
+
+def test_indirect_sort_plan_region_injects_chrom_and_both_ends() -> None:
+    header = ["kind", "score"]
+    r2a = _ByKindRecordToAnnotable()
+
+    plan = _build_indirect_sort_plan(r2a, header, {"kind": "region"})
+
+    assert plan.output_header == \
+        ["kind", "score", "chrom", "pos_beg", "pos_end"]
+    assert plan.chrom_col_idx == 2
+    assert plan.sort_keys == [(4, "n"), (5, "n")]
+    assert (plan.tabix_seq_col, plan.tabix_start_col, plan.tabix_end_col) \
+        == (2, 3, 4)
+    assert plan.injected_count == 3
+    assert plan.expected_annotatable_type is Region
+    assert plan.inject is not None
+    assert plan.inject({"kind": "region", "score": "0.1"}) \
+        == ["chr1", "7", "9"]
+
+
+def test_indirect_sort_plan_cnv_allele_injects_ends_and_cnv_type() -> None:
+    header = ["c", "b", "e", "v"]
+    r2a = RecordToCNVAllele(("c", "b", "e", "v"), None)
+    row = {"c": "chr2", "b": "100", "e": "200", "v": "CNV+"}
+
+    plan = _build_indirect_sort_plan(r2a, header, row)
+
+    assert plan.output_header == \
+        ["c", "b", "e", "v", "chrom", "pos_beg", "pos_end", "cnv_type"]
+    assert plan.chrom_col_idx == 4
+    assert plan.sort_keys == [(6, "n"), (7, "n")]
+    assert (plan.tabix_seq_col, plan.tabix_start_col, plan.tabix_end_col) \
+        == (4, 5, 6)
+    assert plan.injected_count == 4
+    assert plan.expected_annotatable_type is CNVAllele
+    assert plan.inject is not None
+    assert plan.inject(row) == ["chr2", "100", "200", "LARGE_DUPLICATION"]
+
+
+def test_indirect_sort_plan_unsupported_annotatable_type_errors() -> None:
+    r2a = _ByKindRecordToAnnotable()
+
+    with pytest.raises(
+        ValueError,
+        match=r"^unsupported annotatable type produced by "
+              r"_ByKindRecordToAnnotable: _UnlistedPosition$",
+    ):
+        _build_indirect_sort_plan(r2a, ["kind"], {"kind": "unlisted"})
+
+
+def test_indirect_sort_plan_inject_refuses_another_annotatable_type(
+) -> None:
+    r2a = _ByKindRecordToAnnotable()
+    plan = _build_indirect_sort_plan(r2a, ["kind"], {"kind": "position"})
+    assert plan.inject is not None
+
+    with pytest.raises(
+        TypeError,
+        match=r"^non-uniform annotatable types in input: expected "
+              r"Position, got Region ",
+    ):
+        plan.inject({"kind": "region"})
 
 
 def test_build_sort_cmd_forwards_threads_and_buffer_only_when_set(

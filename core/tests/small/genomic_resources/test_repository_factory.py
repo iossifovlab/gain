@@ -24,6 +24,7 @@ from gain.genomic_resources.repository import (
     GenomicResourceProtocolRepo,
 )
 from gain.genomic_resources.repository_factory import (
+    _build_group_from_definition,
     build_genomic_resource_repository,
 )
 from gain.genomic_resources.testing import (
@@ -961,3 +962,41 @@ def test_an_empty_definition_file_is_rejected(
 
     with pytest.raises(ValueError, match="can't find GRR definition"):
         build_genomic_resource_repository(file_name=str(file_name))
+
+
+def test_a_group_definition_without_children_is_rejected() -> None:
+    definition_copy = {
+        "url": "https://user:s3cret@example.org/grr",
+        "password": "hunter2",
+    }
+
+    with pytest.raises(ValueError) as excinfo:
+        _build_group_from_definition("root", definition_copy)
+
+    message = str(excinfo.value)
+    assert message.startswith("The definition for group repository ")
+    assert message.endswith(" has no children attiribute.")
+    assert "s3cret" not in message
+    assert "hunter2" not in message
+
+
+def test_a_group_definition_with_non_list_children_is_rejected() -> None:
+    definition_copy = {"children": {"id": "a", "type": "embedded"}}
+
+    with pytest.raises(ValueError) as excinfo:
+        _build_group_from_definition("root", definition_copy)
+
+    assert str(excinfo.value) == (
+        "The children attribute in the definition of a group "
+        "repository must be a list")
+
+
+def test_a_group_definition_with_tuple_children_is_accepted() -> None:
+    definition_copy = {
+        "children": ({"id": "a", "type": "embedded", "content": {}},),
+    }
+
+    repo = _build_group_from_definition("root", definition_copy)
+
+    assert isinstance(repo, GenomicResourceGroupRepo)
+    assert [child.repo_id for child in repo.children] == ["a"]

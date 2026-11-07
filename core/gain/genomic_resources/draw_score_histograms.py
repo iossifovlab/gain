@@ -1,6 +1,7 @@
 import argparse
 import os
 import sys
+from collections.abc import Sequence
 
 from gain import logging
 from gain.genomic_resources.cli import (
@@ -74,18 +75,7 @@ def main(
 
     VerbosityConfiguration.set(args)
 
-    repo_path = find_directory_with_a_file(
-        GR_CONTENTS_FILE_NAME,
-        args.repository,
-    )
-    if repo_path is None:
-        current_path = args.repository
-        if current_path is None:
-            current_path = os.getcwd()
-        print("Can't find repository starting from: %s", current_path)
-        sys.exit(1)
-
-    repo_url = str(repo_path)
+    repo_url = _find_repository_url(args.repository)
     print(f"working with repository: {repo_url}")
 
     proto = _create_proto(repo_url)
@@ -100,10 +90,39 @@ def main(
         print("Resource not found...")
         sys.exit(1)
 
+    failed, scoreless, found_a_score_resource = _draw_histograms(resourses)
+    _report_outcome(
+        repo_url, args.resource, failed, scoreless,
+        found_a_score_resource=found_a_score_resource)
+
+
+def _find_repository_url(repository: str | None) -> str:
+    """Find the repository directory from ``repository``; exit on a miss."""
+    repo_path = find_directory_with_a_file(
+        GR_CONTENTS_FILE_NAME,
+        repository,
+    )
+    if repo_path is None:
+        current_path = repository
+        if current_path is None:
+            current_path = os.getcwd()
+        print("Can't find repository starting from: %s", current_path)
+        sys.exit(1)
+    return str(repo_path)
+
+
+def _draw_histograms(
+    resources: Sequence[GenomicResource],
+) -> tuple[set[str], list[tuple[str, str]], bool]:
+    """Draw the histograms of each resource.
+
+    Returns the ids of the resources that failed, the id and type of each
+    resource that carries no scores, and whether any resource was drawn.
+    """
     failed: set[str] = set()
     scoreless: list[tuple[str, str]] = []
     found_a_score_resource = False
-    for res in resourses:
+    for res in resources:
         try:
             _draw_resource_histograms(res)
         except ScorelessResourceError:
@@ -140,7 +159,17 @@ def main(
             failed.add(res.resource_id)
         else:
             found_a_score_resource = True
+    return failed, scoreless, found_a_score_resource
 
+
+def _report_outcome(
+    repo_url: str,
+    resource: str | None,
+    failed: set[str],
+    scoreless: list[tuple[str, str]], *,
+    found_a_score_resource: bool,
+) -> None:
+    """Exit on a failed resource, or raise when ``-r`` selected no score."""
     if failed:
         # Reported once at the end as well as per resource: a long sweep
         # scrolls its individual failures out of sight, and the exit
@@ -152,7 +181,7 @@ def main(
             repo_url, ", ".join(sorted(failed)))
         sys.exit(1)
 
-    if args.resource is not None and scoreless and not found_a_score_resource:
+    if resource is not None and scoreless and not found_a_score_resource:
         # Naming resources and getting no histogram at all is a mistake
         # worth reporting, and `-r` is the only way a user asserts that
         # particular resources have some.  Keyed on that assertion rather

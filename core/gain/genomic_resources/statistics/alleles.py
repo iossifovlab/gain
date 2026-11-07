@@ -241,21 +241,9 @@ class AlleleCounts(NamedTuple):
         the diagonal's identity rows as transversions.
         """
         matrix = self.substitution_matrix
-        if matrix is None and self.insertion_lengths is None \
-                and self.deletion_lengths is None \
-                and self.complex_grid is None:
+        if _all_groups_unknown(self):
             return None
-        transitions: int | None = None
-        transversions: int | None = None
-        ts_tv: float | None = None
-        if matrix is not None:
-            transitions = sum(
-                count for cell, count in matrix.items()
-                if cell in _TRANSITION_CELLS)
-            transversions = sum(
-                count for (ref, alt), count in matrix.items()
-                if ref != alt and (ref, alt) not in _TRANSITION_CELLS)
-            ts_tv = transitions / transversions if transversions else None
+        transitions, transversions, ts_tv = _ts_tv_summary(matrix)
         return AlleleDisplay(
             None if matrix is None else dict(matrix),
             transitions,
@@ -266,6 +254,30 @@ class AlleleCounts(NamedTuple):
             self.insertion_lengths,
             self.deletion_lengths,
             None if self.complex_grid is None else dict(self.complex_grid))
+
+
+def _all_groups_unknown(counts: AlleleCounts) -> bool:
+    """Whether all four optional groups of ``counts`` are unknown."""
+    return counts.substitution_matrix is None \
+        and counts.insertion_lengths is None \
+        and counts.deletion_lengths is None \
+        and counts.complex_grid is None
+
+
+def _ts_tv_summary(
+    matrix: dict[tuple[str, str], int] | None,
+) -> tuple[int | None, int | None, float | None]:
+    """The transitions, the transversions and their ratio of ``matrix``."""
+    if matrix is None:
+        return None, None, None
+    transitions = sum(
+        count for cell, count in matrix.items()
+        if cell in _TRANSITION_CELLS)
+    transversions = sum(
+        count for (ref, alt), count in matrix.items()
+        if ref != alt and (ref, alt) not in _TRANSITION_CELLS)
+    ts_tv = transitions / transversions if transversions else None
+    return transitions, transversions, ts_tv
 
 
 def _merged_matrix(

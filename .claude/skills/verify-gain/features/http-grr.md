@@ -11,8 +11,8 @@ container.
 - `-g GRR_FILENAME`: the GRR definition. The HTTP definition has `id`,
   `type: url`, `url` and `cache_dir`.
 - An HTTP GRR serves its resource index as `.CONTENTS.json` or
-  `.CONTENTS.json.gz`. `mini-GRR` commits both, so a plain copy is an HTTP
-  GRR.
+  `.CONTENTS.json.gz`. `mini-GRR` commits only `.CONTENTS.json.gz`, and a
+  plain copy of it is an HTTP GRR.
 - `cache_dir`: the definition wraps the HTTP GRR in a local cache.
   `grr_browse` shows the cached file count of each resource as
   `<cached>/<files>`.

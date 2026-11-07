@@ -24,7 +24,7 @@ from gain.genomic_resources.resource_types import (
 from gain.genomic_resources.resource_types import (
     LEGACY_ANNOTATOR_NAMES as _LEGACY_ANNOTATOR_NAMES,
 )
-from gain.genomic_resources.score_filter import ScoreFilterError
+from gain.genomic_resources.score_filter import ScoreFilter, ScoreFilterError
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +87,40 @@ def _read_overlap_fraction(
     )
 
 
+def _read_fragment_filter(
+    info: AnnotatorInfo, found_in: str,
+) -> tuple[str | None, str]:
+    """Read both filter spellings and select the one that is set.
+
+    Return the filter expression, or ``None``, and the name of the
+    parameter that the expression came from.
+    """
+    # Two spellings -- `fragment_filter` is the one to write, `cnv_filter`
+    # is what pipelines we do not control say.
+    # Read BOTH unconditionally: `info.parameters` refuses a parameter
+    # nobody read, so a `get` skipped after an early match would turn
+    # the unmatched spelling into an "unused parameter" error instead
+    # of the duplicate-configuration error below.
+    fragment_filter_str = info.parameters.get(FRAGMENT_FILTER_PARAMETER)
+    cnv_filter_str = info.parameters.get(LEGACY_FILTER_PARAMETER)
+    if cnv_filter_str is not None:
+        warn_deprecated_spelling(
+            logger, "parameter", LEGACY_FILTER_PARAMETER,
+            FRAGMENT_FILTER_PARAMETER, found_in=found_in)
+    if fragment_filter_str is not None and cnv_filter_str is not None:
+        raise AnnotationConfigurationError(
+            f"{info.type} configures both "
+            f"'{FRAGMENT_FILTER_PARAMETER}' and "
+            f"'{LEGACY_FILTER_PARAMETER}'. They are two spellings of one "
+            f"parameter, so choosing between them would apply a filter "
+            f"the configuration did not ask for; keep "
+            f"'{FRAGMENT_FILTER_PARAMETER}' and delete the other")
+
+    if fragment_filter_str is None:
+        return cnv_filter_str, LEGACY_FILTER_PARAMETER
+    return fragment_filter_str, FRAGMENT_FILTER_PARAMETER
+
+
 def build_fragment_score_annotator(pipeline: AnnotationPipeline,
                                    info: AnnotatorInfo) -> Annotator:
     return FragmentScoreAnnotator(pipeline, info)
@@ -130,47 +164,9 @@ class FragmentScoreAnnotator(AnnotatorBase):
         self.fragment_score = FragmentScore(resource)
         info.resources.append(resource)
 
-        # Two spellings -- `fragment_filter` is the one to write, `cnv_filter`
-        # is what pipelines we do not control say.
-        # Read BOTH unconditionally: `info.parameters` refuses a parameter
-        # nobody read, so a `get` skipped after an early match would turn
-        # the unmatched spelling into an "unused parameter" error instead
-        # of the duplicate-configuration error below.
-        fragment_filter_str = info.parameters.get(FRAGMENT_FILTER_PARAMETER)
-        cnv_filter_str = info.parameters.get(LEGACY_FILTER_PARAMETER)
-        if cnv_filter_str is not None:
-            warn_deprecated_spelling(
-                logger, "parameter", LEGACY_FILTER_PARAMETER,
-                FRAGMENT_FILTER_PARAMETER, found_in=found_in)
-        if fragment_filter_str is not None and cnv_filter_str is not None:
-            raise AnnotationConfigurationError(
-                f"{info.type} configures both "
-                f"'{FRAGMENT_FILTER_PARAMETER}' and "
-                f"'{LEGACY_FILTER_PARAMETER}'. They are two spellings of one "
-                f"parameter, so choosing between them would apply a filter "
-                f"the configuration did not ask for; keep "
-                f"'{FRAGMENT_FILTER_PARAMETER}' and delete the other")
-
-        self.fragment_filter = None
-        used_parameter = (
-            LEGACY_FILTER_PARAMETER if fragment_filter_str is None
-            else FRAGMENT_FILTER_PARAMETER)
-        filter_str = (
-            cnv_filter_str if fragment_filter_str is None
-            else fragment_filter_str)
-        if filter_str is not None:
-            assert isinstance(filter_str, str)
-
-            try:
-                self.fragment_filter = self.fragment_score.compile_filter(
-                    filter_str)
-            except ScoreFilterError as e:
-                # Names the spelling the user actually wrote -- reporting a
-                # key absent from their config sends them looking in the
-                # wrong place (cf. gain#477).  The score cannot do this: it
-                # is handed an expression, not the parameter it came from.
-                raise AnnotationConfigurationError(
-                    f"Error parsing {used_parameter}: {e}") from e
+        filter_str, used_parameter = _read_fragment_filter(info, found_in)
+        self.fragment_filter = self._compile_filter(
+            filter_str, used_parameter)
 
         self.min_region_overlap_fraction = _read_overlap_fraction(
             info, "min_region_overlap_fraction")
@@ -206,6 +202,28 @@ class FragmentScoreAnnotator(AnnotatorBase):
             if attr.aggregator is not None
         ]
 
+        self._document_attributes()
+
+    def _compile_filter(
+        self, filter_str: str | None, used_parameter: str,
+    ) -> ScoreFilter | None:
+        """Compile the fragment filter, or return ``None`` without one."""
+        if filter_str is None:
+            return None
+        assert isinstance(filter_str, str)
+
+        try:
+            return self.fragment_score.compile_filter(filter_str)
+        except ScoreFilterError as e:
+            # Names the spelling the user actually wrote -- reporting a
+            # key absent from their config sends them looking in the
+            # wrong place (cf. gain#477).  The score cannot do this: it
+            # is handed an expression, not the parameter it came from.
+            raise AnnotationConfigurationError(
+                f"Error parsing {used_parameter}: {e}") from e
+
+    def _document_attributes(self) -> None:
+        """Set the documentation of each attribute over a score."""
         for attr in self._attributes:
             spec = self.attribute_specs[attr.source]
             score_def = self.fragment_score\

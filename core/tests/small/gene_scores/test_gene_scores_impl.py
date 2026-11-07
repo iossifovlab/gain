@@ -535,6 +535,24 @@ def test_calc_histogram_number_over_a_boolean_column(
     assert histogram.bars[1] == 2, "True folds as 1"
 
 
+def test_calc_histogram_refuses_an_unknown_histogram_config(
+    linear_impl: GeneScoreImplementation,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _UnknownConfig:
+        def __str__(self) -> str:
+            return "an-unknown-config"
+
+    gene_score = linear_impl.score
+    monkeypatch.setattr(
+        gene_score, "get_histogram_config",
+        lambda _score_id: _UnknownConfig())
+
+    with pytest.raises(
+            TypeError, match=r"^Unknown histogram config: an-unknown-config$"):
+        GeneScoreImplementation._calc_histogram(gene_score, "score1")
+
+
 def test_calc_histogram_categorical() -> None:
     repo = build_inmemory_test_repository({
         "CatScore": {

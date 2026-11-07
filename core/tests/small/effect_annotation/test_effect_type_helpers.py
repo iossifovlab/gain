@@ -5,6 +5,7 @@ from gain.effect_annotation.annotation_effects import (
 from gain.effect_annotation.effect import (
     AlleleEffects,
     EffectGene,
+    gene_effect_get_genes,
     gene_effect_get_genes_worst,
 )
 
@@ -101,3 +102,28 @@ def test_gene_effect_get_genes_worst_joins_sorted_unique_worst_genes() -> None:
     result = gene_effect_get_genes_worst(effects)
 
     assert result == "NUDT4;NUDT4B"
+
+
+def test_gene_effect_get_genes_of_none_is_empty() -> None:
+    result = gene_effect_get_genes(None)
+
+    assert result == ""
+
+
+def test_gene_effect_get_genes_joins_sorted_unique_genes() -> None:
+    """Keep the genes of every effect, drop a duplicate and a ``None``."""
+    effects = AlleleEffects(
+        "splice-site",
+        [
+            EffectGene("NUDT4B", "splice-site"),
+            EffectGene("NUDT4", "splice-site"),
+            EffectGene("NUDT4", "missense"),
+            EffectGene("NUDT4P2", "non-coding-intron"),
+            EffectGene(None, "splice-site"),
+        ],
+        {},
+    )
+
+    result = gene_effect_get_genes(effects)
+
+    assert result == "NUDT4;NUDT4B;NUDT4P2"

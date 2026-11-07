@@ -848,6 +848,79 @@ def build_genomic_resource_group_repository(
     return GenomicResourceGroupRepo(children, repo_id)
 
 
+def _resolve_definition(
+        definition: dict | None, file_name: str | None) -> dict:
+    """Return the definition that the two arguments select.
+
+    An empty ``definition`` falls back to ``file_name``, and with no
+    ``file_name`` to the default definition.
+    """
+    if not definition:
+        if file_name is not None:
+            definition = load_definition_file(file_name)
+        else:
+            definition = get_default_grr_definition()
+    else:
+        if file_name is not None:
+            raise ValueError(
+                "only one of the definition and file_name parameters"
+                "should be provided")
+
+    if definition is None:
+        raise ValueError("can't find GRR definition")
+    return definition
+
+
+def _validate_definition(definition: dict) -> RepoDefinition:
+    """Validate ``definition`` and raise a message without its secrets."""
+    # ``hide_input_in_errors=True`` already keeps the raw input out of
+    # ``str(exc)`` and the traceback, but ``ValidationError.errors()`` and
+    # ``.json()`` still echo it verbatim — including a plaintext password.
+    # Capture only the secret-free ``str(exc)`` (which retains the useful
+    # which-field-is-wrong detail) inside the ``except``, then raise a plain
+    # ``ValueError`` (the type this factory already uses for bad definitions)
+    # OUTSIDE the ``except`` block. Raising outside leaves the ValidationError
+    # entirely off the new exception's chain — ``__context__`` is ``None`` —
+    # so no code path (including error-aggregation tooling that walks
+    # ``__context__`` regardless of ``__suppress_context__``) can reach its
+    # leaky ``.errors()``/``.json()`` input. ``from None`` alone would only
+    # clear ``__cause__``, leaving the secret on ``__context__``.
+    validation_error_msg: str | None = None
+    try:
+        return _REPO_DEFINITION_ADAPTER.validate_python(definition)
+    except ValidationError as exc:
+        validation_error_msg = str(exc)
+    raise ValueError(
+        f"invalid GRR definition {redact_definition(definition)}: "
+        f"{validation_error_msg}")
+
+
+def _build_group_from_definition(
+        repo_id: str, definition_copy: dict) -> GenomicResourceRepo:
+    """Build the group repository of a root definition from its children.
+
+    ``definition_copy`` holds the definition without its ``type`` and
+    ``id`` keys.
+    """
+    # ``_validate_definition`` rejects a group whose ``children`` is
+    # missing or not a list, so these guards are defensive/unreachable in
+    # the normal flow; kept as belt-and-braces for callers that might one
+    # day reach this with a pre-validated-but-mutated dict.
+    if "children" not in definition_copy:
+        raise ValueError(
+            f"The definition for group repository "
+            f"{redact_definition(definition_copy)} "
+            "has no children attiribute.")
+    if not isinstance(definition_copy["children"], (list, tuple)):
+        # ``build_genomic_resource_repository`` documents ``ValueError``.
+        raise ValueError(  # ruff: ignore[type-check-without-type-error]
+            "The children attribute in the definition of a group "
+            "repository must be a list")
+
+    children = cast(list[dict], definition_copy.pop("children"))
+    return _build_group_repository(repo_id, children, **definition_copy)
+
+
 def build_genomic_resource_repository(
         definition: dict | None = None,
         file_name: str | None = None) -> GenomicResourceRepo:
@@ -882,42 +955,8 @@ def build_genomic_resource_repository(
         definition is found, or if the definition is not valid. The
         message does not contain passwords.
     """
-    if not definition:
-        if file_name is not None:
-            definition = load_definition_file(file_name)
-        else:
-            definition = get_default_grr_definition()
-    else:
-        if file_name is not None:
-            raise ValueError(
-                "only one of the definition and file_name parameters"
-                "should be provided")
-
-    if definition is None:
-        raise ValueError("can't find GRR definition")
-
-    # ``hide_input_in_errors=True`` already keeps the raw input out of
-    # ``str(exc)`` and the traceback, but ``ValidationError.errors()`` and
-    # ``.json()`` still echo it verbatim — including a plaintext password.
-    # Capture only the secret-free ``str(exc)`` (which retains the useful
-    # which-field-is-wrong detail) inside the ``except``, then raise a plain
-    # ``ValueError`` (the type this factory already uses for bad definitions)
-    # OUTSIDE the ``except`` block. Raising outside leaves the ValidationError
-    # entirely off the new exception's chain — ``__context__`` is ``None`` —
-    # so no code path (including error-aggregation tooling that walks
-    # ``__context__`` regardless of ``__suppress_context__``) can reach its
-    # leaky ``.errors()``/``.json()`` input. ``from None`` alone would only
-    # clear ``__cause__``, leaving the secret on ``__context__``.
-    validation_error_msg: str | None = None
-    root_definition: RepoDefinition | None = None
-    try:
-        root_definition = _REPO_DEFINITION_ADAPTER.validate_python(definition)
-    except ValidationError as exc:
-        validation_error_msg = str(exc)
-    if validation_error_msg is not None:
-        raise ValueError(
-            f"invalid GRR definition {redact_definition(definition)}: "
-            f"{validation_error_msg}")
+    definition = _resolve_definition(definition, file_name)
+    root_definition = _validate_definition(definition)
 
     logger.info("GRR definition in use: %s", redact_definition(definition))
 
@@ -935,25 +974,9 @@ def build_genomic_resource_repository(
     if isinstance(root_definition, GroupRepoDefinition):
         _check_root_id_is_not_a_descendant_id(repo_id, root_definition)
 
+    repo: GenomicResourceRepo
     if repo_type == "group":
-        # ``validate_python`` above rejects a group whose ``children`` is
-        # missing or not a list, so these guards are defensive/unreachable in
-        # the normal flow; kept as belt-and-braces for callers that might one
-        # day reach this with a pre-validated-but-mutated dict.
-        if "children" not in definition_copy:
-            raise ValueError(
-                f"The definition for group repository "
-                f"{redact_definition(definition_copy)} "
-                "has no children attiribute.")
-        if not isinstance(definition_copy["children"], list) and \
-                not isinstance(definition_copy["children"], tuple):
-            raise ValueError(
-                "The children attribute in the definition of a group "
-                "repository must be a list")
-
-        children = cast(list[dict], definition_copy.pop("children"))
-        repo: GenomicResourceRepo = \
-            _build_group_repository(repo_id, children, **definition_copy)
+        repo = _build_group_from_definition(repo_id, definition_copy)
     else:
         repo = _build_real_repository(repo_type, repo_id, **definition_copy)
     repo.definition = definition
