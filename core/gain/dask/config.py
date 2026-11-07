@@ -12,14 +12,9 @@ logger = logging.getLogger(__name__)
 #: The config key that holds the named clusters.
 NAMED_CLUSTER_KEY = "gain_named_cluster"
 
-#: The old config key of the named clusters. Its ``clusters`` value is a list
-#: of cluster definitions, each with a ``name`` key.
+#: The old config key of the named clusters. GAIn no longer reads it.
+#: :func:`reconfigure` refuses a dask config that holds it.
 LEGACY_NAMED_CLUSTER_KEY = "dae_named_cluster"
-
-#: The GAIn release that stops reading :data:`LEGACY_NAMED_CLUSTER_KEY`.
-#: Named in the warning: a notice that does not say when it bites cannot be
-#: scheduled against.
-LEGACY_NAMED_CLUSTER_REMOVAL_RELEASE = "2026.11.0"
 
 NAMED_CLUSTERS_DOCS_URL = "https://iossifovlab.com/gaindocs/named_clusters.html"
 
@@ -50,7 +45,8 @@ def check_named_cluster_config() -> None:
     Raises
     ------
     ValueError
-        When the named cluster config that dask loaded has the wrong shape.
+        When the named cluster config that dask loaded has the wrong shape,
+        or when the dask config holds the old key ``dae_named_cluster``.
     """
     if _deferred_error is not None:
         raise _deferred_error
@@ -131,9 +127,9 @@ def reconfigure() -> None:
         "distributed", {})
     dask.config.update_defaults(distributed_config)  # pyright: ignore
 
-    error = translate_legacy_named_cluster()
     if _deferred_error is None:
-        _deferred_error = error
+        _deferred_error = _check_legacy_named_cluster(
+            dask.config.config)  # pyright: ignore
 
 
 def _spellings(config: dict[str, Any], key: str) -> list[str]:
@@ -146,35 +142,22 @@ def _spellings(config: dict[str, Any], key: str) -> list[str]:
         if existing.replace("-", "_") == key]
 
 
-def _legacy_clusters(clusters: Any) -> dict[str, Any]:
-    """Convert the old ``clusters`` list to a mapping keyed by each name.
+def _check_legacy_named_cluster(
+    config: dict[str, Any],
+) -> ValueError | None:
+    """Return the refusal of the old key, when the config holds it.
 
-    Raises
-    ------
-    ValueError
-        When the old ``clusters`` value is not a list, or when an entry is
-        not a mapping or has no ``name`` key.
+    Any value of the old key gets the refusal, ``null`` too.
     """
-    where = f"'{LEGACY_NAMED_CLUSTER_KEY}.clusters'"
-    if clusters is None:
-        return {}
-    if not isinstance(clusters, list):
-        raise ValueError(  # ruff: ignore[type-check-without-type-error]
-            f"{where} must be a list of cluster definitions, not a "
-            f"{type(clusters).__name__}.")
-    result: dict[str, Any] = {}
-    for cluster_config in clusters:
-        if not isinstance(cluster_config, Mapping):
-            raise ValueError(  # ruff: ignore[type-check-without-type-error]
-                f"Each entry of {where} must be a mapping, not a "
-                f"{type(cluster_config).__name__}: {cluster_config!r}")
-        cluster_config = dict(cluster_config)
-        if "name" not in cluster_config:
-            raise ValueError(
-                f"A cluster definition in {where} has no 'name' key: "
-                f"{cluster_config}")
-        result[cluster_config.pop("name")] = cluster_config
-    return result
+    if not _spellings(config, LEGACY_NAMED_CLUSTER_KEY):
+        return None
+    return ValueError(
+        f"GAIn no longer reads the dask config key "
+        f"'{LEGACY_NAMED_CLUSTER_KEY}'. Its replacement is the key "
+        f"'{NAMED_CLUSTER_KEY}'. In your files in the dask config directory "
+        f"(for example ~/.config/dask/), move the entries of "
+        f"'{LEGACY_NAMED_CLUSTER_KEY}' to '{NAMED_CLUSTER_KEY}' in the new "
+        f"shape:\n{_DICT_SHAPE_EXAMPLE}\nSee {NAMED_CLUSTERS_DOCS_URL}")
 
 
 def _mapping_shape_error(key: str, value: Any) -> ValueError:
@@ -182,122 +165,6 @@ def _mapping_shape_error(key: str, value: Any) -> ValueError:
     return ValueError(
         f"'{key}' must be a mapping, not a {type(value).__name__}:\n"
         f"{_DICT_SHAPE_EXAMPLE}")
-
-
-def _collect_legacy_named_cluster(
-    config: dict[str, Any], keys: list[str],
-) -> tuple[dict[str, Any], ValueError | None]:
-    """Pop each spelling of the old key and merge the mapping values.
-
-    Return the merged old values and the first refusal of a value that is
-    not a mapping.
-    """
-    error: ValueError | None = None
-    legacy: dict[str, Any] = {}
-    for key in keys:
-        value = config.pop(key) or {}
-        if not isinstance(value, Mapping):
-            error = error or _mapping_shape_error(
-                LEGACY_NAMED_CLUSTER_KEY, value)
-            continue
-        legacy = dask.config.merge(legacy, value)  # pyright: ignore
-    return legacy, error
-
-
-def _translate_legacy_named_cluster(
-    legacy: Mapping[str, Any],
-) -> tuple[dict[str, Any], dict[str, Any], ValueError | None]:
-    """Translate the fields and the clusters of the old key.
-
-    Return the ``default`` and ``distributed`` fields, the clusters keyed by
-    name, and the refusal of the old ``clusters`` value.
-    """
-    translated: dict[str, Any] = {
-        field: legacy[field]
-        for field in ("default", "distributed")
-        if field in legacy
-    }
-    try:
-        clusters = _legacy_clusters(legacy.get("clusters"))
-    except ValueError as refusal:
-        return translated, {}, refusal
-    return translated, clusters, None
-
-
-def _merge_into_named_cluster(
-    config: dict[str, Any],
-    translated: dict[str, Any],
-    clusters: dict[str, Any],
-) -> ValueError | None:
-    """Merge the translated values over the new key in the dask config.
-
-    Return the refusal of a new key value that is not a mapping.
-    """
-    error: ValueError | None = None
-    target = next(
-        iter(_spellings(config, NAMED_CLUSTER_KEY)), NAMED_CLUSTER_KEY)
-    current = config.get(target) or {}
-    if not isinstance(current, Mapping):
-        error = _mapping_shape_error(NAMED_CLUSTER_KEY, current)
-        current = {}
-    merged = dask.config.merge(current, translated)  # pyright: ignore
-    if clusters:
-        # Merge at the level of the clusters mapping, not inside each
-        # cluster definition: before the new key, the old list replaced the
-        # bundled list whole. A deep merge would bring back bundled keys
-        # that the user removed, for example a number_of_workers next to the
-        # user's adapt_params.
-        merged["clusters"] = {**(merged.get("clusters") or {}), **clusters}
-    config[target] = merged
-    return error
-
-
-def translate_legacy_named_cluster() -> ValueError | None:
-    """Translate the old named cluster key in the dask config.
-
-    When the dask config holds ``dae_named_cluster``, the function converts
-    its ``clusters`` list to a mapping keyed by each ``name`` and merges the
-    result over ``gain_named_cluster``: the values of the old key win, and a
-    key that the old key lacks keeps its value. An old cluster definition
-    replaces the cluster definition of the same name whole. The ``default`` and
-    ``distributed`` values of the old key come across too. The function
-    removes the old key from the dask config and logs one warning. It does
-    not change any file.
-
-    The function does not raise. When the old key, the new key or the old
-    ``clusters`` value has the wrong shape, the function translates the other
-    values and returns the first refusal. :func:`reconfigure` defers the
-    refusal until GAIn reads the named clusters.
-
-    Returns
-    -------
-    ValueError | None
-        The refusal of a malformed named cluster value, or ``None``.
-    """
-    config = dask.config.config  # pyright: ignore
-    keys = _spellings(config, LEGACY_NAMED_CLUSTER_KEY)
-    if not keys:
-        return None
-
-    legacy, error = _collect_legacy_named_cluster(config, keys)
-    translated, clusters, translate_error = _translate_legacy_named_cluster(
-        legacy)
-    merge_error = _merge_into_named_cluster(config, translated, clusters)
-
-    logger.warning(
-        "The dask config key '%s' is deprecated and GAIn "
-        "%s stops reading it. GAIn read it as the new key '%s' for this run. "
-        "In your files in the dask config directory (for example "
-        "~/.config/dask/), move the entries of '%s' to '%s' in the new "
-        "shape. Delete only the entries that you do not need. See %s",
-        LEGACY_NAMED_CLUSTER_KEY,
-        LEGACY_NAMED_CLUSTER_REMOVAL_RELEASE,
-        NAMED_CLUSTER_KEY,
-        LEGACY_NAMED_CLUSTER_KEY,
-        NAMED_CLUSTER_KEY,
-        NAMED_CLUSTERS_DOCS_URL,
-    )
-    return error or translate_error or merge_error
 
 
 reconfigure()
