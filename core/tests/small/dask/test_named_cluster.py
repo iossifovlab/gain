@@ -709,6 +709,11 @@ def _assert_old_key_refusal(refusal: BaseException) -> None:
     message = str(refusal)
     assert "dae_named_cluster" in message
     assert "gain_named_cluster" in message
+    assert "no longer reads" in message
+    assert "dask config directory" in message
+    assert (
+        "move the entries of 'dae_named_cluster' to 'gain_named_cluster'"
+        in message)
     assert gain.dask.config.NAMED_CLUSTERS_DOCS_URL in message
     assert re.search(r"\d{4}\.\d+\.\d+", message) is None
 
