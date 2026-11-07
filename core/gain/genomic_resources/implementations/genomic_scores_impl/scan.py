@@ -488,6 +488,50 @@ def update_hist_confs(
     return all_hist_confs
 
 
+def _add_record_values(
+    result: dict[str, Histogram],
+    score_ids: list[str],
+    rec: list[ScoreValue],
+    weight: int,
+    *,
+    resource: GenomicResource,
+    chrom: str,
+    start: int | None,
+    end: int | None,
+) -> None:
+    """Add the score values of one record to their histograms.
+
+    Each score of the record goes to its own histogram in ``result``,
+    at ``weight``.  A histogram that refuses its value is replaced IN
+    PLACE in ``result`` by a null histogram, and the other scores of
+    the record carry on.
+    """
+    for scr_index, scr_id in enumerate(score_ids):
+
+        try:
+            result[scr_id].add_value(
+                rec[scr_index],  # type: ignore
+                weight,
+            )
+        except TypeError as err:
+            logger.exception(
+                "Failed adding value %s to histogram of %s; "
+                "%s:%s-%s", rec[scr_index] if rec else None,
+                resource.resource_id,
+                chrom, start, end)
+            result[scr_id] = NullHistogram(
+                NullHistogramConfig(str(err)),
+            )
+        except HistogramError as err:
+            logger.warning(
+                "Histogram for %s nullified",
+                scr_id,
+            )
+            result[scr_id] = NullHistogram(
+                NullHistogramConfig(str(err)),
+            )
+
+
 def do_histogram(
     resource: GenomicResource,
     all_hist_confs: dict[str, HistogramConfig],
@@ -552,30 +596,9 @@ def do_histogram(
             # clipped to the region: see `_select_and_weigh`, which says
             # why selecting beats clipping here (gain#816).
             weight = opened.record_weight(left, right)
-            for scr_index, scr_id in enumerate(score_ids):
-
-                try:
-                    result[scr_id].add_value(
-                        rec[scr_index],  # type: ignore
-                        weight,
-                    )
-                except TypeError as err:
-                    logger.exception(
-                        "Failed adding value %s to histogram of %s; "
-                        "%s:%s-%s", rec[scr_index] if rec else None,
-                        resource.resource_id,
-                        chrom, start, end)
-                    result[scr_id] = NullHistogram(
-                        NullHistogramConfig(str(err)),
-                    )
-                except HistogramError as err:
-                    logger.warning(
-                        "Histogram for %s nullified",
-                        scr_id,
-                    )
-                    result[scr_id] = NullHistogram(
-                        NullHistogramConfig(str(err)),
-                    )
+            _add_record_values(
+                result, score_ids, rec, weight,
+                resource=resource, chrom=chrom, start=start, end=end)
     return result
 
 
