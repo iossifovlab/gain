@@ -116,39 +116,11 @@ class GeneScoreImplementation(ScoreImplementationBase):
         hist_conf = gene_score.get_histogram_config(score_id)
         if isinstance(hist_conf, NullHistogramConfig):
             return None
-        histogram: NumberHistogram | CategoricalHistogram
-
         if isinstance(hist_conf, NumberHistogramConfig):
-            histogram = NumberHistogram(hist_conf)
-            for value in gene_score.get_values(score_id):
-                histogram.add_value(value)
-        elif isinstance(hist_conf, CategoricalHistogramConfig):
-            histogram = CategoricalHistogram(hist_conf)
-            for value in gene_score.get_values(score_id):
-                # Categorical values pass through untouched -- int()/isnan
-                # coercion is invalid for string categories (#352). Missing
-                # values are NaN floats (or None) regardless of the column's
-                # declared type, so filter them without assuming a number.
-                if value is None:
-                    continue
-                if isinstance(value, float) and math.isnan(value):
-                    continue
-                # get_values yields numpy scalars for numeric columns;
-                # CategoricalHistogram.add_value accepts only native str/int,
-                # so normalize numpy -> python (this is what int() used to do
-                # for the int-valued case).
-                if isinstance(value, np.generic):
-                    value = value.item()
-                # An int column with empty cells is promoted to float by
-                # pandas, so its categories arrive as whole-number floats
-                # (#1744). Count them as their int category; a non-whole
-                # float is not a category and add_value refuses it.
-                if isinstance(value, float) and value.is_integer():
-                    value = int(value)
-                histogram.add_value(value)
-        else:
-            raise TypeError(f"Unknown histogram config: {hist_conf}")
-        return histogram
+            return _number_histogram(hist_conf, gene_score, score_id)
+        if isinstance(hist_conf, CategoricalHistogramConfig):
+            return _categorical_histogram(hist_conf, gene_score, score_id)
+        raise TypeError(f"Unknown histogram config: {hist_conf}")
 
     def calc_info_hash(self) -> bytes:
         return b"placeholder"
@@ -168,3 +140,54 @@ class GeneScoreImplementation(ScoreImplementationBase):
             ],
             "score_file": manifest[score_filename].md5,
         }, sort_keys=True, indent=2).encode()
+
+
+def _number_histogram(
+    hist_conf: NumberHistogramConfig, gene_score: GeneScore, score_id: str,
+) -> NumberHistogram:
+    histogram = NumberHistogram(hist_conf)
+    for value in gene_score.get_values(score_id):
+        histogram.add_value(value)
+    return histogram
+
+
+def _categorical_histogram(
+    hist_conf: CategoricalHistogramConfig,
+    gene_score: GeneScore, score_id: str,
+) -> CategoricalHistogram:
+    histogram = CategoricalHistogram(hist_conf)
+    for value in gene_score.get_values(score_id):
+        category = _categorical_value(value)
+        if category is None:
+            continue
+        histogram.add_value(category)
+    return histogram
+
+
+def _categorical_value(value: Any) -> Any:
+    """One categorical value as ``add_value`` takes it, ``None`` if missing.
+
+    A missing value is ``None`` or a NaN float, whatever the declared type
+    of the column.
+    """
+    # Categorical values pass through untouched -- int()/isnan coercion is
+    # invalid for string categories (#352). Missing values are NaN floats
+    # (or None) regardless of the column's declared type, so filter them
+    # without assuming a number.
+    if value is None:
+        return None
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    # get_values yields numpy scalars for numeric columns;
+    # CategoricalHistogram.add_value accepts only native str/int,
+    # so normalize numpy -> python (this is what int() used to do
+    # for the int-valued case).
+    if isinstance(value, np.generic):
+        value = value.item()
+    # An int column with empty cells is promoted to float by
+    # pandas, so its categories arrive as whole-number floats
+    # (#1744). Count them as their int category; a non-whole
+    # float is not a category and add_value refuses it.
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return value
