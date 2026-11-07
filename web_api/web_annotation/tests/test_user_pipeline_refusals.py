@@ -24,8 +24,13 @@ NOT_RECOGNIZED = {"reason": "Pipeline name not recognized!"}
 INVALID_NAME = {"reason": "Invalid pipeline name!"}
 
 
-def _config_files() -> set[pathlib.Path]:
-    return set(pathlib.Path(settings.ANNOTATION_CONFIG_STORAGE_DIR).rglob("*"))
+def _config_files() -> dict[pathlib.Path, bytes | None]:
+    """Map each path under the config storage to its bytes (dirs: None)."""
+    root = pathlib.Path(settings.ANNOTATION_CONFIG_STORAGE_DIR)
+    return {
+        path: path.read_bytes() if path.is_file() else None
+        for path in root.rglob("*")
+    }
 
 
 def _post_named_pipeline(client: Client, name: str) -> Any:
