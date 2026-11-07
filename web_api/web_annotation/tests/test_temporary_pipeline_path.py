@@ -16,6 +16,7 @@ from web_annotation.models import TemporaryPipeline
 
 ESCAPE = "../../cq89-escape"
 CONFIG = "- position_score: scores/pos1"
+SECOND_CONFIG = "- position_score: scores/pos2"
 
 
 def _all_files() -> set[pathlib.Path]:
@@ -91,11 +92,11 @@ def test_temporary_save_writes_the_stored_config_path_of_the_row(
 
 
 def _post_escape_name(
-    client: Client, pipeline_id: str | None,
+    client: Client, pipeline_id: str | None, config: str = CONFIG,
 ) -> int:
     data: dict[str, object] = {
         "name": ESCAPE,
-        "config": ContentFile(CONFIG),
+        "config": ContentFile(config),
     }
     if pipeline_id is not None:
         data["id"] = pipeline_id
@@ -135,7 +136,8 @@ def test_escape_name_with_session_id_writes_only_the_temporary_file(
     assert first.status_code == 200
     before = _all_files()
 
-    _post_escape_name(client, session_id)
+    status = _post_escape_name(client, session_id, SECOND_CONFIG)
 
-    assert _all_files() - before <= {_temporary_path(session_id)}
-    assert _temporary_path(session_id) in _all_files()
+    assert status == 200
+    assert _all_files() - before == set()
+    assert _temporary_path(session_id).read_text() == SECOND_CONFIG

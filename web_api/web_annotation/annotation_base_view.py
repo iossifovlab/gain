@@ -566,13 +566,16 @@ class AnnotationMixin:
         await sync_to_async(self._put_pipeline_or_404)(pipeline_id, user)
 
     def get_genome(self, data: QueryDict) -> str:
-        """Get genome from a request; an empty field means no genome."""
+        """Get genome from a request; an empty field means no genome.
+
+        ``_validate_request`` refuses an unknown genome first. The
+        ``NotFound`` here keeps a caller that skips it on a 404.
+        """
         genome = data.get("genome")
         if not genome:
             return ""
         if genome not in GRR_GENOMES:
-            raise ValueError(
-                "Genome not matching any id of grr genome resource!")
+            raise NotFound("Genome is not a valid option!")
         return genome
 
     def _save_annotation_config(
