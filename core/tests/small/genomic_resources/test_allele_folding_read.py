@@ -18,7 +18,11 @@ not, both pinned here:
 """
 
 import pathlib
-import tracemalloc
+import subprocess
+import sys
+import textwrap
+import threading
+import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -531,22 +535,73 @@ def test_the_read_consumes_every_record_through_the_fold(
     assert len(pulled) == 3
 
 
-def _peak_bytes_reading(score: AlleleScore, end: int) -> int:
-    """Peak bytes allocated by ONE folding read over ``[1, end]``.
+_MEASURE_PEAK = textwrap.dedent("""
+    import pathlib
+    import sys
+    import tracemalloc
 
-    The score is opened and read once before measuring, so the peak is a
-    steady-state read's rather than the table's one-off load.
-    """
+    from gain.genomic_resources.aggregators import ScoreAggregationQuery
+    from gain.genomic_resources.genomic_scores import (
+        build_allele_score_from_resource,
+    )
+    from gain.genomic_resources.testing import (
+        build_filesystem_test_resource,
+    )
+
+    end = int(sys.argv[2])
+    queries = [ScoreAggregationQuery("v", "max")]
+    score = build_allele_score_from_resource(
+        build_filesystem_test_resource(pathlib.Path(sys.argv[1])))
     with score.open() as opened:
-        opened.get_allele_scores_in_region_agg(
-            "1", 1, end, queries=[ScoreAggregationQuery("v", "max")])
+        opened.get_allele_scores_in_region_agg("1", 1, end, queries=queries)
+
         tracemalloc.start()
         try:
             opened.get_allele_scores_in_region_agg(
-                "1", 1, end, queries=[ScoreAggregationQuery("v", "max")])
-            return tracemalloc.get_traced_memory()[1]
+                "1", 1, end, queries=queries)
+            peak = tracemalloc.get_traced_memory()[1]
         finally:
             tracemalloc.stop()
+    print(peak)
+""")
+"""The script that ``_peak_bytes_reading`` runs in a new interpreter."""
+
+
+def _peak_bytes_reading(root: pathlib.Path, end: int) -> int:
+    """Peak bytes allocated by ONE folding read over ``[1, end]``.
+
+    ``root`` holds the resource of ``_score_of_many_alleles``.  The score
+    is opened and read once before measuring, so the peak is a
+    steady-state read's rather than the table's one-off load.
+
+    ``tracemalloc`` traces every thread of a process, and earlier tests
+    leave threads that allocate.  The measurement therefore runs in a new
+    interpreter, which has none of those threads (gain#2225).
+    """
+    result = subprocess.run(
+        [sys.executable, "-c", _MEASURE_PEAK, str(root), str(end)],
+        capture_output=True, text=True, check=False)
+    assert result.returncode == 0, (
+        f"the measuring interpreter exited {result.returncode}:\n"
+        f"{result.stderr}")
+    return int(result.stdout.strip().splitlines()[-1])
+
+
+def test_a_failing_peak_measurement_reports_the_traceback_of_the_child(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The measuring interpreter's traceback reaches the test report.
+
+    A directory without the resource makes the child fail while opening
+    the score.  Without its stderr the report would say only that a
+    subprocess exited non-zero.
+    """
+    (tmp_path / "empty").mkdir()
+
+    with pytest.raises(AssertionError) as failure:
+        _peak_bytes_reading(tmp_path / "empty", 200)
+
+    assert "Traceback (most recent call last)" in str(failure.value)
 
 
 def test_peak_memory_does_not_grow_with_the_number_of_alleles(
@@ -564,13 +619,48 @@ def test_peak_memory_does_not_grow_with_the_number_of_alleles(
     The bound is loose on purpose: linear growth is ~10x here, and the
     assertion fails anything above 3x.
     """
-    small = _peak_bytes_reading(
-        _score_of_many_alleles(tmp_path / "small", 200), 200)
-    large = _peak_bytes_reading(
-        _score_of_many_alleles(tmp_path / "large", 2000), 2000)
+    _score_of_many_alleles(tmp_path / "small", 200)
+    _score_of_many_alleles(tmp_path / "large", 2000)
+    small = _peak_bytes_reading(tmp_path / "small", 200)
+    large = _peak_bytes_reading(tmp_path / "large", 2000)
 
     assert large < 3 * small, (
         f"peak grew from {small} to {large} bytes for 10x the alleles")
+
+
+def test_peak_measurement_ignores_allocations_of_other_threads(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A thread left running by an earlier test does not count as peak.
+
+    ``tracemalloc`` traces every thread.  The in-process ``distributed``
+    client of ``tests/small/task_graph`` leaves threads that allocate, so
+    the peaks of the test above grew in a run that collected
+    ``task_graph`` first (gain#2225).  The thread here allocates 1 MB
+    blocks without a pause, far above what one read costs, so every
+    measuring window of an in-process measurement would overlap one.
+    """
+    _score_of_many_alleles(tmp_path / "small", 200)
+    _score_of_many_alleles(tmp_path / "large", 2000)
+    stop = threading.Event()
+
+    def allocate() -> None:
+        while not stop.is_set():
+            block = bytearray(10 ** 6)
+            time.sleep(0)
+            del block
+
+    noise = threading.Thread(target=allocate, daemon=True)
+    noise.start()
+    try:
+        small = _peak_bytes_reading(tmp_path / "small", 200)
+        large = _peak_bytes_reading(tmp_path / "large", 2000)
+    finally:
+        stop.set()
+        noise.join()
+
+    assert max(small, large) < 10 ** 6
+    assert large < 3 * small
 
 
 # ---------------------------------------------------------------------------
