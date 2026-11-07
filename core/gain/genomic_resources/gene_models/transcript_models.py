@@ -697,44 +697,14 @@ class TranscriptModel:
             Use update_frames() to set frame attribute on Exon objects.
         """
         length = len(self.exons)
-        fms = []
 
         cds_beg, cds_end = self._coding_bounds()
         if cds_beg >= cds_end:
             fms = [-1] * length
         elif self.strand == "+":
-            k = 0
-            while self.exons[k].stop < cds_beg:
-                fms.append(-1)
-                k += 1
-            fms.append(0)
-            if self.exons[k].stop < cds_end:
-                fms.append((self.exons[k].stop - cds_beg + 1) % 3)
-                k += 1
-            while k < length and self.exons[k].stop < cds_end:
-                fms.append(
-                    (fms[k] +
-                     self.exons[k].stop - self.exons[k].start + 1) % 3,
-                )
-                k += 1
-            fms += [-1] * (length - len(fms))
+            fms = self._plus_strand_frames(cds_beg, cds_end)
         else:
-            k = length - 1
-            while self.exons[k].start > cds_end:
-                fms.append(-1)
-                k -= 1
-            fms.append(0)
-            if cds_beg < self.exons[k].start:
-                fms.append((cds_end - self.exons[k].start + 1) % 3)
-                k -= 1
-            while k > -1 and cds_beg < self.exons[k].start:
-                fms.append(
-                    (fms[-1] + self.exons[k].stop - self.exons[k].start + 1)
-                    % 3,
-                )
-                k -= 1
-            fms += [-1] * (length - len(fms))
-            fms = fms[::-1]
+            fms = self._minus_strand_frames(cds_beg, cds_end)
 
         if len(fms) != length:
             raise ValueError(
@@ -743,6 +713,48 @@ class TranscriptModel:
                 f"cds={self.cds} coding_bounds={(cds_beg, cds_end)}",
             )
         return fms
+
+    def _plus_strand_frames(self, cds_beg: int, cds_end: int) -> list[int]:
+        """Calculate the exon frames of a coding ``+`` strand transcript."""
+        length = len(self.exons)
+        fms: list[int] = []
+        k = 0
+        while self.exons[k].stop < cds_beg:
+            fms.append(-1)
+            k += 1
+        fms.append(0)
+        if self.exons[k].stop < cds_end:
+            fms.append((self.exons[k].stop - cds_beg + 1) % 3)
+            k += 1
+        while k < length and self.exons[k].stop < cds_end:
+            fms.append(
+                (fms[k] +
+                 self.exons[k].stop - self.exons[k].start + 1) % 3,
+            )
+            k += 1
+        fms += [-1] * (length - len(fms))
+        return fms
+
+    def _minus_strand_frames(self, cds_beg: int, cds_end: int) -> list[int]:
+        """Calculate the exon frames of a coding ``-`` strand transcript."""
+        length = len(self.exons)
+        fms: list[int] = []
+        k = length - 1
+        while self.exons[k].start > cds_end:
+            fms.append(-1)
+            k -= 1
+        fms.append(0)
+        if cds_beg < self.exons[k].start:
+            fms.append((cds_end - self.exons[k].start + 1) % 3)
+            k -= 1
+        while k > -1 and cds_beg < self.exons[k].start:
+            fms.append(
+                (fms[-1] + self.exons[k].stop - self.exons[k].start + 1)
+                % 3,
+            )
+            k -= 1
+        fms += [-1] * (length - len(fms))
+        return fms[::-1]
 
     def update_frames(self) -> None:
         """Update the frame attribute of all exons.

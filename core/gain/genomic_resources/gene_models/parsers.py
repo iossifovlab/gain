@@ -679,44 +679,65 @@ def _end_of_gtf_attribute(data: str, start: int) -> int:
     return len(data) if stop == -1 else stop
 
 
+def _skip_gtf_separators(data: str, index: int) -> int:
+    """Return the first index at or after `index` past ``;`` and spaces."""
+    length = len(data)
+    while index < length and (data[index] == ";" or data[index].isspace()):
+        index += 1
+    return index
+
+
+def _read_gtf_attribute_key(data: str, index: int) -> tuple[str, int]:
+    """Read the key that starts at `index`.
+
+    Returns the key and the index of the space that ends it. Raises
+    `ValueError` when the attribute has no space before its separator.
+    """
+    space = data.find(" ", index)
+    stop = _end_of_gtf_attribute(data, index)
+    if space == -1 or stop < space:
+        raise ValueError(
+            f"malformed GTF attribute {data[index:stop].strip()!r}; "
+            f"expected a 'key value' pair",
+        )
+    return data[index:space], space
+
+
+def _read_gtf_attribute_value(
+    data: str, index: int, key: str,
+) -> tuple[str, int]:
+    """Read the quoted or unquoted value of `key` that follows `index`.
+
+    Returns the unstripped value and the index of the separator after it.
+    """
+    length = len(data)
+    while index < length and data[index] == " ":
+        index += 1
+
+    if index < length and data[index] == '"':
+        closing = _find_gtf_closing_quote(data, index + 1)
+        if closing == -1:
+            raise ValueError(
+                f"unterminated quote in GTF attribute {key!r}: "
+                f"{data[index:index + QUOTED_TEXT_LIMIT]!r}",
+            )
+        return data[index + 1:closing], _end_of_gtf_attribute(
+            data, closing + 1)
+    stop = _end_of_gtf_attribute(data, index)
+    return data[index:stop], stop
+
+
 def _scan_gtf_attributes(data: str) -> dict[str, str]:
     """Parse a GTF attributes column, reading quotes by position."""
     result = {}
     index = 0
     length = len(data)
     while index < length:
-        while index < length and (data[index] == ";" or data[index].isspace()):
-            index += 1
+        index = _skip_gtf_separators(data, index)
         if index >= length:
             break
-
-        space = data.find(" ", index)
-        stop = _end_of_gtf_attribute(data, index)
-        if space == -1 or stop < space:
-            raise ValueError(
-                f"malformed GTF attribute {data[index:stop].strip()!r}; "
-                f"expected a 'key value' pair",
-            )
-        key = data[index:space]
-
-        index = space
-        while index < length and data[index] == " ":
-            index += 1
-
-        if index < length and data[index] == '"':
-            closing = _find_gtf_closing_quote(data, index + 1)
-            if closing == -1:
-                raise ValueError(
-                    f"unterminated quote in GTF attribute {key!r}: "
-                    f"{data[index:index + QUOTED_TEXT_LIMIT]!r}",
-                )
-            value = data[index + 1:closing]
-            index = _end_of_gtf_attribute(data, closing + 1)
-        else:
-            stop = _end_of_gtf_attribute(data, index)
-            value = data[index:stop]
-            index = stop
-
+        key, index = _read_gtf_attribute_key(data, index)
+        value, index = _read_gtf_attribute_value(data, index, key)
         result[key] = value.strip()
     return result
 
@@ -1001,19 +1022,12 @@ def _drop_exonless_transcripts(
         )
 
 
-def parse_gtf_gene_models_format(
-    infile: IO,
-    gene_mapping: dict[str, str] | None = None,
-    nrows: int | None = None,
-) -> dict[str, TranscriptModel] | None:
-    """Parse GTF gene models file format."""
-    df = _read_gtf_records(infile, nrows)
-    if df is None:
-        return None
-
-    if gene_mapping is None:
-        gene_mapping = {}
-    transcript_models = {}
+def _collect_gtf_transcripts(
+    df: pd.DataFrame,
+    gene_mapping: dict[str, str],
+) -> dict[str, TranscriptModel]:
+    """Build the transcript models of the GTF records in `df`."""
+    transcript_models: dict[str, TranscriptModel] = {}
     skipped_transcripts: dict[str, str] = {}
 
     for rec in df.to_dict(orient="records"):
@@ -1046,7 +1060,14 @@ def parse_gtf_gene_models_format(
             continue
         _apply_gtf_child_record(
             rec, tr_id, transcript_models, skipped_transcripts)
+    return transcript_models
 
+
+def _finish_gtf_transcripts(
+    transcript_models: dict[str, TranscriptModel],
+    nrows: int | None,
+) -> None:
+    """Drop the exonless transcripts and update the frames of the rest."""
     # Known only now: a transcript's exons arrive as separate records,
     # so "this one has none" cannot be decided until the whole file has
     # been read. The early skip of GTF_EXONLESS_TRANSCRIPT_FEATURES is
@@ -1071,6 +1092,21 @@ def parse_gtf_gene_models_format(
             transcript_model.exons, key=lambda x: x.start)
         transcript_model.update_frames()
 
+
+def parse_gtf_gene_models_format(
+    infile: IO,
+    gene_mapping: dict[str, str] | None = None,
+    nrows: int | None = None,
+) -> dict[str, TranscriptModel] | None:
+    """Parse GTF gene models file format."""
+    df = _read_gtf_records(infile, nrows)
+    if df is None:
+        return None
+
+    if gene_mapping is None:
+        gene_mapping = {}
+    transcript_models = _collect_gtf_transcripts(df, gene_mapping)
+    _finish_gtf_transcripts(transcript_models, nrows)
     return transcript_models
 
 
