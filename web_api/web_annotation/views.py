@@ -176,8 +176,14 @@ class Login(FirstRefusalThrottledAPIView):
 
         email = request.data["email"]
         password = request.data["password"]
-        assert isinstance(email, str)
-        assert isinstance(password, str)
+        if not isinstance(email, str):
+            return Response(
+                {"error": "The email to log in must be a string"},
+                status=views.status.HTTP_400_BAD_REQUEST)
+        if not isinstance(password, str):
+            return Response(
+                {"error": "The password to log in must be a string"},
+                status=views.status.HTTP_400_BAD_REQUEST)
 
         user = authenticate(
             cast(HttpRequest, request), email=email, password=password)
