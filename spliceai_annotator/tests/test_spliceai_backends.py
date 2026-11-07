@@ -31,6 +31,25 @@ def onnx_models(onnx_backend: ModuleType) -> Iterator[list]:
 
 
 @pytest.fixture(scope="module")
+def single_thread_onnx_models(onnx_backend: ModuleType) -> Iterator[list]:
+    """An ONNX ensemble whose sessions have 1 intra-op thread.
+
+    The fixture sets `SPLICEAI_ONNX_INTRA_OP_THREADS`, the knob of the
+    integration job, only for the load. `spliceai_load_models` keeps no
+    cache, so these sessions are separate from those of `onnx_models`.
+    """
+    # The load returns before the yield, so the tests see the env restored.
+    yield _load_single_thread_models(onnx_backend)
+    onnx_backend.spliceai_close()
+
+
+def _load_single_thread_models(onnx_backend: ModuleType) -> list:
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv(onnx_backend.ONNX_INTRA_OP_THREADS_ENV, "1")
+        return onnx_backend.spliceai_load_models()
+
+
+@pytest.fixture(scope="module")
 def tensorflow_backend() -> ModuleType:
     # Loaded explicitly rather than through `impl.SPLICEAI_MODELS`, which
     # holds whichever backend the *process* selected -- these tests compare
@@ -261,7 +280,7 @@ def test_onnx_never_hands_ort_an_unbounded_batch(
 
 def test_onnx_chunking_does_not_change_results(
     onnx_backend: ModuleType,
-    onnx_models: list,
+    single_thread_onnx_models: list,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Chunking is a memory device, not a numerical one.
@@ -269,15 +288,22 @@ def test_onnx_chunking_does_not_change_results(
     Rows of the batch axis are independent, so splitting them across `run`
     calls must reproduce the single-invocation result exactly -- including
     when the batch is not a multiple of the chunk size (5 rows, 2 per run).
+
+    The sessions have 1 intra-op thread: a pool of more than one thread is
+    not bitwise reproducible under CPU contention (see
+    `spliceai_session_options`), and exact equality needs a reproducible
+    session. A tolerance instead would hide a real chunking defect.
     """
+    for session in single_thread_onnx_models:
+        assert session.get_session_options().intra_op_num_threads == 1
     x = a_one_hot_window(MIN_WIDTH, batch=5)
 
     monkeypatch.setattr(
         onnx_backend, "ONNX_POSITION_BUDGET", 1024 * MIN_WIDTH)
-    unchunked = onnx_backend.spliceai_predict(onnx_models, x)
+    unchunked = onnx_backend.spliceai_predict(single_thread_onnx_models, x)
     monkeypatch.setattr(
         onnx_backend, "ONNX_POSITION_BUDGET", 2 * MIN_WIDTH)
-    chunked = onnx_backend.spliceai_predict(onnx_models, x)
+    chunked = onnx_backend.spliceai_predict(single_thread_onnx_models, x)
 
     assert chunked.shape == unchunked.shape == (5, 1, 3)
     np.testing.assert_array_equal(chunked, unchunked)
