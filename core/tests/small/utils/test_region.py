@@ -77,6 +77,51 @@ def test_collapse_simple(data: str, expected: list[Region]) -> None:
 
 
 @pytest.mark.parametrize(
+    "regions,expected",
+    [
+        (
+            [Region("1", 10, None), Region("1", 20, 30)],
+            [Region("1", 10, None)],
+        ),
+        (
+            [Region("1", 10, 40), Region("1", 20, None)],
+            [Region("1", 10, None)],
+        ),
+        (
+            [Region("1", 10, None), Region("1", 20, None)],
+            [Region("1", 10, None)],
+        ),
+        (
+            [Region("1", 10, 20), Region("1", 20, None)],
+            [Region("1", 10, None)],
+        ),
+        (
+            [Region("1", None, 20), Region("1", 15, None)],
+            [Region("1", None, None)],
+        ),
+        (
+            [Region("1", 10, 20), Region("1", 21, None)],
+            [Region("1", 10, 20), Region("1", 21, None)],
+        ),
+        (
+            [Region("1", 10, None), Region("1", 5, 8)],
+            [Region("1", 5, 8), Region("1", 10, None)],
+        ),
+        (
+            [Region("1", 10, None), Region("2", 20, 30)],
+            [Region("1", 10, None), Region("2", 20, 30)],
+        ),
+    ],
+)
+def test_collapse_reads_an_open_stop_as_no_limit(
+    regions: list[Region], expected: list[Region],
+) -> None:
+    result = collapse(regions)
+
+    assert result == expected
+
+
+@pytest.mark.parametrize(
     "data,expected",
     [
         ("1:1-2,1:1-3", [Region("1", 1, 3)]),
@@ -553,6 +598,12 @@ def test_union() -> None:
     assert len(result) >= 2
 
 
+def test_union_with_an_open_stop_absorbs_the_later_region() -> None:
+    result = union([Region("1", 10, None)], [Region("1", 20, 30)])
+
+    assert result == [Region("1", 10, None)]
+
+
 def test_difference() -> None:
     regions1 = [Region("chr1", 1, 100)]
     regions2 = [Region("chr1", 20, 30)]
@@ -560,6 +611,15 @@ def test_difference() -> None:
     assert len(result) == 2
     assert result[0] == Region("chr1", 1, 19)
     assert result[1] == Region("chr1", 31, 100)
+
+
+def test_difference_collapses_an_open_stop_in_the_first_list() -> None:
+    result = difference(
+        [Region("1", 10, None), Region("1", 20, 30)],
+        [Region("1", 100, 200)],
+    )
+
+    assert result == [Region("1", 10, 99), Region("1", 201, None)]
 
 
 def test_difference_no_overlap() -> None:
