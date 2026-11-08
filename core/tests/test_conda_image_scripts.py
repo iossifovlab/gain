@@ -86,7 +86,8 @@ def pytest_calls(run_sh: str, cwd: pathlib.Path) -> list[PytestCall]:
 
 
 SCRIPT_PATH = re.compile(
-    r"""scripts/([\w.-]+)|["']scripts["']\s*/\s*["']([\w.-]+)["']""")
+    r"""(?<![\w/.-])scripts/([\w.-]+)"""
+    r"""|["']scripts["']\s*/\s*["']([\w.-]+)["']""")
 
 
 def named_scripts(text: str, scripts: set[str]) -> set[str]:
@@ -198,6 +199,8 @@ def test_named_scripts_matches_only_a_path_to_a_repo_root_script() -> None:
         """Runs scripts/b.py."""
         PACKAGE = "__init__.py"
         CONFIG = "web_api/scripts/grr-definition-dir.yaml"
+        PACKAGE_INIT = "some_pkg/scripts/__init__.py"
+        TABLE = "transcripts/c.sh"
         ''')
 
     named = named_scripts(text, {"a.sh", "b.py", "__init__.py", "c.sh"})
