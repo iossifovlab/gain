@@ -179,6 +179,24 @@ def test_a_batch_folds_its_interior_runs_with_one_array_call(
         == ExactLengths({1: 1, 2: 1, 4: 1, 5: 1, 7: 1, 8: 1}, 6, 27, 1, 8)
 
 
+def test_an_empty_batch_leaves_the_region_unchanged() -> None:
+    region = RegionCoverage("chr1", 1, 100)
+    region.add_interval(5, 9, (0.5,))
+    region.add_interval(10, 12, (0.7,))
+    empty = np.array([], dtype=np.int64)
+
+    region.add_interval_batch(empty, empty, [np.array([], dtype=float)])
+
+    assert region.covered == 8
+    assert region.segment_count == 2
+    assert region.segment_lengths() == ExactLengths({3: 1, 5: 1}, 2, 8, 3, 5)
+    # The open run is still [10, 12] with value 0.7: an equal-valued row
+    # that touches it stitches on and opens no new segment.
+    region.add_interval(13, 14, (0.7,))
+    assert region.segment_count == 2
+    assert region.segment_lengths() == ExactLengths({5: 2}, 2, 10, 5, 5)
+
+
 def test_merging_in_a_region_without_segments_loses_them() -> None:
     # The flag survives a merge only if both sides carry it: a region
     # that publishes no segments has no runs to stitch, so the merged
