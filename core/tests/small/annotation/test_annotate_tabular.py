@@ -413,7 +413,7 @@ def test_annotate_tabular_cli_runs_in_work_dir_and_restores_cwd(
 
 
 @pytest.mark.grr_http
-def test_annotate_tabular_http_grr_contains_tbi_in_work_dir(
+def test_annotate_tabular_http_grr_leaves_no_tbi_in_work_dir(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
     request: pytest.FixtureRequest,
@@ -467,9 +467,9 @@ def test_annotate_tabular_http_grr_contains_tbi_in_work_dir(
         out_file = tmp_path / "out.txt"
         work_dir = tmp_path / "work"
 
-        # Launch from a clean directory: htslib downloads the remote .tbi
-        # index relative to the working directory, and that must be work_dir
-        # rather than the directory the user launched the tool from.
+        # Launch from a clean directory: gain fetches the remote .tbi
+        # index into a temporary directory of its own (gain#2283), so
+        # neither the launch directory nor work_dir gets a copy of it.
         launch_dir = tmp_path / "launch"
         launch_dir.mkdir()
         monkeypatch.chdir(launch_dir)
@@ -479,15 +479,15 @@ def test_annotate_tabular_http_grr_contains_tbi_in_work_dir(
             str(a) for a in [
                 in_file, annotation_file, "--grr", grr_file,
                 "-o", out_file, "-w", work_dir, "-j", 1,
-                # keep the work dir so the downloaded .tbi can be inspected
+                # keep the work dir so its contents can be inspected
                 "--keep-work-dir",
             ]
         ])
 
     assert list(launch_dir.glob("*.tbi")) == [], \
         "remote tabix index leaked into the launch directory"
-    assert list(work_dir.rglob("*.tbi")), \
-        "expected the remote tabix index to be contained in work_dir"
+    assert list(work_dir.rglob("*.tbi")) == [], \
+        "remote tabix index leaked into work_dir"
     assert os.getcwd() == cwd_before
     assert out_file.read_text().splitlines()[0].split("\t")[-1] == "score"
 

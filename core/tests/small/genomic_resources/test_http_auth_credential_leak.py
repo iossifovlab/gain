@@ -20,6 +20,7 @@ import pytest_mock
 import yarl
 from gain.genomic_resources import cli as grr_cli
 from gain.genomic_resources.cli import cli_browse
+from gain.genomic_resources.cli_errors import RESOURCE_ERRORS
 from gain.genomic_resources.fsspec_protocol import (
     FsspecReadOnlyProtocol,
     FsspecReadWriteProtocol,
@@ -1841,6 +1842,24 @@ def _libbigwig_refused_open_line(url: str) -> str:
     return f"[urlOpen] Couldn't open {url} for reading"
 
 
+@pytest.fixture
+def stubbed_index_fetch(mocker: pytest_mock.MockerFixture) -> None:
+    """Make the fetch of a remote index succeed without a request.
+
+    A remote tabix or VCF open fetches its index through the filesystem
+    before pysam runs, and on a refused host that fetch fails first. The
+    tests that ask for this fixture are about the data url, which only
+    pysam is handed, so the fetch is stubbed out of the way. The stub
+    returns a path in the temporary directory of the open and writes
+    nothing there: htslib opens the data file first, and a refused data url
+    fails before htslib looks for the index.
+    """
+    mocker.patch.object(
+        FsspecReadOnlyProtocol, "_copy_resource_file_to_local",
+        side_effect=lambda _resource, filename, dest_dir: os.path.join(
+            dest_dir, os.path.basename(filename)))
+
+
 def _a_refused_protocol(
     proto_id: str, *, authed: bool = True,
 ) -> tuple[FsspecRepositoryProtocol, GenomicResource]:
@@ -1858,6 +1877,7 @@ def _a_refused_protocol(
     return proto, GenomicResource("sub/res", (1, 0), proto, {})
 
 
+@pytest.mark.usefixtures("stubbed_index_fetch")
 def test_tabix_open_failure_does_not_leak_url_credential(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
@@ -1885,13 +1905,15 @@ def test_tabix_open_failure_does_not_leak_url_credential(
     assert _SECRET not in capfd.readouterr().err
 
 
+@pytest.mark.usefixtures("stubbed_index_fetch")
 def test_tabix_open_still_hands_pysam_the_credential(
     mocker: pytest_mock.MockerFixture,
 ) -> None:
     # What only a mock can show: the url pysam is HANDED. Redacting it before
     # the call reads as the tidier fix and breaks every authed read, and no
     # leak test can see that -- every failure this suite plants is on the way
-    # out. Both urls carry it: htslib authenticates the index fetch too.
+    # out. Only the data url carries it: the index is fetched through the
+    # filesystem first, and pysam is handed the local copy (gain#2283).
     # Precedent: ``..._forwards_the_mode_and_the_credential``.
     proto, resource = _a_refused_protocol("i1314-tabix-cred")
     opened = mocker.patch.object(pysam, "TabixFile")
@@ -1900,9 +1922,10 @@ def test_tabix_open_still_hands_pysam_the_credential(
         resource, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
 
     assert _SECRET in opened.call_args.args[0]
-    assert _SECRET in opened.call_args.kwargs["index"]
+    assert "://" not in opened.call_args.kwargs["index"]
 
 
+@pytest.mark.usefixtures("stubbed_index_fetch")
 def test_tabix_open_without_userinfo_raises_the_librarys_own_error(
     mocker: pytest_mock.MockerFixture,
 ) -> None:
@@ -1923,6 +1946,7 @@ def test_tabix_open_without_userinfo_raises_the_librarys_own_error(
     assert excinfo.value is planted
 
 
+@pytest.mark.usefixtures("stubbed_index_fetch")
 def test_tabix_open_without_userinfo_keeps_htslib_diagnostics(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
@@ -1938,6 +1962,7 @@ def test_tabix_open_without_userinfo_keeps_htslib_diagnostics(
     assert "[E::hts_open_format]" in capfd.readouterr().err
 
 
+@pytest.mark.usefixtures("stubbed_index_fetch")
 def test_failed_authed_open_does_not_silence_the_next_one(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
@@ -1961,6 +1986,7 @@ def test_failed_authed_open_does_not_silence_the_next_one(
     assert "[E::hts_open_format]" in capfd.readouterr().err
 
 
+@pytest.mark.usefixtures("stubbed_index_fetch")
 def test_successful_authed_open_does_not_silence_the_next_one(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
@@ -1987,6 +2013,7 @@ def test_successful_authed_open_does_not_silence_the_next_one(
     ("index_filename", "index_exists"),
     [(None, False), (f"{_VCF_FILE_NAME}.tbi", True)],
     ids=["unindexed", "indexed"])
+@pytest.mark.usefixtures("stubbed_index_fetch")
 def test_vcf_open_failure_does_not_leak_url_credential(
     index_filename: str | None, index_exists: bool,
     capfd: pytest.CaptureFixture[str], mocker: pytest_mock.MockerFixture,
@@ -2025,11 +2052,12 @@ def test_vcf_unindexed_open_still_hands_pysam_the_credential(
     assert _SECRET in opened.call_args.args[0]
 
 
+@pytest.mark.usefixtures("stubbed_index_fetch")
 def test_vcf_indexed_open_still_hands_pysam_the_credential(
     mocker: pytest_mock.MockerFixture,
 ) -> None:
-    # Both urls carry it: htslib fetches the index over the same authenticated
-    # transport as the data file.
+    # Only the data url carries it: the index is fetched through the
+    # filesystem first, and pysam is handed the local copy (gain#2283).
     proto, resource = _a_refused_protocol("i1314-vcf-cred")
     mocker.patch.object(proto.filesystem, "exists", return_value=True)
     opened = mocker.patch.object(pysam, "VariantFile")
@@ -2037,7 +2065,71 @@ def test_vcf_indexed_open_still_hands_pysam_the_credential(
     proto.open_vcf_file(resource, _VCF_FILE_NAME, f"{_VCF_FILE_NAME}.tbi")
 
     assert _SECRET in opened.call_args.args[0]
-    assert _SECRET in opened.call_args.kwargs["index_filename"]
+    assert "://" not in opened.call_args.kwargs["index_filename"]
+
+
+# ---------------------------------------------------------------------------
+# gain#2283 -- a remote tabix or VCF open fetches its index through the
+# filesystem, before pysam runs. A failed fetch must raise an error from
+# ``RESOURCE_ERRORS`` that carries no credential.
+# ---------------------------------------------------------------------------
+
+#: The opener under test, the pysam class it must not reach, and the index
+#: the open fetches.
+_INDEXED_OPENS = pytest.mark.parametrize(
+    ("opener", "pysam_class", "index_filename"),
+    [("open_tabix_file", "TabixFile", f"{_TABIX_FILE_NAME}.tbi"),
+     ("open_vcf_file", "VariantFile", f"{_VCF_FILE_NAME}.tbi")],
+    ids=["tabix", "vcf"])
+
+
+def _a_failing_index_fetch(
+    proto: FsspecRepositoryProtocol, resource: GenomicResource,
+    index_filename: str, fault: str, mocker: pytest_mock.MockerFixture,
+) -> None:
+    """Make the fetch of ``index_filename`` fail with ``fault``.
+
+    ``refused`` leaves the filesystem alone: the host of ``_a_refused_protocol``
+    refuses every connection. ``http-500`` plants on the filesystem the error
+    aiohttp raises for a 500 on the fetch url of the index, credential
+    included.
+    """
+    mocker.patch.object(proto.filesystem, "exists", return_value=True)
+    if fault == "refused":
+        return
+    index_url = proto.get_resource_file_url(resource, index_filename)
+    mocker.patch.object(
+        proto.filesystem, "open",
+        side_effect=_an_aiohttp_error_carrying(index_url))
+
+
+@_INDEXED_OPENS
+@pytest.mark.parametrize("fault", ["refused", "http-500"])
+@pytest.mark.parametrize("authed", [True, False], ids=["authed", "unauthed"])
+def test_failed_index_fetch_raises_a_resource_error_without_credential(
+    opener: str, pysam_class: str, index_filename: str,
+    fault: str, authed: bool,
+    capfd: pytest.CaptureFixture[str], mocker: pytest_mock.MockerFixture,
+) -> None:
+    proto, resource = _a_refused_protocol(
+        f"i2283-{opener}-{fault}-{authed}", authed=authed)
+    _a_failing_index_fetch(proto, resource, index_filename, fault, mocker)
+    pysam_open = mocker.patch.object(pysam, pysam_class)
+
+    data_filename = index_filename.removesuffix(".tbi")
+
+    with pytest.raises(RESOURCE_ERRORS) as excinfo:
+        getattr(proto, opener)(resource, data_filename, index_filename)
+
+    # The fetch failed, not the open: pysam was never reached.
+    pysam_open.assert_not_called()
+    exc = excinfo.value
+    _assert_no_credential_escaped(exc)
+    assert "alice" not in str(exc)
+    assert _SECRET not in capfd.readouterr().err
+    if fault == "http-500":
+        assert "500" in str(exc)
+        assert index_filename in str(exc)
 
 
 def test_bigwig_open_failure_does_not_leak_url_credential(
@@ -2442,6 +2534,7 @@ _PRESIGNED_SHAPES = pytest.mark.parametrize(
 
 
 @_PRESIGNED_SHAPES
+@pytest.mark.usefixtures("stubbed_index_fetch")
 def test_s3_tabix_open_failure_does_not_leak_presigned_signature(
     query: str, capfd: pytest.CaptureFixture[str],
 ) -> None:
@@ -2469,6 +2562,7 @@ def test_s3_tabix_open_failure_does_not_leak_presigned_signature(
     assert _SIGNATURE not in capfd.readouterr().err
 
 
+@pytest.mark.usefixtures("stubbed_index_fetch")
 def test_s3_tabix_open_still_hands_pysam_the_presigned_url(
     mocker: pytest_mock.MockerFixture,
 ) -> None:
@@ -2476,8 +2570,9 @@ def test_s3_tabix_open_still_hands_pysam_the_presigned_url(
     # handing it over reads as the tidier fix, leaves every assertion above
     # GREEN -- a credential-free url produces a clean message for the wrong
     # reason -- and breaks every authed s3 read in production, because the
-    # signature IS the authorisation. Both urls carry it: htslib fetches the
-    # index over the same presigned transport.
+    # signature IS the authorisation. Only the data url carries it: the
+    # index is fetched through the filesystem first, and pysam is handed the
+    # local copy (gain#2283).
     proto, resource = _a_refused_s3_protocol("i1339-tabix-cred")
     opened = mocker.patch.object(pysam, "TabixFile")
 
@@ -2485,9 +2580,10 @@ def test_s3_tabix_open_still_hands_pysam_the_presigned_url(
         resource, _TABIX_FILE_NAME, f"{_TABIX_FILE_NAME}.tbi")
 
     assert _SIGNATURE in opened.call_args.args[0]
-    assert _SIGNATURE in opened.call_args.kwargs["index"]
+    assert "://" not in opened.call_args.kwargs["index"]
 
 
+@pytest.mark.usefixtures("stubbed_index_fetch")
 def test_anonymous_s3_tabix_open_keeps_htslib_diagnostics(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
@@ -2506,6 +2602,7 @@ def test_anonymous_s3_tabix_open_keeps_htslib_diagnostics(
     assert "[E::hts_open_format]" in capfd.readouterr().err
 
 
+@pytest.mark.usefixtures("stubbed_index_fetch")
 def test_anonymous_s3_tabix_open_raises_the_librarys_own_error(
     mocker: pytest_mock.MockerFixture,
 ) -> None:
@@ -2555,9 +2652,8 @@ _REDACTED_MESSAGES = [
         "could not open file `https://host/f.gz`",
         id="password-containing-question-mark"),
     pytest.param(
-        # The substitution must be global. Both of a tabix open's urls are
-        # presigned -- htslib fetches the index over the same signed
-        # transport -- so a message naming two must lose both.
+        # The substitution must be global: a message naming two presigned
+        # urls must lose both signatures.
         f"copy `https://host/a.gz?Signature={_SIGNATURE}1` -> "
         f"`https://host/b.gz?Signature={_SIGNATURE}2` failed",
         "copy `https://host/a.gz` -> `https://host/b.gz` failed",
@@ -2580,6 +2676,7 @@ _REDACTED_MESSAGES = [
 
 
 @pytest.mark.parametrize(("planted", "expected"), _REDACTED_MESSAGES)
+@pytest.mark.usefixtures("stubbed_index_fetch")
 def test_s3_open_failure_redacts_the_message(
     planted: str, expected: str, mocker: pytest_mock.MockerFixture,
 ) -> None:
@@ -2594,6 +2691,7 @@ def test_s3_open_failure_redacts_the_message(
     _assert_no_credential_escaped(excinfo.value)
 
 
+@pytest.mark.usefixtures("stubbed_index_fetch")
 def test_s3_open_failure_keeps_a_query_free_url_whole(
     mocker: pytest_mock.MockerFixture,
 ) -> None:
@@ -2623,6 +2721,7 @@ def test_s3_open_failure_keeps_a_query_free_url_whole(
     assert excinfo.value is planted
 
 
+@pytest.mark.usefixtures("stubbed_index_fetch")
 def test_failed_presigned_open_does_not_silence_the_next_one(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
@@ -2648,6 +2747,7 @@ def test_failed_presigned_open_does_not_silence_the_next_one(
     assert "[E::hts_open_format]" in capfd.readouterr().err
 
 
+@pytest.mark.usefixtures("stubbed_index_fetch")
 def test_successful_presigned_open_does_not_silence_the_next_one(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
@@ -2670,6 +2770,7 @@ def test_successful_presigned_open_does_not_silence_the_next_one(
     assert "[E::hts_open_format]" in capfd.readouterr().err
 
 
+@pytest.mark.usefixtures("stubbed_index_fetch")
 def test_concurrent_credentialed_htslib_opens_do_not_strand_verbosity(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
@@ -2721,6 +2822,7 @@ def test_concurrent_credentialed_htslib_opens_do_not_strand_verbosity(
     ("index_filename", "index_exists"),
     [(None, False), (f"{_VCF_FILE_NAME}.tbi", True)],
     ids=["unindexed", "indexed"])
+@pytest.mark.usefixtures("stubbed_index_fetch")
 def test_s3_vcf_open_failure_does_not_leak_presigned_signature(
     index_filename: str | None, index_exists: bool,
     capfd: pytest.CaptureFixture[str], mocker: pytest_mock.MockerFixture,

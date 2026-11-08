@@ -1692,13 +1692,12 @@ class FsspecReadOnlyProtocol(
             # which one this resource actually carries (gain#430).
             index_filename = resolve_tabix_index_filename_for_read(
                 resource, filename)
-        index_url = self._get_file_url(resource, index_filename)
-
-        return _open_htslib_file(
-            file_url,
-            lambda: pysam.TabixFile(  # pylint: disable=no-member
-                file_url, index=index_url, encoding="utf-8",
-                parser=pysam.asTuple()))
+        with self._htslib_index_path(resource, index_filename) as index:
+            return _open_htslib_file(
+                file_url,
+                lambda: pysam.TabixFile(  # pylint: disable=no-member
+                    file_url, index=index, encoding="utf-8",
+                    parser=pysam.asTuple()))
 
     def open_vcf_file(
             self, resource: GenomicResource,
@@ -1737,14 +1736,63 @@ class FsspecReadOnlyProtocol(
                     lambda: pysam.VariantFile(  # pylint: disable=no-member
                         file_url))
 
-        index_url = self._get_file_url(resource, index_filename)
-
-        vcf_file = _open_htslib_file(
-            file_url,
-            lambda: pysam.VariantFile(  # pylint: disable=no-member
-                file_url, index_filename=index_url))
+        with self._htslib_index_path(resource, index_filename) as index:
+            vcf_file = _open_htslib_file(
+                file_url,
+                lambda: pysam.VariantFile(  # pylint: disable=no-member
+                    file_url, index_filename=index))
         _declare_index_contigs(vcf_file)
         return vcf_file
+
+    @contextmanager
+    def _htslib_index_path(
+            self, resource: GenomicResource,
+            index_filename: str) -> Generator[str]:
+        """Yield the path of ``index_filename`` that pysam opens.
+
+        A ``file`` GRR yields the stored path. A remote GRR fetches the index
+        through ``filesystem`` into a fresh temporary directory, yields the
+        local copy and removes the directory when the body returns. htslib
+        loads the whole index at open, so the removal is safe once the pysam
+        constructor returns.
+
+        A remote index is never handed to htslib as a url: htslib downloads
+        such an index into the current working directory under its basename,
+        and reuses a file it finds there, so two resources whose data files
+        share a name would read through one index.
+        """
+        if self.scheme == "file":
+            yield self._get_file_url(resource, index_filename)
+            return
+        with tempfile.TemporaryDirectory(prefix="gain-htslib-idx-") as tmpdir:
+            yield self._fetch_index_to_local(
+                resource, index_filename, tmpdir)
+
+    def _fetch_index_to_local(
+            self, resource: GenomicResource,
+            index_filename: str, dest_dir: str) -> str:
+        """Copy ``index_filename`` into ``dest_dir``; raise an ``OSError``.
+
+        ``_copy_resource_file_to_local`` redacts a credential, but it lets an
+        error of any type through. An ``aiohttp`` error is not an
+        ``OSError``, so ``report_resource_failure`` would take its
+        "unexpected internal error" branch. Any error that is not an
+        ``OSError`` is converted here into one that names the index and the
+        resource. The conversion is raised outside the ``except`` block, so
+        it carries no chain.
+        """
+        converted: OSError | None = None
+        try:
+            return self._copy_resource_file_to_local(
+                resource, index_filename, dest_dir)
+        except OSError:
+            raise
+        except Exception as exc:  # ruff: ignore[blind-except]  # pylint: disable=broad-exception-caught
+            converted = OSError(
+                f"could not fetch index '{index_filename}' of resource "
+                f"'{resource.resource_id}': "
+                f"{_error_without_url_credentials(exc)}")
+        raise converted
 
     def open_fasta_file(
             self, resource: GenomicResource,
