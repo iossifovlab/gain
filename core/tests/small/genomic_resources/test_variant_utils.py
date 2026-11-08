@@ -194,3 +194,15 @@ def test_maximally_extend_variant(
     assert mpos == epos
     assert mref == eref
     assert malts == ealts
+
+
+def test_maximally_extend_a_novariant_extends_to_the_chromosome_end(
+        normalize_genome_2: ReferenceGenome) -> None:
+    # A no-variant (REF equal to ALT, one base) is the only input that
+    # skips the extension to the right after normalization.  Today the
+    # function then extends it to the end of the chromosome.  This test
+    # pins the behavior of today: gain#2296 decides the right result.
+    with normalize_genome_2.open() as genome:
+        result = maximally_extend_variant("1", 8, "C", ["C"], genome)
+
+    assert result == ("1", 8, "CACAGGG", ["CACAGGG"])
