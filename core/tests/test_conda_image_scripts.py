@@ -1,4 +1,3 @@
-# pylint: disable=C0116
 """The conda-integration image copies each repo-root script its tests name.
 
 ``core/conda-integration/Dockerfile`` copies each repo-root script that a
@@ -134,6 +133,7 @@ def scripts_named_by_image_tests() -> dict[str, list[pathlib.Path]]:
 
 
 def test_copied_scripts_reads_each_source_of_a_continued_copy() -> None:
+    """Each source of a COPY line counts, also on a continued line."""
     dockerfile = (
         "COPY --chown=u:u scripts/a.sh \\\n"
         "    scripts/b.py /testbed/scripts/\n"
@@ -144,12 +144,14 @@ def test_copied_scripts_reads_each_source_of_a_continued_copy() -> None:
 
 
 def test_copied_scripts_drops_a_relative_destination() -> None:
+    """The last argument of a COPY line is the destination, not a source."""
     dockerfile = "COPY scripts/a.sh scripts/\n"
 
     assert copied_scripts(dockerfile) == ({"a.sh"}, False)
 
 
 def test_copied_scripts_counts_the_scripts_directory() -> None:
+    """A COPY of the whole scripts directory copies every script."""
     assert copied_scripts("COPY scripts /testbed/scripts\n")[1]
     assert copied_scripts("COPY scripts/ /testbed/scripts/\n")[1]
 
@@ -157,6 +159,7 @@ def test_copied_scripts_counts_the_scripts_directory() -> None:
 def test_pytest_calls_reads_targets_and_ignores_of_each_call(
     tmp_path: pathlib.Path,
 ) -> None:
+    """Each pytest call of run.sh gives its own targets and ignores."""
     (tmp_path / "tests" / "integration").mkdir(parents=True)
     run_sh = (
         "# python -m pytest tests/commented\n"
@@ -177,6 +180,7 @@ def test_pytest_calls_reads_targets_and_ignores_of_each_call(
 def test_files_the_image_runs_drops_the_files_under_an_ignored_directory(
     tmp_path: pathlib.Path,
 ) -> None:
+    """An ignored directory excludes each test file under it."""
     (tmp_path / "tests" / "source_only").mkdir(parents=True)
     (tmp_path / "tests" / "test_a.py").write_text("")
     (tmp_path / "tests" / "source_only" / "test_b.py").write_text("")
@@ -188,6 +192,7 @@ def test_files_the_image_runs_drops_the_files_under_an_ignored_directory(
 
 
 def test_named_scripts_matches_only_a_path_to_a_repo_root_script() -> None:
+    """A bare name or a path under another scripts directory is no match."""
     text = textwrap.dedent('''\
         SCRIPT = REPO_ROOT / "scripts" / "a.sh"
         """Runs scripts/b.py."""
@@ -201,6 +206,7 @@ def test_named_scripts_matches_only_a_path_to_a_repo_root_script() -> None:
 
 
 def test_the_image_copies_each_script_that_its_tests_name() -> None:
+    """The Dockerfile copies each script that a test of the image names."""
     named = scripts_named_by_image_tests()
     copied, whole = copied_scripts(DOCKERFILE.read_text())
 
