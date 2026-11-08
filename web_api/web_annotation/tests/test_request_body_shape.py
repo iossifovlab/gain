@@ -12,9 +12,11 @@ import pytest
 from django.forms.models import model_to_dict
 from django.test import Client
 
+from web_annotation import views as web_annotation_views
 from web_annotation.messages import (
     DAE_INDEL_NOT_SUPPORTED,
     INVALID_ANNOTATABLE,
+    INVALID_LOGIN_CREDENTIALS,
 )
 from web_annotation.models import AlleleQuery, User, UserQuota
 from web_annotation.single_allele_annotation import (
@@ -50,6 +52,40 @@ def test_non_object_json_body_is_a_400(
 
     assert response.status_code == 400
     assert response.json() == {key: "Request body must be a JSON object"}
+
+
+#: A JSON value of each non-string kind (iossifovlab/gain#2200).
+NON_STRING_VALUES = [None, 3, ["user@example.com"], {"a": "b"}]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("value", NON_STRING_VALUES)
+@pytest.mark.parametrize("field", ["email", "password"])
+def test_login_with_a_non_string_field_is_a_400(
+    anonymous_client: Client, monkeypatch: pytest.MonkeyPatch,
+    field: str, value: object,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    def spy_authenticate(*args: Any, **kwargs: Any) -> None:
+        calls.append(kwargs)
+
+    monkeypatch.setattr(
+        web_annotation_views, "authenticate", spy_authenticate)
+    body: dict[str, object] = {
+        "email": "user@example.com", "password": "secret"}
+    body[field] = value
+
+    response = anonymous_client.post(
+        "/api/login", body, content_type="application/json",
+    )
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert isinstance(error, str)
+    assert field in error
+    assert error != INVALID_LOGIN_CREDENTIALS
+    assert not calls
 
 
 #: Views that read ``request.data`` as multipart form data; a JSON body
