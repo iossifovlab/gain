@@ -88,6 +88,28 @@ def test_login_with_a_non_string_field_is_a_400(
     assert not calls
 
 
+@pytest.mark.django_db
+@pytest.mark.parametrize("value", NON_STRING_VALUES)
+@pytest.mark.parametrize("field", ["email", "password"])
+def test_register_with_a_non_string_field_is_a_400(
+    anonymous_client: Client, field: str, value: object,
+) -> None:
+    body: dict[str, object] = {
+        "email": "new-user@example.com", "password": "secret"}
+    body[field] = value
+    users_before = User.objects.count()
+
+    response = anonymous_client.post(
+        "/api/register", body, content_type="application/json",
+    )
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert isinstance(error, str)
+    assert field in error
+    assert User.objects.count() == users_before
+
+
 #: Views that read ``request.data`` as multipart form data; a JSON body
 #: parses to a ``dict``, not a ``QueryDict``.
 MULTIPART_ENDPOINTS = [
