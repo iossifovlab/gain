@@ -2582,6 +2582,39 @@ def test_internal_error_in_index_fetch_keeps_its_type(
     assert excinfo.value is planted
 
 
+@_INDEXED_OPENS
+def test_converted_index_fetch_error_is_redacted_and_unchained(
+    opener: str, pysam_class: str, index_filename: str,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    # On an authed GRR ``_read_fetch_file`` already rebuilds a failed read
+    # as a redacted ``OSError``, so the conversion of a non-``OSError``
+    # would see no credential there. Plant the credential-bearing aiohttp
+    # error past that redactor, so the redaction and the missing chain of
+    # the conversion are the only guards.
+    proto, resource = _a_refused_protocol(f"i2283-conv-{opener}")
+    mocker.patch.object(proto.filesystem, "exists", return_value=True)
+    planted = _an_aiohttp_error_carrying(
+        proto.get_resource_file_url(resource, index_filename))
+    assert _SECRET in str(planted)
+    mocker.patch.object(
+        FsspecReadOnlyProtocol, "_copy_resource_file_to_local",
+        side_effect=planted)
+    mocker.patch.object(pysam, pysam_class)
+
+    data_filename = index_filename.removesuffix(".tbi")
+
+    with pytest.raises(OSError, match="500") as excinfo:
+        getattr(proto, opener)(resource, data_filename, index_filename)
+
+    exc = excinfo.value
+    assert exc.__cause__ is None
+    assert exc.__context__ is None
+    _assert_no_credential_escaped(exc)
+    assert "alice" not in str(exc)
+    assert index_filename in str(exc)
+
+
 @_PRESIGNED_SHAPES
 @pytest.mark.usefixtures("stubbed_index_fetch")
 def test_s3_tabix_open_failure_does_not_leak_presigned_signature(

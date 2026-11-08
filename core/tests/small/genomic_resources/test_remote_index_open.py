@@ -19,6 +19,7 @@ import tempfile
 from collections.abc import Iterator
 from typing import Any
 
+import pysam
 import pytest
 import pytest_mock
 from gain.genomic_resources.fsspec_protocol import build_fsspec_protocol
@@ -242,3 +243,48 @@ def test_tabix_open_leaves_the_working_directory_empty(
 
     assert rows == [("2", "1", "10", "2.5")]
     assert list(workdir.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("builder", "filename", "pysam_class"),
+    [(_a_tabix_score(("1", 1, 10, 1.5)), "data.txt.gz", "TabixFile"),
+     (_a_vcf_score(("1", 5, 1.5)), "data.vcf.gz", "VariantFile")],
+    ids=["tabix", "vcf"])
+def test_remote_open_leaves_the_process_cwd_alone(
+    builder: PositionScoreBuilder | VcfInfoScoreBuilder, filename: str,
+    pysam_class: str, tmp_path: pathlib.Path, workdir: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # gainweb opens resources from a thread pool of one process, so an open
+    # must not contain the htslib download with a chdir: two concurrent
+    # opens would race on the one working directory of the process.
+    root = tmp_path / "grr"
+    a_grr().with_resource("res", builder).build_repo(root)
+    chdirs: list[str] = []
+    real_chdir = os.chdir
+
+    def recording_chdir(path: Any) -> None:
+        chdirs.append(str(path))
+        real_chdir(path)
+
+    monkeypatch.setattr(os, "chdir", recording_chdir)
+    cwds_at_open: list[str] = []
+    real_class = getattr(pysam, pysam_class)
+
+    def recording_class(*args: Any, **kwargs: Any) -> Any:
+        cwds_at_open.append(os.getcwd())
+        return real_class(*args, **kwargs)
+
+    monkeypatch.setattr(pysam, pysam_class, recording_class)
+
+    with _serving_http_out_of_process(root) as base_url:
+        proto = build_fsspec_protocol(f"i2283-cwd-{filename}", base_url)
+        resource = proto.get_resource("res")
+        opener = (
+            proto.open_vcf_file if filename.endswith(".vcf.gz")
+            else proto.open_tabix_file)
+        with opener(resource, filename) as opened:
+            assert opened is not None
+
+    assert chdirs == []
+    assert cwds_at_open == [str(workdir)]
