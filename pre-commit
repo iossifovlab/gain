@@ -1,18 +1,60 @@
 #!/bin/bash
+# Run ruff on each staged .py file, at the version uv.lock pins, via
+# uvx: no venv and no ruff on PATH needed. The hook checks the file in
+# the working tree, not the staged blob.
+
 # Redirect output to stderr.
 exec 1>&2
 
+top=$(git rev-parse --show-toplevel) || exit 1
+cd "$top" || exit 1
+
+# `--diff-filter dr` drops deleted and renamed-away paths; the paths
+# are relative to the repo top.
+files=()
+while read -r st file; do
+    if [[ $file == *.py ]]; then
+        files+=("$file")
+    fi
+done < <(git diff --diff-filter dr --cached --name-status)
+
+if [[ ${#files[@]} -eq 0 ]]; then
+    exit 0
+fi
+
+if ! command -v uvx > /dev/null; then
+    echo "pre-commit: uvx not found; install uv to run ruff"
+    exit 1
+fi
+
+# The [[package]] block for ruff itself: `name = "ruff"` on its own
+# line, `version = "..."` on the next. Dependency references spell it
+# inline (`{ name = "ruff" ... }`), so they never match.
+version=$(awk '
+    /^name = "ruff"$/ { in_ruff = 1; next }
+    in_ruff && /^version = / { gsub(/"/, "", $3); print $3; exit }
+' uv.lock)
+# The awk rule above is shared text with pre-push. When the ruff block
+# has no version line, it reads the version of a later block, so check
+# that the version sits on the line right after `name = "ruff"`.
+if [[ -n $version ]] && ! grep -A1 -x 'name = "ruff"' uv.lock \
+        | grep -qxF "version = \"$version\""; then
+    version=
+fi
+if [[ -z $version ]]; then
+    echo "pre-commit: could not read ruff's version from uv.lock"
+    exit 1
+fi
+
 found_errors=0
 
-while read st file; do
-
-    if [[ $file == *.py ]] && ! ruff check -s "$file" --ignore "FIX"; then
+for file in "${files[@]}"; do
+    if ! uvx "ruff@$version" check -s "$file" --ignore "FIX"; then
         echo "Ruff check failed for file: $file"
         found_errors=1
     fi
-
-done < <(git diff --diff-filter dr --cached --name-status)
+done
 
 if [[ $found_errors -eq 1 ]]; then
-        exit 1
+    exit 1
 fi
