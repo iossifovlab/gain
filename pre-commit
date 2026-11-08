@@ -46,15 +46,15 @@ if [[ -z $version ]]; then
     exit 1
 fi
 
-found_errors=0
+# One uvx start for all files. `-s` silences ruff, so only on a
+# failure run ruff again per file to name each file that fails.
+if uvx "ruff@$version" check -s --ignore "FIX" -- "${files[@]}"; then
+    exit 0
+fi
 
 for file in "${files[@]}"; do
     if ! uvx "ruff@$version" check -s "$file" --ignore "FIX"; then
         echo "Ruff check failed for file: $file"
-        found_errors=1
     fi
 done
-
-if [[ $found_errors -eq 1 ]]; then
-    exit 1
-fi
+exit 1

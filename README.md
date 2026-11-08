@@ -203,7 +203,11 @@ mypy gain --exclude core/docs/ \
 ### Pre-commit lint check hook
 
 A git pre-commit hook for lint checking with Ruff is
-included. Install it from the repository root:
+included. The hook runs ruff through `uvx` at the
+version that `uv.lock` pins, so it needs `uv` installed
+but no venv and no `ruff` on `PATH`. Install it from the
+repository root, and copy it again after the hook
+changes:
 
 ```bash
 cp pre-commit .git/hooks/
