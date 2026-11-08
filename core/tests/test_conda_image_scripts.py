@@ -103,13 +103,15 @@ def named_scripts(text: str, scripts: set[str]) -> set[str]:
     return found & scripts
 
 
-def files_the_image_runs() -> set[pathlib.Path]:
+def files_the_image_runs(
+    run_sh: str, cwd: pathlib.Path,
+) -> set[pathlib.Path]:
     """Return the test files under a target of a pytest call of run.sh.
 
     A file that an ``--ignore=`` path of the same call covers is left out.
     """
     files: set[pathlib.Path] = set()
-    for targets, ignores in pytest_calls(RUN_SH.read_text(), CORE):
+    for targets, ignores in pytest_calls(run_sh, cwd):
         for target in targets:
             candidates = (
                 target.rglob("*.py") if target.is_dir() else [target])
@@ -125,7 +127,7 @@ def scripts_named_by_image_tests() -> dict[str, list[pathlib.Path]]:
         path.name for path in (REPO_ROOT / "scripts").iterdir()
         if path.is_file()}
     named: dict[str, list[pathlib.Path]] = {}
-    for path in sorted(files_the_image_runs()):
+    for path in sorted(files_the_image_runs(RUN_SH.read_text(), CORE)):
         for name in named_scripts(path.read_text(), scripts):
             named.setdefault(name, []).append(path)
     return named
@@ -139,6 +141,12 @@ def test_copied_scripts_reads_each_source_of_a_continued_copy() -> None:
         "RUN echo scripts/c.sh\n")
 
     assert copied_scripts(dockerfile) == ({"a.sh", "b.py"}, False)
+
+
+def test_copied_scripts_drops_a_relative_destination() -> None:
+    dockerfile = "COPY scripts/a.sh scripts/\n"
+
+    assert copied_scripts(dockerfile) == ({"a.sh"}, False)
 
 
 def test_copied_scripts_counts_the_scripts_directory() -> None:
@@ -164,6 +172,19 @@ def test_pytest_calls_reads_targets_and_ignores_of_each_call(
          [tmp_path / "tests" / "integration", tmp_path / "tests" / "a.py"]),
         ([tmp_path / "tests" / "integration"], []),
     ]
+
+
+def test_files_the_image_runs_drops_the_files_under_an_ignored_directory(
+    tmp_path: pathlib.Path,
+) -> None:
+    (tmp_path / "tests" / "source_only").mkdir(parents=True)
+    (tmp_path / "tests" / "test_a.py").write_text("")
+    (tmp_path / "tests" / "source_only" / "test_b.py").write_text("")
+    run_sh = "python -m pytest tests --ignore=tests/source_only\n"
+
+    files = files_the_image_runs(run_sh, tmp_path)
+
+    assert files == {tmp_path / "tests" / "test_a.py"}
 
 
 def test_named_scripts_matches_only_a_path_to_a_repo_root_script() -> None:
