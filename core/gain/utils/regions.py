@@ -459,8 +459,12 @@ def collapse(
             continue
         prev_reg = chrom_collapsed[-1]
 
-        if coalesce(reg.start, 1) <= coalesce(prev_reg.stop, 1):
-            if coalesce(reg.stop, 1) > coalesce(prev_reg.stop, 1):
+        # An open stop (None) has no limit: it absorbs every later region.
+        prev_stop = prev_reg.stop
+        if prev_stop is None:
+            continue
+        if coalesce(reg.start, 1) <= prev_stop:
+            if reg.stop is None or reg.stop > prev_stop:
                 last = collapsed[reg.chrom][-1]
                 collapsed[reg.chrom][-1] = \
                     Region(last.chrom, last.start, reg.stop)
