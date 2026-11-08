@@ -8,7 +8,7 @@ open reads its data through the index of the first (gain#2283).
 Each test here opens remote resources from an empty working directory, so
 any file the open leaves behind shows up in it.
 """
-# pylint: disable=C0116
+# pylint: disable=C0116  # each test name states its behaviour
 import contextlib
 import os
 import pathlib

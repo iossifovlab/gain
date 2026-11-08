@@ -2533,6 +2533,55 @@ _PRESIGNED_SHAPES = pytest.mark.parametrize(
     "query", [_SIGV2_QUERY, _SIGV4_QUERY], ids=["sigv2", "sigv4"])
 
 
+@_INDEXED_OPENS
+def test_failed_s3_index_fetch_raises_a_resource_error(
+    opener: str, pysam_class: str, index_filename: str,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    # An unreachable s3 endpoint: s3fs hands botocore's connection error
+    # through untranslated, and that error is neither an ``OSError`` nor an
+    # ``aiohttp`` error (gain#2283).
+    botocore_exceptions = pytest.importorskip("botocore.exceptions")
+    proto, resource = _a_refused_s3_protocol(f"i2283-s3-{opener}")
+    mocker.patch.object(proto.filesystem, "exists", return_value=True)
+    mocker.patch.object(
+        proto.filesystem, "open",
+        side_effect=botocore_exceptions.EndpointConnectionError(
+            endpoint_url="https://127.0.0.1:1/bucket"))
+    pysam_open = mocker.patch.object(pysam, pysam_class)
+
+    data_filename = index_filename.removesuffix(".tbi")
+
+    with pytest.raises(RESOURCE_ERRORS) as excinfo:
+        getattr(proto, opener)(resource, data_filename, index_filename)
+
+    pysam_open.assert_not_called()
+    assert index_filename in str(excinfo.value)
+
+
+@_INDEXED_OPENS
+def test_internal_error_in_index_fetch_keeps_its_type(
+    opener: str, pysam_class: str, index_filename: str,
+    mocker: pytest_mock.MockerFixture,
+) -> None:
+    # Only a transport error becomes an ``OSError``. A bug in gain's own
+    # fetch code must surface as itself, with its traceback.
+    proto, resource = _a_refused_protocol(f"i2283-bug-{opener}")
+    mocker.patch.object(proto.filesystem, "exists", return_value=True)
+    planted = TypeError("a bug in the index fetch")
+    mocker.patch.object(
+        FsspecReadOnlyProtocol, "_copy_resource_file_to_local",
+        side_effect=planted)
+    mocker.patch.object(pysam, pysam_class)
+
+    data_filename = index_filename.removesuffix(".tbi")
+
+    with pytest.raises(TypeError) as excinfo:
+        getattr(proto, opener)(resource, data_filename, index_filename)
+
+    assert excinfo.value is planted
+
+
 @_PRESIGNED_SHAPES
 @pytest.mark.usefixtures("stubbed_index_fetch")
 def test_s3_tabix_open_failure_does_not_leak_presigned_signature(
