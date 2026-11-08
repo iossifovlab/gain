@@ -224,8 +224,16 @@ class Registration(views.APIView):
                 {"error": "A password is required to register"},
                 status=views.status.HTTP_400_BAD_REQUEST)
 
-        email = str(request.data["email"])
-        password = str(request.data["password"])
+        email = request.data["email"]
+        password = request.data["password"]
+        if not isinstance(email, str):
+            return Response(
+                {"error": "The email to register must be a string"},
+                status=views.status.HTTP_400_BAD_REQUEST)
+        if not isinstance(password, str):
+            return Response(
+                {"error": "The password to register must be a string"},
+                status=views.status.HTTP_400_BAD_REQUEST)
 
         email_error = account_email_error(email)
         if email_error is not None:
