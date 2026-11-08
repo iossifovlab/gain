@@ -193,10 +193,10 @@ def test_remote_open_removes_its_temporary_index(
             else proto.open_tabix_file)
         with opener(resource, filename) as opened:
             assert opened is not None
+            assert list(scratch.iterdir()) == []
 
     assert made
     assert all(path.parent == scratch for path in made)
-    assert list(scratch.iterdir()) == []
     assert list(workdir.iterdir()) == []
 
 

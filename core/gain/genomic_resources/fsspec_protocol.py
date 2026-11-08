@@ -1771,23 +1771,24 @@ class FsspecReadOnlyProtocol(
     def _fetch_index_to_local(
             self, resource: GenomicResource,
             index_filename: str, dest_dir: str) -> str:
-        """Copy ``index_filename`` into ``dest_dir``; raise an ``OSError``.
+        """Copy ``index_filename`` into ``dest_dir``, or raise ``OSError``.
 
         ``_copy_resource_file_to_local`` redacts a credential, but it lets an
         error of any type through. An ``aiohttp`` error is not an
         ``OSError``, so ``report_resource_failure`` would take its
-        "unexpected internal error" branch. Any error that is not an
-        ``OSError`` is converted here into one that names the index and the
-        resource. The conversion is raised outside the ``except`` block, so
-        it carries no chain.
+        "unexpected internal error" branch. An ``aiohttp.ClientError`` that
+        is not an ``OSError`` is converted here into one that names the
+        index and the resource. The conversion is raised outside the
+        ``except`` block, so it carries no chain. Any other error, for
+        example an internal bug, passes through with its type and traceback.
         """
         converted: OSError | None = None
         try:
             return self._copy_resource_file_to_local(
                 resource, index_filename, dest_dir)
-        except OSError:
-            raise
-        except Exception as exc:  # ruff: ignore[blind-except]  # pylint: disable=broad-exception-caught
+        except _aiohttp_errors as exc:
+            if isinstance(exc, OSError):
+                raise
             converted = OSError(
                 f"could not fetch index '{index_filename}' of resource "
                 f"'{resource.resource_id}': "
