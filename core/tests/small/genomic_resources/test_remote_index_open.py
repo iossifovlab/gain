@@ -90,6 +90,17 @@ def _a_vcf_score(*rows: tuple[str, int, float]) -> VcfInfoScoreBuilder:
     return a_vcf_info_score().with_data(data)
 
 
+#: A one-row resource of each indexed kind, its data file, the opener of
+#: the protocol and the pysam class that opener constructs.
+_ONE_ROW_OPENS = pytest.mark.parametrize(
+    ("builder", "filename", "opener", "pysam_class"),
+    [(_a_tabix_score(("1", 1, 10, 1.5)), "data.txt.gz",
+      "open_tabix_file", "TabixFile"),
+     (_a_vcf_score(("1", 5, 1.5)), "data.vcf.gz",
+      "open_vcf_file", "VariantFile")],
+    ids=["tabix", "vcf"])
+
+
 @pytest.fixture
 def workdir(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
@@ -161,13 +172,10 @@ def test_second_vcf_open_reads_its_own_index(
     assert list(workdir.iterdir()) == []
 
 
-@pytest.mark.parametrize(
-    ("builder", "filename"),
-    [(_a_tabix_score(("1", 1, 10, 1.5)), "data.txt.gz"),
-     (_a_vcf_score(("1", 5, 1.5)), "data.vcf.gz")],
-    ids=["tabix", "vcf"])
+@_ONE_ROW_OPENS
 def test_remote_open_removes_its_temporary_index(
     builder: PositionScoreBuilder | VcfInfoScoreBuilder, filename: str,
+    opener: str, pysam_class: str,
     tmp_path: pathlib.Path, workdir: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -189,10 +197,7 @@ def test_remote_open_removes_its_temporary_index(
     with _serving_http_out_of_process(root) as base_url:
         proto = build_fsspec_protocol(f"i2283-tmp-{filename}", base_url)
         resource = proto.get_resource("res")
-        opener = (
-            proto.open_vcf_file if filename.endswith(".vcf.gz")
-            else proto.open_tabix_file)
-        with opener(resource, filename) as opened:
+        with getattr(proto, opener)(resource, filename) as opened:
             assert opened is not None
             assert list(scratch.iterdir()) == []
 
@@ -245,14 +250,11 @@ def test_tabix_open_leaves_the_working_directory_empty(
     assert list(workdir.iterdir()) == []
 
 
-@pytest.mark.parametrize(
-    ("builder", "filename", "pysam_class"),
-    [(_a_tabix_score(("1", 1, 10, 1.5)), "data.txt.gz", "TabixFile"),
-     (_a_vcf_score(("1", 5, 1.5)), "data.vcf.gz", "VariantFile")],
-    ids=["tabix", "vcf"])
+@_ONE_ROW_OPENS
 def test_remote_open_leaves_the_process_cwd_alone(
     builder: PositionScoreBuilder | VcfInfoScoreBuilder, filename: str,
-    pysam_class: str, tmp_path: pathlib.Path, workdir: pathlib.Path,
+    opener: str, pysam_class: str,
+    tmp_path: pathlib.Path, workdir: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # gainweb opens resources from a thread pool of one process, so an open
@@ -280,10 +282,7 @@ def test_remote_open_leaves_the_process_cwd_alone(
     with _serving_http_out_of_process(root) as base_url:
         proto = build_fsspec_protocol(f"i2283-cwd-{filename}", base_url)
         resource = proto.get_resource("res")
-        opener = (
-            proto.open_vcf_file if filename.endswith(".vcf.gz")
-            else proto.open_tabix_file)
-        with opener(resource, filename) as opened:
+        with getattr(proto, opener)(resource, filename) as opened:
             assert opened is not None
 
     assert chdirs == []
