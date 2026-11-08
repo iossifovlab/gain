@@ -196,6 +196,10 @@ cd "$TESTBED"
 # repo-root environment.yml with the workspace pyprojects, and the pytest
 # pin of this script with the repo-root uv.lock, and this test bed has no
 # repo checkout to read them from.
+# test_conda_image_scripts.py is excluded too: it reads the Dockerfile
+# next to this script and the source tests tree to check that the image
+# copies each repo-root script its tests name, and the image has no
+# Dockerfile (#2284).
 #
 # --enable-http-testing / --enable-s3-testing make the conftest generate
 # the http/s3 scheme parametrizations the root's run has (#1571); the
@@ -209,6 +213,7 @@ set +e
     --enable-http-testing --enable-s3-testing \
     --ignore=tests/integration --ignore=tests/test_architecture.py \
     --ignore=tests/test_conda_deps.py \
+    --ignore=tests/test_conda_image_scripts.py \
     --junitxml="$REPORTS/pytest-small.xml"
 small_exit=$?
 echo "pytest exit code (small tier): $small_exit"
