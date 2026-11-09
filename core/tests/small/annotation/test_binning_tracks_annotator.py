@@ -25,9 +25,14 @@ The GRR also holds ``genome``, 60 bases of ``chr1``, which only the
 ``binning_tool`` run of the cross-check reads.
 """
 
+import html
 import pathlib
+import re
+import textwrap
+from collections.abc import Hashable
 from typing import Any
 
+import pysam
 import pytest
 import yaml
 from gain.annotation import binning_tracks_annotator
@@ -37,6 +42,8 @@ from gain.annotation.annotatable import (
     Position,
     Region,
 )
+from gain.annotation.annotate_doc import cli as annotate_doc
+from gain.annotation.annotate_vcf import cli as annotate_vcf
 from gain.annotation.annotation_config import AnnotationConfigurationError
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
@@ -53,12 +60,14 @@ from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_resource_id,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.testing import setup_vcf
 from gain.genomic_resources.testing.builders import (
     a_fragment_score,
     a_grr,
     a_position_score,
     a_reference_genome,
 )
+from gain.templates.markdown_support import render_markdown
 
 POSITION = Position("chr1", 15)
 REGION = Region("chr1", 12, 32)
@@ -156,7 +165,7 @@ def test_an_attribute_is_named_by_its_prefix_and_track(
     assert list(annotate(pipeline, REGION)) == expected
 
 
-def test_a_track_attribute_is_a_float_described_by_its_resources(
+def test_a_track_attribute_is_a_float_described_by_its_track_label(
     tmp_path: pathlib.Path,
 ) -> None:
     fragments = a_fragment_score().with_data("""
@@ -178,7 +187,148 @@ def test_a_track_attribute_is_a_float_described_by_its_resources(
     assert (
         attribute.name, attribute.spec.value_type,
         attribute.spec.description, attribute.spec.supports_aggregation,
-    ) == ("track_0_0", "float", "pair/a, pair/b", False)
+    ) == ("track_0_0", "float", "pair/*:all:sum", False)
+
+
+PAIR_FRAGMENTS = a_fragment_score().with_data("""
+    chrom  pos_begin  pos_end  score
+    chr1   10         19       1
+""")
+
+UNPOOLED_PAIR = {"fragment_score_binner": {
+    "resource_query": "pair/*", "pool": False, "group": {"group": "all"},
+    "aggregate": {"mode": "fragment_start", "aggregator": "mean"}}}
+
+
+@pytest.fixture
+def pair_grr_dir(tmp_path: pathlib.Path) -> pathlib.Path:
+    """A GRR of ``pair/a`` and ``pair/b``: one fragment on chr1:10-19."""
+    grr_dir = tmp_path / "pair"
+    (
+        a_grr()
+        .with_resource("pair/a", PAIR_FRAGMENTS)
+        .with_resource("pair/b", PAIR_FRAGMENTS)
+        .build_repo(grr_dir)
+    )
+    return grr_dir
+
+
+@pytest.mark.usefixtures("clean_genomic_context")
+def test_annotate_vcf_writes_each_track_with_its_label(
+    pair_grr_dir: pathlib.Path, tmp_path: pathlib.Path,
+) -> None:
+    # chr1:10 is the start of the fragment; no fragment starts at
+    # chr1:15, so the mean over no fragments is missing.
+    input_vcf = tmp_path / "in.vcf"
+    setup_vcf(input_vcf, textwrap.dedent("""
+        ##fileformat=VCFv4.2
+        ##contig=<ID=chr1>
+        #CHROM POS ID REF ALT QUAL FILTER INFO
+        chr1   10  .  A   T   .    .      .
+        chr1   15  .  A   T   .    .      .
+    """))
+    pipeline = tmp_path / "pipeline.yaml"
+    pipeline.write_text(yaml.safe_dump([{"binning_tracks_annotator": {
+        "prefix": "atac", "binners": [UNPOOLED_PAIR]}}]))
+    output = tmp_path / "out.vcf"
+
+    annotate_vcf([
+        str(input_vcf), str(pipeline), "-o", str(output),
+        "-w", str(tmp_path / "work"), "-j", "1",
+        "--grr-directory", str(pair_grr_dir)])
+
+    # pylint: disable=no-member
+    with pysam.VariantFile(str(output)) as vcf:
+        descriptions = {
+            key: vcf.header.info[key].description
+            for key in ("atac_0_0", "atac_0_1")}
+    info_columns = [
+        line.split("\t")[7]
+        for line in output.read_text().splitlines()
+        if not line.startswith("#")]
+    assert descriptions == {
+        "atac_0_0": "pair/a:all:mean", "atac_0_1": "pair/b:all:mean"}
+    assert info_columns == ["atac_0_0=1;atac_0_1=1", "."]
+
+
+def attribute_documentation(page: str, name: str) -> str:
+    """The rendered documentation of the attribute ``name`` of ``page``."""
+    match = re.search(
+        r'<div class="attribute-name">\s*' + re.escape(name)
+        + r'\s*</div>.*?<div class="attribute-description">(.*?)'
+        r'<div class="attribute-source">',
+        page, re.DOTALL)
+    assert match is not None
+    return html.unescape(match.group(1))
+
+
+@pytest.mark.usefixtures("clean_genomic_context")
+def test_annotate_doc_shows_the_label_and_the_six_fields_of_a_track(
+    pair_grr_dir: pathlib.Path, tmp_path: pathlib.Path,
+) -> None:
+    pipeline = tmp_path / "pipeline.yaml"
+    pipeline.write_text(yaml.safe_dump([{"binning_tracks_annotator": {
+        "prefix": "atac", "binners": [UNPOOLED_PAIR]}}]))
+    output = tmp_path / "doc.html"
+
+    annotate_doc([
+        str(pipeline), "-o", str(output),
+        "--grr-directory", str(pair_grr_dir)])
+
+    page = output.read_text()
+    documentation = attribute_documentation(page, "atac_0_0")
+    assert "<p><code>pair/a:all:mean</code></p>" in documentation
+    for field, value in [
+            ("binner_type", "fragment_score"),
+            ("binner_index", "0"),
+            ("track_index", "0"),
+            ("resource_ids", "pair/a"),
+            ("selector", "all")]:
+        assert f"<li><code>{field}</code>: <code>{value}</code></li>" \
+            in documentation
+    assert "<code>binner_def</code>:" in documentation
+    assert textwrap.dedent("""\
+        {
+          "aggregator": "mean",
+          "mode": "fragment_start",
+          "name": null,
+          "pool": false,
+          "resource_query": "pair/*",
+          "score_id": null,
+          "uncovered_value": null
+        }""") in documentation
+    second = attribute_documentation(page, "atac_0_1")
+    assert "<p><code>pair/b:all:mean</code></p>" in second
+    for field, value in [
+            ("track_index", "1"),
+            ("resource_ids", "pair/b")]:
+        assert f"<li><code>{field}</code>: <code>{value}</code></li>" \
+            in second
+    assert (
+        "annotation_infrastructure.html#binning-tracks-annotator" in page)
+
+
+@pytest.mark.parametrize("label", [
+    "atac/sample_a_b:cell_type_x:mean",
+    "scores/*/a/*:all:mean",
+    "<img src=x onerror=alert(1)>/atac/pbmc:all:mean",
+    "pair/a`b:all:mean",
+])
+def test_the_rendered_documentation_shows_the_label_and_fields_verbatim(
+    label: str,
+) -> None:
+    row: dict[Hashable, Any] = {
+        "binner_type": "fragment_score", "binner_index": 0,
+        "track_index": 0, "resource_ids": label, "selector": label,
+        "binner_def": "{}"}
+
+    rendered = render_markdown(
+        binning_tracks_annotator.track_documentation(label, row))
+
+    assert "<img" not in rendered
+    assert "<em>" not in rendered
+    assert re.findall(r"<code>(.*?)</code>", rendered).count(
+        html.escape(label, quote=False)) == 3
 
 
 def test_close_exits_each_binding_that_open_entered(

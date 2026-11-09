@@ -6,10 +6,15 @@ answers one float attribute for each track, for each annotatable
 """
 from __future__ import annotations
 
+import json
 import math
 import re
+import textwrap
+from collections.abc import Hashable, Mapping
 from contextlib import ExitStack
 from typing import Any
+
+import pandas as pd
 
 from gain.annotation.annotatable import Annotatable
 from gain.annotation.annotation_config import AnnotatorInfo
@@ -20,11 +25,14 @@ from gain.annotation.annotation_pipeline import (
 )
 from gain.annotation.annotator_base import AnnotatedValues, AnnotatorBase
 from gain.binning.binners import (
+    TRACKS_COLUMNS,
     BinningJob,
     BoundBinner,
     Track,
     discover_binner_kinds,
+    tracks_frame,
 )
+from gain.binning.h5_reader import track_labels
 from gain.binning.run_definition import resolve_binners
 from gain.utils.regions import BedRegion
 
@@ -53,6 +61,56 @@ def checked_prefix(prefix: Any) -> str:
             f"prefix {prefix!r} does not match the VCF key pattern "
             f"{VCF_KEY_PATTERN}")
     return prefix
+
+
+def code_span(value: Any) -> str:
+    """``value`` as a Markdown code span that shows it verbatim.
+
+    The fence is one backtick longer than the longest backtick run of
+    the value, so no backtick of the value closes the span.  A renderer
+    escapes HTML inside a code span.  Each line ending of the value
+    becomes a space, as a renderer shows it inside a code span, so a
+    blank line of the value cannot end the paragraph and the span.
+    """
+    text = re.sub(r"\r\n|\r|\n", " ", str(value))
+    runs = re.findall(r"`+", text)
+    fence = "`" * (max((len(run) for run in runs), default=0) + 1)
+    return f"{fence} {text} {fence}"
+
+
+def track_documentation(label: str, row: Mapping[Hashable, Any]) -> str:
+    """The Markdown documentation of a track: its label, then its fields.
+
+    ``row`` is the track's row of :func:`gain.binning.tracks_frame`.  The
+    label and the field values are code spans, so a renderer shows them
+    verbatim.  The ``binner_def`` field is shown as indented JSON.
+    """
+    fields = "\n".join(
+        f"* `{field}`: {code_span(row[field])}"
+        for field in TRACKS_COLUMNS if field != "binner_def")
+    definition = json.dumps(
+        json.loads(row["binner_def"]), indent=2, sort_keys=True)
+    return (
+        f"{code_span(label)}\n\n{fields}\n\n`binner_def`:\n\n"
+        f"```\n{definition}\n```")
+
+
+def labeled_tracks_frame(jobs: list[BinningJob]) -> pd.DataFrame:
+    """:func:`tracks_frame` of ``jobs``, with a refusal that names the entry.
+
+    ``tracks_frame`` refuses a definition with a NaN or an infinity, as
+    ``binning_tool`` does.  This refusal names the annotator and the
+    ``binners`` entry, so the author finds the wrong entry.
+    """
+    for job in jobs:
+        try:
+            tracks_frame([job])
+        except ValueError as error:
+            raise ValueError(
+                f"{job.entry}: binning_tracks_annotator refuses a "
+                f"definition with a NaN or an infinity, as binning_tool "
+                f"does: {error}") from error
+    return tracks_frame(jobs)
 
 
 class LocalFilesError(ValueError):
@@ -122,19 +180,38 @@ class BinningTracksAnnotator(AnnotatorBase):
         self._names = [
             track_attribute_name(self._prefix, track)
             for track in self._tracks]
+        frame = labeled_tracks_frame(self._jobs)
+        self._labels = track_labels(frame)
+        documentation = {
+            name: track_documentation(label, row)
+            for name, label, row in zip(
+                self._names, self._labels, frame.to_dict("records"),
+                strict=True)}
         self._stack: ExitStack | None = None
         self._bound: list[BoundBinner] = []
         super().__init__(pipeline, info)
+
+        info.documentation += textwrap.dedent(f"""
+
+Annotator that gives one float attribute for each track of a `binners:`
+list of `binning_tool` entries.
+
+<a href="{self.BASE_DOC_URL}#binning-tracks-annotator" target="_blank">More info</a>
+
+""")  # ruff: ignore[line-too-long]
+        for attr in self._attributes:
+            attr._documentation = (  # ruff: ignore[private-member-access]
+                documentation[attr.source])
 
     def get_attribute_specs(self) -> dict[str, AttributeSpec]:
         return {
             name: AttributeSpec(
                 source=name,
                 value_type="float",
-                description=", ".join(track.resource_ids),
+                description=label,
                 supports_aggregation=False,
             )
-            for name, track in zip(self._names, self._tracks, strict=True)
+            for name, label in zip(self._names, self._labels, strict=True)
         }
 
     def open(self) -> Annotator:

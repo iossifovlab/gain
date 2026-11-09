@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from importlib.metadata import entry_points
@@ -17,6 +18,7 @@ from typing import Any, ClassVar, Protocol, Self
 
 import numpy as np
 import numpy.typing as npt
+import pandas as pd
 
 from gain.binning.position_fold import (
     ARRAY_FOLD_AGGREGATORS,
@@ -204,6 +206,49 @@ class BinningJob:
     def local_files(self) -> tuple[str, ...]:
         """The local files the job reads, as absolute paths: none here."""
         return ()
+
+
+#: The columns of the ``/tracks`` table (``tracks_layout`` 2), in order.
+TRACKS_COLUMNS = (
+    "binner_type", "binner_index", "track_index", "resource_ids",
+    "selector", "binner_def")
+
+
+def tracks_frame(jobs: Sequence[BinningJob]) -> pd.DataFrame:
+    """Give the ``/tracks`` rows of ``jobs``: one row per track, in order.
+
+    ``binner_type`` is the kind, ``binner_index`` the entry's position
+    in the ``binners`` list and ``track_index`` the track's position in
+    that entry.  ``resource_ids`` is the comma-separated list of the
+    resources a track is computed from, in resource-id order.  A
+    resource id never holds a comma.  ``selector`` picks the track in
+    its resources, and ``binner_def`` is the canonical JSON of the
+    kind's definition.
+
+    Parameters
+    ----------
+    jobs
+        The resolved jobs, in the order of their tracks.
+
+    Returns
+    -------
+    pandas.DataFrame
+        The columns of :data:`TRACKS_COLUMNS`.  The two index columns
+        are ``int64``.
+
+    Raises
+    ------
+    ValueError
+        For a definition with a NaN or an infinity.
+    """
+    frame = pd.DataFrame(
+        [
+            (t.binner_type, t.binner_index, t.track_index,
+             ",".join(t.resource_ids), t.selector, t.definition.to_json())
+            for job in jobs for t in job.tracks
+        ],
+        columns=list(TRACKS_COLUMNS))
+    return frame.astype({"binner_index": "int64", "track_index": "int64"})
 
 
 class BoundBinner(Protocol):

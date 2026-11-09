@@ -32,6 +32,7 @@ from gain.binning.binners import (
     Track,
     aggregator_of,
     discover_binner_kinds,
+    tracks_frame,
 )
 from gain.binning.fragment_binner import CellGrouping, FragmentBinningJob
 from gain.binning.fragment_def import FragmentScoreDef
@@ -460,7 +461,7 @@ def _write_hdf5(
     row_block = min(ROW_BLOCK, n_bins)
     # The table is built first: a definition JSON refuses (a NaN) must
     # not leave a half-written file behind.
-    tracks_table = _tracks_table(run.tracks)
+    tracks_table = _tracks_table(run.jobs)
     # A chunk cache of a few row blocks, so that the region slabs, which
     # start and end mid-block, are recompressed once each, not per slab.
     with h5py.File(
@@ -534,25 +535,16 @@ def _bins_table(run: RunDefinition, counts: list[int]) -> npt.NDArray[Any]:
     return table
 
 
-def _tracks_table(tracks: list[Track]) -> npt.NDArray[Any]:
-    """The ``/tracks`` table (``tracks_layout`` 2), one row per column.
+def _tracks_table(jobs: list[BinningJob]) -> npt.NDArray[Any]:
+    """The ``/tracks`` table: the rows of :func:`tracks_frame`.
 
-    ``binner_type`` is the kind, ``binner_index`` the entry's position
-    in the run definition and ``track_index`` the track's position in
-    that entry.  ``resource_ids`` is the comma-separated list of the
-    resources a track was computed from, in resource-id order -- a
-    resource id never holds a comma.  ``selector`` picks the track in its
-    resources, and ``binner_def`` is the canonical JSON of the kind's
-    definition.  Raises :class:`ValueError` for a definition with a NaN
-    or an infinity.
+    Raises :class:`ValueError` for a definition with a NaN or an
+    infinity.
     """
     text = h5py.string_dtype(encoding="utf-8")
+    frame = tracks_frame(jobs)
     return np.array(
-        [
-            (t.binner_type, t.binner_index, t.track_index,
-             ",".join(t.resource_ids), t.selector, t.definition.to_json())
-            for t in tracks
-        ],
+        list(frame.itertuples(index=False, name=None)),
         dtype=[
             ("binner_type", text), ("binner_index", "<i8"),
             ("track_index", "<i8"), ("resource_ids", text),
