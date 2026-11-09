@@ -126,7 +126,7 @@ def test_different_versions_with_an_old_release_exit_1(
     assert code == 1
     assert "2026.11.0" in out
     assert "2026.10.2" in out
-    assert f"{age.days} days" in out
+    assert f"{age.days} days old" in out
 
 
 def copy_and_parent(
