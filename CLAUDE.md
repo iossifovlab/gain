@@ -116,6 +116,30 @@ cd core && pylint --rcfile=../pylintrc gain ../scripts
 - Install the hooks with `cp pre-commit pre-push .git/hooks/`. pre-commit runs `ruff check` on staged `.py` files only, at the version `uv.lock` pins (via `uvx`, no venv needed). An installed hook changes only after you copy it into `.git/hooks/` again. pre-push runs ruff over the **whole tree** at the version `uv.lock` pins (via `uvx`, no venv needed) and refuses the push on any finding; it is ruff only, so pylint's whole-tree invariants (the module line cap below) stay yours to re-check.
 </important>
 
+<important if="you are setting up a new git worktree of gain">
+
+`git worktree add` does not check out the `test_fixtures/mini-GRR` submodule and does not create a venv. Run these commands from the root of the new worktree, in this order: initialise the submodule, sync, install the hooks.
+
+```bash
+git submodule update --init
+uv sync --package gain-core --group dev --frozen
+cp pre-commit pre-push "$(git rev-parse --git-path hooks)/"
+```
+
+- `--frozen` syncs from `uv.lock` as CI does (`core/Dockerfile`), so the local tools are the versions of CI. For the other workflows, see the development-environment block above.
+- In a worktree, `.git` is a file, so `.git/hooks/` does not exist. The hooks live in the shared git dir, which `git rev-parse --git-path hooks` names. One install covers each worktree of the clone.
+- If the hooks are already installed, skip the `cp`. The `cp` replaces the hooks of every checkout of the clone with the copies of the current branch.
+- Check the pytest version: `uv run --no-sync pytest --version` must print the version of `pytest` in `uv.lock`. If it does not, run the `uv sync` command again.
+- Do not reuse the `.venv` of the main checkout. Its editable install points at the main checkout, not at the worktree.
+- Run the pytest commands and the lint commands of the blocks above with the venv of the worktree. Prefix each tool with `uv run --no-sync`, for example `cd core && uv run --no-sync ruff check --fix . ../scripts`. Or run `source ../.venv/bin/activate` in `core/` first.
+
+To check that the setup is complete, run the info-pages tests. They fail when the mini-GRR submodule is not checked out:
+
+```bash
+cd core && uv run --no-sync pytest tests/small/genomic_resources/info_pages -q
+```
+</important>
+
 <important if="you are running habit-hooks, or changing its configuration or snooze index">
 
 habit-hooks coaches on code smells with its python and generic plugins (`.habit-hooks/config.toml`). It filters the findings through the committed snooze index `.habit-hooks/snooze.json`. A snoozed finding comes back when a branch changes its file, against `master`. The jscpd settings are in `.jscpd.json`.
