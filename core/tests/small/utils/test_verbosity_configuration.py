@@ -107,3 +107,31 @@ def test_verbosity_three_is_trace() -> None:
 
 def test_verbosity_above_three_stays_trace() -> None:
     assert VerbosityConfiguration.verbosity(4) == TRACE
+
+
+def test_set_with_a_mapping_without_verbose_is_warning() -> None:
+    # ``set`` caps ``fsspec`` at ``max(loglevel, INFO)``, so the logger
+    # shows the level that a missing ``verbose`` key selects.
+    VerbosityConfiguration.set({"logfile": None})
+
+    assert logging.getLogger("fsspec").level == logging.WARNING
+
+
+def test_set_arguments_parses_the_defaults() -> None:
+    parser = argparse.ArgumentParser()
+    VerbosityConfiguration.set_arguments(parser)
+
+    args = parser.parse_args([])
+
+    assert args.verbose == 0
+    assert args.logfile is None
+
+
+def test_set_arguments_counts_each_verbose_flag() -> None:
+    parser = argparse.ArgumentParser()
+    VerbosityConfiguration.set_arguments(parser)
+
+    args = parser.parse_args(["-v", "-V", "--verbose", "--logfile", "a.log"])
+
+    assert args.verbose == 3
+    assert args.logfile == "a.log"
