@@ -18,6 +18,7 @@ from gain.annotation.annotation_factory import (
     get_annotator_factory,
     get_available_annotator_types,
 )
+from gain.annotation.annotation_pipeline import Annotator
 from gain.genomic_resources.aggregators import (
     AGGREGATOR_CLASS_DICT,
     NUMERIC_ONLY_AGGREGATORS,
@@ -78,6 +79,30 @@ def _unavailable_annotator_message(annotator_type: str) -> str:
     if annotator_type in RETIRED_ANNOTATOR_NAMES:
         return retired_annotator_message(annotator_type)
     return f"Unknown annotator_type: {annotator_type}"
+
+
+def _build_editor_annotator(
+    pipeline: ThreadSafePipeline,
+    annotator_type: str,
+    data: dict[str, Any],
+) -> Annotator:
+    """Build an annotator from a configuration that the editor posted.
+
+    Raises ``AnnotationConfigurationError`` when the factory refuses the
+    configuration with a ``ValueError`` or a ``FileNotFoundError``, as
+    ``build_pipeline_annotator`` does. Unlike that function, it runs no
+    unused-parameter or repeated-attribute check: the editor posts partial
+    configurations while the user types.
+    """
+    annotator_config = AnnotatorInfo(annotator_type, [], data)
+    factory = get_annotator_factory(annotator_type)
+    try:
+        return factory(pipeline, annotator_config)
+    except (ValueError, FileNotFoundError) as error:
+        raise AnnotationConfigurationError(
+            f"The {annotator_config.annotator_id} annotator"
+            f" configuration is incorrect: ",
+            error) from error
 
 
 class EditorMixin:  # pylint: disable=too-few-public-methods
@@ -595,9 +620,7 @@ class AnnotatorAttributes(AsyncEditorView):
         ``_InvalidSearchTermError`` for a non-string ``search_term`` (checked
         after the build, matching master), both mapped to 400 by the caller.
         """
-        annotator_config = AnnotatorInfo(annotator_type, [], data)
-        factory = get_annotator_factory(annotator_type)
-        annotator = factory(pipeline, annotator_config)
+        annotator = _build_editor_annotator(pipeline, annotator_type, data)
         all_specs = annotator.get_attribute_specs()
         attributes_by_source = {
             attr.source: attr for attr in annotator.attributes
@@ -1026,9 +1049,7 @@ class AnnotatorAggregators(AsyncEditorView):
         Touches GRR metadata; raises ``AnnotationConfigurationError`` for an
         invalid annotator config, which the caller maps to 400.
         """
-        annotator_config = AnnotatorInfo(annotator_type, [], data)
-        factory = get_annotator_factory(annotator_type)
-        annotator = factory(pipeline, annotator_config)
+        annotator = _build_editor_annotator(pipeline, annotator_type, data)
 
         all_specs = annotator.get_attribute_specs()
         attributes_by_source = {
