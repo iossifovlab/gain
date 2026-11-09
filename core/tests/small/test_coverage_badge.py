@@ -92,3 +92,27 @@ def test_badge_creates_the_missing_output_directory(
 
     assert rc == 0
     assert json.loads(target.read_text())["message"] == "90%"
+
+
+def test_build_docs_writes_the_badge_into_the_tarball() -> None:
+    script = (REPO_ROOT / "docs" / "build_docs.sh").read_text()
+    lines = script.replace("\\\n", " ").splitlines()
+    commands = [line.split() for line in lines
+                if line.strip() and not line.lstrip().startswith("#")]
+
+    def index_of(program: str) -> int:
+        matches = [i for i, words in enumerate(commands)
+                   if program in words[:2]]
+        assert len(matches) == 1, f"{program}: {matches}"
+        return matches[0]
+
+    sphinx = index_of("sphinx-build")
+    badge = index_of("scripts/coverage_badge.py")
+    tar = index_of("tar")
+
+    assert sphinx < badge < tar
+    assert commands[badge][2:] == [
+        "reports/core/coverage.xml",
+        "docs/build/html/_badges/coverage.json",
+    ]
+    assert commands[tar][-2:] == ["docs/build/", "html/"]
