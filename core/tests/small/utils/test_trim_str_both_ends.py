@@ -49,3 +49,13 @@ def test_trim_str_right_left_stops_when_the_right_trim_empties_an_allele(
 def test_trim_order_decides_the_position_of_a_repeat_deletion() -> None:
     assert trim_str_left_right(10, "AA", "A") == (11, "A", "")
     assert trim_str_right_left(10, "AA", "A") == (10, "A", "")
+
+
+@pytest.mark.parametrize("pos,ref,alt,expected", [
+    (10, "AC", "AGC", (11, "", "G")),
+    (10, "AGC", "AC", (11, "G", "")),
+])
+def test_trim_str_right_left_trims_left_after_one_base_is_left(
+    pos: int, ref: str, alt: str, expected: tuple[int, str, str],
+) -> None:
+    assert trim_str_right_left(pos, ref, alt) == expected

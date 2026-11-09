@@ -64,6 +64,17 @@ def test_trim_str_left(
     assert trim_alt == talt
 
 
+@pytest.mark.parametrize("pos,ref,alt", [
+    (1, "", "A"),
+    (1, "A", ""),
+])
+def test_trim_str_left_refuses_an_empty_allele(
+    pos: int, ref: str, alt: str,
+) -> None:
+    with pytest.raises(AssertionError):
+        trim_str_left(pos, ref, alt)
+
+
 @pytest.mark.parametrize("allele,parsimonious", [
     ((1, "AA", "CA"), (1, "A", "C")),
     ((1, "CA", "CT"), (2, "A", "T")),
@@ -73,6 +84,8 @@ def test_trim_str_left(
     ((5, "CATG", "TGCG"), (5, "CAT", "TGC")),
     ((4, "GCATG", "GTGCG"), (5, "CAT", "TGC")),
     ((4, "GG", "GAGG"), (4, "G", "GAG")),
+    ((1, "A", "CA"), (1, "A", "CA")),
+    ((1, "CA", "A"), (1, "CA", "A")),
     ((100, "TGGTGCAGGC", "T"), (100, "TGGTGCAGGC", "T")),
     ((100, "TGGTGCAGGC", "CGGTGCAGGC"), (100, "T", "C")),
     ((100, "TGGTGCAGGC", "TGGTGCAGGCGGTGCAGGC"), (100, "T", "TGGTGCAGGC")),
