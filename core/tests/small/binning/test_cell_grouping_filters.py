@@ -47,8 +47,9 @@ def expected(operand: str | None) -> dict[str, str]:
         if fragment_grouping._as_text(cell) == operand}
 
 
-@pytest.mark.parametrize("operand", ["a", "2", "2.5", "b", "zzz", None])
-def test_groups_of_selects_rows_by_text_of_cell(operand: str | None) -> None:
+# A None operand comes only from a label: see the test below.
+@pytest.mark.parametrize("operand", ["a", "2", "2.5", "b", "zzz"])
+def test_groups_of_selects_rows_by_text_of_cell(operand: str) -> None:
     grouping = a_grouping(MetaFilter("kind", value=operand))
 
     result = grouping.groups_of(a_table(), a_resource())
@@ -133,8 +134,8 @@ def test_resolve_grouping_converts_filter_cells_once_not_per_resource(
         return original(value)
 
     monkeypatch.setattr(fragment_grouping, "_as_text", counting)
-    meta = fragment_grouping._MetaSpec(
-        filters=(MetaFilter("kind", value="k1"),), table=meta_table)
+    meta = fragment_grouping.MetaSource(
+        resource_id="meta", filters=(MetaFilter("kind", value="k1"),))
     resources = [a_resource() for _ in range(10)]
 
     fragment_grouping._resolve_grouping(

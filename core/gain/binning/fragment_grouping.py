@@ -1,13 +1,15 @@
 """The configuration side of the ``fragment_score_binner`` binner.
 
 The GRR convention's constants for single-cell fragment resources, the
-parsers of an entry's ``value``, ``aggregate``, ``group`` and ``meta``
-blocks, and the resolution of a cell grouping from a metadata table and
-of a value grouping from a score's histogram.  The binding of a job to
-its resources and the fold of its fragments into bins are not here.
+spec classes of an entry (:class:`FragmentEntry` and its blocks), the
+reader of an entry's config into them, and the resolution of a cell
+grouping from a metadata table and of a value grouping from a score's
+histogram.  The binding of a job to its resources and the fold of its
+fragments into bins are not here.
 """
 from __future__ import annotations
 
+import enum
 import gzip
 import json
 import math
@@ -25,6 +27,7 @@ from gain.binning.binners import (
     NUMERIC_VALUE_TYPES,
     RunDefinitionError,
     check_keys,
+    entry_name,
 )
 from gain.binning.fragment_array_folds import LENGTH_AGGREGATORS
 from gain.genomic_resources.data_frame_resource import (
@@ -145,14 +148,42 @@ def _partition(
 class MetaFilter:
     """One conjunct of a ``meta`` filter: ``column`` equals an operand.
 
-    The operand is the literal ``value``, or -- when ``label`` is set --
-    the value of that label on the fragment resource whose rows are
-    being selected.
+    A cell matches by its text: a number matches as its text, and a
+    missing or empty cell has none.
+
+    Attributes
+    ----------
+    column
+        The column of the cell metadata table.
+    value
+        A literal operand.
+    label
+        A label of the fragment resource whose rows are selected.  The
+        value of that label is the operand.  Give exactly one of
+        ``value`` or ``label``.
+
+    Raises
+    ------
+    RunDefinitionError
+        When ``column`` or ``label`` is not a non-empty string, ``value``
+        is empty or not a string, or not exactly one of ``value`` and
+        ``label`` is given.
     """
 
     column: str
     value: str | None = None
     label: str | None = None
+
+    def __post_init__(self) -> None:
+        _text("column", self.column)
+        if (self.value is None) == (self.label is None):
+            raise RunDefinitionError("give exactly one of value or label")
+        if self.label is not None:
+            _text("label", self.label)
+        if self.value == "":
+            raise RunDefinitionError("value must not be empty")
+        if self.value is not None:
+            _text("value", self.value)
 
     def operand(self, resource: GenomicResource) -> str | None:
         """The text this conjunct's column must equal, for ``resource``."""
@@ -395,140 +426,141 @@ class BoundValueGrouping:
 
 
 @dataclass(frozen=True)
-class _FragmentValue:
-    """What one fragment adds: a numeric score's value, or a constant.
+class ScoreContribution:
+    """What one fragment adds: its value of a numeric score.
 
-    Exactly one of ``score_id`` and a constant ``value``; the default is
-    the constant 1, so a bin's ``sum`` is its fragment count.
+    Attributes
+    ----------
+    score_id
+        The fragment score whose value each fragment adds.  Each
+        resource of the entry must have it as an ``int`` or a ``float``
+        score; the resources are checked when the entry is resolved.
+
+    Raises
+    ------
+    RunDefinitionError
+        When ``score_id`` is not a non-empty string.
     """
 
-    score_id: str | None
-    value: float
+    score_id: str
 
-    @classmethod
-    def parse(
-        cls, label: str, config: Any, matches: list[GenomicResource],
-    ) -> _FragmentValue:
-        """Resolve an entry's ``value`` block against its matches.
-
-        A score must be numeric in every matched resource.
-        """
-        check_keys(label, config, VALUE_KEYS)
-        if len(config) != 1:
-            raise RunDefinitionError(
-                f"{label}: give one of score_id or value"
-                f"{', not both' if config else ''}")
-        if "score_id" not in config:
-            value = config["value"]
-            if isinstance(value, bool) or not isinstance(value, int | float):
-                raise RunDefinitionError(
-                    f"{label}: value must be a number, not {value!r}")
-            return cls(score_id=None, value=value)
-        score_id = _require_text(label, "score_id", config["score_id"])
-        for resource in matches:
-            value_type = _score_type(label, resource, score_id)
-            if value_type not in NUMERIC_VALUE_TYPES:
-                raise RunDefinitionError(
-                    f"{label}: resource {resource.resource_id!r} score "
-                    f"{score_id!r} is of type {value_type!r}; only a "
-                    f"numeric score (int or float) can be aggregated")
-        return cls(score_id=score_id, value=1)
-
-    @classmethod
-    def default(cls) -> _FragmentValue:
-        """The value of an entry that states none: 1 per fragment."""
-        return cls(score_id=None, value=1)
+    def __post_init__(self) -> None:
+        _text("score_id", self.score_id)
 
 
 @dataclass(frozen=True)
-class _Aggregate:
-    """How a bin reduces the values of its fragments.
+class ConstantContribution:
+    """What one fragment adds: a constant.
 
-    ``mode`` says which fragments reach a bin; ``aggregator`` is the
-    fold over their values.  The default is :data:`FRAGMENT_START` and
-    ``sum``.
+    The default, 1, makes the ``sum`` of a bin its count of fragments.
+
+    Attributes
+    ----------
+    value
+        The number each fragment adds.
+
+    Raises
+    ------
+    RunDefinitionError
+        When ``value`` is not an ``int`` or a ``float``.  A ``bool`` is
+        not a number here.
     """
 
-    mode: str
-    aggregator: str
-    #: What an uncovered base adds, with a weight of 1 bp; ``None``,
-    #: nothing.  :data:`FRAGMENT_START` takes none.
-    uncovered_value: float | None = None
+    value: float = 1
 
-    @classmethod
-    def parse(cls, label: str, config: Any) -> _Aggregate:
-        """Resolve an entry's ``aggregate`` block.
+    def __post_init__(self) -> None:
+        value: Any = self.value
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            raise RunDefinitionError(
+                f"value must be a number, not {value!r}")
 
-        The aggregator must be one the mode's fold accepts, and
-        ``uncovered_value`` a number or ``null``, not given in
-        :data:`FRAGMENT_START` mode; omitted, it is ``0`` in
-        :data:`COVERAGE_PROFILE` mode and ``None`` otherwise.  What one
-        fragment adds is ``value``'s, and refused here.
-        """
-        _refuse_moved_to_value(label, config)
-        mode, aggregator = _aggregate_mode_and_aggregator(label, config)
+
+class _ModeDefault(enum.Enum):
+    """The marker of an ``uncovered_value`` that the caller did not give."""
+
+    MODE = "mode"
+
+
+#: The default ``uncovered_value`` of :class:`Aggregate`: the default of
+#: its mode.  ``None`` cannot mark it, since ``None`` is a value to give.
+_MODE_DEFAULT = _ModeDefault.MODE
+
+
+@dataclass(frozen=True)
+class Aggregate:
+    """How a bin reduces the values of its fragments.
+
+    Attributes
+    ----------
+    mode
+        Which fragments reach a bin: :data:`FRAGMENT_START`,
+        :data:`FRAGMENT_LENGTH` or :data:`COVERAGE_PROFILE`.
+    aggregator
+        The fold over the values of a bin.  The two length modes take
+        only :data:`LENGTH_AGGREGATORS`.
+    uncovered_value
+        What an uncovered base adds, with a weight of 1 bp, as a
+        ``float``; ``None`` adds nothing.  When it is not given, it is 0
+        in :data:`COVERAGE_PROFILE` mode and ``None`` in the other
+        modes.  :data:`FRAGMENT_START` mode takes none, not even
+        ``None``.  The field keeps what the caller gave, or a private
+        marker when the caller gave nothing, so
+        :func:`dataclasses.replace` derives the default of the new mode.
+        Read :attr:`effective_uncovered_value`, the value a bin uses.
+
+    Raises
+    ------
+    RunDefinitionError
+        When the mode is unknown, the aggregator is not one that the
+        mode accepts, or ``uncovered_value`` is not a finite number or
+        ``None``.
+    """
+
+    mode: str = FRAGMENT_START
+    aggregator: str = "sum"
+    uncovered_value: float | _ModeDefault | None = _MODE_DEFAULT
+
+    def __post_init__(self) -> None:
+        mode = self.mode
+        if mode not in MODES:
+            raise RunDefinitionError(
+                f"mode {mode!r} is not supported; use one of "
+                f"{', '.join(MODES)}")
+        aggregator = _text("aggregator", self.aggregator)
+        if aggregator not in EMPTY_BIN_VALUES:
+            raise RunDefinitionError(
+                f"aggregator {aggregator!r} does not produce a number; "
+                f"use one of {', '.join(sorted(EMPTY_BIN_VALUES))}")
+        given = self.uncovered_value is not _MODE_DEFAULT
         if mode == FRAGMENT_START:
-            if "uncovered_value" in config:
+            if given:
                 raise RunDefinitionError(
-                    f"{label}: uncovered_value does not apply in "
-                    f"{FRAGMENT_START} mode, where a bin reduces only the "
-                    f"fragments starting in it; give mode: "
-                    f"{FRAGMENT_LENGTH} or {COVERAGE_PROFILE}, or drop "
-                    f"uncovered_value")
-            return cls(mode=mode, aggregator=aggregator)
+                    f"uncovered_value does not apply in {FRAGMENT_START} "
+                    f"mode, where a bin reduces only the fragments "
+                    f"starting in it; give mode: {FRAGMENT_LENGTH} or "
+                    f"{COVERAGE_PROFILE}, or drop uncovered_value")
+            return
         if aggregator == "count":
             raise RunDefinitionError(
-                f"{label}: aggregator 'count' would count base pairs, not "
+                f"aggregator 'count' would count base pairs, not "
                 f"fragments, in {mode} mode; for the covered base pairs "
                 f"give aggregator: sum with value: {{value: 1}}")
         if aggregator not in LENGTH_AGGREGATORS:
             raise RunDefinitionError(
-                f"{label}: aggregator {aggregator!r} would weigh a value "
-                f"by its overlap as a power in {mode} mode; use one of "
+                f"aggregator {aggregator!r} would weigh a value by its "
+                f"overlap as a power in {mode} mode; use one of "
                 f"{', '.join(LENGTH_AGGREGATORS)}")
-        uncovered = config.get(
-            "uncovered_value", 0 if mode == COVERAGE_PROFILE else None)
-        return cls(
-            mode=mode, aggregator=aggregator,
-            uncovered_value=_uncovered_value(label, uncovered))
+        _uncovered_value(self.uncovered_value if given else None)
 
-    @classmethod
-    def default(cls) -> _Aggregate:
-        """The aggregate of an entry that states none: the sum."""
-        return cls(mode=FRAGMENT_START, aggregator="sum")
+    @property
+    def effective_uncovered_value(self) -> float | None:
+        """What an uncovered base adds: the given value, or the default."""
+        if self.uncovered_value is not _MODE_DEFAULT:
+            return _uncovered_value(self.uncovered_value)
+        return 0.0 if self.mode == COVERAGE_PROFILE else None
 
 
-def _refuse_moved_to_value(label: str, config: Any) -> None:
-    """Refuse an ``aggregate`` key that belongs in the entry's ``value``."""
-    if isinstance(config, dict):
-        for key, value_key in MOVED_TO_VALUE.items():
-            if key in config:
-                raise RunDefinitionError(
-                    f"{label}: {key} is not an aggregate key; what one "
-                    f"fragment adds is the entry's value key: give "
-                    f"value: {{{value_key}: {config[key]}}}")
-
-
-def _aggregate_mode_and_aggregator(
-    label: str, config: Any,
-) -> tuple[str, str]:
-    """Check the ``aggregate`` keys; return its mode and its aggregator."""
-    check_keys(label, config, AGGREGATE_KEYS)
-    mode = config.get("mode", FRAGMENT_START)
-    if mode not in MODES:
-        raise RunDefinitionError(
-            f"{label}: mode {mode!r} is not supported; use one of "
-            f"{', '.join(MODES)}")
-    aggregator = _require_text(
-        label, "aggregator", config.get("aggregator", "sum"))
-    if aggregator not in EMPTY_BIN_VALUES:
-        raise RunDefinitionError(
-            f"{label}: aggregator {aggregator!r} does not produce a "
-            f"number; use one of {', '.join(sorted(EMPTY_BIN_VALUES))}")
-    return mode, aggregator
-
-
-def _uncovered_value(label: str, uncovered: Any) -> float | None:
+def _uncovered_value(uncovered: Any) -> float | None:
     """``uncovered`` as a finite float, or None; anything else is refused.
 
     NaN is refused because it is the output's marker for no uncovered
@@ -545,8 +577,7 @@ def _uncovered_value(label: str, uncovered: Any) -> float | None:
             value = math.nan
     if not math.isfinite(value):
         raise RunDefinitionError(
-            f"{label}: uncovered_value must be a number or null, not "
-            f"{uncovered!r}")
+            f"uncovered_value must be a number or null, not {uncovered!r}")
     return value
 
 
@@ -562,10 +593,11 @@ def _score_type(
     return definitions[score_id].value_type
 
 
-def _require_text(label: str, key: str, value: Any) -> str:
+def _text(key: str, value: Any) -> str:
+    """``value``, which must be a non-empty string; ``key`` names it."""
     if not isinstance(value, str) or not value:
         raise RunDefinitionError(
-            f"{label}: {key} must be a non-empty string, not {value!r}")
+            f"{key} must be a non-empty string, not {value!r}")
     return value
 
 
@@ -582,117 +614,201 @@ def _is_labelled(resource: GenomicResource) -> bool:
 
 
 @dataclass(frozen=True)
-class _Group:
-    """An entry's ``group``: at most one of its three forms.
+class ConstantGroup:
+    """One track, with a constant group name.
 
-    The ``constant`` group name, the metadata grouping's three
-    ``cell_keys``, or the ``value_score`` whose raw values group; all
-    ``None`` when the entry gives no ``group``, so that the resources'
-    labels decide.
+    Attributes
+    ----------
+    name
+        The group.
+
+    Raises
+    ------
+    RunDefinitionError
+        When ``name`` is not a non-empty string.
     """
 
-    constant: str | None = None
-    cell_keys: dict[str, str] | None = None
-    value_score: str | None = None
+    name: str
 
-    @classmethod
-    def parse(cls, label: str, config: Any) -> _Group:
-        """Parse an entry's ``group`` block; ``None`` when it is omitted."""
-        if config is None:
-            return cls()
-        check_keys(label, config, GROUP_KEYS)
-        forms = [
-            form for form, keys in (
-                ("group", {"group"}),
-                ("cell_score_id, cell_meta_column and group_meta_column",
-                 CELL_GROUP_KEYS),
-                (VALUE_GROUP_KEY, {VALUE_GROUP_KEY}))
-            if keys & config.keys()]
-        if len(forms) > 1:
-            given = "both" if len(forms) == 2 else "all of"
-            raise RunDefinitionError(
-                f"{label}: give one form of group -- group; cell_score_id, "
-                f"cell_meta_column and group_meta_column; or "
-                f"{VALUE_GROUP_KEY} -- not {given} {'; '.join(forms)}")
-        if "group" in config:
-            return cls(constant=_require_text(label, "group", config["group"]))
-        if VALUE_GROUP_KEY in config:
-            return cls(value_score=_require_text(
-                label, VALUE_GROUP_KEY, config[VALUE_GROUP_KEY]))
-        return cls(cell_keys={
-            key: _require_text(label, key, config.get(key, default))
-            for key, default in CELL_GROUP_DEFAULTS.items()})
-
-
-def _parse_filters(label: str, config: Any) -> tuple[MetaFilter, ...]:
-    if config is None:
-        return ()
-    if not isinstance(config, list):
-        raise RunDefinitionError(
-            f"{label}: expected a list of {{column, value | label}} "
-            f"conjuncts")
-    filters = []
-    for index, conjunct in enumerate(config):
-        item = f"{label}[{index}]"
-        check_keys(item, conjunct, FILTER_KEYS)
-        column = _require_text(item, "column", conjunct.get("column"))
-        if ("value" in conjunct) == ("label" in conjunct):
-            raise RunDefinitionError(
-                f"{item}: give exactly one of value or label")
-        if "label" in conjunct:
-            filters.append(MetaFilter(column, label=_require_text(
-                item, "label", conjunct["label"])))
-        else:
-            value = _as_text(conjunct["value"])
-            if value is None:
-                raise RunDefinitionError(
-                    f"{item}: value must not be empty")
-            filters.append(MetaFilter(column, value=value))
-    return tuple(filters)
+    def __post_init__(self) -> None:
+        _text("group", self.name)
 
 
 @dataclass(frozen=True)
-class _MetaSpec:
-    """A ``meta`` block: one table source and the filter of its rows.
+class CellGrouping:
+    """One track per group of a cell metadata table.
 
-    The source is a fixed ``table`` -- a resource id or a local file --
-    or ``resource_label``, the label whose value on each fragment
-    resource is the id of its table.
+    The ``meta`` of the entry names the table.  Without a ``meta``, the
+    table is the one of the convention.
+
+    Attributes
+    ----------
+    cell_score_id
+        The fragment score that carries the barcode of a fragment.
+    cell_meta_column
+        The column of the table that holds the barcode of a cell.
+    group_meta_column
+        The column of the table that holds the group of a cell.
+
+    Raises
+    ------
+    RunDefinitionError
+        When a field is not a non-empty string.
     """
 
-    filters: tuple[MetaFilter, ...]
-    table: MetaTable | None = None
+    cell_score_id: str = CELL_SCORE
+    cell_meta_column: str = BARCODE_COLUMN
+    group_meta_column: str = CLASS_COLUMN
+
+    def __post_init__(self) -> None:
+        for key in CELL_GROUP_DEFAULTS:
+            _text(key, getattr(self, key))
+
+
+@dataclass(frozen=True)
+class ValueGrouping:
+    """One track per distinct value of a ``str`` fragment score.
+
+    The values are read from the full categorical histogram of the
+    score when the entry is resolved.  In a pooled entry, the group of a
+    value is ``<sample_id>:<value>``.  In an unpooled entry, the group
+    is the value.
+
+    Attributes
+    ----------
+    score_id
+        The ``str`` fragment score whose values are the groups.
+
+    Raises
+    ------
+    RunDefinitionError
+        When ``score_id`` is not a non-empty string.
+    """
+
+    score_id: str
+
+    def __post_init__(self) -> None:
+        _text(VALUE_GROUP_KEY, self.score_id)
+
+
+def _check_meta_keys(given: Iterable[str]) -> None:
+    """Refuse a ``meta`` that does not give exactly one source.
+
+    ``given`` names the source and file keys that the ``meta`` gives.
+    """
+    keys = set(given)
+    sources = sorted(META_SOURCE_KEYS & keys)
+    if len(sources) != 1:
+        raise RunDefinitionError(
+            f"give exactly one of resource_id, resource_label or "
+            f"file_name; got {', '.join(sources) or 'none'}")
+    if sources != ["file_name"] and META_FILE_KEYS & keys:
+        raise RunDefinitionError(
+            "file_format and file_separator go only with file_name")
+
+
+@dataclass(frozen=True)
+class MetaSource:
+    """The cell metadata table of a cell grouping, and its row filter.
+
+    Give exactly one source: ``resource_id``, ``resource_label`` or
+    ``file_name``.
+
+    Attributes
+    ----------
+    resource_id
+        A ``data_frame`` resource.
+    resource_label
+        A label of each fragment resource.  The value of the label is
+        the id of the ``data_frame`` resource of that fragment resource.
+    file_name
+        A local table, as given.  A relative name is read from the
+        ``base_dir`` that resolves the entry, or from the current
+        directory without one.
+    file_format
+        The format of the local table: ``csv``, ``tsv`` or ``excel``.
+        When it is not given, the suffix of ``file_name`` decides:
+        ``.tsv`` is ``tsv``, ``.xls`` and ``.xlsx`` are ``excel``, and
+        any other suffix is ``csv``.  The field keeps what the caller
+        gave, so :func:`dataclasses.replace` derives the format of a new
+        ``file_name``.  :attr:`effective_file_format` is the format read.
+    file_separator
+        The separator of a ``csv`` or ``tsv`` table; ``None`` is the
+        separator of the format.
+    filters
+        The conjuncts that select the rows of a fragment resource.  No
+        filter selects every row.
+
+    Raises
+    ------
+    RunDefinitionError
+        When the source is not exactly one, a file key goes with a
+        source that is not a file, or a field is malformed.
+    """
+
+    resource_id: str | None = None
     resource_label: str | None = None
+    file_name: str | None = None
+    file_format: str | None = None
+    file_separator: str | None = None
+    filters: tuple[MetaFilter, ...] = ()
 
-    @classmethod
-    def parse(
-        cls, label: str, config: Any, base_dir: str | None,
-    ) -> _MetaSpec:
-        """Parse a ``meta`` block; a local file is read from ``base_dir``."""
-        check_keys(label, config, META_KEYS)
-        sources = sorted(META_SOURCE_KEYS & config.keys())
-        if len(sources) != 1:
-            raise RunDefinitionError(
-                f"{label}: give exactly one of resource_id, resource_label "
-                f"or file_name; got {', '.join(sources) or 'none'}")
-        (source,) = sources
-        if source != "file_name" and META_FILE_KEYS & config.keys():
-            raise RunDefinitionError(
-                f"{label}: file_format and file_separator go only with "
-                f"file_name")
-        filters = _parse_filters(f"{label}.filter", config.get("filter"))
-        if source == "resource_id":
-            return cls(filters, table=MetaTable(resource_id=_require_text(
-                label, "resource_id", config["resource_id"])))
-        if source == "resource_label":
-            return cls(filters, resource_label=_require_text(
-                label, "resource_label", config["resource_label"]))
-        return cls(filters, table=_parse_local_table(label, config, base_dir))
+    def __post_init__(self) -> None:
+        _check_meta_keys(
+            key for key in sorted(META_SOURCE_KEYS | META_FILE_KEYS)
+            if getattr(self, key) is not None)
+        object.__setattr__(self, "filters", tuple(self.filters))
+        if self.resource_id is not None:
+            _text("resource_id", self.resource_id)
+        elif self.resource_label is not None:
+            _text("resource_label", self.resource_label)
+        else:
+            self._check_file()
 
-    def table_of(self, label: str, resource: GenomicResource) -> MetaTable:
-        """The table whose rows map ``resource``'s barcodes."""
-        if self.table is not None:
-            return self.table
+    @property
+    def effective_file_format(self) -> str | None:
+        """The format of the local table: the given one, or the suffix's.
+
+        ``None`` without ``file_name``.
+        """
+        if self.file_format is not None or self.file_name is None:
+            return self.file_format
+        suffix = os.path.splitext(os.path.normpath(
+            os.path.expanduser(self.file_name)))[1].lower()
+        return {".tsv": "tsv", ".xls": "excel", ".xlsx": "excel"}\
+            .get(suffix, "csv")
+
+    def _check_file(self) -> None:
+        _text("file_name", self.file_name)
+        file_format: Any = _text("file_format", self.effective_file_format)
+        if file_format not in FILE_FORMATS:
+            raise RunDefinitionError(
+                f"file_format must be one of {', '.join(FILE_FORMATS)}, "
+                f"not {file_format!r}")
+        if self.file_separator is not None:
+            if file_format == "excel":
+                raise RunDefinitionError(
+                    "file_separator does not apply to an excel file")
+            _text("file_separator", self.file_separator)
+
+    def table_of(
+        self, label: str, resource: GenomicResource, base_dir: str | None,
+    ) -> MetaTable:
+        """The table whose rows map ``resource``'s barcodes.
+
+        :meta private:
+        """
+        if self.resource_id is not None:
+            return MetaTable(resource_id=self.resource_id)
+        if self.file_name is not None:
+            file_format = self.effective_file_format
+            assert file_format is not None
+            return MetaTable(
+                path=os.path.abspath(os.path.join(
+                    base_dir if base_dir is not None else os.getcwd(),
+                    os.path.expanduser(self.file_name))),
+                file_format=file_format,
+                file_separator=self.file_separator)
         assert self.resource_label is not None
         value = resource.get_labels().get(self.resource_label)
         if value is None:
@@ -709,48 +825,254 @@ class _MetaSpec:
 
 
 #: ``meta`` omitted under a metadata grouping: the convention's table.
-CONVENTION_META = _MetaSpec(
-    filters=(MetaFilter(SAMPLE_ID_COLUMN, label=SAMPLE_ID_LABEL),),
-    resource_label=CELL_META_RESOURCE_ID_LABEL)
+CONVENTION_META = MetaSource(
+    resource_label=CELL_META_RESOURCE_ID_LABEL,
+    filters=(MetaFilter(SAMPLE_ID_COLUMN, label=SAMPLE_ID_LABEL),))
 
 
-def _parse_local_table(
-    label: str, config: dict[str, Any], base_dir: str | None,
-) -> MetaTable:
-    """A local table, its relative name read from ``base_dir``.
+#: The refusal of a ``meta`` that goes with a constant group.
+CONSTANT_GROUP_META = (
+    f"meta maps cells to groups, and is given only with a group of "
+    f"cell_score_id, cell_meta_column and group_meta_column, or with no "
+    f"group on a resource labelled {CELL_META_RESOURCE_ID_LABEL!r}")
 
-    Made absolute here, since the tasks run inside the work directory.
+
+@dataclass(frozen=True)
+class FragmentEntry:
+    """A ``fragment_score_binner`` entry of a run definition.
+
+    Attributes
+    ----------
+    resource_query
+        The repository search for the ``fragment_score`` resources.
+    search_term
+        The filter of the full-text index, conjoined with the query.
+        ``None``, or a blank string, filters nothing.
+    pool
+        ``True`` merges every match into one job.  ``False`` makes one
+        job for each resource.
+    name
+        The base of the names of the tracks.  ``None`` names the tracks
+        by the query, or by the resource ids when not pooled.
+    value
+        What one fragment adds.
+    aggregate
+        How a bin reduces the values of its fragments.
+    group
+        How a fragment becomes a group.  ``None`` lets the labels of the
+        resources decide: a resource with the
+        :data:`CELL_META_RESOURCE_ID_LABEL` label is grouped as by
+        ``CellGrouping()``, and any other is the one group ``all``.
+    meta
+        The cell metadata table of a cell grouping.  ``None`` is the
+        table of the convention.
+
+    Raises
+    ------
+    RunDefinitionError
+        When a field is malformed, or ``meta`` goes with a constant group
+        or a value grouping.
     """
-    file_name = _require_text(label, "file_name", config["file_name"])
-    path = os.path.abspath(os.path.join(
-        base_dir if base_dir is not None else os.getcwd(),
-        os.path.expanduser(file_name)))
-    file_format = config.get("file_format")
-    if file_format is None:
-        suffix = os.path.splitext(path)[1].lower()
-        file_format = {".tsv": "tsv", ".xls": "excel", ".xlsx": "excel"}\
-            .get(suffix, "csv")
-    file_format = _require_text(label, "file_format", file_format)
-    if file_format not in FILE_FORMATS:
-        raise RunDefinitionError(
-            f"{label}: file_format must be one of "
-            f"{', '.join(FILE_FORMATS)}, not {file_format!r}")
-    separator = config.get("file_separator")
-    if separator is not None:
-        if file_format == "excel":
+
+    resource_query: str
+    search_term: str | None = None
+    pool: bool = True
+    name: str | None = None
+    value: ScoreContribution | ConstantContribution = ConstantContribution()
+    aggregate: Aggregate = Aggregate()
+    group: ConstantGroup | CellGrouping | ValueGrouping | None = None
+    meta: MetaSource | None = None
+
+    def __post_init__(self) -> None:
+        query: Any = self.resource_query
+        if not isinstance(query, str) or not query:
             raise RunDefinitionError(
-                f"{label}: file_separator does not apply to an excel file")
-        separator = _require_text(label, "file_separator", separator)
-    return MetaTable(
-        path=path, file_format=file_format, file_separator=separator)
+                "resource_query is required and must be a string")
+        object.__setattr__(
+            self, "search_term", _search_term(self.search_term))
+        pool: Any = self.pool
+        if not isinstance(pool, bool):
+            raise RunDefinitionError(
+                f"pool must be true or false, not {pool!r}")
+        if self.name is not None:
+            _text("name", self.name)
+        if self.meta is None:
+            return
+        if isinstance(self.group, ValueGrouping):
+            raise RunDefinitionError(
+                f"meta maps cells to groups, and is not given with a group "
+                f"of {VALUE_GROUP_KEY}, whose values are the groups")
+        if isinstance(self.group, ConstantGroup):
+            raise RunDefinitionError(CONSTANT_GROUP_META)
+
+
+def _search_term(value: Any) -> str | None:
+    """``value``, a ``search_term``; ``None`` when it is blank."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise RunDefinitionError(
+            f"search_term must be a string, not {value!r}")
+    # A blank term filters nothing, as None does.
+    return value if value.strip() else None
+
+
+def _located[Made](
+    where: str, make: Callable[..., Made], /, *args: Any, **kwargs: Any,
+) -> Made:
+    """Call ``make``; prefix its refusal with ``where``, a label."""
+    try:
+        return make(*args, **kwargs)
+    except RunDefinitionError as err:
+        raise RunDefinitionError(f"{where}: {err}") from err
+
+
+def _entry_from_config(label: str, config: Any) -> FragmentEntry:
+    """Read the inner config of a ``fragment_score_binner`` entry."""
+    check_keys(label, config, ENTRY_KEYS)
+    name = entry_name(label, config)
+    return _located(
+        label, FragmentEntry,
+        resource_query=config.get("resource_query"),
+        search_term=config.get("search_term"),
+        pool=config.get("pool", True),
+        name=name,
+        value=_value_from_config(f"{label}.value", config.get("value")),
+        aggregate=_aggregate_from_config(
+            f"{label}.aggregate", config.get("aggregate")),
+        group=_group_from_config(f"{label}.group", config.get("group")),
+        meta=_meta_from_config(f"{label}.meta", config.get("meta")))
+
+
+def _value_from_config(
+    label: str, config: Any,
+) -> ScoreContribution | ConstantContribution:
+    if config is None:
+        return ConstantContribution()
+    check_keys(label, config, VALUE_KEYS)
+    if len(config) != 1:
+        raise RunDefinitionError(
+            f"{label}: give one of score_id or value"
+            f"{', not both' if config else ''}")
+    if "score_id" in config:
+        return _located(label, ScoreContribution, config["score_id"])
+    return _located(label, ConstantContribution, config["value"])
+
+
+def _aggregate_from_config(label: str, config: Any) -> Aggregate:
+    if config is None:
+        return Aggregate()
+    _refuse_moved_to_value(label, config)
+    check_keys(label, config, AGGREGATE_KEYS)
+    return _located(label, Aggregate, **config)
+
+
+def _refuse_moved_to_value(label: str, config: Any) -> None:
+    """Refuse an ``aggregate`` key that belongs in the entry's ``value``."""
+    if isinstance(config, dict):
+        for key, value_key in MOVED_TO_VALUE.items():
+            if key in config:
+                raise RunDefinitionError(
+                    f"{label}: {key} is not an aggregate key; what one "
+                    f"fragment adds is the entry's value key: give "
+                    f"value: {{{value_key}: {config[key]}}}")
+
+
+def _group_from_config(
+    label: str, config: Any,
+) -> ConstantGroup | CellGrouping | ValueGrouping | None:
+    if config is None:
+        return None
+    check_keys(label, config, GROUP_KEYS)
+    forms = [
+        form for form, keys in (
+            ("group", {"group"}),
+            ("cell_score_id, cell_meta_column and group_meta_column",
+             CELL_GROUP_KEYS),
+            (VALUE_GROUP_KEY, {VALUE_GROUP_KEY}))
+        if keys & config.keys()]
+    if len(forms) > 1:
+        given = "both" if len(forms) == 2 else "all of"
+        raise RunDefinitionError(
+            f"{label}: give one form of group -- group; cell_score_id, "
+            f"cell_meta_column and group_meta_column; or "
+            f"{VALUE_GROUP_KEY} -- not {given} {'; '.join(forms)}")
+    if "group" in config:
+        return _located(label, ConstantGroup, config["group"])
+    if VALUE_GROUP_KEY in config:
+        return _located(label, ValueGrouping, config[VALUE_GROUP_KEY])
+    return _located(label, CellGrouping, **config)
+
+
+def _meta_from_config(label: str, config: Any) -> MetaSource | None:
+    if config is None:
+        return None
+    check_keys(label, config, META_KEYS)
+    _located(label, _check_meta_keys, config.keys())
+    for source in META_SOURCE_KEYS & config.keys():
+        _located(label, _text, source, config[source])
+    filters = _filters_from_config(f"{label}.filter", config.get("filter"))
+    return _located(label, MetaSource, filters=filters, **{
+        key: config[key] for key in META_SOURCE_KEYS | META_FILE_KEYS
+        if key in config})
+
+
+def _filters_from_config(label: str, config: Any) -> tuple[MetaFilter, ...]:
+    if config is None:
+        return ()
+    if not isinstance(config, list):
+        raise RunDefinitionError(
+            f"{label}: expected a list of {{column, value | label}} "
+            f"conjuncts")
+    filters = []
+    for index, conjunct in enumerate(config):
+        item = f"{label}[{index}]"
+        check_keys(item, conjunct, FILTER_KEYS)
+        _located(item, _text, "column", conjunct.get("column"))
+        if ("value" in conjunct) == ("label" in conjunct):
+            raise RunDefinitionError(
+                f"{item}: give exactly one of value or label")
+        if "label" in conjunct:
+            _located(item, _text, "label", conjunct["label"])
+            filters.append(_located(
+                item, MetaFilter, conjunct.get("column"),
+                label=conjunct["label"]))
+        else:
+            # A table cell matches by its text, so a number is its text.
+            value = _as_text(conjunct["value"])
+            filters.append(_located(
+                item, MetaFilter, conjunct.get("column"),
+                value="" if value is None else value))
+    return tuple(filters)
+
+
+def _refuse_non_numeric(
+    label: str, score_id: str, matches: list[GenomicResource],
+) -> None:
+    """Refuse a score that a match lacks, or that is not numeric there."""
+    for resource in matches:
+        value_type = _score_type(label, resource, score_id)
+        if value_type not in NUMERIC_VALUE_TYPES:
+            raise RunDefinitionError(
+                f"{label}: resource {resource.resource_id!r} score "
+                f"{score_id!r} is of type {value_type!r}; only a "
+                f"numeric score (int or float) can be aggregated")
 
 
 class _Tables:
-    """The metadata tables an entry reads, each loaded and checked once."""
+    """The metadata tables an entry reads, each loaded and checked once.
 
-    def __init__(self, label: str, grr: GenomicResourceRepo) -> None:
+    ``base_dir`` is the directory that a relative local table is read
+    from; ``None`` is the current directory.
+    """
+
+    def __init__(
+        self, label: str, grr: GenomicResourceRepo,
+        base_dir: str | None = None,
+    ) -> None:
         self.label = label
         self.grr = grr
+        self.base_dir = base_dir
         self.loaded: dict[MetaTable, pd.DataFrame] = {}
 
     def load(
@@ -789,7 +1111,7 @@ class _Tables:
 
 
 def _resolve_grouping(
-    label: str, cell_keys: dict[str, str], meta: _MetaSpec,
+    label: str, cell_keys: dict[str, str], meta: MetaSource,
     resources: list[GenomicResource], tables: _Tables,
 ) -> tuple[BoundCellGrouping, dict[str, set[str]]]:
     """Resolve one job's metadata grouping, and each resource's groups.
@@ -798,7 +1120,8 @@ def _resolve_grouping(
     same one.
     """
     meta_label = f"{label}.meta"
-    table, resource_ids = _pooled_meta_table(meta_label, meta, resources)
+    table, resource_ids = _pooled_meta_table(
+        meta_label, meta, resources, tables.base_dir)
     grouping = BoundCellGrouping(
         table=table, filters=meta.filters, **cell_keys,
     )
@@ -821,12 +1144,13 @@ def _resolve_grouping(
 
 
 def _pooled_meta_table(
-    meta_label: str, meta: _MetaSpec, resources: list[GenomicResource],
+    meta_label: str, meta: MetaSource, resources: list[GenomicResource],
+    base_dir: str | None,
 ) -> tuple[MetaTable, list[str]]:
     """The one cell metadata table of the pooled resources, and their ids."""
     named: dict[MetaTable, list[str]] = defaultdict(list)
     for resource in resources:
-        named[meta.table_of(meta_label, resource)].append(
+        named[meta.table_of(meta_label, resource, base_dir)].append(
             resource.resource_id)
     if len(named) > 1:
         sides = "; ".join(
@@ -960,7 +1284,7 @@ def _value_groups(
 
 
 def _resolve_value_grouping(
-    label: str, score_id: str, fragment_value: _FragmentValue,
+    label: str, score_id: str, aggregated_score: str | None,
     resources: list[GenomicResource], *, pool: bool,
 ) -> tuple[BoundValueGrouping, list[str]]:
     """Resolve one job's raw-value grouping, and its sorted groups.
@@ -976,7 +1300,7 @@ def _resolve_value_grouping(
         prefixes = _pooled_prefixes(group_label, resources)
     values = [
         _resource_value_groups(
-            group_label, resource, score_id, fragment_value)
+            group_label, resource, score_id, aggregated_score)
         for resource in resources]
     groups = _union_groups(
         group_label, score_id, resources, prefixes, values)
@@ -1055,10 +1379,10 @@ def _refuse_shared_samples(
 
 def _resource_value_groups(
     group_label: str, resource: GenomicResource, score_id: str,
-    fragment_value: _FragmentValue,
+    aggregated_score: str | None,
 ) -> tuple[str, ...]:
     """Check one resource's grouping score; read the values it lists."""
-    if score_id == fragment_value.score_id:
+    if score_id == aggregated_score:
         raise RunDefinitionError(
             f"{group_label}: resource {resource.resource_id!r} score "
             f"{score_id!r} is the aggregated score; group by another "

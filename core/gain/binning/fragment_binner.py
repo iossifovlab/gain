@@ -82,6 +82,7 @@ uncovered throughout.
 """
 from __future__ import annotations
 
+import dataclasses
 import heapq
 import json
 import operator
@@ -100,8 +101,6 @@ from gain.binning.binners import (
     RunDefinitionError,
     Track,
     binner_type_of,
-    check_keys,
-    entry_name,
     match_resources,
     named_base,
 )
@@ -131,6 +130,7 @@ from gain.binning.fragment_grouping import (
     CELL_META_RESOURCE_ID_LABEL,
     CELL_SCORE,
     CLASS_COLUMN,
+    CONSTANT_GROUP_META,
     CONVENTION_META,
     COUNT_SCORE,
     COVERAGE_PROFILE,
@@ -152,18 +152,22 @@ from gain.binning.fragment_grouping import (
     VALUE_KEYS,
     BoundCellGrouping,
     BoundValueGrouping,
+    CellGrouping,
+    ConstantContribution,
+    ConstantGroup,
     DuplicateBarcodeError,
+    FragmentEntry,
     MetaFilter,
     MetaTable,
-    _Aggregate,
+    ScoreContribution,
+    ValueGrouping,
     _as_text,
-    _FragmentValue,
-    _Group,
+    _entry_from_config,
     _is_labelled,
     _is_single_cell,
-    _MetaSpec,
     _partition,
     _quoted,
+    _refuse_non_numeric,
     _resolve_grouping,
     _resolve_value_grouping,
     _Tables,
@@ -264,24 +268,6 @@ class FragmentBinningJob(BinningJob):
                 and self.grouping.table.resource_id is not None:
             return (*self.resource_ids, self.grouping.table.resource_id)
         return self.resource_ids
-
-
-@dataclass(frozen=True)
-class _Entry:
-    """An entry's parsed keys, before the defaults its resources decide.
-
-    ``meta`` ``None`` means none was given.
-    """
-
-    label: str
-    pool: bool
-    resource_query: str
-    name: str | None
-    value: _FragmentValue
-    aggregate: _Aggregate
-    group: _Group
-    meta: _MetaSpec | None
-    tables: _Tables
 
 
 class FragmentScoreBinding:
@@ -596,85 +582,137 @@ class FragmentScoreBinner:
     ) -> list[BinningJob]:
         """Resolve one entry into a pooled job, or one job per resource.
 
+        The same as :meth:`entry_jobs` of :meth:`entry_from_config`.
+        """
+        return cls.entry_jobs(
+            label, cls.entry_from_config(label, config), grr,
+            base_dir=base_dir)
+
+    @staticmethod
+    def entry_from_config(label: str, config: Any) -> FragmentEntry:
+        """Read the inner config of a ``fragment_score_binner`` entry.
+
+        Parameters
+        ----------
+        label
+            The label of the entry in the run definition, for example
+            ``binners[0]``.  Each refusal starts with it.
+        config
+            The mapping under the ``fragment_score_binner`` key.
+
+        Returns
+        -------
+        FragmentEntry
+            The entry.  It is equal to the entry built by hand from the
+            same keys.
+
+        Raises
+        ------
+        RunDefinitionError
+            When a key is unknown or a value is malformed.
+        """
+        return _entry_from_config(label, config)
+
+    @classmethod
+    def entry_jobs(
+        cls, label: str, entry: FragmentEntry, grr: GenomicResourceRepo,
+        *, base_dir: str | None = None,
+    ) -> list[BinningJob]:
+        """Resolve ``entry`` into a pooled job, or one job per resource.
+
         A job's tracks are its groups: the constant one, or every
         distinct non-empty group of its resources' filtered rows, in
-        sorted order.  ``base_dir`` is the directory a relative local
-        ``meta`` file is read from; unset, the current directory.
+        sorted order.
+
+        Parameters
+        ----------
+        label
+            The label of the entry in the run definition.  Each refusal
+            starts with it.
+        entry
+            The entry, built by hand or by :meth:`entry_from_config`.
+        grr
+            The repository that the query of the entry searches.
+        base_dir
+            The directory that a relative local ``meta`` file is read
+            from.  ``None`` is the current directory.
+
+        Returns
+        -------
+        list[BinningJob]
+            One job when the entry is pooled, else one job for each
+            matched resource, in the order of the resource ids.
+
+        Raises
+        ------
+        RunDefinitionError
+            When the entry matches no resource, or the resources cannot
+            give what the entry asks for.
         """
-        check_keys(label, config, ENTRY_KEYS)
-        name = entry_name(label, config)
-        matches = match_resources(label, config, grr, "fragment_score")
-        pool = config.get("pool", True)
-        if not isinstance(pool, bool):
-            raise RunDefinitionError(
-                f"{label}: pool must be true or false, not {pool!r}")
-        entry = _Entry(
-            label=label,
-            pool=pool,
-            resource_query=config["resource_query"],
-            name=name,
-            value=_FragmentValue.default() if config.get("value") is None
-            else _FragmentValue.parse(
-                f"{label}.value", config["value"], matches),
-            aggregate=_Aggregate.default()
-            if config.get("aggregate") is None
-            else _Aggregate.parse(f"{label}.aggregate", config["aggregate"]),
-            group=_Group.parse(f"{label}.group", config.get("group")),
-            meta=None if config.get("meta") is None
-            else _MetaSpec.parse(f"{label}.meta", config["meta"], base_dir),
-            tables=_Tables(f"{label}.meta", grr))
-        pooled_base = config["resource_query"] if name is None else name
+        matches = match_resources(label, {
+            "resource_query": entry.resource_query,
+            "search_term": entry.search_term,
+        }, grr, "fragment_score")
+        if isinstance(entry.value, ScoreContribution):
+            _refuse_non_numeric(
+                f"{label}.value", entry.value.score_id, matches)
+        tables = _Tables(f"{label}.meta", grr, base_dir)
+        name = entry.name
+        pooled_base = entry.resource_query if name is None else name
         return [
             cls._resolve_job(
-                entry, resources,
-                base=pooled_base if pool
+                label, entry, resources, tables,
+                base=pooled_base if entry.pool
                 else named_base(name, resources[0].resource_id))
-            for resources in ([matches] if pool else [[r] for r in matches])
+            for resources in (
+                [matches] if entry.pool else [[r] for r in matches])
         ]
 
     @classmethod
     def _resolve_job(
-        cls, entry: _Entry, resources: list[GenomicResource], *, base: str,
+        cls, label: str, entry: FragmentEntry,
+        resources: list[GenomicResource], tables: _Tables, *, base: str,
     ) -> FragmentBinningJob:
         """Resolve the defaults and the grouping of one job's resources."""
         resource_ids = tuple(r.resource_id for r in resources)
-        if entry.group.value_score is not None:
-            value_grouping, value_groups = _value_score_grouping(
-                entry, resources)
+        group = entry.group
+        if isinstance(group, ValueGrouping):
+            value_grouping, value_groups = _resolve_value_grouping(
+                label, group.score_id, _score_id(entry), resources,
+                pool=entry.pool)
             return cls._job_of(
                 resource_ids, entry, value_grouping, value_groups,
                 base=base, warnings=())
-        constant, cell_keys = entry.group.constant, entry.group.cell_keys
         warnings: list[str] = []
-        if constant is None and cell_keys is None:
-            constant, cell_keys = _label_tier(
-                entry.label, resources, warnings)
+        if group is None:
+            group = _label_tier(label, resources, warnings)
         grouping: BoundCellGrouping | None = None
-        if cell_keys is None:
-            assert constant is not None
-            groups = _constant_groups(entry, constant)
+        if isinstance(group, ConstantGroup):
+            groups = _constant_groups(label, entry, group.name)
         else:
             grouping, groups = _cell_grouping(
-                entry, cell_keys, resources, warnings)
+                label, entry, group, resources, tables, warnings)
         return cls._job_of(
             resource_ids, entry, grouping, groups, base=base,
             warnings=tuple(warnings))
 
     @classmethod
     def _job_of(
-        cls, resource_ids: tuple[str, ...], entry: _Entry,
+        cls, resource_ids: tuple[str, ...], entry: FragmentEntry,
         grouping: BoundCellGrouping | BoundValueGrouping | None,
         groups: list[str],
         *, base: str,
         warnings: tuple[str, ...],
     ) -> FragmentBinningJob:
-        value, aggregate = entry.value, entry.aggregate
+        score_id, aggregate = _score_id(entry), entry.aggregate
+        value = entry.value.value \
+            if isinstance(entry.value, ConstantContribution) else 1
         parameters: dict[str, Any] = {
             "mode": aggregate.mode,
-            "uncovered_value": aggregate.uncovered_value,
+            "uncovered_value": aggregate.effective_uncovered_value,
         }
-        if value.score_id is None:
-            parameters["value"] = value.value
+        if score_id is None:
+            parameters["value"] = value
         if grouping is not None:
             parameters.update(grouping.parameters)
         parameters_text = json.dumps(parameters, sort_keys=True)
@@ -688,8 +726,8 @@ class FragmentScoreBinner:
                 definition=FragmentScoreDef(
                     aggregator=aggregate.aggregator,
                     mode=aggregate.mode,
-                    uncovered_value=aggregate.uncovered_value,
-                    score_id=value.score_id,
+                    uncovered_value=aggregate.effective_uncovered_value,
+                    score_id=score_id,
                     resource_query=entry.resource_query,
                     pool=entry.pool,
                     name=entry.name),
@@ -699,7 +737,7 @@ class FragmentScoreBinner:
         )
         return FragmentBinningJob(
             binner=cls.kind, tracks=tracks, resource_ids=resource_ids,
-            score_id=value.score_id, value=value.value,
+            score_id=score_id, value=value,
             grouping=grouping, warnings=warnings)
 
     @staticmethod
@@ -726,29 +764,20 @@ class FragmentScoreBinner:
             track_maps, quiet=quiet)
 
 
-def _value_score_grouping(
-    entry: _Entry, resources: list[GenomicResource],
-) -> tuple[BoundValueGrouping, list[str]]:
-    """Resolve a job grouped by the values of a score."""
-    assert entry.group.value_score is not None
-    if entry.meta is not None:
-        raise RunDefinitionError(
-            f"{entry.label}: meta maps cells to groups, and is not given "
-            f"with a group of {VALUE_GROUP_KEY}, whose values are "
-            f"the groups, for "
-            f"{_quoted(r.resource_id for r in resources)}")
-    return _resolve_value_grouping(
-        entry.label, entry.group.value_score, entry.value, resources,
-        pool=entry.pool)
+def _score_id(entry: FragmentEntry) -> str | None:
+    """The score whose value a fragment adds; ``None`` for a constant."""
+    if isinstance(entry.value, ScoreContribution):
+        return entry.value.score_id
+    return None
 
 
 def _label_tier(
     label: str, resources: list[GenomicResource], warnings: list[str],
-) -> tuple[str | None, dict[str, str] | None]:
+) -> ConstantGroup | CellGrouping:
     """Decide a job's grouping by its resources' label tier (F8).
 
-    Returns the constant group or the cell keys, and adds a warning for
-    each single-cell resource without the label.
+    Returns the constant group or the cell grouping of the convention,
+    and adds a warning for each single-cell resource without the label.
     """
     labelled, unlabelled = _partition(resources, _is_labelled)
     if labelled and unlabelled:
@@ -759,42 +788,40 @@ def _label_tier(
             f"{_quoted(unlabelled)} do not; give group, or "
             f"pool: false")
     if labelled:
-        return None, dict(CELL_GROUP_DEFAULTS)
+        return CellGrouping()
     warnings.extend(
         f"resource {r.resource_id!r} has {CELL_SCORE!r} and "
         f"{COUNT_SCORE!r} scores but no "
         f"{CELL_META_RESOURCE_ID_LABEL!r} label; it is binned "
         f"as the single {DEFAULT_GROUP!r} track"
         for r in resources if _is_single_cell(r))
-    return DEFAULT_GROUP, None
+    return ConstantGroup(DEFAULT_GROUP)
 
 
-def _constant_groups(entry: _Entry, constant: str) -> list[str]:
+def _constant_groups(
+    label: str, entry: FragmentEntry, constant: str,
+) -> list[str]:
     """Return the one group of a constant grouping."""
     if entry.meta is not None:
-        raise RunDefinitionError(
-            f"{entry.label}: meta maps cells to groups, and is given only "
-            f"with a group of cell_score_id, cell_meta_column and "
-            f"group_meta_column, or with no group on a resource "
-            f"labelled {CELL_META_RESOURCE_ID_LABEL!r}")
+        raise RunDefinitionError(f"{label}: {CONSTANT_GROUP_META}")
     return [constant]
 
 
 def _cell_grouping(
-    entry: _Entry, cell_keys: dict[str, str],
-    resources: list[GenomicResource], warnings: list[str],
+    label: str, entry: FragmentEntry, cell: CellGrouping,
+    resources: list[GenomicResource], tables: _Tables, warnings: list[str],
 ) -> tuple[BoundCellGrouping, list[str]]:
     """Resolve a cell grouping and its sorted groups.
 
     Adds a warning when the cell metadata table is a local file.
     """
     grouping, groups_of = _resolve_grouping(
-        entry.label, cell_keys, entry.meta or CONVENTION_META, resources,
-        entry.tables)
+        label, dataclasses.asdict(cell), entry.meta or CONVENTION_META,
+        resources, tables)
     groups = sorted(set[str]().union(*groups_of.values()))
     if not groups:
         raise RunDefinitionError(
-            f"{entry.label}: the meta rows selected for "
+            f"{label}: the meta rows selected for "
             f"{', '.join(groups_of)} name no group")
     if grouping.table.is_local:
         warnings.append(

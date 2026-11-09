@@ -41,5 +41,9 @@ def test_the_public_names_of_gain_binning_are_its_all() -> None:
         if not name.startswith("_")
         and not isinstance(value, types.ModuleType)}
 
-    assert sorted(gain.binning.__all__) == ["resolve_binners", "tracks_frame"]
+    assert sorted(gain.binning.__all__) == [
+        "Aggregate", "CellGrouping", "ConstantContribution", "ConstantGroup",
+        "FragmentEntry", "MetaFilter", "MetaSource", "RunDefinitionError",
+        "ScoreContribution", "ValueGrouping", "resolve_binners",
+        "tracks_frame"]
     assert public == set(gain.binning.__all__)
