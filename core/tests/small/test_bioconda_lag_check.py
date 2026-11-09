@@ -187,16 +187,13 @@ def with_value(body: dict, value: object, *path: str | int) -> dict:
     (with_value(pypi_body(), 20261103, "releases", "2026.11.0", 0,
                 "upload_time_iso_8601"),
      bioconda_body("2026.10.2")),
-    (with_value(pypi_body(), "2026-11-03T12:00:00", "releases",
-                "2026.11.0", 0, "upload_time_iso_8601"),
-     bioconda_body("2026.10.2")),
     (pypi_body(), with_value(bioconda_body(), None, "latest_version")),
     (pypi_body(), with_value(bioconda_body(), 2026, "latest_version")),
     (pypi_body(), ["2026.10.2"]),
 ], ids=[
     "pypi-not-json", "bioconda-not-json", "releases-not-a-dict",
     "release-without-files", "upload-time-not-a-string",
-    "upload-time-without-zone", "latest-version-null",
+    "latest-version-null",
     "latest-version-not-a-string", "bioconda-not-an-object",
 ])
 def test_a_body_of_the_wrong_shape_exits_2(
@@ -234,3 +231,20 @@ def test_a_failed_fetch_exits_2(
 
     assert code == 2
     assert "cannot decide" in capsys.readouterr().err
+
+
+def test_an_upload_time_without_a_zone_exits_2(
+    lag_check: ModuleType, serve: Callable[..., None],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Every file of the release lacks the zone. With one aware file,
+    # min() raises TypeError before the zone check.
+    pypi = pypi_body()
+    for item in pypi["releases"]["2026.11.0"]:
+        item["upload_time_iso_8601"] = "2026-11-03T12:00:00"
+    serve(pypi, bioconda_body("2026.10.2"), OLD)
+
+    code = lag_check.main()
+
+    assert code == 2
+    assert "upload time without a zone" in capsys.readouterr().err
