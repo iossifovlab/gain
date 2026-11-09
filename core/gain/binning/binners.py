@@ -200,6 +200,11 @@ class BinningJob:
     tracks: tuple[Track, ...]
     entry: str = ""
 
+    @property
+    def local_files(self) -> tuple[str, ...]:
+        """The local files the job reads, as absolute paths: none here."""
+        return ()
+
 
 class BoundBinner(Protocol):
     """A job bound to its resources: bins them one region at a time."""

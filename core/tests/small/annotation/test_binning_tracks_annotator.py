@@ -30,6 +30,7 @@ from typing import Any
 
 import pytest
 import yaml
+from gain.annotation import binning_tracks_annotator
 from gain.annotation.annotatable import (
     Annotatable,
     CNVAllele,
@@ -39,9 +40,18 @@ from gain.annotation.annotatable import (
 from gain.annotation.annotation_config import AnnotationConfigurationError
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
+from gain.annotation.binning_tracks_annotator import LocalFilesError
 from gain.binning.cli import cli as binning_tool
 from gain.binning.fragment_binner import FragmentScoreBinding
 from gain.binning.h5_reader import read_values
+from gain.binning.run_definition import (
+    RunDefinitionError,
+    parse_run_definition,
+    resolve_binners,
+)
+from gain.genomic_resources.reference_genome import (
+    build_reference_genome_from_resource_id,
+)
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing.builders import (
     a_fragment_score,
@@ -273,3 +283,127 @@ def test_a_local_meta_file_is_refused_before_it_is_read(
     assert "binners[1]" in message
     assert "file_name" in message
     assert "first line of a server file" not in message
+
+
+@pytest.mark.parametrize("prefix", ["1kg", "a-b", "", "x y"])
+def test_a_prefix_that_is_not_a_vcf_key_is_refused(
+    repo: GenomicResourceRepo, prefix: str,
+) -> None:
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        tracks_pipeline(repo, [fragment_entry()], prefix=prefix)
+
+    message = str(excinfo.value)
+    assert repr(prefix) in message
+    assert "[A-Za-z_][0-9A-Za-z_.]*" in message
+
+
+@pytest.mark.parametrize("attributes", [
+    [{"source": "x"}],
+    [{"source": "track_0_0"}],
+])
+def test_a_non_empty_attributes_list_is_refused(
+    repo: GenomicResourceRepo, attributes: list[dict[str, str]],
+) -> None:
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        tracks_pipeline(repo, [fragment_entry()], attributes=attributes)
+
+    assert "the binners entries define the attributes" in str(excinfo.value)
+
+
+def test_an_empty_attributes_list_gives_every_track_attribute(
+    repo: GenomicResourceRepo,
+) -> None:
+    pipeline = tracks_pipeline(repo, [
+        {"position_score_binner": {
+            "resource_query": "pos", "aggregator": "mean"}},
+        fragment_entry(),
+    ], attributes=[])
+
+    assert [attribute.name for attribute in pipeline.get_attributes()] == [
+        "track_0_0", "track_1_0"]
+
+
+def test_an_entry_error_has_the_words_of_parse_run_definition(
+    repo: GenomicResourceRepo,
+) -> None:
+    binners = [fragment_entry(), {"no_such_binner": {}}]
+    with pytest.raises(RunDefinitionError) as run_error:
+        parse_run_definition(
+            {"bins": {"bin_size": 10}, "binners": binners}, repo,
+            build_reference_genome_from_resource_id("genome", repo))
+
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        tracks_pipeline(repo, binners)
+
+    assert "binners[1]" in str(run_error.value)
+    assert str(run_error.value) in str(excinfo.value)
+
+
+LOCAL_CELL_GROUPING = {"fragment_score_binner": {
+    "resource_query": "frags",
+    "group": {
+        "cell_score_id": "cell", "cell_meta_column": "barcode",
+        "group_meta_column": "cell_type"},
+    "meta": {"file_name": "cells.csv"}}}
+
+
+@pytest.fixture
+def readable_cells_csv(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A readable ``cells.csv`` in the current directory.
+
+    With it, ``LOCAL_CELL_GROUPING`` resolves into a job whose
+    ``local_files`` names the table.
+    """
+    (tmp_path / "cells.csv").write_text("barcode,cell_type\nAAA,T\nBBB,B\n")
+    monkeypatch.chdir(tmp_path)
+
+
+@pytest.mark.usefixtures("readable_cells_csv")
+def test_a_job_that_reads_a_local_file_is_refused(
+    repo: GenomicResourceRepo,
+) -> None:
+    # The parser gives a job a local file only for a meta file_name, so
+    # the refusal before resolution raises this error first.  The tests
+    # below pin the refusal after resolution.
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        tracks_pipeline(repo, [LOCAL_CELL_GROUPING])
+
+    message = str(excinfo.value)
+    assert "binners[0]" in message
+    assert "a pipeline has no directory of a run definition" in message
+    assert not isinstance(excinfo.value.other_error, RunDefinitionError)
+
+
+@pytest.mark.usefixtures("readable_cells_csv")
+def test_the_refusal_after_resolution_holds_without_the_one_before(
+    repo: GenomicResourceRepo, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The refusal before resolution covers meta.file_name.  The refusal
+    # after resolution covers local_files of every job, whatever key of
+    # the entry names the file.  No entry of the parser reaches a local
+    # file without meta.file_name, so this test removes the first
+    # refusal.  If the first refusal moves, move the patch with it.
+    monkeypatch.setattr(
+        binning_tracks_annotator, "refuse_local_file_names",
+        lambda _binners: None)
+
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        tracks_pipeline(repo, [LOCAL_CELL_GROUPING])
+
+    assert isinstance(excinfo.value.other_error, LocalFilesError)
+    assert str(LocalFilesError("binners[0]")) in str(excinfo.value)
+
+
+@pytest.mark.usefixtures("readable_cells_csv")
+def test_a_resolved_job_with_local_files_is_refused(
+    repo: GenomicResourceRepo,
+) -> None:
+    jobs = resolve_binners([LOCAL_CELL_GROUPING], repo)
+
+    with pytest.raises(LocalFilesError) as excinfo:
+        binning_tracks_annotator.refuse_local_files(jobs)
+
+    assert jobs[0].local_files
+    assert str(excinfo.value) == str(LocalFilesError("binners[0]"))
