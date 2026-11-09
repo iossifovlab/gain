@@ -180,6 +180,20 @@ def test_an_unpooled_entry_gives_the_groups_of_each_resource(
     ]
 
 
+def test_the_resources_hold_each_read_resource_once(
+    repo: GenomicResourceRepo,
+) -> None:
+    # Both entries read frags/s1 and the metadata meta/cells.
+    entry = {"resource_query": "frags/s1", "group": BY_CLASS_GROUP,
+             "meta": BY_SAMPLE_META}
+    pipeline = tracks_pipeline(repo, entry, entry | {"name": "again"})
+
+    assert [resource.get_id() for annotator in pipeline.annotators
+            for resource in annotator.resources] == [
+        "frags/s1", "meta/cells"]
+    assert pipeline.get_resource_ids() == {"frags/s1", "meta/cells"}
+
+
 def test_an_annotatable_logs_no_line_about_dropped_fragments(
     repo: GenomicResourceRepo, caplog: pytest.LogCaptureFixture,
 ) -> None:

@@ -252,6 +252,19 @@ class FragmentBinningJob(BinningJob):
             return ()
         return (self.grouping.table.path,)
 
+    @property
+    def read_resource_ids(self) -> tuple[str, ...]:
+        """Every resource the job reads: the fragments, then the metadata.
+
+        A cell grouping whose table is a ``data_frame`` resource adds the
+        id of that resource to ``resource_ids``.  A value grouping and a
+        table from a local file add nothing.
+        """
+        if isinstance(self.grouping, CellGrouping) \
+                and self.grouping.table.resource_id is not None:
+            return (*self.resource_ids, self.grouping.table.resource_id)
+        return self.resource_ids
+
 
 @dataclass(frozen=True)
 class _Entry:

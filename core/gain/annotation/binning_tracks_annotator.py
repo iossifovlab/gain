@@ -157,6 +157,13 @@ def refuse_local_files(jobs: list[BinningJob]) -> None:
             raise LocalFilesError(job.entry)
 
 
+def read_resource_ids(jobs: list[BinningJob]) -> list[str]:
+    """The ``read_resource_ids`` of all ``jobs``, each id once, in order."""
+    return list(dict.fromkeys(
+        resource_id
+        for job in jobs for resource_id in job.read_resource_ids))
+
+
 def refuse_too_many_tracks(tracks: list[Track]) -> None:
     """Refuse more than :data:`MAX_TRACKS` tracks, naming their number."""
     if len(tracks) > MAX_TRACKS:
@@ -187,6 +194,15 @@ class BinningTracksAnnotator(AnnotatorBase):
         refuse_local_file_names(binners)
         self._jobs = resolve_binners(binners, self._grr)
         refuse_local_files(self._jobs)
+        # The pipeline caches these resources.  The locality guard of
+        # ``annotate_utils.check_resource_locality`` also sees them: on a
+        # remote GRR it warns, and above ``LOCALITY_ERROR_THRESHOLD`` rows
+        # it refuses unless ``--allow-remote-resources`` is given.  The
+        # metadata ``data_frame`` loads once, not once per row, but it is
+        # listed too, because a remote read of it is still a network read.
+        info.resources += [
+            self._grr.get_resource(resource_id)
+            for resource_id in read_resource_ids(self._jobs)]
         self._tracks = [track for job in self._jobs for track in job.tracks]
         refuse_too_many_tracks(self._tracks)
         self._names = [

@@ -207,6 +207,16 @@ class BinningJob:
         """The local files the job reads, as absolute paths: none here."""
         return ()
 
+    @property
+    def read_resource_ids(self) -> tuple[str, ...]:
+        """Every resource the job reads: the resources of its tracks.
+
+        Each resource id comes once, in the order of the tracks.
+        """
+        return tuple(dict.fromkeys(
+            resource_id
+            for track in self.tracks for resource_id in track.resource_ids))
+
 
 #: The columns of the ``/tracks`` table (``tracks_layout`` 2), in order.
 TRACKS_COLUMNS = (
