@@ -85,5 +85,12 @@ if [ "${rc}" -ne 0 ]; then
     exit "${rc}"
 fi
 
+# shields.io endpoint file with the line coverage of core, served at
+# /gaindocs/_badges/coverage.json once Deploy docs ships the tarball
+# (gain#2314). A docs-only build has no coverage report, and the script
+# then writes nothing.
+python scripts/coverage_badge.py reports/core/coverage.xml \
+    docs/build/html/_badges/coverage.json
+
 # Tarball for ansible deploy.
 tar -czf docs/gaindocs-html.tar.gz -C docs/build/ html/
