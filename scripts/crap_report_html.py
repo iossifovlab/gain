@@ -107,15 +107,16 @@ def namespace_file(namespace: str, root: pathlib.Path) -> str | None:
 
     The file is that of the longest dotted prefix that is a module
     (``<prefix>.py``) or a package (``<prefix>/__init__.py``) under the
-    source root. The rest of the namespace is a class name. The key has
-    the ``core/`` form that ``git log`` prints.
+    source root. The rest of the namespace is a class name. The key starts
+    with the name of the root, as ``core/`` in the form that ``git log``
+    prints.
     """
     parts = namespace.split(".")
     for end in range(len(parts), 0, -1):
         prefix = "/".join(parts[:end])
         for candidate in (f"{prefix}.py", f"{prefix}/__init__.py"):
             if (root / candidate).is_file():
-                return f"core/{candidate}"
+                return f"{root.name}/{candidate}"
     return None
 
 

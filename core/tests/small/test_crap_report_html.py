@@ -222,6 +222,29 @@ def test_namespace_without_a_file_maps_to_none(
     assert crap_report_html.namespace_file("other.pkg", source_root) is None
 
 
+def test_namespace_key_starts_with_the_name_of_the_root(
+    crap_report_html: ModuleType, tmp_path: pathlib.Path,
+) -> None:
+    root = tmp_path / "web_api"
+    (root / "gain_web").mkdir(parents=True)
+    (root / "gain_web" / "views.py").write_text("")
+
+    assert crap_report_html.namespace_file(
+        "gain_web.views.Index", root) == "web_api/gain_web/views.py"
+
+
+def test_hotspot_of_a_namespace_without_a_file_has_zero_commits(
+    crap_report_html: ModuleType, source_root: pathlib.Path,
+) -> None:
+    rows = [crap_report_html.CrapRow("f", "other.pkg", 1, 0.0, 5.0)]
+
+    hotspots = crap_report_html.rank_hotspots(
+        rows, {"core/gain/binning/binners.py": 3}, source_root)
+
+    assert [(hotspot.commits, hotspot.score) for hotspot in hotspots] == [
+        (0, 0.0)]
+
+
 @pytest.fixture
 def table_root(tmp_path: pathlib.Path) -> pathlib.Path:
     """A source root with the files of the namespaces of ``TABLE``."""
