@@ -247,7 +247,7 @@ class _TextColumn:
 
 
 @dataclass(frozen=True)
-class CellGrouping:
+class BoundCellGrouping:
     """How a fragment's barcode becomes a group: a filtered table lookup.
 
     ``cell_score_id`` is the fragment score carrying the barcode; the
@@ -350,7 +350,7 @@ class CellGrouping:
 
 
 @dataclass(frozen=True)
-class ValueGrouping:
+class BoundValueGrouping:
     """How a fragment's raw value of a ``str`` score becomes a group.
 
     The group of a fragment of the job's ``index``-th resource is
@@ -791,7 +791,7 @@ class _Tables:
 def _resolve_grouping(
     label: str, cell_keys: dict[str, str], meta: _MetaSpec,
     resources: list[GenomicResource], tables: _Tables,
-) -> tuple[CellGrouping, dict[str, set[str]]]:
+) -> tuple[BoundCellGrouping, dict[str, set[str]]]:
     """Resolve one job's metadata grouping, and each resource's groups.
 
     A job reads one table, so resources pooled into it must name the
@@ -799,7 +799,9 @@ def _resolve_grouping(
     """
     meta_label = f"{label}.meta"
     table, resource_ids = _pooled_meta_table(meta_label, meta, resources)
-    grouping = CellGrouping(table=table, filters=meta.filters, **cell_keys)
+    grouping = BoundCellGrouping(
+        table=table, filters=meta.filters, **cell_keys,
+    )
     frame = tables.load(table, resource_ids)
     _refuse_missing_columns(meta_label, grouping, frame, resource_ids)
     prepared = grouping.prepare_filters(frame)
@@ -840,7 +842,7 @@ def _pooled_meta_table(
 
 
 def _refuse_missing_columns(
-    meta_label: str, grouping: CellGrouping, frame: pd.DataFrame,
+    meta_label: str, grouping: BoundCellGrouping, frame: pd.DataFrame,
     resource_ids: list[str],
 ) -> None:
     """Refuse a cell metadata table without a column the grouping reads."""
@@ -858,7 +860,7 @@ def _refuse_missing_columns(
 
 
 def _refuse_bad_filter_labels(
-    meta_label: str, grouping: CellGrouping, resource: GenomicResource,
+    meta_label: str, grouping: BoundCellGrouping, resource: GenomicResource,
 ) -> None:
     """Refuse a resource whose label a filter compares by is unusable."""
     for conjunct in grouping.filters:
@@ -960,7 +962,7 @@ def _value_groups(
 def _resolve_value_grouping(
     label: str, score_id: str, fragment_value: _FragmentValue,
     resources: list[GenomicResource], *, pool: bool,
-) -> tuple[ValueGrouping, list[str]]:
+) -> tuple[BoundValueGrouping, list[str]]:
     """Resolve one job's raw-value grouping, and its sorted groups.
 
     Pooled, each resource's groups are prefixed with its
@@ -979,7 +981,7 @@ def _resolve_value_grouping(
     groups = _union_groups(
         group_label, score_id, resources, prefixes, values)
     return (
-        ValueGrouping(score_id, tuple(prefixes), tuple(values)),
+        BoundValueGrouping(score_id, tuple(prefixes), tuple(values)),
         groups)
 
 

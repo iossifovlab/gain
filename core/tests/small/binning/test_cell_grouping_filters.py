@@ -2,7 +2,7 @@
 # Same header as test_fragment_raw_value_grouping.py: fixtures shadow names
 # (W0621, W0613), tests need no docstrings (C0114, C0116) and reach into
 # private binner names (W0212).
-"""``CellGrouping``: a filter column becomes text once per call."""
+"""``BoundCellGrouping``: a filter column becomes text once per call."""
 from types import SimpleNamespace
 from typing import Any
 
@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 from gain.binning import fragment_grouping
 from gain.binning.fragment_binner import (
-    CellGrouping,
+    BoundCellGrouping,
     DuplicateBarcodeError,
     MetaFilter,
     MetaTable,
@@ -26,8 +26,8 @@ def a_resource(**labels: Any) -> Any:
         resource_id="r", get_labels=lambda: labels)
 
 
-def a_grouping(*filters: MetaFilter) -> CellGrouping:
-    return CellGrouping(
+def a_grouping(*filters: MetaFilter) -> BoundCellGrouping:
+    return BoundCellGrouping(
         cell_score_id="cell", cell_meta_column="barcode",
         group_meta_column="group", table=MetaTable(resource_id="meta"),
         filters=filters)

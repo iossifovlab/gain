@@ -150,11 +150,11 @@ from gain.binning.fragment_grouping import (
     SAMPLE_ID_LABEL,
     VALUE_GROUP_KEY,
     VALUE_KEYS,
-    CellGrouping,
+    BoundCellGrouping,
+    BoundValueGrouping,
     DuplicateBarcodeError,
     MetaFilter,
     MetaTable,
-    ValueGrouping,
     _Aggregate,
     _as_text,
     _FragmentValue,
@@ -208,14 +208,14 @@ __all__ = [
     "SAMPLE_ID_LABEL",
     "VALUE_GROUP_KEY",
     "VALUE_KEYS",
-    "CellGrouping",
+    "BoundCellGrouping",
+    "BoundValueGrouping",
     "DuplicateBarcodeError",
     "FragmentBinningJob",
     "FragmentScoreBinding",
     "FragmentScoreBinner",
     "MetaFilter",
     "MetaTable",
-    "ValueGrouping",
 ]
 
 
@@ -241,13 +241,13 @@ class FragmentBinningJob(BinningJob):
     resource_ids: tuple[str, ...] = ()
     score_id: str | None = None
     value: float = 1
-    grouping: CellGrouping | ValueGrouping | None = None
+    grouping: BoundCellGrouping | BoundValueGrouping | None = None
     warnings: tuple[str, ...] = ()
 
     @property
     def local_files(self) -> tuple[str, ...]:
         """The local metadata files the job reads, as absolute paths."""
-        if not isinstance(self.grouping, CellGrouping) \
+        if not isinstance(self.grouping, BoundCellGrouping) \
                 or self.grouping.table.path is None:
             return ()
         return (self.grouping.table.path,)
@@ -260,7 +260,7 @@ class FragmentBinningJob(BinningJob):
         id of that resource to ``resource_ids``.  A value grouping and a
         table from a local file add nothing.
         """
-        if isinstance(self.grouping, CellGrouping) \
+        if isinstance(self.grouping, BoundCellGrouping) \
                 and self.grouping.table.resource_id is not None:
             return (*self.resource_ids, self.grouping.table.resource_id)
         return self.resource_ids
@@ -649,7 +649,7 @@ class FragmentScoreBinner:
         if constant is None and cell_keys is None:
             constant, cell_keys = _label_tier(
                 entry.label, resources, warnings)
-        grouping: CellGrouping | None = None
+        grouping: BoundCellGrouping | None = None
         if cell_keys is None:
             assert constant is not None
             groups = _constant_groups(entry, constant)
@@ -663,7 +663,8 @@ class FragmentScoreBinner:
     @classmethod
     def _job_of(
         cls, resource_ids: tuple[str, ...], entry: _Entry,
-        grouping: CellGrouping | ValueGrouping | None, groups: list[str],
+        grouping: BoundCellGrouping | BoundValueGrouping | None,
+        groups: list[str],
         *, base: str,
         warnings: tuple[str, ...],
     ) -> FragmentBinningJob:
@@ -727,7 +728,7 @@ class FragmentScoreBinner:
 
 def _value_score_grouping(
     entry: _Entry, resources: list[GenomicResource],
-) -> tuple[ValueGrouping, list[str]]:
+) -> tuple[BoundValueGrouping, list[str]]:
     """Resolve a job grouped by the values of a score."""
     assert entry.group.value_score is not None
     if entry.meta is not None:
@@ -782,7 +783,7 @@ def _constant_groups(entry: _Entry, constant: str) -> list[str]:
 def _cell_grouping(
     entry: _Entry, cell_keys: dict[str, str],
     resources: list[GenomicResource], warnings: list[str],
-) -> tuple[CellGrouping, list[str]]:
+) -> tuple[BoundCellGrouping, list[str]]:
     """Resolve a cell grouping and its sorted groups.
 
     Adds a warning when the cell metadata table is a local file.
