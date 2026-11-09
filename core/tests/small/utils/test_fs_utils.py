@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import os
+import pathlib
 import time
 from collections.abc import Generator
 from urllib.parse import parse_qsl, urlparse
@@ -226,3 +227,57 @@ def test_handle_env_variables_keeps_a_configured_s3_endpoint_url(
 
     assert conf["s3"]["client_kwargs"]["endpoint_url"] == \
         "http://configured:9000"
+
+
+@pytest.mark.parametrize("filename, substring, expected", [
+    ("scores.VCF.gz", ".vcf", 6),
+    ("scores.vcf.gz", ".VCF", 6),
+    ("a.vcf.b.vcf", ".vcf", 1),
+    ("scores.tsv.gz", ".vcf", -1),
+    ("a+b.txt", "+b", 1),
+    # "\u0130".lower() has two code points: the offset stays in the input.
+    ("\u0130.VCF", ".vcf", 1),
+])
+def test_find_ci(filename: str, substring: str, expected: int) -> None:
+    assert fs_utils.find_ci(filename, substring) == expected
+
+
+def test_copy_a_file_creates_the_missing_destination_directory(
+    tmp_path: pathlib.Path,
+) -> None:
+    src = tmp_path / "src.txt"
+    src.write_text("content")
+    dest = tmp_path / "new" / "dir" / "dest.txt"
+
+    fs_utils.copy(str(dest), str(src))
+
+    assert dest.read_text() == "content"
+
+
+def test_copy_a_file_into_an_existing_directory(
+    tmp_path: pathlib.Path,
+) -> None:
+    src = tmp_path / "src.txt"
+    src.write_text("content")
+    (tmp_path / "out").mkdir()
+    dest = tmp_path / "out" / "dest.txt"
+
+    fs_utils.copy(str(dest), str(src))
+
+    assert dest.read_text() == "content"
+
+
+def test_copy_a_directory_merges_into_an_existing_destination(
+    tmp_path: pathlib.Path,
+) -> None:
+    src = tmp_path / "src"
+    (src / "sub").mkdir(parents=True)
+    (src / "sub" / "a.txt").write_text("a")
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    (dest / "old.txt").write_text("old")
+
+    fs_utils.copy(str(dest), str(src))
+
+    assert (dest / "sub" / "a.txt").read_text() == "a"
+    assert (dest / "old.txt").read_text() == "old"

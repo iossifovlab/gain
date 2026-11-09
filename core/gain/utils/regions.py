@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import copy
+import itertools
 import math
 from collections import defaultdict
 from collections.abc import Iterator, Sequence
-from pathlib import Path
 from typing import Any
 
 import networkx as nx
@@ -23,29 +23,6 @@ def coalesce(v1: int | None, v2: int) -> int:
     if v1 is not None:
         return v1
     return v2
-
-
-def bedfile2regions(bed_filename: str) -> list[BedRegion]:
-    """Transform BED file into list of regions."""
-    with open(bed_filename) as infile:
-        regions = []
-        for line in infile:
-            if line[0] == "#":
-                continue
-            chrom, sbeg, send = line.strip().split("\t")
-            beg = int(sbeg)
-            end = int(send)
-            regions.append(BedRegion(chrom, beg + 1, end))
-        return regions
-
-
-def regions2bedfile(regions: list[BedRegion], bed_filename: str) -> None:
-    """Save list of regions into a BED file."""
-    result = "\n".join(
-        f"{reg.chrom}\t{reg.start - 1}\t{reg.stop}\n"
-        for reg in regions
-    )
-    Path(bed_filename).write_text(result)
 
 
 def calc_bin_begin(bin_len: int, bin_idx: int) -> int:
@@ -446,7 +423,7 @@ def collapse(
     regions = copy.deepcopy(list(source))
 
     if not is_sorted:
-        regions.sort(key=lambda x: x.start if x.start is not None else -1)
+        regions.sort(key=lambda x: coalesce(x.start, -1))
 
     collapsed: dict[str, list[Region]] = defaultdict(list)
 
@@ -472,10 +449,7 @@ def collapse(
 
         collapsed[reg.chrom].append(reg)
 
-    result = []
-    for v in list(collapsed.values()):
-        result.extend(v)
-    return result
+    return list(itertools.chain.from_iterable(collapsed.values()))
 
 
 def collapse_no_chrom(

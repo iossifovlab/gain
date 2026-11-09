@@ -1,12 +1,7 @@
 import math
-import os
 
 import numpy as np
 from box import Box
-
-
-def study_id_from_path(filepath: str) -> str:
-    return os.path.splitext(os.path.basename(filepath))[0]
 
 
 def str2bool(value: str | None) -> bool:
