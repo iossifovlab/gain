@@ -120,12 +120,13 @@ cutoff. The effect annotator has a cutoff of the same name that answers a
 coarse CNV effect instead.
 _Avoid_: region cutoff, length limit, maximum region length
 
-**Grouped attribute**:
-An attribute of a fragment score annotator that has a **grouping**. It gives
-one value for each **group** of its resource, and each value is named
-`<attribute name>:<group>`. A fragment that is in no group adds to no value.
-_Avoid_: per-group column, track (a track is a column of the `binning_tool`
-output)
+**Track attribute**:
+An attribute of a `binning_tracks_annotator`. It is the value of one
+**track** of the annotator's **entries** over an annotatable, which the
+annotator bins as one bin. Its name is
+`<prefix>_<binner_index>_<track_index>`. Every track of the entries is a
+track attribute.
+_Avoid_: grouped attribute, per-group column
 
 ### Searching
 
@@ -371,10 +372,10 @@ reason a read of one is not a read of the other
 ### Binning
 
 **Track**:
-One column of the `binning_tool` output matrix. Row *j* of `/tracks` describes
-column *j* of `/values`. A track belongs to one entry of the run definition,
-named by its `binner_index`, and has a `track_index` among the tracks of that
-entry. The file does not store a track name. The kind-specific part of a track
+One column of the `binning_tool` output matrix, or one **track attribute** of
+a `binning_tracks_annotator`. Row *j* of `/tracks` describes column *j* of
+`/values`. A track belongs to one **entry**, named by its `binner_index`, and
+has a `track_index` among the tracks of that entry. The file does not store a track name. The kind-specific part of a track
 is its `binner_def`.
 _Avoid_: series
 
@@ -401,42 +402,38 @@ _Avoid_: track name (the name of an entry is the optional `name` in
 `binner_def`)
 
 **Entry**:
-One item of the `binners` list of a run definition. An entry names a binner
-kind and the resources that it reads, and it makes one or more **tracks**.
+One item of the `binners` list of a run definition or of a
+`binning_tracks_annotator`. An entry names a binner kind and the resources
+that it reads, and it makes one or more **tracks**.
 _Avoid_: binner (the kind that reads an entry), job, task
 
 **Group**:
-The fragments that one fragment **track**, or one value of a **grouped
-attribute**, reduces. The name of the group is the **selector** of the track,
-or the part of the attribute name after the `:`.
+The fragments that one fragment **track** reduces. The name of the group is
+the **selector** of the track.
 _Avoid_: class (a cell class is one source of groups), cluster
 
 **Grouping**:
-The rule that puts each fragment of an **entry**, or of a fragment score
-annotator, into a **group**. A *cell grouping* finds the group of the cell
+The rule that puts each fragment of an **entry** into a **group**. A *cell grouping* finds the group of the cell
 barcode of the fragment in a cell metadata table. A *value grouping* uses the
 value of a text score of the fragment as the group. A *constant group* puts
 every fragment into one named group. When an entry gives no grouping, the
-labels of its resources select a cell grouping or the constant group `all`. A
-fragment score annotator that gives no grouping does not group.
+labels of its resources select a cell grouping or the constant group `all`.
+The fragment score annotator does not group.
 _Avoid_: classification, cell typing
 
 **Contribution**:
-What one fragment adds to its bin of a fragment **track**, or to an attribute
-of a fragment score annotator: the value of a numeric score of the fragment,
-or a constant, which is 1 when the **entry** gives none. The `value` key of an
-entry sets it. An annotator attribute sets it by its source, and the source
-`constant` adds 1.
+What one fragment adds to its bin of a fragment **track**: the value of a
+numeric score of the fragment, or a constant, which is 1 when the **entry**
+gives none. The `value` key of an entry sets it.
 _Avoid_: value (a score value is any value of a score), weight
 
 **Fragment mode**:
-The rule that decides which fragments reach a bin of a fragment **track**, or
-the region of a fragment score annotator, and how much each one weighs.
-`fragment_start` takes the fragments that start in it. `fragment_length`
-takes the fragments that overlap it, each weighted by the overlap in base
-pairs. `coverage_profile` takes the depth at each of its bases, and an
-uncovered base adds the uncovered value. `fragment_overlap` takes each
-overlapping fragment once, and only the annotator has it, as its default. The
+The rule that decides which fragments reach a bin of a fragment **track**,
+and how much each one weighs. `fragment_start` takes the fragments that start
+in it. `fragment_length` takes the fragments that overlap it, each weighted by
+the overlap in base pairs. `coverage_profile` takes the depth at each of its
+bases, and an uncovered base adds the uncovered value. The fragment score
+annotator has no fragment mode: it takes each overlapping fragment once. The
 `mode` of an allele score annotator is a different setting.
 _Avoid_: region mode, aggregate mode
 
