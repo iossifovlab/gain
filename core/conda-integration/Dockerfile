@@ -99,6 +99,9 @@ COPY --chown=mambauser:mambauser scripts/pypi_probe.sh /testbed/scripts/
 # and fails, not skips, when the script is absent (#2061).
 COPY --chown=mambauser:mambauser scripts/crap_report_html.py \
     /testbed/scripts/
+# tests/small/test_crap_gate.py runs scripts/crap_gate.sh and fails,
+# not skips, when the script is absent (#2123).
+COPY --chown=mambauser:mambauser scripts/crap_gate.sh /testbed/scripts/
 # tests/small/test_mutator_nightly.py runs scripts/mutator_nightly.sh
 # and fails, not skips, when the script is absent (#2062).
 COPY --chown=mambauser:mambauser scripts/mutator_nightly.sh \

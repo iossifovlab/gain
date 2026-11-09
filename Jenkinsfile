@@ -28,10 +28,11 @@ def runProject(Map args) {
     String imageTag       = "gain-${distName}-ci:${env.CI_TAG}"
     // gain-web-api is BSD-3-Clause and ships no repository LICENSE (#1961).
     boolean shipsLicense  = distPkg != 'gain-web-api'
-    // CRAP table of ${pkg} from crapper (#2061), report only. Off by
-    // default: only the core image carries crapper. The LCOV report comes
-    // from the same pytest run as the Cobertura one, at the path that
-    // crapper reads under its project root.
+    // CRAP table of ${pkg} from crapper (#2061) and the CRAP gate on
+    // the changed files (#2123). Off by default: only the core image
+    // carries crapper. The LCOV report comes from the same pytest run as
+    // the Cobertura one, at the path that crapper reads under its project
+    // root.
     boolean crap          = args.crap ?: false
     String crapRoot       = "/workspace/${name}"
     String lcovReport     = crap ?
@@ -41,12 +42,21 @@ def runProject(Map args) {
     // package are named one by one, because crapper has no exclude
     // option and a walk of the package reaches the vendored sqlite-wasm
     // JavaScript. The list leaves out _version.py, which coverage omits
-    // too, so it would show as a row at 0%. The exit code of crapper
-    // never reaches pytest_exit. The echo also prints the line count of
-    // crap.txt. The count includes the header lines of crapper, so it is
-    // not the number of function rows: zero lines means no report.
+    // too, so it would show as a row at 0%. The exit code of this
+    // whole-package call does not reach pytest_exit. The echo also prints
+    // the line count of crap.txt. The count includes the header lines of
+    // crapper, so it is not the number of function rows: zero lines
+    // means no report.
     // scripts/crap_report_html.py renders crap.txt as crap.html, which
     // the top-level post block publishes as the CRAP report page.
+    // scripts/crap_gate.sh then runs crapper with --threshold 10 on the
+    // changed files that the Prepare workspace stage lists (#2123). A
+    // function above 10.0 in a changed file sets pytest_exit=1 and the
+    // build becomes FAILURE. The gate passes when the list is missing or
+    // when crapper has a tool fault. The gate call rewrites the
+    // .metrics/crap.edn of the whole-package call, and no other step
+    // reads that file.
+    // core/tests/small/test_crap_gate.py tests the script and this text.
     String crapStep       = !crap ? '' : """
                 crap_start=\$(date +%s)
                 crapper --use-existing-coverage --root ${crapRoot} \\
@@ -57,6 +67,8 @@ def runProject(Map args) {
                 echo "crapper: exit \$crap_exit, took \$((\$(date +%s) - crap_start)) s, \$crap_lines lines in crap.txt"
                 python /workspace/scripts/crap_report_html.py \\
                     /reports/crap.txt /reports/crap.html
+                bash /workspace/scripts/crap_gate.sh \\
+                    /reports/crap_changed_files.txt ${crapRoot} || pytest_exit=1
 """
 
     sh label: "Build ${name} image", script: """
@@ -473,6 +485,30 @@ pipeline {
                         // submodule reaches the CI images through the build
                         // context rather than through a clone of its own.
                         sh 'git submodule update --init test_fixtures/mini-GRR'
+                        // The CRAP gate of the core stage scores the .py
+                        // files of the gain package that this branch
+                        // changes against master (#2123). A branch build
+                        // fetches only its own branch, so the step fetches
+                        // master here. Git on the agent reads its own .git,
+                        // and the repo is public, so the fetch needs no
+                        // credential. On master the diff is empty. A failed
+                        // fetch or merge base leaves no list, and the gate
+                        // then skips: a network fault never fails the build.
+                        // core/tests/small/test_crap_gate.py reads this step.
+                        sh label: 'List the changed files for the CRAP gate', script: '''
+                            mkdir -p reports/core
+                            list=reports/core/crap_changed_files.txt
+                            if git fetch --no-tags origin \\
+                                    +refs/heads/master:refs/remotes/origin/master \\
+                                && base=$(git merge-base origin/master HEAD) \\
+                                && git diff --name-only "$base" HEAD > "$list.tmp"; then
+                                mv "$list.tmp" "$list"
+                                echo "CRAP gate: $(wc -l < "$list") files changed against master"
+                            else
+                                rm -f "$list.tmp"
+                                echo "CRAP gate: the fetch of master or the merge base failed, the gate skips"
+                            fi
+                        '''
                     }
                 }
 
@@ -548,7 +584,8 @@ pipeline {
                                             dockerRunExtra:
                                                 '--network "$COMPOSE_NETWORK" ' +
                                                 cell.dockerRunExtra,
-                                            // CRAP table of gain, report only (#2061).
+                                            // CRAP table of gain (#2061), and the
+                                            // gate on the changed files (#2123).
                                             crap: true,
                                         )
                                     }
