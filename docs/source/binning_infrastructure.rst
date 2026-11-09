@@ -783,20 +783,20 @@ The output is one HDF5 file in a plain layout that any HDF5 reader
 understands without a library beyond ``h5py``. It holds three datasets:
 
 ``/values``
-    Read it with :func:`gain.binning.h5_reader.read_values`. ``float64``,
+    Read it with :func:`gain.binning.read_values`. ``float64``,
     shape ``(n_bins, n_tracks)``. ``NaN`` where a bin has no
     data. Stored in row blocks and gzip-compressed, so reading every track
     for one chromosome is one contiguous read and the ``NaN``- and
     zero-heavy tracks compress well.
 
 ``/bins``
-    Read it with :func:`gain.binning.h5_reader.read_bins`. A compound
+    Read it with :func:`gain.binning.read_bins`. A compound
     (structured) dataset of shape ``(n_bins,)`` with fields
     ``chrom`` (fixed-length bytes, sized to the longest chromosome name in
     the run), ``start`` and ``end`` (``int64``, 1-based inclusive).
 
 ``/tracks``
-    Read it with :func:`gain.binning.h5_reader.read_tracks`. A compound
+    Read it with :func:`gain.binning.read_tracks`. A compound
     dataset of shape ``(n_tracks,)``, one row per track, with
     the same fields for every binner kind. ``binner_type``,
     ``resource_ids``, ``selector`` and ``binner_def`` are
@@ -914,19 +914,22 @@ prefer the bigWig for binning.
 Reading the file back
 ---------------------
 
-:func:`gain.binning.h5_reader.read_tracks` and
-:func:`gain.binning.h5_reader.read_bins` read ``/tracks`` and ``/bins`` as
+The page :doc:`/development/binning/api` documents the functions below and
+the rest of the Python API of ``gain.binning``.
+
+:func:`gain.binning.read_tracks` and
+:func:`gain.binning.read_bins` read ``/tracks`` and ``/bins`` as
 pandas DataFrames. Each takes a path or an open ``h5py.File``. The columns
 come from the file, the text fields are ``str``, and the index is the
 position in ``/values``. ``read_tracks`` raises ``ValueError`` for a file
 with a missing or unsupported ``tracks_layout``. Both functions raise
 ``ValueError`` for a table that is missing, not a dataset, or not compound.
 A path that is missing or not an HDF5 file raises the ``OSError`` of ``h5py``.
-:func:`gain.binning.h5_reader.read_values` reads ``/values`` as a numpy
+:func:`gain.binning.read_values` reads ``/values`` as a numpy
 ``float64`` matrix of shape ``(n_bins, n_tracks)``, not as a DataFrame. It
 reads the whole matrix into memory, and it raises ``ValueError`` for a
 ``/values`` that is missing, not a dataset, or not two-dimensional.
-:func:`gain.binning.h5_reader.track_labels` returns one display label for
+:func:`gain.binning.track_labels` returns one display label for
 each track:
 
 .. code-block:: python

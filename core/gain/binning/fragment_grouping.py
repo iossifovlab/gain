@@ -153,11 +153,11 @@ class MetaFilter:
 
     Attributes
     ----------
-    column
+    column : str
         The column of the cell metadata table.
-    value
+    value : str or None
         A literal operand.
-    label
+    label : str or None
         A label of the fragment resource whose rows are selected.  The
         value of that label is the operand.  Give exactly one of
         ``value`` or ``label``.
@@ -431,7 +431,7 @@ class ScoreContribution:
 
     Attributes
     ----------
-    score_id
+    score_id : str
         The fragment score whose value each fragment adds.  Each
         resource of the entry must have it as an ``int`` or a ``float``
         score; the resources are checked when the entry is resolved.
@@ -456,7 +456,7 @@ class ConstantContribution:
 
     Attributes
     ----------
-    value
+    value : float
         The number each fragment adds.
 
     Raises
@@ -492,13 +492,13 @@ class Aggregate:
 
     Attributes
     ----------
-    mode
+    mode : str
         Which fragments reach a bin: :data:`FRAGMENT_START`,
         :data:`FRAGMENT_LENGTH` or :data:`COVERAGE_PROFILE`.
-    aggregator
+    aggregator : str
         The fold over the values of a bin.  The two length modes take
         only :data:`LENGTH_AGGREGATORS`.
-    uncovered_value
+    uncovered_value : float or None
         What an uncovered base adds, with a weight of 1 bp, as a
         ``float``; ``None`` adds nothing.  When it is not given, it is 0
         in :data:`COVERAGE_PROFILE` mode and ``None`` in the other
@@ -619,7 +619,7 @@ class ConstantGroup:
 
     Attributes
     ----------
-    name
+    name : str
         The group.
 
     Raises
@@ -643,11 +643,11 @@ class CellGrouping:
 
     Attributes
     ----------
-    cell_score_id
+    cell_score_id : str
         The fragment score that carries the barcode of a fragment.
-    cell_meta_column
+    cell_meta_column : str
         The column of the table that holds the barcode of a cell.
-    group_meta_column
+    group_meta_column : str
         The column of the table that holds the group of a cell.
 
     Raises
@@ -676,7 +676,7 @@ class ValueGrouping:
 
     Attributes
     ----------
-    score_id
+    score_id : str
         The ``str`` fragment score whose values are the groups.
 
     Raises
@@ -716,26 +716,26 @@ class MetaSource:
 
     Attributes
     ----------
-    resource_id
+    resource_id : str or None
         A ``data_frame`` resource.
-    resource_label
+    resource_label : str or None
         A label of each fragment resource.  The value of the label is
         the id of the ``data_frame`` resource of that fragment resource.
-    file_name
+    file_name : str or None
         A local table, as given.  A relative name is read from the
         ``base_dir`` that resolves the entry, or from the current
         directory without one.
-    file_format
+    file_format : str or None
         The format of the local table: ``csv``, ``tsv`` or ``excel``.
         When it is not given, the suffix of ``file_name`` decides:
         ``.tsv`` is ``tsv``, ``.xls`` and ``.xlsx`` are ``excel``, and
         any other suffix is ``csv``.  The field keeps what the caller
         gave, so :func:`dataclasses.replace` derives the format of a new
         ``file_name``.  :attr:`effective_file_format` is the format read.
-    file_separator
+    file_separator : str or None
         The separator of a ``csv`` or ``tsv`` table; ``None`` is the
         separator of the format.
-    filters
+    filters : tuple of MetaFilter
         The conjuncts that select the rows of a fragment resource.  No
         filter selects every row.
 
@@ -843,27 +843,27 @@ class FragmentEntry:
 
     Attributes
     ----------
-    resource_query
+    resource_query : str
         The repository search for the ``fragment_score`` resources.
-    search_term
+    search_term : str or None
         The filter of the full-text index, conjoined with the query.
         ``None``, or a blank string, filters nothing.
-    pool
+    pool : bool
         ``True`` merges every match into one job.  ``False`` makes one
         job for each resource.
-    name
+    name : str or None
         The base of the names of the tracks.  ``None`` names the tracks
         by the query, or by the resource ids when not pooled.
-    value
+    value : ScoreContribution or ConstantContribution
         What one fragment adds.
-    aggregate
+    aggregate : Aggregate
         How a bin reduces the values of its fragments.
-    group
+    group : ConstantGroup, CellGrouping, ValueGrouping or None
         How a fragment becomes a group.  ``None`` lets the labels of the
         resources decide: a resource with the
         :data:`CELL_META_RESOURCE_ID_LABEL` label is grouped as by
         ``CellGrouping()``, and any other is the one group ``all``.
-    meta
+    meta : MetaSource or None
         The cell metadata table of a cell grouping.  ``None`` is the
         table of the convention.
 

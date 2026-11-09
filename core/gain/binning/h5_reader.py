@@ -79,7 +79,33 @@ def _check_tracks_layout(h5: h5py.File) -> None:
 
 
 def read_tracks(source: Source) -> pd.DataFrame:
-    """Read ``/tracks`` of a ``tracks_layout = 2`` file."""
+    """Read ``/tracks`` of a ``tracks_layout = 2`` file.
+
+    Row *j* describes column *j* of ``/values``. The text fields are
+    ``str``.
+
+    Parameters
+    ----------
+    source
+        A path or an open ``h5py.File``. A path is opened and closed
+        inside the call; an open file is only read, never closed.
+
+    Returns
+    -------
+    pandas.DataFrame
+        The columns of the ``/tracks`` table of the file, one row for
+        each track. The index is the position of the track in
+        ``/values``.
+
+    Raises
+    ------
+    ValueError
+        If ``/tracks`` is missing, is not a dataset or is not compound,
+        or if the ``tracks_layout`` attribute of the file is missing or
+        is not 2. The message names the file.
+    OSError
+        If a path is missing or is not an HDF5 file. ``h5py`` raises it.
+    """
     tracks = _read_table(source, "tracks")
     if isinstance(source, h5py.File):
         _check_tracks_layout(source)
@@ -90,7 +116,31 @@ def read_tracks(source: Source) -> pd.DataFrame:
 
 
 def read_bins(source: Source) -> pd.DataFrame:
-    """Read ``/bins`` of a ``binning_tool`` file."""
+    """Read ``/bins`` of a ``binning_tool`` file.
+
+    Row *i* describes row *i* of ``/values``. The text fields are
+    ``str``.
+
+    Parameters
+    ----------
+    source
+        A path or an open ``h5py.File``. A path is opened and closed
+        inside the call; an open file is only read, never closed.
+
+    Returns
+    -------
+    pandas.DataFrame
+        The columns of the ``/bins`` table of the file, one row for each
+        bin. The index is the position of the bin in ``/values``.
+
+    Raises
+    ------
+    ValueError
+        If ``/bins`` is missing, is not a dataset or is not compound.
+        The message names the file and the dataset.
+    OSError
+        If a path is missing or is not an HDF5 file. ``h5py`` raises it.
+    """
     return _read_table(source, "bins")
 
 
@@ -125,6 +175,8 @@ def read_values(source: Source) -> npt.NDArray[np.float64]:
     ValueError
         If ``/values`` is missing, is not a dataset or is not
         two-dimensional. The message names the file and the dataset.
+    OSError
+        If a path is missing or is not an HDF5 file. ``h5py`` raises it.
     """
     if isinstance(source, h5py.File):
         return _values_of(source)
@@ -156,6 +208,25 @@ def track_labels(tracks_df: pd.DataFrame) -> list[str]:
 
     The label is read from ``resource_ids``, ``selector`` and the JSON
     ``binner_def`` alone. Equal labels get ``#<position>`` appended.
+
+    Parameters
+    ----------
+    tracks_df
+        The ``/tracks`` rows, as :func:`read_tracks` returns them.
+
+    Returns
+    -------
+    list of str
+        One label for each row of ``tracks_df``, in row order. Label *j*
+        names column *j* of ``/values``.
+
+    Raises
+    ------
+    KeyError
+        If ``tracks_df`` has no ``binner_type``, ``resource_ids``,
+        ``selector`` or ``binner_def`` column.
+    ValueError
+        If a ``binner_def`` is not JSON.
     """
     labels: list[str] = []
     for binner_type, resource_ids, selector, binner_def in zip(
