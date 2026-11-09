@@ -149,6 +149,40 @@
       extra_opts:
         - --strip-components=1
 
+  # Carries the coverage badge across a docs-only deploy (gain#2315). Only
+  # a full master build has a core report, so only its tarball ships
+  # `_badges/coverage.json`; a docs-only build's tree lacks it, and
+  # publishing that tree would drop the badge the README points at.
+  #
+  # Read here, before "retire the pre-symlink docs directory" can delete a
+  # live `html` that is still a real directory. The OS follows the `html`
+  # symlink because it is a middle part of the path (stat's `follow` only
+  # affects the last part), so this sees the published file. On a first
+  # deploy there is no live file and all three tasks skip.
+  - name: check for the published coverage badge
+    stat:
+      path: "{{ base_path }}/gaindocs/html/_badges/coverage.json"
+    register: gaindocs_coverage_badge
+
+  # Modes are explicit for the same reason as the release directory: a
+  # restrictive umask on the docs host would make Apache answer 403.
+  - name: create the badge directory in the release directory
+    file:
+      path: "{{ base_path }}/gaindocs/html-{{ docs_stamp }}/_badges"
+      state: directory
+      mode: "0755"
+    when: gaindocs_coverage_badge.stat.exists
+
+  # `force: false` keeps the fresh coverage.json of a full build.
+  - name: carry the published coverage badge into the release directory
+    copy:
+      src: "{{ base_path }}/gaindocs/html/_badges/coverage.json"
+      dest: "{{ base_path }}/gaindocs/html-{{ docs_stamp }}/_badges/coverage.json"
+      remote_src: true
+      force: false
+      mode: "0644"
+    when: gaindocs_coverage_badge.stat.exists
+
   # Converts the pre-symlink layout, where `html` was a real directory. It
   # cannot be left to `force: true` on the link task: the file module
   # refuses outright to turn a non-empty directory into a symlink, and
