@@ -170,13 +170,15 @@ NOT_SCORED = [
     "web_api/web_annotation/views.py",
     "scripts/outside_core.py",
 ]
+# Every path of NOT_SCORED but the deleted file exists in the sandbox.
+NOT_SCORED_ON_DISK = [
+    path for path in NOT_SCORED if path != "core/gain/utils/deleted.py"]
 
 
 def test_files_that_crapper_must_not_score_give_count_zero(
     sandbox: pathlib.Path,
 ) -> None:
-    add_source(sandbox, *[
-        path for path in NOT_SCORED if path != "core/gain/utils/deleted.py"])
+    add_source(sandbox, *NOT_SCORED_ON_DISK)
 
     result = run_gate(sandbox, NOT_SCORED)
 
@@ -192,8 +194,7 @@ def test_only_existing_gain_sources_reach_crapper(
         "core/gain/utils/variant_utils.py",
         "core/gain/genomic_resources/testing/builders.py",
     ]
-    add_source(sandbox, *kept, *[
-        path for path in NOT_SCORED if path != "core/gain/utils/deleted.py"])
+    add_source(sandbox, *kept, *NOT_SCORED_ON_DISK)
 
     result = run_gate(sandbox, [*NOT_SCORED, *kept])
 
