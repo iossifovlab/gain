@@ -155,9 +155,10 @@
   # publishing that tree would drop the badge the README points at.
   #
   # Read here, before "retire the pre-symlink docs directory" can delete a
-  # live `html` that is still a real directory. The default `follow` of
-  # stat resolves the `html` symlink, so this sees the published file. On
-  # a first deploy there is no live file and all three tasks skip.
+  # live `html` that is still a real directory. The OS follows the `html`
+  # symlink because it is a middle part of the path (stat's `follow` only
+  # affects the last part), so this sees the published file. On a first
+  # deploy there is no live file and all three tasks skip.
   - name: check for the published coverage badge
     stat:
       path: "{{ base_path }}/gaindocs/html/_badges/coverage.json"
