@@ -621,6 +621,9 @@ and region, and the count is logged at ``INFO`` level (``-v``):
 
     INFO:gain.binning.fragment_binner:sc/atac_fragments/donor1 chr1:1-1000: 2 fragments dropped, their barcode absent from the cell metadata rows or of no group
 
+``binning_tracks_annotator`` keeps no count and logs no line, because a
+run over millions of annotatables would log one line for each annotatable.
+
 Grouping by a raw value
 """""""""""""""""""""""
 
@@ -681,6 +684,20 @@ A run that reads a local file can be repeated only where that file is, so
 was: its absolute path, size and modification time, in the
 ``metadata_files``, ``metadata_file_sizes`` and ``metadata_file_mtimes``
 root attributes (see `The output file`_).
+
+Binner kinds
+^^^^^^^^^^^^
+
+A plugin adds a binner kind with an entry point in the
+``gain.binning.binners`` group. The class of a kind provides ``kind``,
+``parse_entry`` and ``bind``. The signature of ``bind`` is
+``bind(job, grr, *, quiet=False)``, and ``bind`` returns a context manager
+whose value bins one region at a time.
+
+``binning_tool`` calls ``bind(job, grr)``. ``binning_tracks_annotator``
+calls ``bind(job, grr, quiet=True)``, so a kind that does not accept the
+keyword ``quiet`` fails in the annotator. With ``quiet=True``, a binding
+keeps no record and logs no line for each region that it bins.
 
 Track names
 ^^^^^^^^^^^

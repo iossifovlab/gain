@@ -120,6 +120,7 @@ cnv_collection = "gain.annotation.fragment_score_annotator:build_fragment_score_
 cnv_collection_annotator = "gain.annotation.fragment_score_annotator:build_fragment_score_annotator"
 chrom_mapping = "gain.annotation.chrom_mapping_annotator:build_chrom_mapping_annotator"
 debug_annotator = "gain.annotation.debug_annotator:build_annotator"
+binning_tracks_annotator = "gain.annotation.binning_tracks_annotator:build_binning_tracks_annotator"
 
 [dependency-groups]
 # scanpy is no longer a runtime dependency of anything: gain reads both

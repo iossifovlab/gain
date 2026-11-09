@@ -25,6 +25,7 @@ __all__ = [
     "RunDefinitionError",
     "parse_run_definition",
     "refuse_renamed_genome_key",
+    "resolve_binners",
 ]
 
 TOP_LEVEL_KEYS = frozenset({"reference_genome", "bins", "binners"})
@@ -85,7 +86,8 @@ def parse_run_definition(
         reference_genome=genome.resource_id,
         bin_size=_resolve_bin_size(bins.get("bin_size")),
         regions=_resolve_regions(bins.get("regions"), genome),
-        jobs=_resolve_jobs(config.get("binners"), grr, base_dir),
+        jobs=resolve_binners(
+            config.get("binners"), grr, base_dir=base_dir),
     )
 
 
@@ -179,9 +181,19 @@ def _refuse_overlapping_regions(
                     f"bins.regions[{later}] {notations[later]!r} overlap")
 
 
-def _resolve_jobs(
-    binners: Any, grr: GenomicResourceRepo, base_dir: str | None,
+def resolve_binners(
+    binners: Any, grr: GenomicResourceRepo, *, base_dir: str | None = None,
 ) -> list[BinningJob]:
+    """Resolve a ``binners:`` list against ``grr`` into its jobs.
+
+    Each track of a job carries its ``binner_index``, the position of
+    its entry in ``binners``, and its ``track_index``, its position
+    among the tracks of that entry.  ``base_dir`` is the directory that
+    a relative path in an entry is read from.  Without it, the kinds
+    read such a path from the current directory.
+
+    Raises :class:`RunDefinitionError` naming the offending entry.
+    """
     if not isinstance(binners, list) or not binners:
         raise RunDefinitionError(
             "binners must be a non-empty list of binner entries")

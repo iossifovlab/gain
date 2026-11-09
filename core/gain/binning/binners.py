@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from importlib.metadata import entry_points
@@ -17,6 +18,7 @@ from typing import Any, ClassVar, Protocol, Self
 
 import numpy as np
 import numpy.typing as npt
+import pandas as pd
 
 from gain.binning.position_fold import (
     ARRAY_FOLD_AGGREGATORS,
@@ -200,6 +202,64 @@ class BinningJob:
     tracks: tuple[Track, ...]
     entry: str = ""
 
+    @property
+    def local_files(self) -> tuple[str, ...]:
+        """The local files the job reads, as absolute paths: none here."""
+        return ()
+
+    @property
+    def read_resource_ids(self) -> tuple[str, ...]:
+        """Every resource the job reads: the resources of its tracks.
+
+        Each resource id comes once, in the order of the tracks.
+        """
+        return tuple(dict.fromkeys(
+            resource_id
+            for track in self.tracks for resource_id in track.resource_ids))
+
+
+#: The columns of the ``/tracks`` table (``tracks_layout`` 2), in order.
+TRACKS_COLUMNS = (
+    "binner_type", "binner_index", "track_index", "resource_ids",
+    "selector", "binner_def")
+
+
+def tracks_frame(jobs: Sequence[BinningJob]) -> pd.DataFrame:
+    """Give the ``/tracks`` rows of ``jobs``: one row per track, in order.
+
+    ``binner_type`` is the kind, ``binner_index`` the entry's position
+    in the ``binners`` list and ``track_index`` the track's position in
+    that entry.  ``resource_ids`` is the comma-separated list of the
+    resources a track is computed from, in resource-id order.  A
+    resource id never holds a comma.  ``selector`` picks the track in
+    its resources, and ``binner_def`` is the canonical JSON of the
+    kind's definition.
+
+    Parameters
+    ----------
+    jobs
+        The resolved jobs, in the order of their tracks.
+
+    Returns
+    -------
+    pandas.DataFrame
+        The columns of :data:`TRACKS_COLUMNS`.  The two index columns
+        are ``int64``.
+
+    Raises
+    ------
+    ValueError
+        For a definition with a NaN or an infinity.
+    """
+    frame = pd.DataFrame(
+        [
+            (t.binner_type, t.binner_index, t.track_index,
+             ",".join(t.resource_ids), t.selector, t.definition.to_json())
+            for job in jobs for t in job.tracks
+        ],
+        columns=list(TRACKS_COLUMNS))
+    return frame.astype({"binner_index": "int64", "track_index": "int64"})
+
 
 class BoundBinner(Protocol):
     """A job bound to its resources: bins them one region at a time."""
@@ -241,7 +301,7 @@ class Binner(Protocol):
 
     @staticmethod
     def bind(
-        job: BinningJob, grr: GenomicResourceRepo,
+        job: BinningJob, grr: GenomicResourceRepo, *, quiet: bool = False,
     ) -> AbstractContextManager[BoundBinner]:
         """Bind ``job`` to its resources for as long as the ``with`` lasts.
 
@@ -249,6 +309,11 @@ class Binner(Protocol):
         the bound value, so a resource is opened once per task however
         many regions the bundle holds, and is released when the ``with``
         ends, whether the task succeeded or not.
+
+        With ``quiet``, the binding keeps no record and logs no line for
+        each region it bins.  ``binning_tool`` binds with the default,
+        ``False``.  ``binning_tracks_annotator`` binds with ``True``, so
+        a kind must accept ``quiet`` to work in the annotator.
         """
 
 
@@ -559,11 +624,13 @@ class PositionScoreBinner:
     @staticmethod
     def bind(
         job: BinningJob, grr: GenomicResourceRepo,
+        *, quiet: bool = False,  # ruff: ignore[unused-static-method-argument]
     ) -> PositionScoreBinding:
         """Bind the job's one track to its score.
 
         The score is opened when the binding is entered and closed when
-        it is left.
+        it is left.  The binding keeps no record for each region, so
+        ``quiet`` changes nothing.
         """
         (track,) = job.tracks
         (resource_id,) = track.resource_ids

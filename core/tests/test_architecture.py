@@ -267,23 +267,20 @@ def test_the_grr_does_not_import_the_annotation_layer(
 
 
 def test_binning_does_not_import_the_annotation_layer() -> None:
-    """``binning`` is a peer of ``annotation``, not a client of it.
+    """``binning`` sits below ``annotation``, by ADR 0041.
 
-    Both sit above ``genomic_resources`` and ``task_graph``; ``binning_tool``
-    reads scores and writes a matrix, and nothing in it is an annotation.
-    It used to import its work-dir convention and its two
-    parsed-arguments-to-GRR steps from ``annotation.annotate_utils`` -- a
-    statement that binning depends on annotation, which it does not -- until
-    gain#1234 moved that shared code down to ``task_graph.work_dir`` and
-    ``genomic_resources.genomic_context``, where a peer can reach it.  The
-    direction is enforced here so it cannot quietly regress.
+    ``binning_tracks_annotator`` in ``annotation`` resolves and binds the
+    binners of ``binning``, so ``annotation`` imports ``binning``.  The
+    other direction is forbidden: ``binning_tool`` reads scores and
+    writes a matrix, and nothing in it is an annotation.  Code that both
+    layers share goes down into ``task_graph`` or ``genomic_resources``.
     """
     offenders = _imports_of_layer(
         pathlib.Path(GAIN_SRC) / "binning", "gain.annotation")
     assert offenders == [], (
         f"binning imports the annotation layer: {offenders}. "
-        f"binning is a peer of annotation -- move the shared code down into "
-        f"task_graph or genomic_resources instead"
+        f"binning sits below annotation (ADR 0041) -- move the shared code "
+        f"down into task_graph or genomic_resources instead"
     )
 
 
