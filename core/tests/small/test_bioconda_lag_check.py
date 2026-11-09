@@ -129,12 +129,20 @@ def test_different_versions_with_an_old_release_exit_1(
     assert f"{age.days} days" in out
 
 
-def without(body: dict, *path: str | int) -> dict:
-    """Return a deep copy of ``body`` without the key at ``path``."""
+def copy_and_parent(
+    body: dict, path: tuple[str | int, ...],
+) -> tuple[dict, dict]:
+    """Return a deep copy of ``body`` and the parent of ``path`` in it."""
     copy: dict = json.loads(json.dumps(body))
     parent = copy
     for key in path[:-1]:
         parent = parent[key]
+    return copy, parent
+
+
+def without(body: dict, *path: str | int) -> dict:
+    """Return a deep copy of ``body`` without the key at ``path``."""
+    copy, parent = copy_and_parent(body, path)
     del parent[path[-1]]
     return copy
 
@@ -169,10 +177,7 @@ def test_a_missing_key_exits_2(
 
 def with_value(body: dict, value: object, *path: str | int) -> dict:
     """Return a deep copy of ``body`` with ``value`` at ``path``."""
-    copy: dict = json.loads(json.dumps(body))
-    parent = copy
-    for key in path[:-1]:
-        parent = parent[key]
+    copy, parent = copy_and_parent(body, path)
     parent[path[-1]] = value
     return copy
 

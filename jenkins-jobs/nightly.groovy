@@ -33,8 +33,8 @@ pipelineJob('gain-nightly') {
         'to a verified master. After the deploy, the Check bioconda ' +
         'lag stage marks the build UNSTABLE when bioconda lags PyPI ' +
         'for gain-core by more than 7 days (#1968). Last, it runs ' +
-        'gain-mutator, the ' +
-        'report-only mutation report of gain.utils (#2062), which ' +
+        'gain-mutator, the report-only mutation report of ' +
+        'gain.utils (#2062), which ' +
         'never changes the result of this job. Sends a Zulip alert ' +
         'on failure (topic: nightly).')
 
