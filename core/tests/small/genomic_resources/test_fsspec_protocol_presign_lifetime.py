@@ -34,8 +34,8 @@ def s3_tabix_proto(
 ) -> Generator[FsspecReadWriteProtocol, None, None]:
     """An s3 GRR carrying one tabix-backed position score.
 
-    The ``chdir`` keeps the run's cwd clean: htslib caches the index it
-    downloads under its basename in the current directory.
+    The ``chdir`` keeps the run's cwd clean if a regression lets htslib
+    download the index itself, under its basename in the current directory.
     """
     monkeypatch.chdir(tmp_path)
     (
@@ -55,7 +55,7 @@ def test_s3_presign_lifetime_does_not_exceed_what_sigv4_accepts() -> None:
     assert S3_PRESIGN_EXPIRATION_SECONDS <= _SIGV4_MAX_EXPIRATION_SECONDS
 
 
-def test_tabix_open_on_s3_presigns_data_and_index_for_the_full_lifetime(
+def test_tabix_open_on_s3_presigns_only_the_data_for_the_full_lifetime(
     s3_tabix_proto: FsspecReadWriteProtocol,
     mocker: pytest_mock.MockerFixture,
 ) -> None:
@@ -74,7 +74,8 @@ def test_tabix_open_on_s3_presigns_data_and_index_for_the_full_lifetime(
         bound.apply_defaults()
         path = bound.arguments["path"].rsplit("/", 1)[-1]
         signed[path] = bound.arguments["expiration"]
+    # Only the data url reaches htslib. The index is copied to a local
+    # file through the filesystem, so it is never presigned.
     assert signed == {
         "data.txt.gz": S3_PRESIGN_EXPIRATION_SECONDS,
-        "data.txt.gz.tbi": S3_PRESIGN_EXPIRATION_SECONDS,
     }

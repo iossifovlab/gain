@@ -684,8 +684,7 @@ def cli(argv: list[str] | None = None) -> None:
     args = handle_default_args(args)
 
     # Run inside work_dir so that intermediate files created by worker
-    # processes (e.g. htslib downloading a remote tabix .tbi index over
-    # http) land in work_dir instead of the launch directory. Workers
+    # processes land in work_dir instead of the launch directory. Workers
     # spawned by process_graph inherit this working directory.
     with chdir(args["work_dir"]):
         context = build_cli_genomic_context(args)

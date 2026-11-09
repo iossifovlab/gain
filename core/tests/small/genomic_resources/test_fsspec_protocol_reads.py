@@ -365,26 +365,29 @@ def test_open_vcf_file_resolves_a_csi_index_it_was_not_told_about(
     does not exist is what the tabix sibling stopped doing in gain#430; this
     is the same resolution on the VCF open.
 
-    Observed at the URL seam, deliberately -- and NOT by reading records
-    back.  htslib probes for an adjacent index whenever it is handed none,
-    and that probe reaches over http and s3 as well as on local disk
-    (measured against the docker fixtures): the read succeeds either way, so
-    it cannot tell a resolved index from a guessed one.  What the caller
-    passes still matters -- the caching protocol fetches the index this
-    resolution names, and only that one, into the cache.
+    Observed at the index handed to pysam, deliberately -- and NOT by
+    reading records back.  htslib probes for an adjacent index whenever it
+    is handed none, and that probe reaches over http and s3 as well as on
+    local disk (measured against the docker fixtures): the read succeeds
+    either way, so it cannot tell a resolved index from a guessed one.  What
+    the caller passes still matters -- the caching protocol fetches the
+    index this resolution names, and only that one, into the cache.  A
+    remote open hands pysam a local copy of the index (gain#2283), so the
+    test compares basenames.
     """
     proto = vcf_proto_with_csi_index
     res = proto.get_resource("res")
-    spy = mocker.spy(proto, "_get_file_url")
+    variant_file = mocker.patch(
+        "pysam.VariantFile", wraps=pysam.VariantFile)
 
     with proto.open_vcf_file(res, "data.vcf.gz") as vcf:
         assert [record.pos for record in vcf.fetch("1", 9, 10)] == [10]
 
-    index_filenames = [
-        call.args[1] for call in spy.call_args_list
-        if call.args[1] != "data.vcf.gz"
+    index_basenames = [
+        os.path.basename(call.kwargs["index_filename"])
+        for call in variant_file.call_args_list
     ]
-    assert index_filenames == ["data.vcf.gz.csi"]
+    assert index_basenames == ["data.vcf.gz.csi"]
 
 
 @pytest.mark.grr_tabix

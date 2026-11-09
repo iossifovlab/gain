@@ -228,6 +228,21 @@ try:
 except ImportError:
     _aiohttp_errors = ()
 
+# botocore's own errors reach a caller of an s3 GRR untranslated when they
+# carry no HTTP response, for example an unreachable endpoint. They are
+# neither ``OSError`` nor ``aiohttp`` errors.
+try:
+    import botocore.exceptions as _botocore_exceptions
+    _botocore_errors: tuple[type[BaseException], ...] = (
+        _botocore_exceptions.BotoCoreError,)
+except ImportError:
+    _botocore_errors = ()
+
+# The transport errors of the remote filesystems that a failed fetch of a
+# resource file can raise.
+_REMOTE_FETCH_ERRORS: tuple[type[BaseException], ...] = (
+    *_aiohttp_errors, *_botocore_errors)
+
 # Transient errors that warrant retrying a file download from scratch. A
 # stalled aiohttp read surfaces as fsspec's FSTimeoutError, and ConnectionError
 # covers resets/refused connects; the tuple exists for those -- failure types
@@ -1692,13 +1707,12 @@ class FsspecReadOnlyProtocol(
             # which one this resource actually carries (gain#430).
             index_filename = resolve_tabix_index_filename_for_read(
                 resource, filename)
-        index_url = self._get_file_url(resource, index_filename)
-
-        return _open_htslib_file(
-            file_url,
-            lambda: pysam.TabixFile(  # pylint: disable=no-member
-                file_url, index=index_url, encoding="utf-8",
-                parser=pysam.asTuple()))
+        with self._htslib_index_path(resource, index_filename) as index:
+            return _open_htslib_file(
+                file_url,
+                lambda: pysam.TabixFile(  # pylint: disable=no-member
+                    file_url, index=index, encoding="utf-8",
+                    parser=pysam.asTuple()))
 
     def open_vcf_file(
             self, resource: GenomicResource,
@@ -1737,14 +1751,65 @@ class FsspecReadOnlyProtocol(
                     lambda: pysam.VariantFile(  # pylint: disable=no-member
                         file_url))
 
-        index_url = self._get_file_url(resource, index_filename)
-
-        vcf_file = _open_htslib_file(
-            file_url,
-            lambda: pysam.VariantFile(  # pylint: disable=no-member
-                file_url, index_filename=index_url))
+        with self._htslib_index_path(resource, index_filename) as index:
+            vcf_file = _open_htslib_file(
+                file_url,
+                lambda: pysam.VariantFile(  # pylint: disable=no-member
+                    file_url, index_filename=index))
         _declare_index_contigs(vcf_file)
         return vcf_file
+
+    @contextmanager
+    def _htslib_index_path(
+            self, resource: GenomicResource,
+            index_filename: str) -> Generator[str]:
+        """Yield the path of ``index_filename`` that pysam opens.
+
+        A ``file`` GRR yields the stored path. A remote GRR fetches the index
+        through ``filesystem`` into a fresh temporary directory, yields the
+        local copy and removes the directory when the body returns. htslib
+        loads the whole index at open, so the removal is safe once the pysam
+        constructor returns.
+
+        A remote index is never handed to htslib as a url: htslib downloads
+        such an index into the current working directory under its basename,
+        and reuses a file it finds there, so two resources whose data files
+        share a name would read through one index.
+        """
+        if self.scheme == "file":
+            yield self._get_file_url(resource, index_filename)
+            return
+        with tempfile.TemporaryDirectory(prefix="gain-htslib-idx-") as tmpdir:
+            yield self._fetch_index_to_local(
+                resource, index_filename, tmpdir)
+
+    def _fetch_index_to_local(
+            self, resource: GenomicResource,
+            index_filename: str, dest_dir: str) -> str:
+        """Copy ``index_filename`` into ``dest_dir``, or raise ``OSError``.
+
+        ``_copy_resource_file_to_local`` redacts a credential, but it lets an
+        error of any type through. An ``aiohttp`` or a ``botocore`` error is
+        not an ``OSError``, so ``report_resource_failure`` would take its
+        "unexpected internal error" branch. A transport error of the remote
+        filesystem that is not an ``OSError`` is converted here into one
+        that names the index and the resource. The conversion is raised
+        outside the ``except`` block, so it carries no chain. Any other
+        error, for example an internal bug, passes through with its type and
+        traceback.
+        """
+        converted: OSError | None = None
+        try:
+            return self._copy_resource_file_to_local(
+                resource, index_filename, dest_dir)
+        except _REMOTE_FETCH_ERRORS as exc:
+            if isinstance(exc, OSError):
+                raise
+            converted = OSError(
+                f"could not fetch index '{index_filename}' of resource "
+                f"'{resource.resource_id}': "
+                f"{_error_without_url_credentials(exc)}")
+        raise converted
 
     def open_fasta_file(
             self, resource: GenomicResource,
