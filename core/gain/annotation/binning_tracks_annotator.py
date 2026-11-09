@@ -38,6 +38,9 @@ from gain.utils.regions import BedRegion
 
 DEFAULT_PREFIX = "track"
 
+#: The most tracks that one annotator gives, one attribute each.
+MAX_TRACKS = 2000
+
 #: The pattern of a VCF INFO key, which each attribute name must match.
 VCF_KEY_PATTERN = "[A-Za-z_][0-9A-Za-z_.]*"
 
@@ -154,6 +157,14 @@ def refuse_local_files(jobs: list[BinningJob]) -> None:
             raise LocalFilesError(job.entry)
 
 
+def refuse_too_many_tracks(tracks: list[Track]) -> None:
+    """Refuse more than :data:`MAX_TRACKS` tracks, naming their number."""
+    if len(tracks) > MAX_TRACKS:
+        raise ValueError(
+            f"binning_tracks_annotator gives at most {MAX_TRACKS} "
+            f"tracks; the binners entries give {len(tracks)}")
+
+
 class BinningTracksAnnotator(AnnotatorBase):
     """Answers each track of a ``binners:`` list over an annotatable.
 
@@ -177,6 +188,7 @@ class BinningTracksAnnotator(AnnotatorBase):
         self._jobs = resolve_binners(binners, self._grr)
         refuse_local_files(self._jobs)
         self._tracks = [track for job in self._jobs for track in job.tracks]
+        refuse_too_many_tracks(self._tracks)
         self._names = [
             track_attribute_name(self._prefix, track)
             for track in self._tracks]
@@ -220,7 +232,8 @@ list of `binning_tool` entries.
             with ExitStack() as stack:
                 self._bound = [
                     stack.enter_context(
-                        kinds[job.binner].bind(job, self._grr))
+                        kinds[job.binner].bind(
+                            job, self._grr, quiet=True))
                     for job in self._jobs]
                 self._stack = stack.pop_all()
         return super().open()

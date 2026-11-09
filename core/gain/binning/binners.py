@@ -291,7 +291,7 @@ class Binner(Protocol):
 
     @staticmethod
     def bind(
-        job: BinningJob, grr: GenomicResourceRepo,
+        job: BinningJob, grr: GenomicResourceRepo, *, quiet: bool = False,
     ) -> AbstractContextManager[BoundBinner]:
         """Bind ``job`` to its resources for as long as the ``with`` lasts.
 
@@ -299,6 +299,11 @@ class Binner(Protocol):
         the bound value, so a resource is opened once per task however
         many regions the bundle holds, and is released when the ``with``
         ends, whether the task succeeded or not.
+
+        With ``quiet``, the binding keeps no record and logs no line for
+        each region it bins.  ``binning_tool`` binds with the default,
+        ``False``.  ``binning_tracks_annotator`` binds with ``True``, so
+        a kind must accept ``quiet`` to work in the annotator.
         """
 
 
@@ -609,11 +614,13 @@ class PositionScoreBinner:
     @staticmethod
     def bind(
         job: BinningJob, grr: GenomicResourceRepo,
+        *, quiet: bool = False,  # ruff: ignore[unused-static-method-argument]
     ) -> PositionScoreBinding:
         """Bind the job's one track to its score.
 
         The score is opened when the binding is entered and closed when
-        it is left.
+        it is left.  The binding keeps no record for each region, so
+        ``quiet`` changes nothing.
         """
         (track,) = job.tracks
         (resource_id,) = track.resource_ids

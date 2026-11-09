@@ -928,6 +928,19 @@ The annotator refuses these mistakes when the pipeline loads:
 - an entry that reads a local file, such as a ``meta: file_name``, because a
   pipeline has no directory of a run definition. Give ``meta`` a
   ``resource_id`` or a ``resource_label``.
+- more than 2000 tracks. The message gives the number of tracks of the
+  entries.
+
+The entries take every grouping of ``binning_tool``: a cell grouping by a
+``data_frame`` resource, a grouping by the values of a ``str`` score, an
+entry without ``group:`` on a resource with the cell-metadata label, and
+``pool: false``. A grouping by values reads the values from the statistics
+of the fragment resource, so build them with ``grr_manage repo-stats``
+first.
+
+The annotator logs no line about dropped fragments, because a run over
+millions of annotatables would log one line for each annotatable. Run
+``binning_tool`` with ``-v`` to see the dropped fragments of a region.
 
 gene_set_annotator
 ^^^^^^^^^^^^^^^^^^^^^

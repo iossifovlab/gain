@@ -283,15 +283,17 @@ class FragmentScoreBinding:
     fragments that reached no track: a barcode absent from the
     resource's filtered rows, a row of no group, or a grouping-score
     value that is missing or that the score's histogram does not list.
+    A ``quiet`` binding keeps ``dropped`` empty and logs no line.
     """
 
     def __init__(
         self, job: FragmentBinningJob, scores: list[FragmentScore],
-        track_maps: list[dict[str, int]] | None,
+        track_maps: list[dict[str, int]] | None, *, quiet: bool = False,
     ) -> None:
         self.job = job
         self.scores = scores
         self.track_maps = track_maps
+        self.quiet = quiet
         self.dropped: dict[tuple[str, str], int] = {}
 
     def __enter__(self) -> FragmentScoreBinding:
@@ -337,7 +339,7 @@ class FragmentScoreBinding:
         without the region's contig contributes nothing.  Every read is
         drained, or closed on failure, before this returns.  With a
         grouping, each resource's dropped fragments are counted into
-        :attr:`dropped` and logged.
+        :attr:`dropped` and logged, unless the binding is quiet.
         """
         dropped = [0] * len(self.scores)
         mode = _fragment_def(self.job.tracks[0]).mode
@@ -352,7 +354,7 @@ class FragmentScoreBinding:
                 block = self._bin_coverage(region, bin_size, dropped)
             except InexactLevelsError:
                 block = self._bin_records(region, bin_size, dropped)
-        if self.job.grouping is not None:
+        if self.job.grouping is not None and not self.quiet:
             where = f"{region.chrom}:{region.start}-{region.stop}"
             for resource_id, count in zip(
                     self.job.resource_ids, dropped, strict=True):
@@ -688,12 +690,14 @@ class FragmentScoreBinner:
 
     @staticmethod
     def bind(
-        job: BinningJob, grr: GenomicResourceRepo,
+        job: BinningJob, grr: GenomicResourceRepo, *, quiet: bool = False,
     ) -> FragmentScoreBinding:
         """Bind the job to one :class:`FragmentScore` per resource.
 
         With a cell grouping, the metadata table is read once and each
-        resource's barcodes are mapped to the job's track indexes.
+        resource's barcodes are mapped to the job's track indexes.  A
+        ``quiet`` binding keeps no record of dropped fragments and logs
+        no line for each region.
         """
         assert isinstance(job, FragmentBinningJob)
         resources = [
@@ -705,7 +709,7 @@ class FragmentScoreBinner:
                 for index, track in enumerate(job.tracks)})
         return FragmentScoreBinding(
             job, [FragmentScore(resource) for resource in resources],
-            track_maps)
+            track_maps, quiet=quiet)
 
 
 def _value_score_grouping(
