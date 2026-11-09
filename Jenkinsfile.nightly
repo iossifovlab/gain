@@ -3,7 +3,8 @@
 // dependency drift / silently-stale caches on quiet days.
 //
 // Six validation downstreams are exercised, then the validated
-// image is deployed to staging, then one report-only job runs:
+// image is deployed to staging, then the bioconda lag is checked,
+// then one report-only job runs:
 //   - iossifovlab/gain/master        — full rebuild, lint+tests+
 //                                      wheels+conda+prod images
 //   - /gain-web-e2e                  — Playwright e2e against the
@@ -35,6 +36,10 @@
 //                                      the master rebuild's
 //                                      BUILD_NUMBER. Gated on all of
 //                                      the above being green.
+//   - Check bioconda lag             — scripts/bioconda_lag_check.py
+//                                      (#1968): UNSTABLE when bioconda
+//                                      lags PyPI for gain-core by more
+//                                      than 7 days. No downstream job
 //   - /gain-mutator                  — nightly mutation report of
 //                                      gain.utils (#2062). Report
 //                                      only: it never changes the
@@ -361,13 +366,52 @@ pipeline {
             }
         }
 
+        stage('Check bioconda lag') {
+            // BiocondaBot skipped the gain-core recipe for 2026.11.0
+            // without a signal (#1968). The script compares the newest
+            // gain-core on PyPI with the newest on bioconda. Exit 1
+            // means a real lag: the versions differ and the PyPI release
+            // is older than 7 days. The stage and the build are then
+            // UNSTABLE, and the `unstable` post hook sends the alert.
+            // Any other non-zero code means the script cannot decide,
+            // for example on an anaconda.org outage. Only the stage is
+            // then UNSTABLE, so a flaky API sends no alert, and the
+            // stage view still shows the broken probe.
+            //
+            // The stage runs after 'Deploy on pooh' because the deploy
+            // gate skips on an UNSTABLE build: a slow bioconda must never
+            // keep staging on an old image. A failed 'Deploy on pooh' is
+            // not caught, so declarative skips this check on that night.
+            //
+            // The script uses the standard library only, so it runs on
+            // the system python3 of the builder agent, outside a CI image.
+            steps {
+                script {
+                    int code = sh(
+                        script: '/usr/bin/python3 scripts/bioconda_lag_check.py',
+                        returnStatus: true,
+                    )
+                    if (code == 1) {
+                        unstable('bioconda lags PyPI for gain-core')
+                    } else if (code != 0) {
+                        catchError(buildResult: 'SUCCESS',
+                                   stageResult: 'UNSTABLE') {
+                            error("bioconda_lag_check.py cannot decide " +
+                                  "(exit ${code})")
+                        }
+                    }
+                }
+            }
+        }
+
         stage('Run gain-mutator') {
             // The mutation report of gain.utils (#2062). Report only:
             // `propagate: false` keeps the result of gain-mutator out of
             // this job, and the catchError keeps a failure to start it
             // (for example before the seed job creates it) out too. The
-            // stage comes last so that the mutator workers, one per core
-            // of an agent, never run next to the other downstream jobs.
+            // stage still comes last, after 'Check bioconda lag', so that
+            // the mutator workers, one per core of an agent, never run
+            // next to the other downstream jobs.
             // No `when` gate: a red validation stage still runs the
             // report, because catchError holds those failures. A failed
             // 'Deploy on pooh' is not caught, so declarative skips this

@@ -107,6 +107,10 @@ COPY --chown=mambauser:mambauser scripts/crap_gate.sh /testbed/scripts/
 # and fails, not skips, when the script is absent (#2062).
 COPY --chown=mambauser:mambauser scripts/mutator_nightly.sh \
     /testbed/scripts/
+# tests/small/test_bioconda_lag_check.py loads scripts/bioconda_lag_check.py
+# and fails, not skips, when the script is absent (#1968).
+COPY --chown=mambauser:mambauser scripts/bioconda_lag_check.py \
+    /testbed/scripts/
 RUN chmod -R a+rwX /testbed
 COPY --chown=mambauser:mambauser core/conda-integration/run.sh \
     core/conda-integration/assert_installed.py /opt/conda-integration/
