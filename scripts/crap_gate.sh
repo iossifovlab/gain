@@ -34,6 +34,8 @@
 #      With no kept path, crapper does not run, because crapper with no
 #      path scores the whole package. A crapper exit other than 0 and 2
 #      is a tool fault, not a CRAP finding, so the gate passes.
+#      An exit 2 with no function above 10.0 in crap.edn is also a
+#      tool fault, for example a usage error.
 #   1  a function in a changed file has a CRAP score above 10.0.
 set -u
 
@@ -88,6 +90,13 @@ above=$(LC_ALL=C sed -n \
     "$crap_root/.metrics/crap.edn" \
     | LC_ALL=C awk '$1 > 10' | LC_ALL=C sort -rn)
 count=$(printf '%s\n' "$above" | grep -c .)
+# A usage error of crapper can also exit 2. Such an exit lists no
+# function above 10.0, so the gate treats it as a tool fault.
+if [ "$count" -eq 0 ]; then
+    echo "crap gate: pass, crapper exited 2 with no function above 10.0," \
+        "a tool fault"
+    exit 0
+fi
 names=$(printf '%s\n' "$above" \
     | LC_ALL=C awk 'NF { printf "%s%s %s %s", sep, $2, $3, $1; sep = ", " }')
 echo "crap gate: fail, ${#changed[@]} changed files," \

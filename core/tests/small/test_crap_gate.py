@@ -230,6 +230,22 @@ def test_crapper_fault_passes_and_prints_the_code(
         f"crap gate: pass, crapper exited {crapper_exit}, a tool fault"]
 
 
+def test_exit_two_with_no_function_above_ten_is_a_tool_fault(
+    sandbox: pathlib.Path,
+) -> None:
+    add_source(sandbox, "core/gain/utils/variant_utils.py")
+    crap_edn = edn(("f", "gain.utils.variant_utils", 10.0))
+
+    result = run_gate(
+        sandbox, ["core/gain/utils/variant_utils.py"],
+        crapper_exit=2, crap_edn=crap_edn)
+
+    assert result.returncode == 0
+    assert gate_lines(result) == [(
+        "crap gate: pass, crapper exited 2 with no function above 10.0, "
+        "a tool fault")]
+
+
 def test_fail_line_lists_each_function_above_ten_worst_first(
     sandbox: pathlib.Path,
 ) -> None:
