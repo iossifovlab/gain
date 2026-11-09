@@ -48,7 +48,10 @@ def runProject(Map args) {
     // crapper, so it is not the number of function rows: zero lines
     // means no report.
     // scripts/crap_report_html.py renders crap.txt as crap.html, which
-    // the top-level post block publishes as the CRAP report page.
+    // the top-level post block publishes as the CRAP report page. The
+    // page also ranks the functions by CRAP times the churn of their
+    // file, from the git log that the Prepare workspace stage writes
+    // (#2250). The source root maps each namespace to its file.
     // scripts/crap_gate.sh then runs crapper with --threshold 10 on the
     // changed files that the Prepare workspace stage lists (#2123). A
     // function above 10.0 in a changed file sets pytest_exit=1 and the
@@ -66,7 +69,8 @@ def runProject(Map args) {
                 crap_lines=\$(wc -l < /reports/crap.txt)
                 echo "crapper: exit \$crap_exit, took \$((\$(date +%s) - crap_start)) s, \$crap_lines lines in crap.txt"
                 python /workspace/scripts/crap_report_html.py \\
-                    /reports/crap.txt /reports/crap.html
+                    /reports/crap.txt /reports/crap.html \\
+                    /reports/crap_churn_log.txt ${crapRoot}
                 bash /workspace/scripts/crap_gate.sh \\
                     /reports/crap_changed_files.txt ${crapRoot} || pytest_exit=1
 """
@@ -507,6 +511,28 @@ pipeline {
                             else
                                 rm -f "$list.tmp"
                                 echo "CRAP gate: the fetch of master or the merge base failed, the gate skips"
+                            fi
+                        '''
+                        // The hotspot table of the CRAP report ranks each
+                        // function by CRAP times the number of commits in
+                        // the last 12 months that changed its file (#2250).
+                        // Git runs here on the agent, because the checkout
+                        // in the container has another owner. The step
+                        // writes the raw log under reports/core, and
+                        // scripts/crap_report_html.py follows the renames
+                        // in it. A failed git log leaves no file, and the
+                        // page then says the churn count is missing: the
+                        // step never fails the build.
+                        // core/tests/small/test_crap_churn.py reads this step.
+                        sh label: 'Write the git log for the CRAP hotspots', script: '''
+                            mkdir -p reports/core
+                            churn=reports/core/crap_churn_log.txt
+                            if git log -M --name-status --since=12.months --format=@@commit:%H > "$churn.tmp"; then
+                                mv "$churn.tmp" "$churn"
+                                echo "CRAP hotspots: $(wc -l < "$churn") lines in the churn log"
+                            else
+                                rm -f "$churn.tmp"
+                                echo "CRAP hotspots: git log failed, the page has no hotspot table"
                             fi
                         '''
                     }

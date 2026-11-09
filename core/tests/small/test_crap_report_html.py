@@ -98,3 +98,259 @@ def test_main_writes_a_no_rows_page_for_a_missing_table(
     assert exit_code == 0
     assert "crapper wrote no rows." in target.read_text()
     assert "<table" not in target.read_text()
+
+
+def churn_log(*commits: list[str]) -> str:
+    """Render ``git log --name-status`` text, newest commit first."""
+    return "".join(
+        "@@commit:0123abc\n\n" + "".join(f"{line}\n" for line in commit)
+        for commit in commits)
+
+
+def test_churn_counts_an_edit_before_and_after_a_rename(
+    crap_report_html: ModuleType,
+) -> None:
+    log = churn_log(
+        ["M\tcore/gain/new.py"],
+        ["R100\tcore/gain/old.py\tcore/gain/new.py"],
+        ["M\tcore/gain/old.py"],
+    )
+
+    churn = crap_report_html.parse_churn_log(log)
+
+    assert churn == {"core/gain/new.py": 2}
+
+
+def test_churn_follows_a_chain_of_renames(
+    crap_report_html: ModuleType,
+) -> None:
+    log = churn_log(
+        ["R100\tgain_core/gain/a.py\tcore/gain/a.py"],
+        ["M\tgain_core/gain/a.py"],
+        ["R100\tgain/gain/a.py\tgain_core/gain/a.py"],
+        ["R100\tdae/dae/a.py\tgain/gain/a.py"],
+        ["M\tdae/dae/a.py"],
+    )
+
+    churn = crap_report_html.parse_churn_log(log)
+
+    assert churn == {"core/gain/a.py": 2}
+
+
+def test_pure_rename_adds_zero_and_rename_with_edits_adds_one(
+    crap_report_html: ModuleType,
+) -> None:
+    log = churn_log(
+        ["R100\tcore/gain/a_old.py\tcore/gain/a.py",
+         "R093\tcore/gain/b_old.py\tcore/gain/b.py"],
+    )
+
+    churn = crap_report_html.parse_churn_log(log)
+
+    assert churn.get("core/gain/a.py", 0) == 0
+    assert churn["core/gain/b.py"] == 1
+
+
+def test_commit_counts_once_for_a_file_with_two_old_paths(
+    crap_report_html: ModuleType,
+) -> None:
+    log = churn_log(
+        ["R100\tcore/gain/b.py\tcore/gain/a.py"],
+        ["D\tcore/gain/a.py"],
+        ["M\tcore/gain/a.py", "M\tcore/gain/b.py"],
+    )
+
+    churn = crap_report_html.parse_churn_log(log)
+
+    assert churn == {"core/gain/a.py": 2}
+
+
+def test_commit_of_100_files_adds_zero_but_keeps_its_renames(
+    crap_report_html: ModuleType,
+) -> None:
+    big_rename = [
+        f"R087\tgain_core/gain/m{i}.py\tcore/gain/m{i}.py"
+        for i in range(99)
+    ] + ["R087\tgain_core/gain/a.py\tcore/gain/a.py"]
+    log = churn_log(
+        big_rename,
+        ["M\tgain_core/gain/a.py"],
+    )
+
+    churn = crap_report_html.parse_churn_log(log)
+
+    assert churn == {"core/gain/a.py": 1}
+
+
+def test_commit_of_99_files_counts(
+    crap_report_html: ModuleType,
+) -> None:
+    log = churn_log([f"M\tcore/gain/m{i}.py" for i in range(99)])
+
+    churn = crap_report_html.parse_churn_log(log)
+
+    assert len(churn) == 99
+    assert set(churn.values()) == {1}
+
+
+@pytest.fixture
+def source_root(tmp_path: pathlib.Path) -> pathlib.Path:
+    root = tmp_path / "core"
+    (root / "gain" / "binning").mkdir(parents=True)
+    (root / "gain" / "__init__.py").write_text("")
+    (root / "gain" / "binning" / "__init__.py").write_text("")
+    (root / "gain" / "binning" / "binners.py").write_text("")
+    return root
+
+
+@pytest.mark.parametrize(("namespace", "expected"), [
+    ("gain.binning.binners", "core/gain/binning/binners.py"),
+    ("gain.binning", "core/gain/binning/__init__.py"),
+    ("gain.binning.binners.BoundBinner", "core/gain/binning/binners.py"),
+    ("gain.binning.binners.Region<T>", "core/gain/binning/binners.py"),
+])
+def test_namespace_maps_to_the_file_of_its_longest_module_prefix(
+    crap_report_html: ModuleType, source_root: pathlib.Path,
+    namespace: str, expected: str,
+) -> None:
+    assert crap_report_html.namespace_file(namespace, source_root) == expected
+
+
+def test_namespace_without_a_file_maps_to_none(
+    crap_report_html: ModuleType, source_root: pathlib.Path,
+) -> None:
+    assert crap_report_html.namespace_file("other.pkg", source_root) is None
+
+
+def test_namespace_key_starts_with_the_name_of_the_root(
+    crap_report_html: ModuleType, tmp_path: pathlib.Path,
+) -> None:
+    root = tmp_path / "web_api"
+    (root / "gain_web").mkdir(parents=True)
+    (root / "gain_web" / "views.py").write_text("")
+
+    assert crap_report_html.namespace_file(
+        "gain_web.views.Index", root) == "web_api/gain_web/views.py"
+
+
+def test_hotspot_of_a_namespace_without_a_file_has_zero_commits(
+    crap_report_html: ModuleType, source_root: pathlib.Path,
+) -> None:
+    rows = [crap_report_html.CrapRow("f", "other.pkg", 1, 0.0, 5.0)]
+
+    hotspots = crap_report_html.rank_hotspots(
+        rows, {"core/gain/binning/binners.py": 3}, source_root)
+
+    assert [(hotspot.commits, hotspot.score) for hotspot in hotspots] == [
+        (0, 0.0)]
+
+
+@pytest.fixture
+def table_root(tmp_path: pathlib.Path) -> pathlib.Path:
+    """A source root with the files of the namespaces of ``TABLE``."""
+    root = tmp_path / "core"
+    for path in ("gain/effect_annotation/cli.py",
+                 "gain/gene_models/parsers.py", "gain/utils.py"):
+        (root / path).parent.mkdir(parents=True, exist_ok=True)
+        (root / path).write_text("")
+    return root
+
+
+def run_main(
+    crap_report_html: ModuleType, tmp_path: pathlib.Path,
+    *churn_args: str,
+) -> tuple[int, str]:
+    source = tmp_path / "crap.txt"
+    source.write_text(TABLE)
+    target = tmp_path / "crap.html"
+    exit_code = crap_report_html.main(
+        ["crap_report_html.py", str(source), str(target), *churn_args])
+    return exit_code, target.read_text()
+
+
+def test_page_ranks_hotspots_by_crap_times_churn(
+    crap_report_html: ModuleType, tmp_path: pathlib.Path,
+    table_root: pathlib.Path,
+) -> None:
+    log = tmp_path / "churn.txt"
+    log.write_text(churn_log(
+        *[["M\tcore/gain/gene_models/parsers.py"]] * 10,
+        ["M\tcore/gain/effect_annotation/cli.py"],
+    ))
+
+    exit_code, page = run_main(
+        crap_report_html, tmp_path, str(log), str(table_root))
+
+    assert exit_code == 0
+    hotspots = page[page.index("<h2>Hotspots</h2>"):]
+    assert (
+        "<th>Function</th><th>Namespace</th><th>CRAP</th>"
+        "<th>Commits in 12 months</th><th>Hotspot score</th>") in hotspots
+    assert [
+        line.split("</td>")[0].removeprefix("<tr><td>")
+        for line in hotspots.splitlines() if line.startswith("<tr><td>")
+    ] == ["parse_gtf", "cli_vcf", "__lt__"]
+    assert (
+        "<tr><td>parse_gtf</td><td>gain.gene_models.parsers</td>"
+        '<td align="right">24.0</td><td align="right">10</td>'
+        '<td align="right">240.0</td></tr>') in hotspots
+    assert page.index("<h2>Hotspots</h2>") > page.index("<td>cli_vcf</td>")
+
+
+def test_hotspot_table_holds_at_most_50_rows(
+    crap_report_html: ModuleType, table_root: pathlib.Path,
+) -> None:
+    rows = [
+        crap_report_html.CrapRow(
+            f"f{i}", "gain.utils", 1, 0.0, float(i))
+        for i in range(60)]
+
+    hotspots = crap_report_html.rank_hotspots(
+        rows, {"core/gain/utils.py": 2}, table_root)
+
+    assert len(hotspots) == 50
+    assert hotspots[0].row.function == "f59"
+    assert hotspots[0].score == 118.0
+    assert hotspots[-1].row.function == "f10"
+
+
+MISSING_CHURN = (
+    "<p>The churn count is missing, so the page has no hotspot table.</p>")
+
+
+def test_page_without_the_churn_argument_says_the_count_is_missing(
+    crap_report_html: ModuleType, tmp_path: pathlib.Path,
+) -> None:
+    exit_code, page = run_main(crap_report_html, tmp_path)
+
+    assert exit_code == 0
+    assert "<td>cli_vcf</td>" in page
+    assert MISSING_CHURN in page
+
+
+def test_page_with_a_missing_churn_file_says_the_count_is_missing(
+    crap_report_html: ModuleType, tmp_path: pathlib.Path,
+    table_root: pathlib.Path,
+) -> None:
+    exit_code, page = run_main(
+        crap_report_html, tmp_path,
+        str(tmp_path / "absent.txt"), str(table_root))
+
+    assert exit_code == 0
+    assert "<td>cli_vcf</td>" in page
+    assert MISSING_CHURN in page
+
+
+def test_page_with_an_empty_churn_file_says_the_count_is_missing(
+    crap_report_html: ModuleType, tmp_path: pathlib.Path,
+    table_root: pathlib.Path,
+) -> None:
+    log = tmp_path / "churn.txt"
+    log.write_text("")
+
+    exit_code, page = run_main(
+        crap_report_html, tmp_path, str(log), str(table_root))
+
+    assert exit_code == 0
+    assert "<td>cli_vcf</td>" in page
+    assert MISSING_CHURN in page

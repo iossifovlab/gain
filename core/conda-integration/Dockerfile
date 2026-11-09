@@ -95,8 +95,9 @@ COPY --chown=mambauser:mambauser docs/source/development/annotators \
 # tests/small/test_pypi_probe.py runs scripts/pypi_probe.sh and fails,
 # not skips, when the script is absent (#1960).
 COPY --chown=mambauser:mambauser scripts/pypi_probe.sh /testbed/scripts/
-# tests/small/test_crap_report_html.py loads scripts/crap_report_html.py
-# and fails, not skips, when the script is absent (#2061).
+# tests/small/test_crap_report_html.py and tests/small/test_crap_churn.py
+# load scripts/crap_report_html.py and fail, not skip, when the script
+# is absent (#2061, #2250).
 COPY --chown=mambauser:mambauser scripts/crap_report_html.py \
     /testbed/scripts/
 # tests/small/test_crap_gate.py runs scripts/crap_gate.sh and fails,
