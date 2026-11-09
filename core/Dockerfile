@@ -61,14 +61,16 @@ ENV UV_LINK_MODE=copy \
 # caches no failed layer, so the next build retries the install. A
 # fallback such as `|| echo` would cache a layer without crapper, and
 # every later build on that agent would archive an empty CRAP table.
-# The core stage ignores the crapper exit code at run time, but an
-# uncached failed install fails the image build. That build failure
+# At run time, the core stage fails the build only on a CRAP score
+# above 10.0 in a changed file (scripts/crap_gate.sh, #2123). A crapper
+# tool fault there passes. An uncached failed install, in contrast,
+# fails the image build. That build failure
 # reaches every build of this Dockerfile: the core stage, the
 # "Core wheel (docs-only)" stage and the "Build docs" stage of the root
 # Jenkinsfile, Jenkinsfile.python-matrix and core/Jenkinsfile.integration.
-# A docs-only build then has no core wheel for gpf to fetch. The
-# report-only rule covers the run, not the image build: the same build
-# already needs the network for apt and PyPI.
+# A docs-only build then has no core wheel for gpf to fetch. The image
+# build fails on purpose: the same build already needs the network for
+# apt and PyPI, so a failed install is not a new kind of fault.
 ARG CRAPPER_REV=6fd92c4c9bcc56efb64a2f8743d5a2993bcfd42d
 ARG MUTATOR_REV=a5a0cb803b66e0cdb8bf471b3b08af701d424a41
 ENV UV_TOOL_DIR=/opt/uv-tools \
