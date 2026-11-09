@@ -111,6 +111,12 @@ COPY --chown=mambauser:mambauser scripts/mutator_nightly.sh \
 # and fails, not skips, when the script is absent (#1968).
 COPY --chown=mambauser:mambauser scripts/bioconda_lag_check.py \
     /testbed/scripts/
+# tests/small/test_coverage_badge.py loads scripts/coverage_badge.py and
+# reads docs/build_docs.sh, and fails, not skips, when either file is
+# absent (#2314).
+COPY --chown=mambauser:mambauser scripts/coverage_badge.py \
+    /testbed/scripts/
+COPY --chown=mambauser:mambauser docs/build_docs.sh /testbed/docs/
 RUN chmod -R a+rwX /testbed
 COPY --chown=mambauser:mambauser core/conda-integration/run.sh \
     core/conda-integration/assert_installed.py /opt/conda-integration/

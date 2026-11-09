@@ -127,6 +127,9 @@ COPY docs/source/development/task_graph/ ./docs/source/development/task_graph/
 # tests/small/annotation/test_docs_testing_an_annotator.py reads the
 # "Writing an annotator" page and fails, not skips, when it is absent.
 COPY docs/source/development/annotators/ ./docs/source/development/annotators/
+# tests/small/test_coverage_badge.py reads docs/build_docs.sh to check
+# where the badge call sits, and fails, not skips, when it is absent.
+COPY docs/build_docs.sh ./docs/
 # The repo-root scripts/ belongs to no project; the core CI stage lints
 # it (#1327), so this image is the one that has to carry it.
 COPY scripts/ ./scripts/
