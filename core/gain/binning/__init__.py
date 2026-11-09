@@ -1,9 +1,12 @@
 """Bin position scores into a fixed genome grid (``binning_tool``).
 
 A notebook user builds a ``fragment_score_binner`` entry from the spec
-classes, :class:`FragmentEntry` and its blocks.  ``binning_tool`` reads
-the same objects from a run definition.  A refusal of the run
-definition or of a spec class is a :class:`RunDefinitionError`.
+classes, :class:`FragmentEntry` and its blocks.  :func:`cell_groups`
+and :func:`fragment_tracks` give the groups and the tracks of an entry
+without a run, and the ``read_*`` functions read the file of a run.
+``binning_tool`` reads the same objects from a run definition.  A
+refusal of the run definition or of a spec class is a
+:class:`RunDefinitionError`.
 
 Ledger
 ------
@@ -24,8 +27,12 @@ package.
   ``BoundValueGrouping``.  ``FragmentScoreBinner`` gains
   ``entry_from_config`` and ``entry_jobs``, and ``parse_entry`` calls
   the two.
+* gain#2119: the package exports ``cell_groups`` and ``fragment_tracks``
+  of the new ``fragment_api`` module, and ``read_tracks``,
+  ``read_bins``, ``read_values`` and ``track_labels`` of ``h5_reader``.
 """
 from gain.binning.binners import RunDefinitionError, tracks_frame
+from gain.binning.fragment_api import cell_groups, fragment_tracks
 from gain.binning.fragment_grouping import (
     Aggregate,
     CellGrouping,
@@ -36,6 +43,12 @@ from gain.binning.fragment_grouping import (
     MetaSource,
     ScoreContribution,
     ValueGrouping,
+)
+from gain.binning.h5_reader import (
+    read_bins,
+    read_tracks,
+    read_values,
+    track_labels,
 )
 from gain.binning.run_definition import resolve_binners
 
@@ -50,6 +63,12 @@ __all__ = [
     "RunDefinitionError",
     "ScoreContribution",
     "ValueGrouping",
+    "cell_groups",
+    "fragment_tracks",
+    "read_bins",
+    "read_tracks",
+    "read_values",
     "resolve_binners",
+    "track_labels",
     "tracks_frame",
 ]

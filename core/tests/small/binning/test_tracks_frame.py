@@ -2,11 +2,13 @@
 # and tests are named by behavior (C0114, C0116).
 # pylint: disable=W0621,C0114,C0116
 """``tracks_frame``: the ``/tracks`` rows of a list of jobs."""
+import importlib
 import pathlib
 import types
 
 import gain.binning
 import pandas as pd
+import pytest
 import yaml
 from gain.binning import tracks_frame
 from gain.binning.h5_reader import read_tracks
@@ -35,15 +37,43 @@ def test_tracks_frame_equals_the_tracks_table_of_the_file(
     pd.testing.assert_frame_equal(frame, read_tracks(output))
 
 
+#: Each public name of ``gain.binning``, and the module that defines it.
+DEFINING_MODULES = {
+    **dict.fromkeys([
+        "Aggregate", "CellGrouping", "ConstantContribution", "ConstantGroup",
+        "FragmentEntry", "MetaFilter", "MetaSource", "ScoreContribution",
+        "ValueGrouping"], "gain.binning.fragment_grouping"),
+    "RunDefinitionError": "gain.binning.binners",
+    "tracks_frame": "gain.binning.binners",
+    "resolve_binners": "gain.binning.run_definition",
+    "cell_groups": "gain.binning.fragment_api",
+    "fragment_tracks": "gain.binning.fragment_api",
+    **dict.fromkeys([
+        "read_tracks", "read_bins", "read_values", "track_labels"],
+        "gain.binning.h5_reader"),
+}
+
+
 def test_the_public_names_of_gain_binning_are_its_all() -> None:
     public = {
         name for name, value in vars(gain.binning).items()
         if not name.startswith("_")
         and not isinstance(value, types.ModuleType)}
 
-    assert sorted(gain.binning.__all__) == [
+    assert sorted(gain.binning.__all__) == sorted([
         "Aggregate", "CellGrouping", "ConstantContribution", "ConstantGroup",
         "FragmentEntry", "MetaFilter", "MetaSource", "RunDefinitionError",
-        "ScoreContribution", "ValueGrouping", "resolve_binners",
-        "tracks_frame"]
-    assert public == set(gain.binning.__all__)
+        "ScoreContribution", "ValueGrouping",
+        "cell_groups", "fragment_tracks",
+        "resolve_binners", "tracks_frame",
+        "read_tracks", "read_bins", "read_values", "track_labels"])
+    assert public == set(gain.binning.__all__) == set(DEFINING_MODULES)
+
+
+@pytest.mark.parametrize("name", sorted(DEFINING_MODULES))
+def test_each_public_name_is_the_object_of_its_defining_module(
+    name: str,
+) -> None:
+    module = importlib.import_module(DEFINING_MODULES[name])
+
+    assert getattr(gain.binning, name) is getattr(module, name)

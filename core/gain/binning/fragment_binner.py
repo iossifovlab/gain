@@ -220,6 +220,7 @@ __all__ = [
     "FragmentScoreBinner",
     "MetaFilter",
     "MetaTable",
+    "job_track_maps",
 ]
 
 
@@ -754,14 +755,31 @@ class FragmentScoreBinner:
         assert isinstance(job, FragmentBinningJob)
         resources = [
             grr.get_resource(resource_id) for resource_id in job.resource_ids]
-        track_maps = None
-        if job.grouping is not None:
-            track_maps = job.grouping.track_maps(grr, resources, {
-                track.group: index
-                for index, track in enumerate(job.tracks)})
         return FragmentScoreBinding(
             job, [FragmentScore(resource) for resource in resources],
-            track_maps, quiet=quiet)
+            job_track_maps(job, grr, resources), quiet=quiet)
+
+
+def job_track_maps(
+    job: FragmentBinningJob, grr: GenomicResourceRepo,
+    resources: list[GenomicResource] | None = None,
+) -> list[dict[str, int]] | None:
+    """Map each key of each resource of ``job`` to its track index.
+
+    The key is a barcode for a cell grouping and a score value for a
+    value grouping.  A job with a constant group gives ``None``.
+    :meth:`FragmentScoreBinner.bind` and the notebook view of
+    :mod:`gain.binning.fragment_api` both call this function, so the two
+    map each key the same way.  ``resources`` are the resources of the
+    job, fetched from ``grr`` when not given.
+    """
+    if job.grouping is None:
+        return None
+    if resources is None:
+        resources = [
+            grr.get_resource(resource_id) for resource_id in job.resource_ids]
+    return job.grouping.track_maps(grr, resources, {
+        track.group: index for index, track in enumerate(job.tracks)})
 
 
 def _score_id(entry: FragmentEntry) -> str | None:
