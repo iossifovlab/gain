@@ -31,9 +31,9 @@ An entry's keys:
   score ``S``, read when the entry is resolved from the score's full
   categorical histogram (its statistics must be built and pulled).
   Pooled, a value's group is ``<sample_id>:<value>``, by the resource's
-  :data:`SAMPLE_ID_LABEL` label, which every pooled resource must carry,
-  each its own, since one barcode recurs in every sample; unpooled, the
-  bare value.
+  :data:`SAMPLE_ID_LABEL` label, each its own, since one barcode recurs
+  in every sample; when no pooled resource carries the label, the bare
+  value, with a warning for each resource.  Unpooled, the bare value.
   The forms do not mix, and ``meta`` does not go with the last.
   Omitted, the resource's labels decide: a resource carrying
   :data:`CELL_META_RESOURCE_ID_LABEL` is grouped as with ``group: {}``,
@@ -64,11 +64,15 @@ An entry's keys:
   every row.  Omitted under a metadata grouping, ``meta`` is the
   convention's: the table the :data:`CELL_META_RESOURCE_ID_LABEL` label
   names, its :data:`SAMPLE_ID_COLUMN` rows equal to the
-  :data:`SAMPLE_ID_LABEL` label.
+  :data:`SAMPLE_ID_LABEL` label; when no resource of the job carries that
+  label, every row of the table, with a warning for each resource.
 
 A pooled entry resolves to one job, so its resources must agree: on
 whether they carry :data:`CELL_META_RESOURCE_ID_LABEL` (when ``group``
-is omitted), and on the one metadata table their ``meta`` names.
+is omitted), on whether they carry :data:`SAMPLE_ID_LABEL` (when
+``meta`` is omitted, and for a raw-value grouping), and on the one
+metadata table their ``meta`` names.  A list-valued
+:data:`SAMPLE_ID_LABEL` counts as carried, and is an error.
 
 A fragment whose barcode is not in the filtered rows, or whose row's
 group is empty, or whose ``group_score_id`` value is missing or is one
