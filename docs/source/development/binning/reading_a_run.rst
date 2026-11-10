@@ -39,6 +39,8 @@ prints its first values on ``chr1``:
 Row *i* of ``values`` belongs to row *i* of ``bins``, and column *j*
 belongs to ``labels[j]``, the label of row *j* of the tracks.
 
+.. _binning-track-labels:
+
 Labels of the tracks
 --------------------
 

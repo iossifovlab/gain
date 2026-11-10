@@ -6,7 +6,10 @@ only in its file. GAIn provides functions that resolve an entry against a
 repository without a run, so a notebook sees the groups and the tracks of
 the entry first. Each function raises
 :class:`~gain.binning.RunDefinitionError` for an entry that ``binning_tool``
-refuses, with the same message.
+refuses, with the same message. The message names the entry as
+``binners[0]``, and ``binning_tool`` names it by its position in the
+``binners`` list. ``fragment_tracks`` takes a ``binner_index`` and names
+the entry as ``binners[<binner_index>]``.
 
 Previewing the groups and tracks of an entry
 --------------------------------------------
@@ -67,18 +70,19 @@ Previewing a whole run definition
 :func:`~gain.binning.resolve_binners` resolves the whole ``binners`` list of
 a run definition into its jobs, as ``binning_tool`` does before a run. A
 notebook calls it to check a run definition with position-score entries
-too, or to see the names that a run gives to the tracks of all its entries
-together. The list holds one mapping of a binner kind to its configuration
+too, or to see the labels of the tracks of all its entries together. The list holds one mapping of a binner kind to its configuration
 for each entry, as the YAML of the run definition does.
 
 :func:`~gain.binning.tracks_frame` gives the ``/tracks`` rows of the jobs
 that ``resolve_binners`` returns, one row for each track, in the order of
-the file:
+the file. The rows hold no name for a track.
+:func:`~gain.binning.track_labels` builds the label of each row, as
+:ref:`binning-track-labels` describes:
 
 .. code-block:: python
 
     import gain.grr as grr
-    from gain.binning import resolve_binners, tracks_frame
+    from gain.binning import resolve_binners, track_labels, tracks_frame
 
     repo = grr.build_genomic_resource_repository()
     binners = [
@@ -87,7 +91,9 @@ the file:
     ]
 
     jobs = resolve_binners(binners, repo)
-    print(tracks_frame(jobs)[["binner_type", "resource_ids", "selector"]])
+    tracks = tracks_frame(jobs)
+    print(tracks[["binner_type", "resource_ids", "selector"]])
+    print(track_labels(tracks))
 
 API
 ---
