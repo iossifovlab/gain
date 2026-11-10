@@ -8,9 +8,9 @@ too small for two decimals is ``<0.01%`` and a share short of the whole
 that rounds up to it is ``>99.99%``, decided on the counts.  Every test
 here runs the real statistics build and reads the rendered page.
 """
+import json
 import pathlib
 
-import yaml
 from gain.genomic_resources.implementations.reference_genome_impl import (
     ChromosomeStatistic,
     ReferenceGenomeImplementation,
@@ -124,24 +124,25 @@ def test_a_genome_without_a_single_pair_leaves_the_pair_cells_empty(
     assert nucleotide_cells(page, "Global")["A"] == "100.00%"
 
 
-def test_the_stored_statistics_keep_their_format(
+def test_the_stored_statistics_are_one_json_document_of_counts(
     tmp_path: pathlib.Path,
 ) -> None:
-    # The shares are derived when the page is rendered, never stored.
-    render_page(tmp_path, ">chr1\nACGTN\n")
+    # The shares and the genome-wide totals are derived when the page is
+    # rendered, never stored.
+    render_page(tmp_path, ">chr1\nACGTN\n>chr2\nAC\n")
 
-    stored_global = yaml.safe_load(
-        (tmp_path / "statistics/reference_genome_statistic.yaml").read_text())
-    stored_chrom = yaml.safe_load(
-        (tmp_path / "statistics/chr1_statistic.yaml").read_text())
+    stored = json.loads(
+        (tmp_path / "statistics/reference_genome.json").read_text())
 
-    assert set(stored_global) == {
-        "chromosomes", "length",
-        "nucleotide_distribution", "bi_nucleotide_distribution",
-    }
-    assert set(stored_chrom) == {
-        "chrom", "length", "nucleotide_counts", "nucleotide_pair_counts",
-    }
+    assert set(stored) == {"format_version", "chromosomes", "contigs"}
+    assert stored["format_version"] == 1
+    assert stored["chromosomes"] == ["chr1", "chr2"]
+    assert set(stored["contigs"]) == {"chr1", "chr2"}
+    for contig in stored["contigs"].values():
+        assert set(contig) == {
+            "length", "nucleotide_counts", "nucleotide_pair_counts",
+        }
+    assert stored["contigs"]["chr1"]["length"] == 5
 
 
 def test_a_stored_chromosome_of_length_zero_loads() -> None:

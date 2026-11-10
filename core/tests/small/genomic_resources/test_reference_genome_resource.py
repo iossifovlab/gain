@@ -1,5 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 
+import json
+import logging
 import os
 import pathlib
 import textwrap
@@ -12,6 +14,7 @@ from gain.genomic_resources.fsspec_protocol import build_local_resource
 from gain.genomic_resources.implementations import reference_genome_impl
 from gain.genomic_resources.implementations.reference_genome_impl import (
     ReferenceGenomeImplementation,
+    ReferenceGenomeStatistics,
 )
 from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_file,
@@ -39,6 +42,7 @@ from gain.genomic_resources.testing import (
     setup_genome_bgz,
 )
 from gain.genomic_resources.testing.builders import a_reference_genome
+from gain.genomic_resources.testing.statistics import build_statistics
 from gain.utils.regions import Region
 
 from .conftest import captured_warnings
@@ -327,19 +331,32 @@ def test_chromosome_statistic_basic(genome_fixture: pathlib.Path) -> None:
         assert stat.nucleotide_distribution[nuc] == \
             pytest.approx(count / total_nucleotides * 100)
 
-    stat.finish()
+    build_statistics(res)
 
-    print(stat.serialize())
-    print(stat.bi_nucleotide_distribution)
-    print(stat.nucleotide_distribution)
+    stored = json.loads(
+        (genome_fixture / "statistics" / "reference_genome.json").read_text())
+    assert "pesho" in stored["chromosomes"]
+    assert stored["contigs"]["pesho"]["length"] == 24
 
-    ReferenceGenomeImplementation._save_chrom_statistic(res, "pesho", stat)
 
-    assert os.path.exists(os.path.join(
-        genome_fixture,
-        "statistics",
-        "pesho_statistic.yaml",
-    ))
+def test_missing_statistics_load_as_none_without_a_traceback(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    resource = a_reference_genome().with_chromosome("1", "ACGT") \
+        .build_resource(tmp_path)
+
+    with caplog.at_level(logging.DEBUG):
+        statistics = ReferenceGenomeStatistics.build_statistics(resource)
+
+    assert statistics is None
+    missing = [
+        record for record in caplog.records
+        if "statistics/reference_genome.json is missing"
+        in record.getMessage()
+    ]
+    assert len(missing) == 1
+    assert missing[0].exc_info is None
 
 
 _SOFT_MASKED_GENOME = textwrap.dedent("""

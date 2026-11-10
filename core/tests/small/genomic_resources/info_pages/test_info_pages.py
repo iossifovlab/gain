@@ -38,6 +38,9 @@ from urllib.parse import unquote, urlparse
 import pytest
 import yaml
 from gain.genomic_resources import get_resource_implementation_builder
+from gain.genomic_resources.implementations.reference_genome_impl import (
+    REFERENCE_GENOME_STATISTIC,
+)
 from gain.genomic_resources.repository import (
     GR_CONF_FILE_NAME,
     GenomicResourceRepo,
@@ -98,6 +101,9 @@ _SECTION_OF_STATISTIC = {
     FRAGMENT_STATISTIC.file: "Fragments",
 }
 _KIND_SECTIONS = frozenset(_SECTION_OF_STATISTIC.values())
+#: Declared statistics that a page reports without a section of their own.
+#: A genome page writes its counts into the chromosomes table.
+_STATISTICS_WITHOUT_A_SECTION = frozenset({REFERENCE_GENOME_STATISTIC.file})
 
 
 # --------------------------------------------------------------------------
@@ -863,7 +869,8 @@ def test_a_page_renders_exactly_the_sections_its_kind_can_fill(
     later is checked here without this test naming it.
     """
     page = _parse(built_grr.path / resource_id / "index.html", built_grr.path)
-    declared = _stored_statistic_files(built_grr.path, resource_id)
+    declared = _stored_statistic_files(
+        built_grr.path, resource_id) - _STATISTICS_WITHOUT_A_SECTION
 
     unknown = declared - _SECTION_OF_STATISTIC.keys()
     assert not unknown, (
