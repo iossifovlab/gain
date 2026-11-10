@@ -34,7 +34,7 @@ from gain.binning.binners import (
     discover_binner_kinds,
     tracks_frame,
 )
-from gain.binning.fragment_binner import CellGrouping, FragmentBinningJob
+from gain.binning.fragment_binner import BoundCellGrouping, FragmentBinningJob
 from gain.binning.fragment_def import FragmentScoreDef
 from gain.binning.run_definition import (
     RunDefinition,
@@ -218,7 +218,7 @@ def _print_fragment_entries(run: RunDefinition) -> None:
         resources = sorted({r for job in jobs for r in job.resource_ids})
         tables = sorted({
             job.grouping.table.name for job in jobs
-            if isinstance(job.grouping, CellGrouping)})
+            if isinstance(job.grouping, BoundCellGrouping)})
         groups = {track.group for job in jobs for track in job.tracks}
         print(f"{entry}: {jobs[0].binner}")
         print(f"    resources: {', '.join(resources)}")

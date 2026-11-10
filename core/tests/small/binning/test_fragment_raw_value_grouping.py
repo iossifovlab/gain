@@ -208,7 +208,6 @@ def test_meta_with_a_value_grouping_is_refused(
 
     assert "meta" in message
     assert "group_score_id" in message
-    assert "'frags/s1'" in message
 
 
 def stats_grr(

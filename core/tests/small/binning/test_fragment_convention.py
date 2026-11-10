@@ -577,6 +577,27 @@ def test_a_local_table_bins_as_the_same_data_frame_resource(
         str(tmp_path / "local" / file_name),)
 
 
+@pytest.mark.parametrize("file_format", ["tsv", "excel"])
+def test_a_local_table_without_a_format_is_read_by_its_suffix(
+    tmp_path: pathlib.Path, genome: ReferenceGenome, file_format: str,
+) -> None:
+    repo = build_repo(tmp_path, ("frags/s1", fragments(
+        **S1_LABELS)))
+    resource = parse({"resource_query": "frags/s1", "group": {}, "meta": {
+        "resource_id": "meta/cells", "filter": BY_SAMPLE}}, repo, genome)
+    file_name = write_cell_meta(tmp_path / "local", file_format)
+
+    local = parse({"resource_query": "frags/s1", "group": {}, "meta": {
+        "file_name": file_name, "filter": BY_SAMPLE}}, repo, genome,
+        base_dir=str(tmp_path / "local"))
+
+    assert [t.group for t in local.tracks] == [
+        t.group for t in resource.tracks]
+    np.testing.assert_array_equal(
+        bin_job(local.jobs[0], CHR1, repo),
+        bin_job(resource.jobs[0], CHR1, repo))
+
+
 def test_a_local_table_s_separator_can_be_given(
     tmp_path: pathlib.Path, genome: ReferenceGenome,
 ) -> None:

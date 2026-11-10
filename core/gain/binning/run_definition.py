@@ -23,6 +23,7 @@ __all__ = [
     "RENAMED_GENOME_KEY_MESSAGE",
     "RunDefinition",
     "RunDefinitionError",
+    "name_job_tracks",
     "parse_run_definition",
     "refuse_renamed_genome_key",
     "resolve_binners",
@@ -188,11 +189,31 @@ def resolve_binners(
 
     Each track of a job carries its ``binner_index``, the position of
     its entry in ``binners``, and its ``track_index``, its position
-    among the tracks of that entry.  ``base_dir`` is the directory that
-    a relative path in an entry is read from.  Without it, the kinds
-    read such a path from the current directory.
+    among the tracks of that entry.
 
-    Raises :class:`RunDefinitionError` naming the offending entry.
+    Parameters
+    ----------
+    binners
+        The ``binners:`` list of a run definition: one one-key mapping
+        of binner kind to its configuration for each entry.
+    grr
+        The repository that the queries of the entries search.
+    base_dir
+        The directory that a relative path in an entry is read from.
+        Without it, the kinds read such a path from the current
+        directory.
+
+    Returns
+    -------
+    list of BinningJob
+        The jobs of the run, in the order of the entries, with their
+        tracks named. :func:`tracks_frame` gives their ``/tracks`` rows.
+
+    Raises
+    ------
+    RunDefinitionError
+        When ``binners`` is not a non-empty list, or an entry is
+        refused. The message names the offending entry.
     """
     if not isinstance(binners, list) or not binners:
         raise RunDefinitionError(
@@ -202,7 +223,7 @@ def resolve_binners(
     jobs: list[tuple[str, BinningJob]] = []
     for index, entry in enumerate(binners):
         jobs.extend(_expand_entry(index, entry, kinds, grr, located))
-    return _name_job_tracks(jobs)
+    return name_job_tracks(jobs)
 
 
 def _expand_entry(
@@ -239,10 +260,16 @@ def _expand_entry(
     return jobs
 
 
-def _name_job_tracks(
+def name_job_tracks(
     jobs: list[tuple[str, BinningJob]],
 ) -> list[BinningJob]:
-    """Name the tracks of all jobs together and give each job its own."""
+    """Name the tracks of all jobs together and give each job its own.
+
+    Each label is ``binners[<index>]``, and the index becomes the
+    ``binner_index`` of each track of the job.  :func:`resolve_binners`
+    and :func:`gain.binning.fragment_api.fragment_tracks` both call this
+    function, so a notebook frame names its tracks as a run does.
+    """
     # Naming reads every track of the run at once; the named tracks come
     # back in the order they went in, so each job takes its own back.
     named = iter(_name_tracks([

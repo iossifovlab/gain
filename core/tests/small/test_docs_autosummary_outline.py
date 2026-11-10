@@ -4,8 +4,9 @@ A docs page lists the members of a class by hand in an ``autosummary``
 block. These tests compare that list with the class, so a new public member
 cannot stay out of the outline without a failure. The test finds each
 ``autoclass`` directive on the pages under
-``docs/source/development/resources`` and
-``docs/source/development/task_graph``. It also finds each
+``docs/source/development/resources``,
+``docs/source/development/task_graph`` and
+``docs/source/development/binning``. It also finds each
 ``autofunction`` directive, and the outline must list each function, on a
 page with classes and on a page of functions alone, such as the Data frames
 and AnnData page. A page that is not rolled out yet sits on
@@ -20,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from gain import grr
+from gain import binning, grr
 from gain.genomic_resources.gene_models import (
     Exon,
     GeneModels,
@@ -32,12 +33,13 @@ DEVELOPMENT_DIR = REPO_ROOT / "docs/source/development"
 RESOURCES_DIR = DEVELOPMENT_DIR / "resources"
 # The directories whose pages the outline tests check, relative to
 # DEVELOPMENT_DIR.
-PAGE_DIRS = ("resources", "task_graph")
+PAGE_DIRS = ("resources", "task_graph", "binning")
 GENE_MODELS_PAGE = RESOURCES_DIR / "gene_models.rst"
 GRAPHS_PAGE = DEVELOPMENT_DIR / "task_graph/graphs.rst"
 TASK_EXECUTORS_PAGE = DEVELOPMENT_DIR / "task_graph/task_executors.rst"
 RUNNING_FROM_A_CLI_PAGE = DEVELOPMENT_DIR / "task_graph/running_from_a_cli.rst"
 NAMED_CLUSTERS_PAGE = DEVELOPMENT_DIR / "task_graph/named_clusters.rst"
+BINNING_API_PAGE = DEVELOPMENT_DIR / "binning/api.rst"
 
 # Pages whose API section is not rolled out yet, as paths relative to
 # DEVELOPMENT_DIR, for example "resources/<page>.rst". The slice of a page
@@ -382,6 +384,18 @@ def test_named_clusters_page_outline_matches_the_client_functions() -> None:
     assert _page_key(NAMED_CLUSTERS_PAGE) not in NOT_ROLLED_OUT
 
 
+def test_binning_api_page_documents_each_exported_name() -> None:
+    """The binning API page documents each name of ``gain.binning``."""
+    page = read_docs_page(BINNING_API_PAGE)
+
+    documented = [obj.__name__ for obj in page_classes(page)] + [
+        obj.__name__ for obj in page_functions(page)]
+
+    assert sorted(documented) == sorted(binning.__all__)
+    assert not page_problems(page)
+    assert _page_key(BINNING_API_PAGE) not in NOT_ROLLED_OUT
+
+
 def test_every_page_with_an_autoclass_is_rolled_out_or_skipped() -> None:
     """Each page with an autoclass or autofunction passes, or is skipped."""
     read_docs_page(GENE_MODELS_PAGE)
@@ -600,16 +614,16 @@ def test_unknown_name_is_reported() -> None:
     assert "Exon.no_such_method" in problems[0]
 
 
-def test_pages_are_collected_from_both_directories(tmp_path: Path) -> None:
-    """A page under ``task_graph/`` is collected with the resource pages."""
-    for directory in ("resources", "task_graph", "annotators"):
+def test_pages_are_collected_from_each_directory(tmp_path: Path) -> None:
+    """A page under each directory of ``PAGE_DIRS`` is collected."""
+    for directory in ("resources", "task_graph", "binning", "annotators"):
         (tmp_path / directory).mkdir()
         (tmp_path / directory / "page.rst").write_text("Page\n====\n")
 
     pages = collect_pages(tmp_path)
 
     assert [_page_key(path, tmp_path) for path in pages] == [
-        "resources/page.rst", "task_graph/page.rst"]
+        "binning/page.rst", "resources/page.rst", "task_graph/page.rst"]
 
 
 def test_missing_docs_page_fails(tmp_path: Path) -> None:
