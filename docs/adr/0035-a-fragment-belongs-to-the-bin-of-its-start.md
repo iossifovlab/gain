@@ -12,7 +12,9 @@
   [gain#1759](https://github.com/iossifovlab/gain/issues/1759) (raw-value grouping),
   [gain#1742](https://github.com/iossifovlab/gain/issues/1742) (the docs and this record),
   [gain#1793](https://github.com/iossifovlab/gain/issues/1793) (the amendment: the
-  `value` / `aggregate` keys and the fragment-count default);
+  `value` / `aggregate` keys and the fragment-count default),
+  [gain#2344](https://github.com/iossifovlab/gain/issues/2344) (the amendment: a
+  resource without a `sample_id` label);
   content [grr_nygc_single_cell_demo#3](https://github.com/iossifovlab/grr_nygc_single_cell_demo/issues/3)
 - **Design:** `seqpipe/genomics-toolbox`
   `docs/2026-09-30-gain-fragment-binner-design.md` (decisions F1–F21). The
@@ -163,6 +165,21 @@ id with a quote in it must not change the query's meaning. There is no
 fallback to the unfiltered table when a label is missing; a missing label is
 an error.
 
+**Amended by #2344 (2026-11-10): a resource without a `sample_id` label reads
+the whole table.** A merged multi-sample fragment file, such as
+`summary/galvao2024Multimodal/atac_fragments` of the demo GRR, holds the
+cells of several samples and has no single sample to filter by. A default
+entry must bin such a file as it is published, without an explicit `meta`.
+So when an entry has no `meta` and no resource of the job carries
+`sample_id`, the omitted `meta` is `{resource_label: cell_meta_resource_id}`
+without a filter: the job reads every row, records `"filter": []`, and
+`--dry-run` warns once for each resource. The duplicate-barcode check then
+runs over the whole table, so a study-wide table whose raw barcodes repeat
+across samples is still refused. A pool whose resources disagree on the
+label is refused, naming both sides, as for `cell_meta_resource_id`. A
+list-valued label counts as present and stays an error. A filter that an
+entry writes keeps the refusal of a missing label.
+
 The explicit `group` / `meta` forms are always available for a table that
 predates the convention, so the binner does not depend on the demo GRR's
 adoption of it (grr_nygc_single_cell_demo#3).
@@ -187,6 +204,17 @@ every sample while naming a different cell, so the group is
 label as one value, without a `:` (so a group splits back one way only), and
 no two may share one (so two samples' cells never reach one track); each is a
 parse-time error naming the resources.
+
+**Amended by #2344 (2026-11-10): a pool without `sample_id` labels gives bare
+groups.** A merged multi-sample file has no single sample to prefix by, and
+a default entry must bin it as published. When no pooled resource carries
+`sample_id`, each group is the bare value, as in the prototype, and
+`--dry-run` warns once for each resource. This rests on an assumption:
+resources without `sample_id` carry barcodes that are already unique across
+samples, as `galvao2024Multimodal` does (`AAACCGCGTGCATTAG-1_1`). Two such
+resources with the same raw barcode reach one track. A pool whose resources
+disagree on the label is refused, naming both sides. A list-valued label
+counts as present, so a pool of list labels is refused, not bare.
 
 **Rejected: refusing pooled raw-value grouping outright.** It was the simpler
 rule — a pooled per-cell matrix is unpooled per-cell matrices side by side —
@@ -249,7 +277,8 @@ stay deferred.
   pooled job doing N times the I/O per base is visible through the dry run,
   not corrected for. Accepted for now, including for the 518-resource study.
 - **A key choosing the pooled raw-value prefix.** It is always the `sample_id`
-  label.
+  label. *Amended by #2344: a pool where no resource carries the label has no
+  prefix.*
 - **A `name:` key**, on any kind (ADR 0025, D10's reasons hold). *Amended
   by [ADR 0037](0037-a-fragment-can-be-binned-by-its-overlap-or-its-coverage.md): both binner kinds now accept a `name` key.*
 - **Per-resource aggregator overrides inside one entry.** One aggregator per
@@ -275,7 +304,9 @@ stay deferred.
   GRR's curators. Renaming a label or a column in the GRR silently changes
   which resources are grouped by default (a resource losing
   `cell_meta_resource_id` becomes an `all` track, with a warning only if it
-  has `cell` and `count`).
+  has `cell` and `count`). *Amended by #2344: a resource losing `sample_id`
+  is grouped by every row of its table, with a warning, and its pooled
+  raw-value groups lose their prefix.*
 - A per-cell matrix can be very wide, and its group set comes from
   statistics, not data: a resource whose statistics are stale bins against
   the stale value list, and fragments with values the histogram lacks are

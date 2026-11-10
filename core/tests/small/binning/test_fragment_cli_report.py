@@ -242,3 +242,30 @@ def test_a_rerun_regroups_after_its_local_table_is_edited(
         rerun = h5["values"][()]
     assert not np.array_equal(expected, first, equal_nan=True)
     np.testing.assert_array_equal(rerun, expected)
+
+
+def test_dry_run_warns_a_resource_without_sample_id_reads_every_row(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    merged = tmp_path / "merged"
+    (
+        a_grr()
+        .with_resource("genome", a_reference_genome()
+                       .with_chromosome("chr1", "A" * 100)
+                       .with_chromosome("chr2", "C" * 40))
+        .with_resource("meta/study", a_data_frame().with_raw_content(
+            "sample_id,barcode,class\nS1,AAA,T\nS2,BBB,B\n"))
+        .with_resource("frags/merged", single_cell(**{
+            CELL_META_RESOURCE_ID_LABEL: "meta/study"}))
+    ).build_repo(merged)
+    definition = run_definition(
+        tmp_path / "defs", "{resource_query: frags/merged}")
+
+    binning_tool(definition, merged, tmp_path / "bins.h5", "--dry-run")
+
+    out = capsys.readouterr().out
+    assert (
+        f"    warning: resource 'frags/merged' has no {SAMPLE_ID_LABEL!r} "
+        f"label; its fragments are grouped by every row of the cell "
+        f"metadata table\n") in out
+    assert not (tmp_path / "bins.h5").exists()

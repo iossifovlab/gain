@@ -386,9 +386,9 @@ class BoundValueGrouping:
 
     The group of a fragment of the job's ``index``-th resource is
     ``prefixes[index]`` followed by its ``group_score_id`` value -- the
-    resource's ``<sample_id>:`` in a pooled job, nothing in an unpooled
-    one -- when ``values[index]``, the values its histogram lists, has
-    that value, and none otherwise.
+    resource's ``<sample_id>:`` in a pooled job of labelled resources,
+    nothing otherwise -- when ``values[index]``, the values its
+    histogram lists, has that value, and none otherwise.
     """
 
     group_score_id: str
@@ -670,9 +670,9 @@ class ValueGrouping:
     """One track per distinct value of a ``str`` fragment score.
 
     The values are read from the full categorical histogram of the
-    score when the entry is resolved.  In a pooled entry, the group of a
-    value is ``<sample_id>:<value>``.  In an unpooled entry, the group
-    is the value.
+    score when the entry is resolved.  In a pooled entry whose resources
+    carry the ``sample_id`` label, the group of a value is
+    ``<sample_id>:<value>``.  Otherwise the group is the value.
 
     Attributes
     ----------
@@ -824,7 +824,8 @@ class MetaSource:
         return MetaTable(resource_id=value)
 
 
-#: ``meta`` omitted under a metadata grouping: the convention's table.
+#: ``meta`` omitted under a metadata grouping: the convention's table,
+#: when the job's resources carry the ``sample_id`` label.
 CONVENTION_META = MetaSource(
     resource_label=CELL_META_RESOURCE_ID_LABEL,
     filters=(MetaFilter(SAMPLE_ID_COLUMN, label=SAMPLE_ID_LABEL),))
@@ -1285,18 +1286,19 @@ def _value_groups(
 
 def _resolve_value_grouping(
     label: str, score_id: str, aggregated_score: str | None,
-    resources: list[GenomicResource], *, pool: bool,
+    resources: list[GenomicResource], *, prefixed: bool,
 ) -> tuple[BoundValueGrouping, list[str]]:
     """Resolve one job's raw-value grouping, and its sorted groups.
 
-    Pooled, each resource's groups are prefixed with its
-    :data:`SAMPLE_ID_LABEL` label, which each must carry, without a
-    ``:``, so that a group name splits back one way only, and no two
-    may share, so that two resources' cells never reach one track.
+    ``prefixed``, each resource's groups are prefixed with its
+    :data:`SAMPLE_ID_LABEL` label, which each must carry as one value,
+    without a ``:``, so that a group name splits back one way only, and
+    no two may share, so that two resources' cells never reach one
+    track.  Otherwise each group is the bare value.
     """
     group_label = f"{label}.group"
     prefixes = [""] * len(resources)
-    if pool:
+    if prefixed:
         prefixes = _pooled_prefixes(group_label, resources)
     values = [
         _resource_value_groups(
@@ -1335,9 +1337,9 @@ def _refuse_unlabelled_samples(
         raise RunDefinitionError(
             f"{group_label}: a pooled {VALUE_GROUP_KEY} grouping "
             f"prefixes each group with the resource's "
-            f"{SAMPLE_ID_LABEL!r} label, which {_quoted(unlabelled)} "
-            f"do not carry as one value; label them, or give "
-            f"pool: false")
+            f"{SAMPLE_ID_LABEL!r} label, which must be one value, and "
+            f"{_quoted(unlabelled)} carry a list or an empty one; "
+            f"relabel them, or give pool: false")
 
 
 def _refuse_coloned_samples(
