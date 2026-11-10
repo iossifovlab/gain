@@ -1,8 +1,10 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import contextlib
+import gc
 import json
 import logging
 import textwrap
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -1013,6 +1015,23 @@ def test_validate_refuses_a_request_with_no_config(
     assert response.status_code == 400
 
 
+def _post_deeply_nested_config(client: Client) -> Any:
+    """Post a config nested deep enough to exhaust the stack.
+
+    The cyclic collector stays off for the request (#2354). A collection at
+    the deepest frame can run a ``__del__`` with no stack left, and the
+    pytest unraisable hook then fails at the same depth.
+    """
+    gc.disable()
+    try:
+        return client.post(
+            "/api/pipelines/validate",
+            {"config": "[" * 2000 + "]" * 2000},
+        )
+    finally:
+        gc.enable()
+
+
 @pytest.mark.django_db
 def test_validate_survives_deeply_nested_yaml(
     anonymous_client: Client,
@@ -1022,11 +1041,59 @@ def test_validate_survives_deeply_nested_yaml(
     which is not a ``YAMLError``, so counting annotators before the view's
     own error handling has to catch it too.
     """
-    response = anonymous_client.post(
-        "/api/pipelines/validate",
-        {"config": "[" * 2000 + "]" * 2000},
-    )
+    response = _post_deeply_nested_config(anonymous_client)
 
+    assert response.status_code == 200
+    assert response.json()["errors"]
+
+
+class _FinalizerGarbage:
+    """Cyclic garbage whose ``__del__`` allocates more of itself.
+
+    While armed, each finalizer plants the next object, so a collection at
+    any depth of the parse finds garbage to finalize. At the deepest frame
+    the allocation raises ``RecursionError``. The finalizer disarms there,
+    so the test reports one unraisable exception, as CI did (#2354).
+    """
+
+    armed = False
+
+    def __init__(self) -> None:
+        self.me = self
+
+    def __del__(self) -> None:
+        if not _FinalizerGarbage.armed:
+            return
+        try:
+            _FinalizerGarbage()
+        except RecursionError:
+            _FinalizerGarbage.armed = False
+            raise
+
+
+@pytest.mark.django_db
+def test_validate_survives_deeply_nested_yaml_with_cyclic_garbage(
+    anonymous_client: Client,
+) -> None:
+    """A collection at the deepest frame of the parse must not run.
+
+    Earlier tests on the xdist worker can leave cyclic garbage with a
+    ``__del__``. Without the guard, ``gc.set_threshold(1)`` makes the
+    collector finalize it at the recursion limit, and the pytest hook fails
+    with ``RuntimeError: Failed to process unraisable exception``.
+    """
+    old_threshold = gc.get_threshold()
+    _FinalizerGarbage()
+    _FinalizerGarbage.armed = True
+    gc.set_threshold(1)
+    try:
+        response = _post_deeply_nested_config(anonymous_client)
+    finally:
+        _FinalizerGarbage.armed = False
+        gc.set_threshold(*old_threshold)
+
+    assert gc.isenabled()
+    assert gc.get_threshold() == old_threshold
     assert response.status_code == 200
     assert response.json()["errors"]
 
