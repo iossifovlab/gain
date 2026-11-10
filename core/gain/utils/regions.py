@@ -628,7 +628,7 @@ def _subtract_contained(
                 reg_a.chrom, prev,
                 coalesce(regions_b[k].start, 1) - 1)
             result.append(new_a)
-        prev = coalesce(regions_b[k].stop, 1) + 1
+        prev = coalesce(regions_b[k].stop, MAX_POSITION) + 1
         k += 1
     return k, prev
 
@@ -644,8 +644,6 @@ def _diff(
             result.append(reg_a)
             continue
         k, prev = _subtract_contained(reg_a, regions_b, k, result)
-        if k < len(regions_b) and regions_b[k].chrom != reg_a.chrom:
-            continue
         if prev <= coalesce(reg_a.stop, MAX_POSITION):
             result.append(Region(reg_a.chrom, prev, reg_a.stop))
 
