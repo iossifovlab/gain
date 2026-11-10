@@ -31,7 +31,10 @@ import h5py
 import numpy as np
 import pytest
 from gain.binning.binners import BinningJob, discover_binner_kinds
-from gain.binning.fragment_binner import FragmentScoreBinding
+from gain.binning.fragment_binner import (
+    FragmentBinningJob,
+    FragmentScoreBinding,
+)
 from gain.binning.run_definition import (
     RunDefinition,
     RunDefinitionError,
@@ -48,7 +51,7 @@ from gain.genomic_resources.testing.builders import (
 )
 from gain.utils.regions import BedRegion
 
-from tests.small.binning.conftest import S1_FRAGMENTS
+from tests.small.binning.conftest import S1_FRAGMENTS, S2_FRAGMENTS
 from tests.small.binning.test_binning_tool_cli import binning_tool
 
 BIN_SIZE = 10
@@ -247,14 +250,20 @@ def many_cells(*, categorical: bool) -> Any:
 
 
 @pytest.mark.parametrize("resources,fragments", [
-    # One resource of a pool without the label, or every one.
+    # A pool that mixes resources with and without the label.
     ((("frags/a", cells(sample_id="S1")), ("frags/b", cells())),
-     ["'frags/b' do not", "'sample_id'", "pool: false"]),
-    ((("frags/a", cells()),), ["'frags/a' do not", "'sample_id'"]),
-    # A list label is not one value: no "['S1', 'S2']:" prefix.
+     ["'frags/a' carry it", "'frags/b' do not", "'sample_id'",
+      "pool: false"]),
+    # A list label is not one value: no "['S1', 'S2']:" prefix.  It
+    # counts as carried, so no pool of lists falls back to bare groups.
     ((("frags/a", cells(sample_id="S1")),
       ("frags/b", cells(sample_id=["S1", "S2"]))),
-     ["'frags/b' do not", "'sample_id'", "one value"]),
+     ["'frags/b'", "'sample_id'", "one value"]),
+    ((("frags/a", cells(sample_id=["S1", "S2"])),
+      ("frags/b", cells(sample_id=["S3"]))),
+     ["'frags/a'", "'frags/b'", "'sample_id'", "one value"]),
+    ((("frags/a", cells(sample_id=["S1", "S2"])), ("frags/b", cells())),
+     ["'frags/a' carry it", "'frags/b' do not"]),
 ])
 def test_a_pooled_resource_without_its_sample_id_label_is_refused(
     tmp_path: pathlib.Path, genome: ReferenceGenome,
@@ -267,6 +276,38 @@ def test_a_pooled_resource_without_its_sample_id_label_is_refused(
 
     for fragment in fragments:
         assert fragment in message
+
+
+def test_a_pool_without_sample_id_labels_has_bare_shared_groups(
+    tmp_path: pathlib.Path, genome: ReferenceGenome,
+) -> None:
+    # AAA is in both resources, and is one track.
+    repo = stats_grr(
+        tmp_path, ("frags/a", cells()),
+        ("frags/b", cells().with_data(S2_FRAGMENTS)))
+
+    run = parse({"resource_query": "frags/*", "group": BY_CELL},
+                repo, genome)
+
+    assert [t.group for t in run.tracks] == [
+        "AAA", "BBB", "CCC", "DDD", "EEE"]
+    (job,) = run.jobs
+    assert isinstance(job, FragmentBinningJob)
+    assert job.warnings == tuple(
+        f"resource {r!r} has no 'sample_id' label; its groups are bare "
+        f"values, not prefixed with a sample"
+        for r in ("frags/a", "frags/b"))
+    unpooled = parse(
+        {"resource_query": "frags/*", "group": BY_CELL, "pool": False},
+        repo, genome).jobs
+    # Bare groups are the normal unpooled behaviour, not a fallback.
+    assert [
+        single.warnings for single in unpooled
+        if isinstance(single, FragmentBinningJob)] == [(), ()]
+    (a_counts, b_counts) = (
+        bin_job(single, CHR1, repo) for single in unpooled)
+    np.testing.assert_array_equal(
+        bin_job(job, CHR1, repo)[:, 0], a_counts[:, 0] + b_counts[:, 0])
 
 
 def test_a_pooled_sample_id_with_a_colon_is_refused(

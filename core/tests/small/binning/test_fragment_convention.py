@@ -404,22 +404,19 @@ def test_a_barcode_twice_in_a_resource_s_rows_is_refused(
     assert "'BBB'" not in message
 
 
-@pytest.mark.parametrize("labels,fragments_", [
-    ({}, ["'frags/s1'", f"no label {SAMPLE_ID_LABEL!r}"]),
-    ({SAMPLE_ID_LABEL: ["S1", "S2"]},
-     ["'frags/s1'", f"label {SAMPLE_ID_LABEL!r} is a list"]),
-])
-def test_a_filter_label_absent_or_a_list_is_refused_naming_the_resource(
+def test_a_filter_label_that_is_a_list_is_refused_naming_the_resource(
     tmp_path: pathlib.Path, genome: ReferenceGenome,
-    labels: dict[str, Any], fragments_: list[str],
 ) -> None:
+    # A resource without the label reads every row instead: see
+    # test_fragment_sample_fallback.
+    listed: dict[str, Any] = {SAMPLE_ID_LABEL: ["S1", "S2"]}
     repo = build_repo(tmp_path, ("frags/s1", fragments(
-        **META_LABELS, **labels)))
+        **META_LABELS, **listed)))
 
     message = refusal({"resource_query": "frags/s1"}, repo, genome)
 
-    for fragment in fragments_:
-        assert fragment in message
+    assert "'frags/s1'" in message
+    assert f"label {SAMPLE_ID_LABEL!r} is a list" in message
 
 
 def test_a_pool_across_label_tiers_is_refused_naming_each_side(

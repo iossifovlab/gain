@@ -285,7 +285,7 @@ Besides ``resource_query`` and ``search_term``, an entry takes these keys:
     selects every row. A label whose value is a list cannot be a filter
     operand. ``meta`` goes only with the metadata form of ``group`` (or
     with no ``group`` on a resource the convention groups). Without it,
-    the convention's table is read.
+    the convention's table is read (see `The single-cell convention`_).
 
 There is no ``none_value_replacement`` key on this kind. In the
 ``fragment_length`` and ``coverage_profile`` modes, ``uncovered_value``
@@ -562,10 +562,19 @@ rows whose ``sample_id`` column equals the resource's ``sample_id`` label —
 spelled out, ``{resource_label: cell_meta_resource_id, filter: [{column:
 sample_id, label: sample_id}]}``.
 
+A merged multi-sample fragment file has no single sample, and so no
+``sample_id`` label. When no resource of a job carries ``sample_id``, the
+default ``meta`` has no filter, ``{resource_label: cell_meta_resource_id}``:
+the job reads every row of the table, and ``--dry-run`` warns once for each
+resource. The table then needs no ``sample_id`` column, and its barcodes
+must be unique across the whole table.
+
 All of it is checked before any work runs, with an error naming the entry
 and the resource: the label exists and names a ``data_frame`` resource the
 repository has; the table has the columns the entry uses; every filter
-label exists on the resource; no barcode occurs on two of one resource's
+label exists on the resource and has one value, except that the default
+``meta`` drops its filter when no resource of the job carries
+``sample_id``; no barcode occurs on two of one resource's
 selected rows; and the selected rows name at least one group. A table that
 predates the convention is used through the explicit ``group`` and
 ``meta`` keys.
@@ -589,7 +598,9 @@ read pairs behind each fragment are summed only on request, with ``value:
 
 A pooled entry is one job reading one table, so its resources must agree:
 on whether they carry ``cell_meta_resource_id`` (when ``group`` is
-omitted), and on the one metadata table their ``meta`` names. Resources
+omitted), on whether they carry ``sample_id`` (when ``meta`` is omitted,
+and for a pooled raw-value grouping), and on the one metadata table their
+``meta`` names. Resources
 that disagree are an error listing both sides; give the setting
 explicitly, or ``pool: false``.
 
@@ -650,9 +661,16 @@ grouping score may not be the ``value`` score.
 Unpooled, a track's group is the bare value. Pooled, the same barcode
 recurs in every 10x sample while naming a different cell, so the group is
 prefixed with the resource's ``sample_id`` label, ``<sample_id>:<value>``.
-Every pooled resource must therefore carry a ``sample_id`` label of one
+When pooled resources carry ``sample_id``, each must carry a label of one
 value, without a ``:``, and no two pooled resources may share one; any of
 these is an error naming the resources, which suggests ``pool: false``.
+
+When no pooled resource carries ``sample_id``, each group is the bare
+value, and ``--dry-run`` warns once for each resource. This suits a merged
+multi-sample file whose barcodes are already unique across its samples. The
+same value in two resources reaches one track. A pool where some resources
+carry ``sample_id`` and some do not is an error naming both sides. A
+``sample_id`` label that is a list counts as carried, and is an error.
 
 Mind the size before running: a per-cell matrix has one column per cell,
 which is thousands of columns per sample, and the full histogram of a
@@ -713,7 +731,9 @@ Every track has a name, and names in the output are always unique.
   which is the one name every pooled entry has — for example
   ``sc/atac_fragments/*:ODC``. Grouped by a raw value, the group carries
   its sample, so a pooled track is
-  ``<resource_query>:<sample_id>:<value>``.
+  ``<resource_query>:<sample_id>:<value>``, or
+  ``<resource_query>:<value>`` when no pooled resource carries
+  ``sample_id``.
 
 An entry's ``name`` key replaces the base of these names. Without
 ``name``, the names are as above.
@@ -1005,9 +1025,10 @@ structural-variant collection, whose records are intervals. It is grouped by
 the raw value of its ``deletion_duplication`` score, whose statistics list
 two values, ``deletion`` and ``duplication``, so it makes two tracks.
 Without ``value`` and ``aggregate``, each track counts the variants that
-start in each bin. A single resource carries no
-``sample_id`` label, so the entry sets ``pool: false`` and the groups are
-the bare values.
+start in each bin. The resource carries no ``sample_id`` label, so its
+groups are the bare values. The entry sets ``pool: false``, so its track
+names start with the resource id, and ``--dry-run`` gives no warning about
+the missing label.
 
 Check what the run would produce first:
 

@@ -31,9 +31,9 @@ An entry's keys:
   score ``S``, read when the entry is resolved from the score's full
   categorical histogram (its statistics must be built and pulled).
   Pooled, a value's group is ``<sample_id>:<value>``, by the resource's
-  :data:`SAMPLE_ID_LABEL` label, which every pooled resource must carry,
-  each its own, since one barcode recurs in every sample; unpooled, the
-  bare value.
+  :data:`SAMPLE_ID_LABEL` label, each its own, since one barcode recurs
+  in every sample; when no pooled resource carries the label, the bare
+  value, with a warning for each resource.  Unpooled, the bare value.
   The forms do not mix, and ``meta`` does not go with the last.
   Omitted, the resource's labels decide: a resource carrying
   :data:`CELL_META_RESOURCE_ID_LABEL` is grouped as with ``group: {}``,
@@ -64,11 +64,15 @@ An entry's keys:
   every row.  Omitted under a metadata grouping, ``meta`` is the
   convention's: the table the :data:`CELL_META_RESOURCE_ID_LABEL` label
   names, its :data:`SAMPLE_ID_COLUMN` rows equal to the
-  :data:`SAMPLE_ID_LABEL` label.
+  :data:`SAMPLE_ID_LABEL` label; when no resource of the job carries that
+  label, every row of the table, with a warning for each resource.
 
 A pooled entry resolves to one job, so its resources must agree: on
 whether they carry :data:`CELL_META_RESOURCE_ID_LABEL` (when ``group``
-is omitted), and on the one metadata table their ``meta`` names.
+is omitted), on whether they carry :data:`SAMPLE_ID_LABEL` (when
+``meta`` is omitted, and for a raw-value grouping), and on the one
+metadata table their ``meta`` names.  A list-valued
+:data:`SAMPLE_ID_LABEL` counts as carried, and is an error.
 
 A fragment whose barcode is not in the filtered rows, or whose row's
 group is empty, or whose ``group_score_id`` value is missing or is one
@@ -677,14 +681,16 @@ class FragmentScoreBinner:
         """Resolve the defaults and the grouping of one job's resources."""
         resource_ids = tuple(r.resource_id for r in resources)
         group = entry.group
+        warnings: list[str] = []
         if isinstance(group, ValueGrouping):
             value_grouping, value_groups = _resolve_value_grouping(
                 label, group.score_id, _score_id(entry), resources,
-                pool=entry.pool)
+                prefixed=entry.pool and _sample_tier(
+                    f"{label}.group", resources, warnings, _BARE_VALUES,
+                    "give pool: false"))
             return cls._job_of(
                 resource_ids, entry, value_grouping, value_groups,
-                base=base, warnings=())
-        warnings: list[str] = []
+                base=base, warnings=tuple(warnings))
         if group is None:
             group = _label_tier(label, resources, warnings)
         grouping: BoundCellGrouping | None = None
@@ -831,11 +837,18 @@ def _cell_grouping(
 ) -> tuple[BoundCellGrouping, list[str]]:
     """Resolve a cell grouping and its sorted groups.
 
-    Adds a warning when the cell metadata table is a local file.
+    Without a ``meta``, the convention's table is filtered by the
+    ``sample_id`` label, or read whole when no resource carries the
+    label (see ``_sample_tier``).  Adds a warning when the cell
+    metadata table is a local file.
     """
+    meta = entry.meta
+    if meta is None:
+        meta = CONVENTION_META if _sample_tier(
+            label, resources, warnings, _EVERY_ROW,
+            "give an explicit meta, or pool: false") else _UNFILTERED_META
     grouping, groups_of = _resolve_grouping(
-        label, dataclasses.asdict(cell), entry.meta or CONVENTION_META,
-        resources, tables)
+        label, dataclasses.asdict(cell), meta, resources, tables)
     groups = sorted(set[str]().union(*groups_of.values()))
     if not groups:
         raise RunDefinitionError(
@@ -846,3 +859,42 @@ def _cell_grouping(
             f"the cell metadata table {grouping.table.name!r} is a "
             f"local file; the run is not reproducible elsewhere")
     return grouping, groups
+
+
+#: ``meta`` omitted on resources without a ``sample_id`` label: the
+#: convention's table, every row of it.
+_UNFILTERED_META = dataclasses.replace(CONVENTION_META, filters=())
+#: What a fallback of :func:`_sample_tier` does, for its warning.
+_EVERY_ROW = (
+    "its fragments are grouped by every row of the cell metadata table")
+_BARE_VALUES = (
+    "its groups are bare values, not prefixed with a sample")
+
+
+def _sample_tier(
+    label: str, resources: list[GenomicResource], warnings: list[str],
+    fallback: str, remedy: str,
+) -> bool:
+    """Whether a job's resources carry the ``sample_id`` label.
+
+    ``False`` when none carries it, with one warning for each resource
+    that says what the ``fallback`` does instead.  A list label counts
+    as carried, so a later check refuses it.  A pool where some carry it
+    and some do not is refused, the refusal offering ``remedy``.
+    """
+    carried, lacking = _partition(
+        resources,
+        lambda r: r.get_labels().get(SAMPLE_ID_LABEL) is not None)
+    if carried and lacking:
+        raise RunDefinitionError(
+            f"{label}: the pooled resources disagree on the label "
+            f"{SAMPLE_ID_LABEL!r}: {_quoted(carried)} carry it and "
+            f"{_quoted(lacking)} do not; label them all or none, "
+            f"or {remedy}")
+    if carried:
+        return True
+    warnings.extend(
+        f"resource {r.resource_id!r} has no {SAMPLE_ID_LABEL!r} label; "
+        f"{fallback}"
+        for r in resources)
+    return False
