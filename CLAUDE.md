@@ -105,12 +105,12 @@ cd info_pages_e2e && npm ci && npx playwright test
 CI runs **ruff + mypy + pylint** on each package *and its `scripts/`* (plus eslint + stylelint for `web_ui`); any finding from any of them marks the build UNSTABLE. Run all three from `core/`, as CI does (its WORKDIR is `/workspace/core`):
 
 ```bash
-cd core && ruff check --fix . ../scripts
-cd core && mypy --config-file ../mypy.ini gain tests ../scripts
-cd core && pylint --rcfile=../pylintrc gain ../scripts
+cd core && uv run --no-sync ruff check --fix . ../scripts
+cd core && uv run --no-sync mypy --config-file ../mypy.ini gain tests ../scripts
+cd core && uv run --no-sync pylint --rcfile=../pylintrc gain ../scripts
 ```
 
-- The repo-root `scripts/` belongs to no project, so the `core` stage carries it. For the other projects run the package *and* `scripts` from the project directory, e.g. `cd spliceai_annotator && mypy spliceai_annotator scripts` and `pylint --rcfile=pylintrc spliceai_annotator scripts` (#1327).
+- The repo-root `scripts/` belongs to no project, so the `core` stage carries it. For the other projects run the package *and* `scripts` from the project directory, e.g. `cd spliceai_annotator && uv run --no-sync mypy spliceai_annotator scripts` and `uv run --no-sync pylint --rcfile=pylintrc spliceai_annotator scripts` (#1327).
 - cwd matters: `mypy gain` reads `gain` as a path and fails from the root, and without `--config-file ../mypy.ini` it silently falls back to defaults looser than CI's (there is no `core/mypy.ini`). `pylint gain` reads an installed module and works from either. Run mypy from the project directory specifically: elsewhere the package resolves to the installed distribution, which ships no `py.typed`, and reports `import-untyped`.
 - Pylint-only catch ruff and mypy miss: `C0103` on a module-level `UPPER_CASE` constant that is reassigned (e.g. in `try`/`except`); assign such constants once.
 - Install the hooks with `cp pre-commit pre-push .git/hooks/`. pre-commit runs `ruff check` on staged `.py` files only, at the version `uv.lock` pins (via `uvx`, no venv needed). An installed hook changes only after you copy it into `.git/hooks/` again. pre-push runs ruff over the **whole tree** at the version `uv.lock` pins (via `uvx`, no venv needed) and refuses the push on any finding; it is ruff only, so pylint's whole-tree invariants (the module line cap below) stay yours to re-check.
@@ -131,7 +131,7 @@ cp pre-commit pre-push "$(git rev-parse --git-path hooks)/"
 - If the hooks are already installed, skip the `cp`. The `cp` replaces the hooks of every checkout of the clone with the copies of the current branch.
 - Check the pytest version: `uv run --no-sync pytest --version` must print the version of `pytest` in `uv.lock`. If it does not, run the `uv sync` command again.
 - Do not reuse the `.venv` of the main checkout. Its editable install points at the main checkout, not at the worktree.
-- Run the pytest commands and the lint commands of the blocks above with the venv of the worktree. Prefix each tool with `uv run --no-sync`, for example `cd core && uv run --no-sync ruff check --fix . ../scripts`. Or run `source ../.venv/bin/activate` in `core/` first.
+- Run the pytest commands of the blocks above with the venv of the worktree. Prefix each `pytest` with `uv run --no-sync`, for example `cd core && uv run --no-sync pytest tests/small -q`. Or run `source ../.venv/bin/activate` in `core/` first. The commands of the lint block already carry the prefix.
 
 To check that the setup is complete, run the info-pages tests. They fail when the mini-GRR submodule is not checked out:
 
