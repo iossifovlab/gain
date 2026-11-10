@@ -22,7 +22,8 @@
 {% endif %}
 {% endif %}
 
-{% if data["global_statistic"]["length"] is none %}
+{% set statistics_missing = data["global_statistic"]["length"] is none %}
+{% if statistics_missing %}
 <p>Statistics not computed.</p>
 {% endif %}
 
@@ -39,7 +40,7 @@
             </tr>
             <tr>
                 <th>Global</th>
-                {% if data["global_statistic"]["length"] is none %}
+                {% if statistics_missing %}
                 <td></td>
                 {% else %}
                 <td>{{ '{:,}'.format(data["global_statistic"]["length"]) }}</td>
@@ -61,7 +62,7 @@
         {%- endfor -%}
     </table>
 </div>
-{% if data["global_statistic"]["length"] is not none %}
+{% if not statistics_missing %}
     <h3>Bi-Nucleotide distribution:</h3>
     <table style="width: fit-content;">
         <tr>
