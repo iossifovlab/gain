@@ -41,8 +41,22 @@ from gain.utils.regions import (
             [Region("1", None, 20)], [Region("1", 1, 30)],
             [Region("1", None, 20)],
         ),
+        # An open start in the first list, before a closed start on the
+        # same chrom. The open start sorts first.
+        (
+            [Region("1", None, 10), Region("1", 20, 30)],
+            [Region("1", 5, 25)],
+            [Region("1", 5, 10), Region("1", 20, 25)],
+        ),
         # An open start in the second list
         ([Region("1", 5, 20)], [Region("1", None, 10)], [Region("1", 5, 10)]),
+        # An open start in the second list, before a closed start on the
+        # same chrom. The open start sorts first.
+        (
+            [Region("1", 5, 25)],
+            [Region("1", None, 10), Region("1", 20, 30)],
+            [Region("1", 5, 10), Region("1", 20, 25)],
+        ),
         # An open stop in the first list
         ([Region("1", 10, None)], [Region("1", 5, 20)], [Region("1", 10, 20)]),
         # An open stop in the second list, against an open start
