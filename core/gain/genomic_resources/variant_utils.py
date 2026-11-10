@@ -79,6 +79,25 @@ def _trim_left(
     return pos, ref, alts
 
 
+def _is_novariant(ref: str, alts: list[str]) -> bool:
+    """Return True when every alt equals the one-base ref."""
+    return len(ref) == 1 and all(alt == ref for alt in alts)
+
+
+def _has_ambiguous_pair(ref: str, alts: list[str]) -> bool:
+    """Check if a neighbouring pair of alleles is a prefix or suffix pair.
+
+    Each pair of neighbours in ``[ref, *alts]`` is checked. The pair is
+    ambiguous when the shorter allele is a prefix or a suffix of the
+    longer one.
+    """
+    for (s1, s2) in itertools.pairwise([ref, *alts]):
+        short, long = (s2, s1) if len(s1) > len(s2) else (s1, s2)
+        if long.startswith(short) or long.endswith(short):
+            return True
+    return False
+
+
 def maximally_extend_variant(
     chrom: str,
     pos: int,
@@ -86,8 +105,14 @@ def maximally_extend_variant(
     alts: list[str],
     genome: ReferenceGenome,
 ) -> tuple[str, int, str, list[str]]:
-    """Maximally extend a variant."""
+    """Maximally extend a variant.
+
+    A no-variant (every alt equal to the one-base ref after normalization)
+    comes back as normalized, with no extension.
+    """
     chrom, pos, ref, alts = normalize_variant(chrom, pos, ref, alts, genome)
+    if _is_novariant(ref, alts):
+        return chrom, pos, ref, alts
     if not all(alt[0] == ref[0] for alt in alts):
         left = genome.get_sequence(chrom, pos - 1, pos - 1)
         pos -= 1
@@ -97,19 +122,10 @@ def maximally_extend_variant(
         right = genome.get_sequence(chrom, pos + len(ref), pos + len(ref))
         ref = f"{ref}{right}"
         alts = [f"{alt}{right}" for alt in alts]
-    while True:
-        changed = False
-        for (s1, s2) in itertools.pairwise([ref, *alts]):
-            if len(s1) > len(s2):
-                s1, s2 = s2, s1
-            if s2.startswith(s1) or s2.endswith(s1):
-                right = genome.get_sequence(
-                    chrom, pos + len(ref), pos + len(ref))
-                if right:
-                    ref = f"{ref}{right}"
-                    alts = [f"{alt}{right}" for alt in alts]
-                    changed = True
-                break
-        if not changed:
+    while _has_ambiguous_pair(ref, alts):
+        right = genome.get_sequence(chrom, pos + len(ref), pos + len(ref))
+        if not right:
             break
+        ref = f"{ref}{right}"
+        alts = [f"{alt}{right}" for alt in alts]
     return chrom, pos, ref, alts

@@ -196,13 +196,43 @@ def test_maximally_extend_variant(
     assert malts == ealts
 
 
-def test_maximally_extend_a_novariant_extends_to_the_chromosome_end(
+def test_maximally_extend_a_novariant_returns_it_unchanged(
         normalize_genome_2: ReferenceGenome) -> None:
-    # A no-variant (REF equal to ALT, one base) is the only input that
-    # skips the extension to the right after normalization.  Today the
-    # function then extends it to the end of the chromosome.  This test
-    # pins the behavior of today: gain#2296 decides the right result.
     with normalize_genome_2.open() as genome:
         result = maximally_extend_variant("1", 8, "C", ["C"], genome)
 
-    assert result == ("1", 8, "CACAGGG", ["CACAGGG"])
+    assert result == ("1", 8, "C", ["C"])
+
+
+def test_maximally_extend_a_variant_that_normalizes_to_a_novariant(
+        normalize_genome_2: ReferenceGenome) -> None:
+    with normalize_genome_2.open() as genome:
+        result = maximally_extend_variant("1", 8, "CA", ["CA"], genome)
+
+    assert result == ("1", 8, "C", ["C"])
+
+
+@pytest.mark.parametrize("ref,alts", [
+    ("C", ["C"]),
+    ("CA", ["CA"]),
+])
+def test_maximally_extend_a_novariant_reads_no_sequence_after_normalize(
+        normalize_genome_2: ReferenceGenome,
+        monkeypatch: pytest.MonkeyPatch,
+        ref: str, alts: list[str]) -> None:
+    with normalize_genome_2.open() as genome:
+        calls: list[tuple[str, int, int]] = []
+        get_sequence = genome.get_sequence
+
+        def counting_get_sequence(chrom: str, start: int, stop: int) -> str:
+            calls.append((chrom, start, stop))
+            return get_sequence(chrom, start, stop)
+
+        monkeypatch.setattr(genome, "get_sequence", counting_get_sequence)
+        normalize_variant("1", 8, ref, alts, genome)
+        normalize_calls = list(calls)
+        calls.clear()
+
+        maximally_extend_variant("1", 8, ref, alts, genome)
+
+    assert calls == normalize_calls
