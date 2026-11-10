@@ -1,4 +1,4 @@
-# pylint: disable=W0621,C0114,C0116,W0212,W0613
+# pylint: disable=C0116
 """``fragment_score_binner`` on resources without a ``sample_id`` label.
 
 A merged multi-sample fragment file has no single sample.  Without a
