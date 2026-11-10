@@ -17,7 +17,6 @@ from gain.utils.regions import (
     Region,
     _diff,
     all_regions_from_chrom,
-    bedfile2regions,
     calc_bin_begin,
     calc_bin_end,
     calc_bin_index,
@@ -28,7 +27,6 @@ from gain.utils.regions import (
     difference,
     get_chromosome_length_tabix,
     intersection,
-    regions2bedfile,
     split_into_regions,
     total_length,
     union,
@@ -445,36 +443,6 @@ def test_coalesce() -> None:
     assert coalesce(5, 10) == 5
     assert coalesce(None, 10) == 10
     assert coalesce(0, 10) == 0
-
-
-def test_bedfile2regions_and_regions2bedfile(tmp_path: pathlib.Path) -> None:
-    bed_file = tmp_path / "test.bed"
-    bed_file.write_text("chr1\t0\t100\nchr2\t50\t150\n")
-
-    regions = bedfile2regions(str(bed_file))
-    assert len(regions) == 2
-    assert regions[0].chrom == "chr1"
-    assert regions[0].start == 1
-    assert regions[0].stop == 100
-    assert regions[1].chrom == "chr2"
-    assert regions[1].start == 51
-    assert regions[1].stop == 150
-
-    # Test writing back
-    output_bed = tmp_path / "output.bed"
-    regions2bedfile(regions, str(output_bed))
-    content = output_bed.read_text()
-    assert "chr1\t0\t100\n" in content
-    assert "chr2\t50\t150\n" in content
-
-
-def test_bedfile2regions_with_comments(tmp_path: pathlib.Path) -> None:
-    bed_file = tmp_path / "test.bed"
-    bed_file.write_text("# Comment line\nchr1\t0\t100\n")
-
-    regions = bedfile2regions(str(bed_file))
-    assert len(regions) == 1
-    assert regions[0].chrom == "chr1"
 
 
 @pytest.mark.parametrize(
@@ -961,47 +929,29 @@ def test_coalesce_first_is_zero() -> None:
     assert coalesce(0, 10) == 0
 
 
-def test_bedfile2regions_multiple_comments(tmp_path: pathlib.Path) -> None:
-    bed_file = tmp_path / "test.bed"
-    bed_file.write_text(
-        "# Comment 1\n# Comment 2\nchr1\t0\t100\n# Comment 3\nchr2\t50\t150\n",
-    )
-
-    regions = bedfile2regions(str(bed_file))
-    assert len(regions) == 2
-
-
-def test_regions2bedfile_single_region(tmp_path: pathlib.Path) -> None:
-    regions = [BedRegion("chr1", 1, 100)]
-    output_file = tmp_path / "output.bed"
-
-    regions2bedfile(regions, str(output_file))
-
-    content = output_file.read_text()
-    assert "chr1\t0\t100\n" in content
-
-
-def test_regions2bedfile_multiple_chroms(tmp_path: pathlib.Path) -> None:
-    regions = [
-        BedRegion("chr1", 1, 100),
-        BedRegion("chr2", 50, 150),
-        BedRegion("chrX", 1000, 2000),
-    ]
-    output_file = tmp_path / "output.bed"
-
-    regions2bedfile(regions, str(output_file))
-
-    content = output_file.read_text()
-    assert "chr1\t0\t100\n" in content
-    assert "chr2\t49\t150\n" in content
-    assert "chrX\t999\t2000\n" in content
-
-
 def test_split_into_regions_large_bin() -> None:
     # When region_size > chrom_length, should return single region
     regions = split_into_regions("chr1", 1000, 5000)
     assert len(regions) == 1
     assert regions[0] == Region("chr1", 1, 1000)
+
+
+def test_region_to_bed_region_keeps_the_bounds() -> None:
+    bed_region = Region("chr1", 5, 10).to_bed_region()
+
+    assert type(bed_region) is BedRegion
+    assert (bed_region.chrom, bed_region.start, bed_region.stop) == \
+        ("chr1", 5, 10)
+
+
+@pytest.mark.parametrize("region", [
+    Region("chr1"),
+    Region("chr1", 5, None),
+    Region("chr1", None, 10),
+])
+def test_region_to_bed_region_refuses_an_open_bound(region: Region) -> None:
+    with pytest.raises(ValueError, match="undefined start/stop"):
+        region.to_bed_region()
 
 
 def test_region_intersection_method_none_boundaries() -> None:

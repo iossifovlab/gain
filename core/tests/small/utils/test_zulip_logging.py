@@ -21,7 +21,7 @@ from urllib.parse import parse_qs
 
 import pytest
 from gain import logging
-from gain.utils.zulip_logging import ZulipHandler, zulip_logger
+from gain.utils.zulip_logging import ZulipFilter, ZulipHandler, zulip_logger
 
 BOT_EMAIL = "gain-bot@zulip.example"
 API_KEY = "s3cr3t-api-key"
@@ -846,3 +846,102 @@ def test_failed_summary_in_close_calls_handle_error_and_does_not_raise(
 
     assert _summaries(zulip_server) == [_summary(TOPIC, 1)]
     assert len(handler.errors) == 1
+
+
+def test_filter_passes_an_exception_type_without_a_value() -> None:
+    record = logging.makeLogRecord({
+        "name": "gain_test.zulip_logging",
+        "levelno": logging.ERROR,
+        "levelname": "ERROR",
+        "msg": "boom",
+        "exc_info": (ValueError, None, None),
+    })
+
+    assert ZulipFilter().filter(record)
+
+
+def _post_to_clip_test(
+    zulip_server: _CaptureServer, message: str, max_chars: int,
+) -> str:
+    logger = logging.getLogger("gain.zulip.clip_test")
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+    handler = ZulipHandler(
+        zulip_server.site, BOT_EMAIL, API_KEY, STREAM, TOPIC,
+        max_chars=max_chars)
+    logger.addHandler(handler)
+    try:
+        logger.info(message)
+    finally:
+        logger.removeHandler(handler)
+    return zulip_server.posts[0].form["content"]
+
+
+# A ``max_chars`` of 2,000 gives a title limit of 2_000 // 4 - 4 = 496.
+_CLIP_TEST_PREFIX = f"INFO {TOPIC} gain.zulip.clip_test: "
+_CLIP_TEST_LIMIT = 496
+
+
+def test_title_of_exactly_the_clip_limit_stays_whole(
+    zulip_server: _CaptureServer,
+) -> None:
+    first_line = "x" * (_CLIP_TEST_LIMIT - len(_CLIP_TEST_PREFIX))
+
+    content = _post_to_clip_test(zulip_server, first_line, 2_000)
+
+    assert content.split("\n")[0] == f"**{_CLIP_TEST_PREFIX}{first_line}**"
+
+
+def test_title_of_one_over_the_clip_limit_ends_with_dots(
+    zulip_server: _CaptureServer,
+) -> None:
+    first_line = "x" * (_CLIP_TEST_LIMIT - len(_CLIP_TEST_PREFIX) + 1)
+    kept = "x" * (_CLIP_TEST_LIMIT - len(_CLIP_TEST_PREFIX) - 3)
+
+    content = _post_to_clip_test(zulip_server, first_line, 2_000)
+
+    assert content.split("\n")[0] == f"**{_CLIP_TEST_PREFIX}{kept}...**"
+
+
+def test_clip_limit_of_zero_posts_an_empty_title_and_body(
+    zulip_server: _CaptureServer,
+) -> None:
+    # A ``max_chars`` of 16 gives a title limit of 16 // 4 - 4 = 0. The
+    # head ``****\n\n````\n`` and the tail then fill all 16 characters.
+    content = _post_to_clip_test(zulip_server, "message", 16)
+
+    assert content == "****\n\n````\n\n````"
+
+
+def test_clip_limit_of_three_posts_only_the_dots(
+    zulip_server: _CaptureServer,
+) -> None:
+    # A ``max_chars`` of 28 gives a title limit of 28 // 4 - 4 = 3.
+    content = _post_to_clip_test(zulip_server, "m", 28)
+
+    assert content == "**...**\n\n````\nm\n````"
+
+
+# The body below has 50 characters, so each cut line reads
+# ``... (cut <N> characters)\n`` with a two-digit N: 24 characters.
+_CUT_TEST_BODY = "".join(f"{i:02d}" for i in range(25))
+
+
+def test_body_budget_of_exactly_the_cut_line_holds_only_the_cut_line(
+    zulip_server: _CaptureServer,
+) -> None:
+    # A ``max_chars`` of 48 gives a title limit of 8 and the head
+    # ``**INFO ...**\n\n````\n`` of 19 characters: the budget is 24.
+    content = _post_to_clip_test(zulip_server, _CUT_TEST_BODY, 48)
+
+    assert content == "**INFO ...**\n\n````\n... (cut 50 characters)\n\n````"
+
+
+def test_body_budget_of_one_under_the_cut_line_keeps_the_body_end(
+    zulip_server: _CaptureServer,
+) -> None:
+    # A ``max_chars`` of 46 gives a title limit of 7 and the head
+    # ``**INFO...**\n\n````\n`` of 18 characters: the budget is 23.
+    content = _post_to_clip_test(zulip_server, _CUT_TEST_BODY, 46)
+
+    assert content == f"**INFO...**\n\n````\n{_CUT_TEST_BODY[-23:]}\n````"

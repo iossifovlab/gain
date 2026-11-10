@@ -96,3 +96,36 @@ def test_stats_default_0(stats_fixture: StatsCollection) -> None:
 
     stats.inc(("tttt", "tttt"))
     assert stats["tttt", "tttt"] == 1
+
+
+def test_stats_item_of_a_missing_key_is_zero(
+    stats_fixture: StatsCollection,
+) -> None:
+    assert stats_fixture["c",] == 0
+    assert stats_fixture["b", "3"] == 0
+
+
+def test_stats_prefix_with_one_longer_match_is_a_dict() -> None:
+    stats = StatsCollection()
+    stats["b", "1"] = 42
+
+    assert stats["b",] == {("b", "1"): 42}
+
+
+def test_stats_exact_key_with_longer_keys_is_a_dict(
+    stats_fixture: StatsCollection,
+) -> None:
+    stats = stats_fixture
+    stats["b",] = 7
+
+    assert stats["b",] == {
+        ("b",): 7,
+        ("b", "1"): 1,
+        ("b", "2"): 2,
+    }
+
+
+def test_stats_prefix_does_not_match_a_shorter_key(
+    stats_fixture: StatsCollection,
+) -> None:
+    assert stats_fixture["a", "x"] == 0

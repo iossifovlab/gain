@@ -60,3 +60,16 @@ def test_no_regions_is_no_bundles_whatever_the_budget() -> None:
     # invent an empty bundle for a run with nothing in it.
     assert bundle_regions([], 0) == []
     assert bundle_regions([], 50) == []
+
+
+def test_a_bundle_that_fills_the_budget_exactly_takes_no_cut() -> None:
+    # 10 + 15 and 20 + 5 each fill the budget of 25 exactly. A region
+    # opens a new bundle only when the total would exceed the budget.
+    regions = [
+        BedRegion("chr1", 1, 10), BedRegion("chr2", 1, 15),
+        BedRegion("chr3", 1, 20), BedRegion("chr4", 1, 5),
+    ]
+
+    bundles = bundle_regions(regions, 25)
+
+    assert bundles == [regions[:2], regions[2:]]
