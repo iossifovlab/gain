@@ -26,8 +26,9 @@ A notebook works with ``gain.binning`` in four steps:
 
 The package has two limits. Python does not run a binning: only
 ``binning_tool`` writes the file of a run. Only the ``fragment_score_binner``
-entries have spec classes. A ``position_score_binner`` entry exists only as
-YAML in a run definition.
+entries have spec classes. A ``position_score_binner`` entry has no spec
+class: you write it as a mapping, in the YAML of a run definition or as a
+dict that you pass to ``resolve_binners``.
 
 The examples of this chapter import the package ``gain.grr`` as ``grr`` and
 call the repository ``repo``:

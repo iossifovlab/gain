@@ -934,8 +934,9 @@ prefer the bigWig for binning.
 Reading the file back
 ---------------------
 
-The functions of ``gain.binning`` read the three tables back as numpy and
-pandas objects, and build a display label for each track. The page
+The functions of ``gain.binning`` read the ``/bins`` and ``/tracks`` tables
+back as pandas DataFrames and the ``/values`` matrix as a numpy array, and
+build a display label for each track. The page
 :doc:`/development/binning/reading_a_run` describes them.
 
 To print the tables without Python, use :doc:`cli/binning_tool_view`.

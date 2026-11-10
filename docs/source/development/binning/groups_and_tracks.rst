@@ -18,9 +18,10 @@ Previewing the groups and tracks of an entry
 puts each key of an entry in. The key of a cell grouping is the barcode of
 a cell, and the key of a value grouping is a value of its score. The result
 is a DataFrame with the columns ``resource_id``, ``score_value`` and
-``group``. A fragment with a key that no row lists reaches no track, so the
-result shows which cells an entry drops. An entry with a constant group
-gives no row.
+``group``. The result lists only the keys that have a group. A fragment
+with a key that no row lists reaches no track, so the cells that an entry
+drops are the barcodes of the fragments that the result does not list. An
+entry with a constant group gives no row.
 
 :func:`~gain.binning.fragment_tracks` gives the ``/tracks`` rows that
 ``binning_tool`` writes for an entry, one row for each track, in output
