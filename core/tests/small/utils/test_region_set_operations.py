@@ -208,6 +208,11 @@ def test_connected_component_joins_regions_that_touch(
             [Region("1", 20, None)],
             [Region("1", 1, 19)],
         ),
+        (
+            [Region("1", None, None)],
+            [Region("1", None, None)],
+            [],
+        ),
     ],
     ids=[
         "touch_at_the_stop",
@@ -224,6 +229,7 @@ def test_connected_component_joins_regions_that_touch(
         "open_stop_before_a_cut_on_the_next_chrom",
         "open_stop_cut_before_a_cut_on_the_next_chrom",
         "open_stop_cut_on_one_chrom",
+        "whole_chrom_cut_out_of_the_whole_chrom",
     ],
 )
 def test_difference_cuts_the_second_list_out_of_the_first(
