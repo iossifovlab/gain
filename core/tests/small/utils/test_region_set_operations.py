@@ -159,6 +159,11 @@ def test_connected_component_joins_regions_that_touch(
             [Region("1", 21, 50)],
         ),
         (
+            [Region("1", 50, 60)],
+            [Region("1", 10, None)],
+            [],
+        ),
+        (
             [
                 Region("chr1", 1, 10), Region("chr2", 1, 100),
                 Region("chr3", 1, 10),
@@ -178,6 +183,7 @@ def test_connected_component_joins_regions_that_touch(
         "open_start_in_the_first_list",
         "open_stop_in_the_first_list",
         "open_start_in_the_second_list",
+        "open_stop_in_the_second_list",
         "second_list_on_other_chroms",
     ],
 )

@@ -544,7 +544,7 @@ def intersection(
                     k += 1
                     continue
                 break
-            if coalesce(i.stop, 1) < coalesce(s1_c[k].start, 1):
+            if coalesce(i.stop, MAX_POSITION) < coalesce(s1_c[k].start, 1):
                 break
             if coalesce(i.start, 1) > coalesce(s1_c[k].stop, MAX_POSITION):
                 k += 1

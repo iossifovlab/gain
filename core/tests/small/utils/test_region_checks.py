@@ -45,12 +45,24 @@ from gain.utils.regions import (
         ([Region("1", 5, 20)], [Region("1", None, 10)], [Region("1", 5, 10)]),
         # An open stop in the first list
         ([Region("1", 10, None)], [Region("1", 5, 20)], [Region("1", 10, 20)]),
-        # An open stop in the second list, against an open start. The case
-        # with a closed start in the first list waits on #2294.
+        # An open stop in the second list, against an open start
         (
             [Region("1", None, 20)], [Region("1", 10, None)],
             [Region("1", 10, 20)],
         ),
+        # An open stop in the second list, against a closed start that
+        # comes after the start of the second list
+        ([Region("1", 10, 20)], [Region("1", 5, None)], [Region("1", 10, 20)]),
+        ([Region("1", 50, 60)], [Region("1", 10, None)], [Region("1", 50, 60)]),
+        # An open stop in the second list covers each region of the first
+        # list on its chrom, not only the first one
+        (
+            [Region("1", 10, 20), Region("1", 30, 40)],
+            [Region("1", 5, None)],
+            [Region("1", 10, 20), Region("1", 30, 40)],
+        ),
+        # The same lists in the other order
+        ([Region("1", 10, None)], [Region("1", 50, 60)], [Region("1", 50, 60)]),
         # Lists on two chroms
         (
             [Region("1", 1, 10), Region("2", 1, 10)], [Region("2", 5, 15)],
