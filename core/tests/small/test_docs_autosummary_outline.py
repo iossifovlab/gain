@@ -39,7 +39,11 @@ GRAPHS_PAGE = DEVELOPMENT_DIR / "task_graph/graphs.rst"
 TASK_EXECUTORS_PAGE = DEVELOPMENT_DIR / "task_graph/task_executors.rst"
 RUNNING_FROM_A_CLI_PAGE = DEVELOPMENT_DIR / "task_graph/running_from_a_cli.rst"
 NAMED_CLUSTERS_PAGE = DEVELOPMENT_DIR / "task_graph/named_clusters.rst"
-BINNING_API_PAGE = DEVELOPMENT_DIR / "binning/api.rst"
+BINNING_PAGES = (
+    DEVELOPMENT_DIR / "binning/entries.rst",
+    DEVELOPMENT_DIR / "binning/groups_and_tracks.rst",
+    DEVELOPMENT_DIR / "binning/reading_a_run.rst",
+)
 
 # Pages whose API section is not rolled out yet, as paths relative to
 # DEVELOPMENT_DIR, for example "resources/<page>.rst". The slice of a page
@@ -384,16 +388,21 @@ def test_named_clusters_page_outline_matches_the_client_functions() -> None:
     assert _page_key(NAMED_CLUSTERS_PAGE) not in NOT_ROLLED_OUT
 
 
-def test_binning_api_page_documents_each_exported_name() -> None:
-    """The binning API page documents each name of ``gain.binning``."""
-    page = read_docs_page(BINNING_API_PAGE)
+def test_binning_pages_document_each_exported_name_once() -> None:
+    """The binning pages document each name of ``gain.binning`` once."""
+    documented: list[str] = []
+    for path in BINNING_PAGES:
+        page = read_docs_page(path)
+        names = [obj.__name__ for obj in page_classes(page)] + [
+            obj.__name__ for obj in page_functions(page)]
+        outline = [e for e in autosummary_entries(page) if "." not in e]
 
-    documented = [obj.__name__ for obj in page_classes(page)] + [
-        obj.__name__ for obj in page_functions(page)]
+        assert sorted(outline) == sorted(names), _page_key(path)
+        assert not page_problems(page), _page_key(path)
+        assert _page_key(path) not in NOT_ROLLED_OUT
+        documented.extend(names)
 
     assert sorted(documented) == sorted(binning.__all__)
-    assert not page_problems(page)
-    assert _page_key(BINNING_API_PAGE) not in NOT_ROLLED_OUT
 
 
 def test_every_page_with_an_autoclass_is_rolled_out_or_skipped() -> None:

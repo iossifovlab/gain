@@ -124,8 +124,8 @@ COPY docs/source/running_in_parallel.rst ./docs/source/
 # tests/small/test_docs_autosummary_outline.py reads the Graphs page of
 # the task graph chapter and fails, not skips, when the page is absent.
 COPY docs/source/development/task_graph/ ./docs/source/development/task_graph/
-# tests/small/test_docs_autosummary_outline.py reads the binning API page
-# and fails, not skips, when the page is absent.
+# tests/small/test_docs_autosummary_outline.py reads the binning pages
+# and fails, not skips, when a page is absent.
 COPY docs/source/development/binning/ ./docs/source/development/binning/
 # tests/small/annotation/test_docs_testing_an_annotator.py reads the
 # "Writing an annotator" page and fails, not skips, when it is absent.

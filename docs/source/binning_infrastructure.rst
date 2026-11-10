@@ -934,49 +934,9 @@ prefer the bigWig for binning.
 Reading the file back
 ---------------------
 
-The page :doc:`/development/binning/api` documents the functions below and
-the rest of the Python API of ``gain.binning``.
-
-:func:`gain.binning.read_tracks` and
-:func:`gain.binning.read_bins` read ``/tracks`` and ``/bins`` as
-pandas DataFrames. Each takes a path or an open ``h5py.File``. The columns
-come from the file, the text fields are ``str``, and the index is the
-position in ``/values``. ``read_tracks`` raises ``ValueError`` for a file
-with a missing or unsupported ``tracks_layout``. Both functions raise
-``ValueError`` for a table that is missing, not a dataset, or not compound.
-A path that is missing or not an HDF5 file raises the ``OSError`` of ``h5py``.
-:func:`gain.binning.read_values` reads ``/values`` as a numpy
-``float64`` matrix of shape ``(n_bins, n_tracks)``, not as a DataFrame. It
-reads the whole matrix into memory, and it raises ``ValueError`` for a
-``/values`` that is missing, not a dataset, or not two-dimensional.
-:func:`gain.binning.track_labels` returns one display label for
-each track:
-
-.. code-block:: python
-
-    from gain.binning.h5_reader import (
-        read_bins, read_tracks, read_values, track_labels)
-
-    values = read_values("binning_run.h5")  # numpy matrix, bins x tracks
-    bins = read_bins("binning_run.h5")
-    labels = track_labels(read_tracks("binning_run.h5"))
-
-    column = labels.index("hg38/scores/phyloP100way:mean")
-    on_chr1 = (bins["chrom"] == "chr1").to_numpy()
-    print(values.shape)
-    print(values[on_chr1, column][:5])
-
-``values`` is a numpy matrix, not a DataFrame. Row *i* belongs to row *i* of
-``bins`` and column *j* to ``labels[j]``, which is the label of row *j* of
-the tracks. The label of a
-position-score track is its resource id and its aggregator, for example
-``hg38/scores/phyloP100way:mean``. The label of a fragment track is its
-resource, the group and the aggregator, for example
-``frags/s1:B:sum``. A ``name`` of the entry prefixes the resource id of a
-position-score track and of an unpooled fragment track, and replaces the
-resource query in the label of a pooled fragment track. Tracks with equal
-labels get ``#<position>`` appended, where the position is the column of
-the track.
+The functions of ``gain.binning`` read the three tables back as numpy and
+pandas objects, and build a display label for each track. The page
+:doc:`/development/binning/reading_a_run` describes them.
 
 To print the tables without Python, use :doc:`cli/binning_tool_view`.
 
