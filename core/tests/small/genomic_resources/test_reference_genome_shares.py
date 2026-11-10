@@ -13,6 +13,7 @@ import pathlib
 
 from gain.genomic_resources.implementations.reference_genome_impl import (
     ChromosomeStatistic,
+    GenomeStatistic,
     ReferenceGenomeImplementation,
 )
 from gain.genomic_resources.testing.builders import a_reference_genome
@@ -152,4 +153,21 @@ def test_a_stored_chromosome_of_length_zero_loads() -> None:
 
     loaded = ChromosomeStatistic.deserialize(stored)
 
+    assert set(loaded.nucleotide_distribution.values()) == {0.0}
+
+
+def test_a_stored_contig_of_length_zero_loads_from_the_genome_document(
+) -> None:
+    # The build reads the one JSON document; a zero-length contig in it
+    # must not divide by its zero length either.
+    written = GenomeStatistic(["chrZ"])
+    written.add_value(ChromosomeStatistic("chrZ"))
+    written.finish()
+
+    loaded = GenomeStatistic.deserialize(written.serialize())
+
+    contig = loaded.chromosome_statistics["chrZ"]
+    assert contig.length == 0
+    assert set(contig.nucleotide_distribution.values()) == {0.0}
+    assert set(contig.bi_nucleotide_distribution.values()) == {0.0}
     assert set(loaded.nucleotide_distribution.values()) == {0.0}

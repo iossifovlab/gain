@@ -227,37 +227,15 @@ class ChromosomeStatistic(Statistic):
 class GenomeStatistic(Statistic):
     """The genome-wide statistic: every chromosome's counts summed."""
 
-    def __init__(
-            self, chromosomes: list[str], length: int = 0,
-            nucleotide_distribution: dict[str, float] | None = None,
-            bi_nucleotide_distribution: dict[str, float] | None = None,
-            chromosome_statistics: dict[
-                str, ChromosomeStatistic] | None = None,
-    ):
+    def __init__(self, chromosomes: list[str]):
         super().__init__("global", "")
         self.chromosomes = chromosomes
+        self.chromosome_statistics: dict[str, ChromosomeStatistic] = {}
         self.length = 0
         self.nucleotide_counts: dict[str, int] = {}
         self.nucleotide_pair_counts: dict[str, int] = {}
-
-        if chromosome_statistics is not None:
-            self.chromosome_statistics = chromosome_statistics
-            self.nucleotide_distribution: dict[str, Any] = {}
-            self.bi_nucleotide_distribution: dict[str, Any] = {}
-            self.finish()
-        else:
-            self.chromosome_statistics = {}
-            if nucleotide_distribution is None:
-                self.nucleotide_distribution = {}
-            else:
-                self.nucleotide_distribution = nucleotide_distribution
-
-            if bi_nucleotide_distribution is None:
-                self.bi_nucleotide_distribution = {}
-            else:
-                self.bi_nucleotide_distribution = bi_nucleotide_distribution
-
-        self.length = length
+        self.nucleotide_distribution: dict[str, float] = {}
+        self.bi_nucleotide_distribution: dict[str, float] = {}
 
     @property
     def chrom_count(self) -> int:
