@@ -297,10 +297,15 @@ def test_a_pool_without_sample_id_labels_has_bare_shared_groups(
         f"resource {r!r} has no 'sample_id' label; its groups are bare "
         f"values, not prefixed with a sample"
         for r in ("frags/a", "frags/b"))
+    unpooled = parse(
+        {"resource_query": "frags/*", "group": BY_CELL, "pool": False},
+        repo, genome).jobs
+    # Bare groups are the normal unpooled behaviour, not a fallback.
+    assert [
+        single.warnings for single in unpooled
+        if isinstance(single, FragmentBinningJob)] == [(), ()]
     (a_counts, b_counts) = (
-        bin_job(single, CHR1, repo) for single in parse(
-            {"resource_query": "frags/*", "group": BY_CELL, "pool": False},
-            repo, genome).jobs)
+        bin_job(single, CHR1, repo) for single in unpooled)
     np.testing.assert_array_equal(
         bin_job(job, CHR1, repo)[:, 0], a_counts[:, 0] + b_counts[:, 0])
 
