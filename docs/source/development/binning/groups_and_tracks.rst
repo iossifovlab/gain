@@ -70,8 +70,9 @@ Previewing a whole run definition
 :func:`~gain.binning.resolve_binners` resolves the whole ``binners`` list of
 a run definition into its jobs, as ``binning_tool`` does before a run. A
 notebook calls it to check a run definition with position-score entries
-too, or to see the labels of the tracks of all its entries together. The list holds one mapping of a binner kind to its configuration
-for each entry, as the YAML of the run definition does.
+too, or to see the labels of the tracks of all its entries together. The
+list holds one mapping of a binner kind to its configuration for each
+entry, as the YAML of the run definition does.
 
 :func:`~gain.binning.tracks_frame` gives the ``/tracks`` rows of the jobs
 that ``resolve_binners`` returns, one row for each track, in the order of
