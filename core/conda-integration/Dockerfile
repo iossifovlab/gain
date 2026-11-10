@@ -88,6 +88,11 @@ COPY --chown=mambauser:mambauser docs/source/running_in_parallel.rst \
 # the task graph chapter and fails, not skips, when the page is absent.
 COPY --chown=mambauser:mambauser docs/source/development/task_graph \
     /testbed/docs/source/development/task_graph
+# tests/small/test_docs_autosummary_outline.py reads the binning API page
+# (test_binning_api_page_documents_each_exported_name) and fails, not
+# skips, when the page is absent.
+COPY --chown=mambauser:mambauser docs/source/development/binning \
+    /testbed/docs/source/development/binning
 # tests/small/annotation/test_docs_testing_an_annotator.py reads the
 # "Writing an annotator" page and fails, not skips, when it is absent.
 COPY --chown=mambauser:mambauser docs/source/development/annotators \
