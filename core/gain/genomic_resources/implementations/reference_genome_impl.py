@@ -4,7 +4,6 @@ import bisect
 import copy
 import itertools
 import json
-import os
 from typing import Any, ClassVar
 
 import yaml
@@ -23,7 +22,10 @@ from gain.genomic_resources.resource_implementation import (
     InfoImplementationMixin,
     ResourceStatistics,
 )
-from gain.genomic_resources.statistics.base_statistic import Statistic
+from gain.genomic_resources.statistics.base_statistic import (
+    Statistic,
+    StoredStatistic,
+)
 from gain.genomic_resources.statistics.percentages import percentages_over
 from gain.task_graph.graph import Task, TaskDesc, TaskGraph
 from gain.utils.regions import check_region_size
@@ -39,16 +41,17 @@ logger = logging.getLogger(__name__)
 CHROMOSOME_STATISTIC_FETCH_BUFFER_SIZE = 1_000_000
 
 
-class GenomeStatisticsMixin:
-    """Mixin for reference genome statistics access."""
-
-    @staticmethod
-    def get_global_statistic_file() -> str:
-        return "reference_genome_statistic.yaml"
-
-    @staticmethod
-    def get_chrom_file(chrom: str) -> str:
-        return f"{chrom}_statistic.yaml"
+REFERENCE_GENOME_STATISTICS_FILE = "statistics/reference_genome.json"
+#: The ``format_version`` the build stamps into
+#: :data:`REFERENCE_GENOME_STATISTICS_FILE`.
+REFERENCE_GENOME_FORMAT_VERSION = 1
+#: The declaration the repair flow reads to report a genome whose
+#: statistics file is missing or older than this format.
+REFERENCE_GENOME_STATISTIC = StoredStatistic(
+    REFERENCE_GENOME_STATISTICS_FILE, REFERENCE_GENOME_FORMAT_VERSION,
+    # Only the scan of a genomic score calls ``writes_for``. A genome is
+    # not a score, so the answer is False for every score.
+    lambda _: False)
 
 
 def _distribution(counts: dict[str, int], total: int) -> dict[str, float]:
@@ -63,10 +66,7 @@ def _shares(counts: dict[str, int]) -> dict[str, str]:
     return percentages_over(counts, sum(counts.values())) or {}
 
 
-class ReferenceGenomeStatistics(
-    ResourceStatistics,
-    GenomeStatisticsMixin,
-):
+class ReferenceGenomeStatistics(ResourceStatistics):
     """Class for accessing reference genome statistics."""
 
     def __init__(
@@ -81,42 +81,27 @@ class ReferenceGenomeStatistics(
     def build_statistics(
         genomic_resource: GenomicResource,
     ) -> ReferenceGenomeStatistics | None:
-        """Load reference genome statistics.
+        """Load the statistics of a genome from its one stored file.
 
         The global statistic is summed from the per-chromosome ones, as
-        the build does; its stored file supplies only the chromosomes.
+        the build does: the stored file holds only the counts of each
+        contig.  ``None`` when the file is missing, for example on a
+        genome whose statistics were never built in this format.
         """
-        chrom_statistics = {}
         try:
-            global_stat_filepath = os.path.join(
-                ReferenceGenomeStatistics.get_statistics_folder(),
-                ReferenceGenomeStatistics.get_global_statistic_file(),
-            )
             with genomic_resource.open_raw_file(
-                    global_stat_filepath, mode="r") as infile:
-                global_statistic = GenomeStatistic(
-                    yaml.safe_load(infile.read())["chromosomes"])
-            for chrom in global_statistic.chromosomes:
-                chrom_stat_filepath = os.path.join(
-                    ReferenceGenomeStatistics.get_statistics_folder(),
-                    ReferenceGenomeStatistics.get_chrom_file(chrom),
-                )
-                with genomic_resource.open_raw_file(
-                        chrom_stat_filepath, mode="r") as infile:
-                    chrom_statistics[chrom] = ChromosomeStatistic.deserialize(
-                        infile.read(),
-                    )
-                global_statistic.add_value(chrom_statistics[chrom])
-            global_statistic.finish()
+                    REFERENCE_GENOME_STATISTICS_FILE, mode="r") as infile:
+                global_statistic = GenomeStatistic.deserialize(infile.read())
         except FileNotFoundError:
-            logger.exception(
-                "Couldn't load statistics of %s", genomic_resource.resource_id,
-            )
+            logger.info(
+                "no statistics of %s: %s is missing",
+                genomic_resource.resource_id,
+                REFERENCE_GENOME_STATISTICS_FILE)
             return None
         return ReferenceGenomeStatistics(
             genomic_resource.resource_id,
             global_statistic,
-            chrom_statistics,
+            global_statistic.chromosome_statistics,
         )
 
 
@@ -242,37 +227,15 @@ class ChromosomeStatistic(Statistic):
 class GenomeStatistic(Statistic):
     """The genome-wide statistic: every chromosome's counts summed."""
 
-    def __init__(
-            self, chromosomes: list[str], length: int = 0,
-            nucleotide_distribution: dict[str, float] | None = None,
-            bi_nucleotide_distribution: dict[str, float] | None = None,
-            chromosome_statistics: dict[
-                str, ChromosomeStatistic] | None = None,
-    ):
+    def __init__(self, chromosomes: list[str]):
         super().__init__("global", "")
         self.chromosomes = chromosomes
+        self.chromosome_statistics: dict[str, ChromosomeStatistic] = {}
         self.length = 0
         self.nucleotide_counts: dict[str, int] = {}
         self.nucleotide_pair_counts: dict[str, int] = {}
-
-        if chromosome_statistics is not None:
-            self.chromosome_statistics = chromosome_statistics
-            self.nucleotide_distribution: dict[str, Any] = {}
-            self.bi_nucleotide_distribution: dict[str, Any] = {}
-            self.finish()
-        else:
-            self.chromosome_statistics = {}
-            if nucleotide_distribution is None:
-                self.nucleotide_distribution = {}
-            else:
-                self.nucleotide_distribution = nucleotide_distribution
-
-            if bi_nucleotide_distribution is None:
-                self.bi_nucleotide_distribution = {}
-            else:
-                self.bi_nucleotide_distribution = bi_nucleotide_distribution
-
-        self.length = length
+        self.nucleotide_distribution: dict[str, float] = {}
+        self.bi_nucleotide_distribution: dict[str, float] = {}
 
     @property
     def chrom_count(self) -> int:
@@ -313,22 +276,42 @@ class GenomeStatistic(Statistic):
             total_pair_counts, total_pairs)
 
     def serialize(self) -> str:
-        return yaml.dump({
-            "chromosomes": self.chromosomes,
-            "length": self.length,
-            "nucleotide_distribution": self.nucleotide_distribution,
-            "bi_nucleotide_distribution": self.bi_nucleotide_distribution,
-        })
+        """The stored JSON document: the counts of each contig.
+
+        The genome-wide totals are not stored: :meth:`deserialize` sums
+        them from the contigs.
+        """
+        return json.dumps({
+            "format_version": REFERENCE_GENOME_FORMAT_VERSION,
+            "chromosomes": list(self.chromosomes),
+            "contigs": {
+                chrom: {
+                    "length": contig.length,
+                    "nucleotide_counts": contig.nucleotide_counts,
+                    "nucleotide_pair_counts": contig.nucleotide_pair_counts,
+                }
+                for chrom in self.chromosomes
+                for contig in [self.chromosome_statistics[chrom]]
+            },
+        }, indent=2)
 
     @staticmethod
     def deserialize(content: str) -> GenomeStatistic:
-        res = yaml.safe_load(content)
-        return GenomeStatistic(
-            res["chromosomes"],
-            length=res.get("length"),
-            nucleotide_distribution=res.get("nucleotide_distribution"),
-            bi_nucleotide_distribution=res.get("bi_nucleotide_distribution"),
-        )
+        """Load a document that :meth:`serialize` wrote, totals summed."""
+        stored = json.loads(content)
+        statistic = GenomeStatistic(stored["chromosomes"])
+        for chrom in statistic.chromosomes:
+            contig = stored["contigs"][chrom]
+            chrom_statistic = ChromosomeStatistic(
+                chrom,
+                length=contig["length"],
+                nucleotide_counts=contig["nucleotide_counts"],
+                nucleotide_pair_counts=contig["nucleotide_pair_counts"],
+            )
+            chrom_statistic.finish()
+            statistic.add_value(chrom_statistic)
+        statistic.finish()
+        return statistic
 
 
 def _pack_contigs(
@@ -427,6 +410,13 @@ class ReferenceGenomeImplementation(
             "score_file": manifest[genome_filename].md5,
         }, sort_keys=True, indent=2).encode()
 
+    def stored_statistics(self) -> list[StoredStatistic]:
+        """List the one versioned statistics file that a build writes.
+
+        :meta private:
+        """
+        return [REFERENCE_GENOME_STATISTIC]
+
     def create_statistics_build_tasks(
         self, *,
         region_size: int = DEFAULT_STATISTICS_REGION_SIZE,
@@ -439,8 +429,10 @@ class ReferenceGenomeImplementation(
         longest contig (nor than ``region_size``), so the critical path
         stays one longest contig while a scaffold-heavy assembly -- a few
         thousand contigs -- costs a handful of tasks.  A contig longer
-        than ``region_size`` is counted region by region and merged and
-        saved by one task.
+        than ``region_size`` is counted region by region and merged by
+        one task.  These tasks write nothing: they return their counts,
+        and the last task, the global one, writes the one statistics
+        file, ``statistics/reference_genome.json``.
         """
         check_region_size(region_size)
         with self.reference_genome.open():
@@ -497,9 +489,9 @@ class ReferenceGenomeImplementation(
         ]
         merge_task = TaskGraph.make_task(
             f"{self.resource.resource_id}"
-            f"_merge_and_save_chrom_statistics_{chrom}",
-            ReferenceGenomeImplementation._merge_and_save_chrom_statistics,
-            args=[self.resource, chrom, *[t.task for t in tasks]],
+            f"_merge_chrom_statistics_{chrom}",
+            ReferenceGenomeImplementation._merge_chrom_statistics,
+            args=[t.task for t in tasks],
             deps=[],
         )
         tasks.append(merge_task)
@@ -535,26 +527,14 @@ class ReferenceGenomeImplementation(
     def _do_chrom_statistics_batch(
         resource: GenomicResource, chroms: list[str],
     ) -> list[ChromosomeStatistic]:
-        """Count and save each of ``chroms`` whole, under one open."""
+        """Count each of ``chroms`` whole, under one open."""
         impl = build_reference_genome_from_resource(resource)
         with impl.open():
             return [
-                ReferenceGenomeImplementation._save_chrom_statistic(
-                    resource, chrom,
-                    ReferenceGenomeImplementation._count_chrom(
-                        impl, chrom, 1, None))
+                ReferenceGenomeImplementation._count_chrom(
+                    impl, chrom, 1, None)
                 for chrom in chroms
             ]
-
-    @staticmethod
-    def _merge_and_save_chrom_statistics(
-        resource: GenomicResource, chrom: str,
-        *region_statistics: ChromosomeStatistic,
-    ) -> ChromosomeStatistic:
-        return ReferenceGenomeImplementation._save_chrom_statistic(
-            resource, chrom,
-            ReferenceGenomeImplementation._merge_chrom_statistics(
-                *region_statistics))
 
     @staticmethod
     def _merge_chrom_statistics(
@@ -570,45 +550,24 @@ class ReferenceGenomeImplementation(
         return final_statistic
 
     @staticmethod
-    def _save_chrom_statistic(
-        resource: GenomicResource, chrom: str,
-        merged_statistic: ChromosomeStatistic,
-    ) -> ChromosomeStatistic:
-        proto = resource.proto
-        if merged_statistic is None:
-            logger.warning("Chrom statistic for %s is None", chrom)
-            return {chrom: None}
-        with proto.open_raw_file(
-            resource,
-            f"{ReferenceGenomeStatistics.get_statistics_folder()}"
-            f"/{ReferenceGenomeStatistics.get_chrom_file(chrom)}",
-            mode="wt",
-        ) as outfile:
-            outfile.write(merged_statistic.serialize())
-        return merged_statistic
-
-    @staticmethod
     def _do_global_statistic(
         resource: GenomicResource,
-        *chrom_save_tasks: ChromosomeStatistic | list[ChromosomeStatistic],
+        *chrom_tasks: ChromosomeStatistic | list[ChromosomeStatistic],
     ) -> GenomeStatistic:
         impl = build_reference_genome_from_resource(resource)
         with impl.open():
             statistic = GenomeStatistic(impl.chromosomes)
-            for saved in chrom_save_tasks:
-                # A batch task saves several contigs and returns them all.
+            for counted in chrom_tasks:
+                # A batch task counts several contigs and returns them all.
                 for chrom_statistic in (
-                        saved if isinstance(saved, list) else [saved]):
+                        counted if isinstance(counted, list) else [counted]):
                     statistic.add_value(chrom_statistic)
 
             statistic.finish()
 
         proto = resource.proto
         with proto.open_raw_file(
-            resource,
-            f"{ReferenceGenomeStatistics.get_statistics_folder()}"
-            f"/{ReferenceGenomeStatistics.get_global_statistic_file()}",
-            mode="wt",
+            resource, REFERENCE_GENOME_STATISTICS_FILE, mode="wt",
         ) as outfile:
             outfile.write(statistic.serialize())
         return statistic

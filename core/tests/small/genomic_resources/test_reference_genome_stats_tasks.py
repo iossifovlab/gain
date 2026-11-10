@@ -5,7 +5,8 @@
 
 Contigs that fit whole into one region are packed together, so a
 scaffold-heavy assembly costs a handful of tasks rather than three per
-contig, while every contig still gets its own statistics file.
+contig, while the one stored file, ``statistics/reference_genome.json``,
+still holds the statistics of every contig.
 """
 import pathlib
 import random
@@ -21,6 +22,7 @@ from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
 )
 from gain.genomic_resources.testing.builders import a_reference_genome
+from gain.genomic_resources.testing.statistics import build_statistics
 from gain.task_graph.cli_tools import task_graph_run
 from gain.task_graph.graph import TaskGraph
 from gain.task_graph.sequential_executor import SequentialExecutor
@@ -57,7 +59,7 @@ def test_whole_contigs_are_packed_up_to_the_longest_contig(
     assert len(tasks) == 3
 
 
-def test_a_split_contig_merges_and_saves_in_one_task(
+def test_a_split_contig_merges_in_one_task(
     tmp_path: pathlib.Path,
 ) -> None:
     impl = _scaffold_heavy_genome(tmp_path)
@@ -67,12 +69,12 @@ def test_a_split_contig_merges_and_saves_in_one_task(
         for desc in impl.create_statistics_build_tasks(region_size=20)
     ]
 
-    # chrA in two 20 bp regions plus one merge-and-save; the scaffolds in
+    # chrA in two 20 bp regions plus one merge; the scaffolds in
     # two 20 bp batches (five each); the global statistic.
     assert task_ids == [
         "_count_nucleotides_chrA:1-20",
         "_count_nucleotides_chrA:21",
-        "_merge_and_save_chrom_statistics_chrA",
+        "_merge_chrom_statistics_chrA",
         "_chrom_statistics_batch_scaf0",
         "_chrom_statistics_batch_scaf5",
         "_global_statistics",
@@ -101,6 +103,19 @@ def test_packed_build_writes_every_contig_statistic(
         assert scaf.nucleotide_counts == {
             "A": 1, "C": 1, "G": 1, "T": 1, "N": 0}
     assert stats.global_statistic.length == 80
+
+
+def test_a_split_contig_and_a_batch_store_one_statistics_file(
+    tmp_path: pathlib.Path,
+) -> None:
+    impl = _scaffold_heavy_genome(tmp_path)
+
+    # chrA (40 bp) is split into 20 bp regions; the scaffolds are batched.
+    build_statistics(impl.resource, region_size=20)
+
+    assert sorted(
+        path.name for path in (tmp_path / "statistics").iterdir()
+    ) == ["reference_genome.json"]
 
 
 def test_packing_keeps_every_contig_once_within_capacity() -> None:

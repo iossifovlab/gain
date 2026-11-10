@@ -22,6 +22,11 @@
 {% endif %}
 {% endif %}
 
+{% set statistics_missing = data["global_statistic"]["length"] is none %}
+{% if statistics_missing %}
+<p>Statistics not computed.</p>
+{% endif %}
+
 <h3>{{ "Chromosomes ({0}):".format(data["chromosomes"]|length) }}</h3>
 <div class="scrollable-table-container">
     <table id="chromosomes-table">
@@ -35,7 +40,11 @@
             </tr>
             <tr>
                 <th>Global</th>
+                {% if statistics_missing %}
+                <td></td>
+                {% else %}
                 <td>{{ '{:,}'.format(data["global_statistic"]["length"]) }}</td>
+                {% endif %}
                 {% for nucleotide in ["A", "T", "C", "G", "N"] %}
                     <td>{{ data["global_statistic"]["nucleotide_shares"].get(nucleotide, "") }}</td>
                 {% endfor %}
@@ -53,7 +62,7 @@
         {%- endfor -%}
     </table>
 </div>
-{% if data["global_statistic"] %}
+{% if not statistics_missing %}
     <h3>Bi-Nucleotide distribution:</h3>
     <table style="width: fit-content;">
         <tr>

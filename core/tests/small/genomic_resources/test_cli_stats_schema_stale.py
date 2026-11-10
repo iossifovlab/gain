@@ -19,6 +19,9 @@ from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.genomic_scores.chrom_lengths import (
     CHROM_LENGTHS_FILE,
 )
+from gain.genomic_resources.implementations.reference_genome_impl import (
+    REFERENCE_GENOME_STATISTICS_FILE,
+)
 from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
 )
@@ -34,6 +37,7 @@ from gain.genomic_resources.testing.builders import (
     GRRBuilder,
     PositionScoreBuilder,
     ResourceBuilder,
+    a_basic_resource,
     a_fragment_score,
     a_grr,
     a_position_score,
@@ -84,6 +88,7 @@ def _an_allele_score() -> AlleleScoreBuilder:
     ("position", _a_position_score),
     ("fragment", _a_fragment_score),
     ("allele", _an_allele_score),
+    ("genome", lambda: a_reference_genome().with_chromosome("1", "ACGT")),
 ])
 def test_each_kind_declares_exactly_the_statistics_files_its_build_writes(
     tmp_path: pathlib.Path,
@@ -174,7 +179,7 @@ def position_score_at_v1(
 
 
 @pytest.fixture(scope="module")
-def two_stale_scores_and_a_genome(
+def two_stale_scores_and_a_basic_resource(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> pathlib.Path:
     """Two position scores at v1 beside a resource of another kind.
@@ -186,8 +191,7 @@ def two_stale_scores_and_a_genome(
         a_grr()
         .with_resource("pos_a", _a_position_score())
         .with_resource("pos_b", _a_position_score())
-        .with_resource(
-            "genome", a_reference_genome().with_chromosome("1", "A" * 30)))
+        .with_resource("basic", a_basic_resource()))
     for resource_id in ("pos_a", "pos_b"):
         _downgrade_format_version(path, resource_id)
     _refresh_manifest(path)
@@ -195,17 +199,17 @@ def two_stale_scores_and_a_genome(
 
 
 def test_a_resource_of_another_kind_is_never_reported(
-    two_stale_scores_and_a_genome: pathlib.Path,
+    two_stale_scores_and_a_basic_resource: pathlib.Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    path = two_stale_scores_and_a_genome
+    path = two_stale_scores_and_a_basic_resource
 
     with caplog.at_level(logging.INFO, logger="grr_manage"):
         cli_manage(["repo-repair", "--dry-run", "-R", str(path), "-j", "1"])
 
     named = {
         resource_id
-        for resource_id in ("pos_a", "pos_b", "genome")
+        for resource_id in ("pos_a", "pos_b", "basic")
         for record in caplog.records
         if "predate the current schema" in record.getMessage()
         and f"<{resource_id}>" in record.getMessage()
@@ -214,10 +218,10 @@ def test_a_resource_of_another_kind_is_never_reported(
 
 
 def test_a_run_ends_with_one_warning_naming_how_many_predate_the_schema(
-    two_stale_scores_and_a_genome: pathlib.Path,
+    two_stale_scores_and_a_basic_resource: pathlib.Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    path = two_stale_scores_and_a_genome
+    path = two_stale_scores_and_a_basic_resource
 
     with caplog.at_level(logging.INFO, logger="grr_manage"):
         cli_manage(["repo-repair", "--dry-run", "-R", str(path), "-j", "1"])
@@ -409,3 +413,68 @@ def test_a_resource_whose_hash_is_stale_is_only_reported_as_needing_update(
     assert excinfo.value.code == 1
     assert "Statistics of <pos> needs update" in caplog.text
     assert "predate the current schema" not in caplog.text
+
+
+#: The global file of the per-contig YAML format that came before
+#: ``statistics/reference_genome.json``.
+_OLD_GENOME_STATISTICS_FILE = "statistics/reference_genome_statistic.yaml"
+
+
+@pytest.fixture
+def genome_in_the_old_format_and_a_current_one(
+    tmp_path: pathlib.Path,
+) -> pathlib.Path:
+    """A repaired GRR: a genome left with only the old YAML statistics
+    and a current statistics hash, beside a genome the build wrote."""
+    path = _repaired(
+        tmp_path,
+        a_grr()
+        .with_resource(
+            "old_genome", a_reference_genome().with_chromosome("1", "ACGT"))
+        .with_resource(
+            "new_genome", a_reference_genome().with_chromosome("1", "ACGT")))
+    (path / "old_genome" / REFERENCE_GENOME_STATISTICS_FILE).unlink()
+    (path / "old_genome" / _OLD_GENOME_STATISTICS_FILE).write_text(
+        "chromosomes:\n- '1'\nlength: 4\n")
+    _refresh_manifest(path)
+    return path
+
+
+def test_a_genome_without_the_json_statistics_is_reported(
+    genome_in_the_old_format_and_a_current_one: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path = genome_in_the_old_format_and_a_current_one
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"):
+        cli_manage(["repo-repair", "--dry-run", "-R", str(path), "-j", "1"])
+
+    stale_lines = [
+        record.getMessage() for record in caplog.records
+        if record.getMessage().startswith("statistics of <")
+        and "predate the current schema" in record.getMessage()
+    ]
+    assert len(stale_lines) == 1
+    assert "<old_genome>" in stale_lines[0]
+    assert f"{REFERENCE_GENOME_STATISTICS_FILE} is missing" in stale_lines[0]
+    assert "grr_manage resource-stats -r old_genome -f" in stale_lines[0]
+
+
+def test_an_unforced_repair_writes_the_page_of_a_genome_without_statistics(
+    genome_in_the_old_format_and_a_current_one: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path = genome_in_the_old_format_and_a_current_one
+    page = path / "old_genome" / "index.html"
+    page.unlink()
+
+    with caplog.at_level(logging.INFO, logger="grr_manage"):
+        cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
+
+    assert "is consistent" in caplog.text
+    assert "old_genome" not in "".join(
+        record.getMessage() for record in caplog.records
+        if "failed resources" in record.getMessage()
+        or "skipping info page for" in record.getMessage())
+    assert "Statistics not computed." in page.read_text()
+    assert f"{REFERENCE_GENOME_STATISTICS_FILE} is missing" in caplog.text
