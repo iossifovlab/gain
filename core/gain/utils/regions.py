@@ -575,15 +575,13 @@ def _intersect_overlapping(
         new_i = Region(i.chrom, s1_region.start, i.stop)
         intersect.append(new_i)
         return k, True
-    if coalesce(i.start, 1) > coalesce(s1_region.start, 1):
-        if coalesce(i.stop, MAX_POSITION) <= \
-                coalesce(s1_region.stop, MAX_POSITION):
-            intersect.append(i)
-            return k, True
-        new_i = Region(i.chrom, i.start, s1_region.stop)
-        intersect.append(new_i)
-        return k + 1, False
-    return k, False
+    if coalesce(i.stop, MAX_POSITION) <= \
+            coalesce(s1_region.stop, MAX_POSITION):
+        intersect.append(i)
+        return k, True
+    new_i = Region(i.chrom, i.start, s1_region.stop)
+    intersect.append(new_i)
+    return k + 1, False
 
 
 def union(*r: list[Region]) -> list[Region]:
