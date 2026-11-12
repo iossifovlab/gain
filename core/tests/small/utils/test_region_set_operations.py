@@ -263,6 +263,16 @@ def test_difference_with_an_empty_second_list_keeps_an_open_start() -> None:
     assert result == [Region("1", None, 10)]
 
 
+def test_difference_keeps_an_open_start_before_a_cut_on_the_next_chrom(
+) -> None:
+    result = difference(
+        [Region("1", None, 10), Region("2", 5, 8)],
+        [Region("2", 5, 6)],
+    )
+
+    assert result == [Region("1", None, 10), Region("2", 7, 8)]
+
+
 def test_collapse_sorts_an_open_start_before_a_start_of_zero() -> None:
     result = collapse([Region("1", 0, 5), Region("1", None, 3)])
 
