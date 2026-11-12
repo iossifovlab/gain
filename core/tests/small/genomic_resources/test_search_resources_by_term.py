@@ -13,7 +13,7 @@ import pathlib
 
 import apsw
 import pytest
-from gain.genomic_resources.cli import _create_contents_db
+from gain.genomic_resources.cli_manifest import _create_contents_db
 from gain.genomic_resources.repository import GenomicResourceProtocolRepo
 from gain.genomic_resources.repository_ids import GR_SQLITE_META_FILE_NAME
 from gain.genomic_resources.repository_search import SearchTermError

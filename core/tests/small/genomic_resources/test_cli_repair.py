@@ -9,7 +9,7 @@ import textwrap
 from typing import Any
 
 import pytest
-from gain.genomic_resources import cli
+from gain.genomic_resources import cli, cli_info, cli_manifest, cli_stats
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 from gain.genomic_resources.implementations.genomic_scores_impl import (
@@ -306,7 +306,8 @@ def test_repo_repair_keeps_the_traceback_of_an_unexpected_error(
     def boom(_resource: object) -> None:
         raise RuntimeError("something GAIn did not expect")
 
-    monkeypatch.setattr(cli, "build_resource_implementation", boom)
+    for module in (cli_stats, cli_manifest, cli_info):
+        monkeypatch.setattr(module, "build_resource_implementation", boom)
 
     with caplog.at_level(logging.INFO, logger="grr_manage"), \
             pytest.raises(SystemExit) as excinfo:
@@ -362,7 +363,8 @@ def test_a_message_less_failure_still_names_its_cause(
     def boom(_resource: object) -> None:
         raise ValueError
 
-    monkeypatch.setattr(cli, "build_resource_implementation", boom)
+    for module in (cli_stats, cli_manifest, cli_info):
+        monkeypatch.setattr(module, "build_resource_implementation", boom)
 
     with caplog.at_level(logging.INFO, logger="grr_manage"), \
             pytest.raises(SystemExit) as excinfo:
@@ -490,7 +492,7 @@ def test_repo_repair_fails_when_the_statistics_hash_is_not_stored(
     def never_stores(_proto: object, _resource: object) -> bool:
         return False
 
-    monkeypatch.setattr(cli, "_store_stats_hash", never_stores)
+    monkeypatch.setattr(cli_stats, "_store_stats_hash", never_stores)
 
     with caplog.at_level(logging.INFO, logger="grr_manage"), \
             pytest.raises(SystemExit) as excinfo:

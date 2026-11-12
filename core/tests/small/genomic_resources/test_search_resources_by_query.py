@@ -31,7 +31,7 @@ from gain.annotation.annotation_config import (
     AnnotationConfigParser,
     AnnotationConfigurationError,
 )
-from gain.genomic_resources.cli import _create_contents_db
+from gain.genomic_resources.cli_manifest import _create_contents_db
 from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
 from gain.genomic_resources.repository import GenomicResourceProtocolRepo
 from gain.genomic_resources.repository_ids import GR_SQLITE_META_FILE_NAME

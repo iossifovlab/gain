@@ -22,7 +22,7 @@ that has quietly stopped distinguishing the two routes.
 """
 import pathlib
 
-from gain.genomic_resources.cli import _create_contents_db
+from gain.genomic_resources.cli_manifest import _create_contents_db
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_ids import GR_INDEX_NON_LABEL_COLUMNS
 from gain.genomic_resources.testing import build_filesystem_test_protocol

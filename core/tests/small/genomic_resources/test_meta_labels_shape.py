@@ -12,7 +12,7 @@ import logging
 import pathlib
 
 import pytest
-from gain.genomic_resources.cli import _create_contents_db
+from gain.genomic_resources.cli_manifest import _create_contents_db
 from gain.genomic_resources.testing import build_filesystem_test_protocol
 from gain.genomic_resources.testing.builders import a_grr, a_position_score
 

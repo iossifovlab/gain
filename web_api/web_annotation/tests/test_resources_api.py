@@ -8,7 +8,7 @@ from django.test import Client
 from gain.genomic_resources.cached_repository import (
     GenomicResourceCachedRepo,
 )
-from gain.genomic_resources.cli import _create_contents_db
+from gain.genomic_resources.cli_manifest import _create_contents_db
 from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
 from gain.genomic_resources.repository import (
     GenomicResourceProtocolRepo,

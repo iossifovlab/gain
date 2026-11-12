@@ -21,7 +21,8 @@ from unittest import mock
 
 import pytest
 import pytest_mock
-from gain.genomic_resources.cli import _create_contents_db, cli_manage
+from gain.genomic_resources.cli import cli_manage
+from gain.genomic_resources.cli_manifest import _create_contents_db
 from gain.genomic_resources.fsspec_protocol import (
     FsspecReadOnlyProtocol,
     FsspecReadWriteProtocol,

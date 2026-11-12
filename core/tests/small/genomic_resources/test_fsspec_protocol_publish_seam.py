@@ -4,7 +4,7 @@ import pathlib
 from collections.abc import Callable
 
 import pytest
-from gain.genomic_resources.cli import _create_contents_db
+from gain.genomic_resources.cli_manifest import _create_contents_db
 from gain.genomic_resources.fsspec_errors import GRR_INTERNAL_DIR
 from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 from gain.genomic_resources.repository import GenomicResource
@@ -464,7 +464,7 @@ def test_a_failed_index_build_leaves_no_scratch_database_behind(
     root_path = pathlib.Path(proto.root_path)
 
     mocker.patch(
-        "gain.genomic_resources.cli.gzip.compress",
+        "gain.genomic_resources.cli_manifest.gzip.compress",
         side_effect=OSError("scripted failure after the build"))
 
     with pytest.raises(OSError, match="scripted failure after the build"):

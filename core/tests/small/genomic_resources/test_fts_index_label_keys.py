@@ -5,7 +5,8 @@ import textwrap
 from itertools import starmap
 
 import pytest
-from gain.genomic_resources.cli import _create_contents_db, cli_manage
+from gain.genomic_resources.cli import cli_manage
+from gain.genomic_resources.cli_manifest import _create_contents_db
 from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 from gain.genomic_resources.repository import (
     GenomicResource,

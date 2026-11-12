@@ -3,7 +3,8 @@ import pathlib
 import textwrap
 
 import pytest
-from gain.genomic_resources.cli import _create_contents_db, cli_manage
+from gain.genomic_resources.cli import cli_manage
+from gain.genomic_resources.cli_manifest import _create_contents_db
 from gain.genomic_resources.repository import (
     GenomicResourceProtocolRepo,
     GenomicResourceRepo,

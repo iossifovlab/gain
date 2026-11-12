@@ -8,7 +8,7 @@ import textwrap
 from collections import Counter
 
 import pytest
-from gain.genomic_resources import cli as cli_module
+from gain.genomic_resources import cli_info as cli_module
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 from gain.genomic_resources.repository import (

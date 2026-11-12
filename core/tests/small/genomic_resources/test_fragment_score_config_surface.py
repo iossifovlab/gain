@@ -35,7 +35,8 @@ from gain.genomic_resources import (
     get_resource_implementation_builder,
     resource_types,
 )
-from gain.genomic_resources.cli import _create_contents_db, cli_manage
+from gain.genomic_resources.cli import cli_manage
+from gain.genomic_resources.cli_manifest import _create_contents_db
 from gain.genomic_resources.genomic_scores import (
     FragmentScore,
     build_score_from_resource,
