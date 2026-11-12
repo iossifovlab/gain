@@ -5,9 +5,12 @@ sibling modules (gain#2266). Code outside gain imports some of them from
 the old path, so each public name stays importable from
 ``gain.genomic_resources.repository`` for one release and warns there.
 """
+import ast
 import importlib
+import pathlib
 import warnings
 
+import gain
 import pytest
 from gain.genomic_resources import repository
 
@@ -54,12 +57,14 @@ ALIASED = [
         "ManifestUpdate",
         "ResourceFileState",
         "ResourceScan",
-        "SearchIndexUnavailableError",
-        "SearchTermError",
         "Unread",
         "UnreadableResourceFilesError",
     )),
-    ("drain_search", SEARCH),
+    *((name, SEARCH) for name in (
+        "SearchIndexUnavailableError",
+        "SearchTermError",
+        "drain_search",
+    )),
 ]
 
 
@@ -98,3 +103,59 @@ def test_a_name_that_stayed_does_not_warn() -> None:
 def test_an_unknown_name_raises_attribute_error() -> None:
     with pytest.raises(AttributeError):
         _ = repository.no_such_name  # type: ignore[attr-defined]
+
+
+def moved_name_imports(root: pathlib.Path, package: str) -> list[str]:
+    """List each import of a moved name from the old module under ``root``.
+
+    ``package`` is the dotted name of ``root``. A relative import resolves
+    against the package of its file. Each entry is ``<file>: <name>``.
+    """
+    offenders: list[str] = []
+    for py in sorted(root.rglob("*.py")):
+        rel = py.relative_to(root)
+        own_package = [package, *rel.with_suffix("").parts][:-1]
+        tree = ast.parse(py.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            module = node.module or ""
+            if node.level:
+                base = own_package[:len(own_package) - node.level + 1]
+                module = ".".join([*base, module])
+            if module != repository.__name__:
+                continue
+            offenders.extend(
+                f"{rel.as_posix()}: {alias.name}"
+                for alias in node.names if alias.name in repository._MOVED)
+    return offenders
+
+
+def test_the_fence_finds_absolute_and_relative_imports(
+    tmp_path: pathlib.Path,
+) -> None:
+    pkg = tmp_path / "gain" / "genomic_resources"
+    pkg.mkdir(parents=True)
+    (pkg / "absolute.py").write_text(
+        "from gain.genomic_resources.repository import Manifest\n")
+    (pkg / "relative.py").write_text(
+        "from .repository import GR_CONF_FILE_NAME, GenomicResource\n")
+    (pkg / "new_path.py").write_text(
+        "from .repository_ids import GR_CONF_FILE_NAME\n")
+
+    offenders = moved_name_imports(tmp_path / "gain", "gain")
+
+    assert offenders == [
+        "genomic_resources/absolute.py: Manifest",
+        "genomic_resources/relative.py: GR_CONF_FILE_NAME",
+    ]
+
+
+def test_nothing_in_gain_imports_a_moved_name_from_the_old_module() -> None:
+    gain_pkg = pathlib.Path(gain.__file__).parent
+    assert (gain_pkg / "genomic_resources" / "repository.py").exists()
+
+    offenders = moved_name_imports(gain_pkg, "gain")
+
+    assert offenders == [], (
+        f"import these names from their new modules: {offenders}")

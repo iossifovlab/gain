@@ -18,7 +18,7 @@ from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceProtocolRepo,
 )
-from gain.genomic_resources.repository_manifest import (
+from gain.genomic_resources.repository_search import (
     SearchIndexUnavailableError,
 )
 from gain.genomic_resources.resource_types import FRAGMENT_SCORE_TYPES

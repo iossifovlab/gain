@@ -11,13 +11,72 @@ from typing import Any
 
 import apsw
 
-from gain.genomic_resources.repository_manifest import SearchTermError
 from gain.genomic_resources.resource_query import LabelClause, ResourceQuery
 
 # The name the resource-query push-down registers on a metadata
 # connection. The connection is deserialized fresh for every search, so it
 # never has to be unique across concurrent searches.
 _MATCH_ID_FUNCTION = "gain_query_match_id"
+
+
+class SearchTermError(ValueError):
+    """A search term that SQLite's FTS5 could not parse as a match expression.
+
+    The term is bound, never interpolated, so this is not a failure to
+    contain it -- it is that FTS5 reads a bound term as an *expression*,
+    with a grammar of its own: quotes, ``AND``/``OR``/``NOT``, ``NEAR``,
+    ``column : value``. A term that does not parse is the caller's
+    mistake, and ``apsw.SQLError`` reports it as neither -- it names no
+    term, no argument, and reads like the database broke (gain#632).
+
+    A ``ValueError``, like ``ResourceQueryParseError``, so the two bad
+    arguments this search can be given are handled the same way by the
+    endpoint and the CLI that take them.
+
+    The column filter is why the term is not simply quoted into a literal
+    before it reaches ``MATCH``: label keys are index columns, and
+    ``ref_genome : hg38`` is a supported search. Quoting would make that a
+    search for the text.
+    """
+
+    def __init__(self, search_term: str, cause: Exception) -> None:
+        # The cause is not kept: `raise ... from err` records it as
+        # `__cause__` already, and the message carries what it said.
+        self.search_term = search_term
+        super().__init__(
+            f"cannot search for <{search_term}>: it is not a valid "
+            f"full-text search expression ({cause})",
+        )
+
+
+class SearchIndexUnavailableError(ValueError):
+    """A repository that cannot apply a search filter for want of an index.
+
+    Raised when the repository publishes no ``.CONTENTS.sqlite3.gz`` at all,
+    and when the one it publishes carries no ``contents`` table because no
+    resource could be indexed into it. Both are repository *health*: the
+    filter is unobjectionable and a ``grr_manage repo-repair`` would let it
+    be applied.
+
+    Typed rather than left as a bare ``ValueError`` because a group
+    repository absorbs this to skip the child and carry on (ADR 0012), and
+    the layers it absorbs it through raise ``ValueError`` of their own that
+    must keep propagating -- the cache layer resolving a resource it cannot
+    place, for one.
+
+    A ``ValueError`` still, so a caller that only ever distinguished bad
+    arguments from working ones is unaffected.
+    """
+
+    def __init__(self, repo_id: str, reason: str) -> None:
+        self.repo_id = repo_id
+        self.reason = reason
+        super().__init__(
+            f"repository <{repo_id}> cannot be searched: {reason}. "
+            f"Build a search index with `grr_manage repo-repair`, or "
+            f"select by type, id and labels with a type filter and a "
+            f"resource query, which need none",
+        )
 
 
 def _sql_matcher(match: Callable[[str], bool]) -> Callable[..., bool]:

@@ -9,11 +9,11 @@ from .repository import (
     GenomicResource,
     GenomicResourceRepo,
 )
-from .repository_manifest import (
+from .repository_search import (
     SearchIndexUnavailableError,
     SearchTermError,
+    _map_relaying_skips,
 )
-from .repository_search import _map_relaying_skips
 from .resource_query import ResourceQuery
 
 logger = logging.getLogger(__name__)

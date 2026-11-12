@@ -17,7 +17,7 @@ from gain.genomic_resources.repository import (
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
-from gain.genomic_resources.repository_manifest import (
+from gain.genomic_resources.repository_search import (
     SearchIndexUnavailableError,
 )
 from gain.genomic_resources.testing import build_filesystem_test_protocol

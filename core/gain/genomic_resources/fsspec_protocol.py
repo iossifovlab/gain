@@ -72,6 +72,8 @@ from gain.genomic_resources.repository_manifest import (
     ManifestEntry,
     ResourceFileState,
     ResourceScan,
+)
+from gain.genomic_resources.repository_search import (
     SearchIndexUnavailableError,
 )
 from gain.templates import get_template

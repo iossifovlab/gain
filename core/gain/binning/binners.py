@@ -42,7 +42,7 @@ from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
 )
-from gain.genomic_resources.repository_manifest import (
+from gain.genomic_resources.repository_search import (
     SearchIndexUnavailableError,
     SearchTermError,
 )

@@ -102,11 +102,11 @@ from gain.genomic_resources.repository_manifest import (
     ManifestUpdate,
     ResourceFileState,
     ResourceScan,
-    SearchIndexUnavailableError,
     Unread,
     UnreadableResourceFilesError,
 )
 from gain.genomic_resources.repository_search import (
+    SearchIndexUnavailableError,
     _map_relaying_skips,
     _reject_unparsable_search_term,
     _search_index_statement,
@@ -164,12 +164,14 @@ _MOVED: dict[str, str] = {
         "ManifestUpdate",
         "ResourceFileState",
         "ResourceScan",
-        "SearchIndexUnavailableError",
-        "SearchTermError",
         "Unread",
         "UnreadableResourceFilesError",
     ), _MANIFEST),
-    "drain_search": _SEARCH,
+    **dict.fromkeys((
+        "SearchIndexUnavailableError",
+        "SearchTermError",
+        "drain_search",
+    ), _SEARCH),
 }
 
 
