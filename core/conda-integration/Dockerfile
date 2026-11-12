@@ -116,6 +116,10 @@ COPY --chown=mambauser:mambauser scripts/mutator_nightly.sh \
 # and fails, not skips, when the script is absent (#1968).
 COPY --chown=mambauser:mambauser scripts/bioconda_lag_check.py \
     /testbed/scripts/
+# tests/small/test_release_notes.py loads scripts/release_notes.py and
+# fails, not skips, when the script is absent (#2364).
+COPY --chown=mambauser:mambauser scripts/release_notes.py \
+    /testbed/scripts/
 # tests/small/test_coverage_badge.py loads scripts/coverage_badge.py and
 # reads docs/build_docs.sh, and fails, not skips, when either file is
 # absent (#2314).
