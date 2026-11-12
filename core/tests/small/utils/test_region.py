@@ -439,14 +439,19 @@ def test_get_chrom_length_vcf(
 
 def test_get_chrom_length_vcf_declared_contig_without_records(
     sample_vcf: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     # The header declares contig 2, so every fetch returns an empty
     # iterator; pos halves to 0 and the pos == 0 guard gives up.
+    # The guard raises a bare ValueError, so the warning ends in an empty
+    # message; a ValueError from fetch would carry pysam's text instead.
     variant_file = pysam.VariantFile(str(sample_vcf))
 
-    length = get_chromosome_length_tabix(variant_file, "2")
+    with caplog.at_level(logging.WARNING):
+        length = get_chromosome_length_tabix(variant_file, "2")
 
     assert length is None
+    assert caplog.messages == ["unable to find length of contig 2: "]
 
 
 # Additional tests for better coverage
