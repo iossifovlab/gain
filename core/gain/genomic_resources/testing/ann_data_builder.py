@@ -1,9 +1,8 @@
 """Fluent, immutable test-data builder for ``ann_data`` resources.
 
-A sibling of :mod:`gain.genomic_resources.testing.builders` for the same
-reason :mod:`.data_frame_builder` is one: ``builders`` sits two lines under
-pylint's ``max-module-lines`` ceiling, so a new builder has nowhere to go
-inside it.  The dependency runs ONE WAY -- this module imports the shared
+A sibling of :mod:`gain.genomic_resources.testing.builders`, like
+:mod:`.data_frame_builder`: each resource kind has its own builder
+module.  The dependency runs ONE WAY -- this module imports the shared
 single-realize seam from ``builders`` and ``builders`` does not import back
 -- so ``an_ann_data`` is imported from here.
 

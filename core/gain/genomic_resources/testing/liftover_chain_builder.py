@@ -1,8 +1,8 @@
 """Fluent, immutable test-data builder for ``liftover_chain`` resources.
 
 A sibling of :mod:`gain.genomic_resources.testing.builders`, like
-:mod:`.gene_models_builder`: ``builders`` is past pylint's
-``max-module-lines``, so the dependency runs ONE WAY -- this module
+:mod:`.gene_models_builder`: each resource kind has its own builder
+module.  The dependency runs ONE WAY -- this module
 imports the shared single-realize seam from ``builders`` and ``builders``
 does not import back -- and ``a_liftover_chain`` is imported from here.
 

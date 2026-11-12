@@ -1,9 +1,8 @@
 """Fluent, immutable test-data builder for ``data_frame`` resources.
 
 A sibling of :mod:`gain.genomic_resources.testing.builders` rather than a
-member of it: that module was already within nine lines of its size ceiling
-before this builder existed, so the next builder to be added had to live
-somewhere.  The dependency runs ONE WAY -- this module imports the shared
+member of it: each resource kind has its own builder module.  The
+dependency runs ONE WAY -- this module imports the shared
 single-realize seam from ``builders``, and ``builders`` does not import back
 -- so ``a_data_frame`` is imported from here, not from ``builders`` with the
 other factories.

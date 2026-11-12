@@ -7,9 +7,8 @@ from the child repository it was found in rather than from a single base
 url.
 
 This lives beside :mod:`gain.genomic_resources.testing.builders` rather
-than inside it: that module is already over pylint's ``max-module-lines``
-and carries a suppression for it, so the convention is that a new builder
-gets a sibling module importing the shared seam one way.  ``builders``
+than inside it: the convention is that each builder gets a sibling module
+importing the shared seam one way.  ``builders``
 does not import back, and there is no re-export.
 
 Example::
