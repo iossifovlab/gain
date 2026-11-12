@@ -5,7 +5,7 @@ from collections.abc import Callable
 import pytest
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     build_score_implementation_from_resource,
-    scan,
+    scan_noregion,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing.builders import (
@@ -24,7 +24,7 @@ _NATURAL_ORDER = ["all chromosomes", "chr1", "chr2", "chr10"]
 
 def _built_page(resource: GenomicResource) -> str:
     """The resource's info page, statistics built."""
-    scan.do_noregion_histograms(resource)
+    scan_noregion.do_noregion_histograms(resource)
     return build_score_implementation_from_resource(resource).get_info()
 
 

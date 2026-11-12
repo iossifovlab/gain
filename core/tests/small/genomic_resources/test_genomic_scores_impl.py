@@ -30,6 +30,7 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
     GenomicScoreImplementation,
     build_score_implementation_from_resource,
     scan,
+    scan_histograms,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
@@ -116,7 +117,7 @@ def test_update_hist_confs_sets_view_range() -> None:
     hist_confs = {"score": NumberHistogramConfig((None, None))}
     minmax = {"score": MinMaxValue("score", 1.0, 5.0)}
 
-    result = scan.update_hist_confs(
+    result = scan_histograms.update_hist_confs(
         cast(dict[str, HistogramConfig], hist_confs),
         minmax,
     )
@@ -129,7 +130,7 @@ def test_update_hist_confs_nullifies_on_nan() -> None:
     hist_confs = {"score": NumberHistogramConfig((None, None))}
     minmax = {"score": MinMaxValue("score")}
 
-    result = scan.update_hist_confs(
+    result = scan_histograms.update_hist_confs(
         cast(dict[str, HistogramConfig], hist_confs),
         minmax,
     )
@@ -561,7 +562,7 @@ def test_add_statistics_build_tasks_creates_min_max_tasks() -> None:
     assert len(tasks) == 6
     save_task = tasks[-1]
     assert save_task.func is \
-        scan.merge_and_save_histograms
+        scan_histograms.merge_and_save_histograms
 
     task_ids = {t.task.task_id for t in tasks}
     assert any("calculate_min_max" in task_id for task_id in task_ids)
@@ -653,7 +654,7 @@ def test_add_min_max_tasks_builds_graph() -> None:
     assert len(calc_tasks) == 6
     calculate_task = calc_tasks[-1]
     assert calculate_task.func is \
-        scan.merge_and_save_histograms
+        scan_histograms.merge_and_save_histograms
 
 
 def test_add_histogram_tasks_skip_null_histograms_and_link_minmax() -> None:
@@ -687,7 +688,7 @@ def test_add_histogram_tasks_skip_null_histograms_and_link_minmax() -> None:
     assert len(calc_tasks) == 6
     calculate_task = calc_tasks[-1]
     assert calculate_task.func is \
-        scan.merge_and_save_histograms
+        scan_histograms.merge_and_save_histograms
 
 
 def test_calc_statistics_hash_includes_expected_fields() -> None:
@@ -1008,9 +1009,9 @@ def test_noregion_statistics_build_writes_the_score_histogram(
 ) -> None:
     """A ``region_size <= 0`` build computes histograms in a single task.
 
-    ``scan.do_noregion_histograms`` runs min/max, histogram and save together
-    instead of fanning out over regions.  It must still write a histogram
-    that spans the whole score.
+    ``scan_noregion.do_noregion_histograms`` runs min/max, histogram and
+    save together instead of fanning out over regions.  It must still
+    write a histogram that spans the whole score.
     """
     res = _a_two_chrom_score().build_resource(tmp_path)
 
@@ -1084,7 +1085,7 @@ def test_merge_histograms_nullifies_only_the_overflowing_score() -> None:
     # the merge never reads it.  Passing None says so, and turns a future
     # use of the argument into a loud failure here rather than a silent pass
     # against a resource that has nothing to do with these histograms.
-    merged = scan.merge_histograms(
+    merged = scan_histograms.merge_histograms(
         cast(GenomicResource, None), region1, region2)
 
     many = merged["many"]

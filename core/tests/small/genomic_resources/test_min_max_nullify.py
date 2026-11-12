@@ -9,7 +9,8 @@ from gain.genomic_resources.histogram import (
     NumberHistogramConfig,
 )
 from gain.genomic_resources.implementations.genomic_scores_impl import (
-    scan,
+    scan_histograms,
+    scan_min_max,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.min_max import (
@@ -60,7 +61,7 @@ def test_one_region_refusing_nullifies_a_score_the_others_folded(
         else [refused, folded]
     hist_confs: dict = {"s": NumberHistogramConfig.default_config(None)}
 
-    merged = scan.merge_min_max(["s"], hist_confs, *regions)
+    merged = scan_min_max.merge_min_max(["s"], hist_confs, *regions)
 
     assert isinstance(merged["s"], NullHistogramConfig)
 
@@ -80,7 +81,7 @@ def test_a_refused_scores_null_config_names_the_score_and_the_cause() -> None:
     hist_confs: dict = {
         score_id: NumberHistogramConfig.default_config(None)}
 
-    updated = scan.update_hist_confs(hist_confs, refused)
+    updated = scan_histograms.update_hist_confs(hist_confs, refused)
 
     config = updated[score_id]
     assert isinstance(config, NullHistogramConfig)
@@ -117,7 +118,8 @@ def test_the_refusal_is_reported_once_per_score_not_once_per_record(
     resource = _many_rowed_text_tabix(tmp_path, REFUSED_RECORD_COUNT)
 
     with caplog.at_level(logging.ERROR):
-        scan.do_min_max(resource, ["s"], "chr1", 1, REFUSED_RECORD_COUNT)
+        scan_min_max.do_min_max(
+            resource, ["s"], "chr1", 1, REFUSED_RECORD_COUNT)
 
     refusals = [
         record for record in caplog.records
@@ -137,7 +139,7 @@ def test_a_refused_score_does_not_cost_the_others_their_min_max(
     """
     resource = _text_and_number_tabix(tmp_path)
 
-    result = scan.do_min_max(resource, ["s", "f"], "chr1", 1, 20)
+    result = scan_min_max.do_min_max(resource, ["s", "f"], "chr1", 1, 20)
 
     assert isinstance(result["s"], NullMinMaxValue)
     assert np.isnan(result["s"].min)
@@ -159,9 +161,9 @@ def test_a_value_only_the_type_gate_refuses_nullifies_that_one_score(
     resource = _text_and_number_tabix(tmp_path)
     records = [(1, 1, [0.5 + 0j, 0.1]), (2, 2, [0.5 + 0j, 0.9])]
     monkeypatch.setattr(
-        scan, "scan_region", lambda *_args, **_kwargs: iter(records))
+        scan_min_max, "scan_region", lambda *_args, **_kwargs: iter(records))
 
-    result = scan.do_min_max(resource, ["s", "f"], "chr1", 1, 2)
+    result = scan_min_max.do_min_max(resource, ["s", "f"], "chr1", 1, 2)
 
     assert isinstance(result["s"], NullMinMaxValue)
     assert "non numerical value" in result["s"].reason
@@ -179,8 +181,9 @@ def test_a_refused_score_leaves_the_others_exactly_their_solo_min_max(
     """
     resource = _text_and_number_tabix(tmp_path)
 
-    beside_refused = scan.do_min_max(resource, ["s", "f"], "chr1", 1, 20)
-    alone = scan.do_min_max(resource, ["f"], "chr1", 1, 20)
+    beside_refused = scan_min_max.do_min_max(
+        resource, ["s", "f"], "chr1", 1, 20)
+    alone = scan_min_max.do_min_max(resource, ["f"], "chr1", 1, 20)
 
     assert (beside_refused["f"].min, beside_refused["f"].max) == \
         (alone["f"].min, alone["f"].max)

@@ -16,7 +16,7 @@ validating again still passes the scan's tests.
 # pylint: disable=C0116,W0212,W0621
 import inspect
 import pathlib
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import pytest
 from gain.genomic_resources.genomic_position_table.record import Record
@@ -34,6 +34,9 @@ from gain.genomic_resources.histogram import (
 )
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     scan,
+    scan_histograms,
+    scan_min_max,
+    scan_noregion,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_errors import MalformedResourceError
@@ -201,23 +204,23 @@ def test_a_region_split_between_two_touching_records_still_refuses_them(
     resource = _position_score_resource(tmp_path, "touching", TOUCHING_RECORDS)
 
     # The first region holds only the first record: nothing to compare it to.
-    assert scan.do_min_max(
+    assert scan_min_max.do_min_max(
         resource, ["s"], "chr1", 1, 4)["s"].max == pytest.approx(0.1)
 
     # The second is where they meet -- the straddling record arrives with it.
     with pytest.raises(MalformedResourceError) as excinfo:
-        scan.do_min_max(resource, ["s"], "chr1", 5, 9)
+        scan_min_max.do_min_max(resource, ["s"], "chr1", 5, 9)
 
     assert "at most one record per position" in str(excinfo.value)
 
 
 @pytest.mark.parametrize("statistics_pass,payload", [
-    ("do_min_max", ["s"]),
-    ("do_histogram", {"s": _hist_conf()}),
-])
+    (scan_min_max.do_min_max, ["s"]),
+    (scan_histograms.do_histogram, {"s": _hist_conf()}),
+], ids=["do_min_max", "do_histogram"])
 def test_both_per_record_passes_refuse_a_malformed_position_score(
     tmp_path: pathlib.Path,
-    statistics_pass: str,
+    statistics_pass: Callable[..., object],
     payload: object,
 ) -> None:
     # Both passes, because each reads the region for itself: a helper only
@@ -225,7 +228,7 @@ def test_both_per_record_passes_refuse_a_malformed_position_score(
     resource = _position_score_resource(tmp_path, "touching", TOUCHING_RECORDS)
 
     with pytest.raises(MalformedResourceError) as excinfo:
-        getattr(scan, statistics_pass)(
+        statistics_pass(
             resource, payload, "chr1", 1, 10)
 
     assert "at most one record per position" in str(excinfo.value)
@@ -457,7 +460,7 @@ def test_the_region_size_zero_path_refuses_a_malformed_position_score(
     resource = _position_score_resource(tmp_path, "touching", TOUCHING_RECORDS)
 
     with pytest.raises(MalformedResourceError) as excinfo:
-        scan.do_noregion_histograms(resource)
+        scan_noregion.do_noregion_histograms(resource)
 
     assert "at most one record per position" in str(excinfo.value)
 
@@ -536,13 +539,13 @@ def test_both_scan_paths_refuse_an_index_column_mismatch_alike(
     resource = _end_column_mismatch_resource(tmp_path)
 
     scans = [
-        lambda: scan.do_histogram(
+        lambda: scan_histograms.do_histogram(
             resource, {"s": _hist_conf()}, "chr1", 100, 200),
-        lambda: scan.do_histogram_bulk(
+        lambda: scan_histograms.do_histogram_bulk(
             resource, {"s": _hist_conf()}, "chr1", 100, 200),
-        lambda: scan.do_min_max(
+        lambda: scan_min_max.do_min_max(
             resource, ["s"], "chr1", 100, 200),
-        lambda: scan.do_min_max_bulk(
+        lambda: scan_min_max.do_min_max_bulk(
             resource, ["s"], "chr1", 100, 200),
     ]
 
@@ -787,6 +790,6 @@ def test_a_statistics_pass_reads_the_region_once(
 
     monkeypatch.setattr(PositionScore, "fetch_records", counted)
 
-    assert scan.do_min_max(
+    assert scan_min_max.do_min_max(
         resource, ["s"], "chr1", 1, 20)["s"].max == 0.2
     assert len(reads) == 1

@@ -24,6 +24,9 @@ statistics machinery beside them in a module of its own.
   gain#857), which is why it kept the original file's blame (gain#1007);
   the base kept the class's for the same reason (gain#1210).  Its
   ``__all__`` states the surface, in tiers.
+* :mod:`.scan_min_max`, :mod:`.scan_histograms` and :mod:`.scan_noregion`
+  -- the min/max pass, the histogram pass with its merge and save, and
+  the one-task build.  Each imports :mod:`.scan`, never the reverse.
 
 The dependency runs one way: the classes import ``scan``, never the
 reverse, which ``tests/test_architecture.py`` pins from the AST.

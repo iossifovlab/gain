@@ -49,7 +49,7 @@ from gain.utils.regions import (
     split_into_regions,
 )
 
-from . import scan
+from . import scan, scan_histograms, scan_min_max, scan_noregion
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +145,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             return [
                 TaskGraph.make_task(
                     f"{self.resource.get_full_id()}_noregion_histograms",
-                    scan.do_noregion_histograms,
+                    scan_noregion.do_noregion_histograms,
                     args=[self.resource],
                     deps=[],
                 ),
@@ -166,7 +166,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                 task = TaskGraph.make_task(
                     f"{self.resource.get_full_id()}_calculate_min_max"
                     f"_{chrom}_{start}_{end}",
-                    scan.do_min_max_task,
+                    scan_min_max.do_min_max_task,
                     args=[
                         self.resource,
                         all_min_max_scores,
@@ -177,7 +177,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
                 tasks.append(task)
             merge_task = TaskGraph.make_task(
                 f"{self.resource.get_full_id()}_merge_min_max",
-                scan.merge_min_max,
+                scan_min_max.merge_min_max,
                 args=[
                     all_min_max_scores,
                     all_hist_confs,
@@ -196,7 +196,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             task = TaskGraph.make_task(
                 f"{self.resource.get_full_id()}_calculate_histogram_"
                 f"{chrom}_{start}_{end}",
-                scan.do_histogram_task,
+                scan_histograms.do_histogram_task,
                 args=[
                     self.resource,
                     merge_min_max_task,
@@ -207,7 +207,7 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             tasks.append(task)
         save_task = TaskGraph.make_task(
             f"{self.resource.get_full_id()}_merge_and_save_histograms",
-            scan.merge_and_save_histograms,
+            scan_histograms.merge_and_save_histograms,
             args=[self.resource, *histogram_tasks],
             deps=[],
         )
@@ -238,7 +238,8 @@ class GenomicScoreImplementation(ScoreImplementationBase):
 
     def stored_statistics(self) -> list[StoredStatistic]:
         # The same three declarations the scan gates on, so what is
-        # declared here is what ``scan.merge_and_save_histograms`` writes.
+        # declared here is what
+        # ``scan_histograms.merge_and_save_histograms`` writes.
         return [
             stored for stored in (
                 COVERAGE_STATISTIC, FRAGMENT_STATISTIC, ALLELE_STATISTIC)
@@ -563,8 +564,8 @@ class GenomicScoreImplementation(ScoreImplementationBase):
             # the resource still reported its statistics as freshly built.
             # A length is what SPLITTING needs, not what READING needs, so
             # scan the contig whole.  An unbounded region keeps the
-            # per-record path (see scan.do_histogram_task): slower than a
-            # split contig, never wrong.
+            # per-record path (see scan_histograms.do_histogram_task):
+            # slower than a split contig, never wrong.
             logger.warning(
                 "unable to find chromosome length for %s; "
                 "scanning it as a single unbounded region", chrom)

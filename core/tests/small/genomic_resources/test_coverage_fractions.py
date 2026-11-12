@@ -10,7 +10,7 @@ import pytest
 import pytest_mock
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     PositionScoreImplementation,
-    scan,
+    scan_noregion,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.statistics.coverage import resolve_chrom_lengths
@@ -58,7 +58,7 @@ def built_impl(
     repo: GenomicResourceRepo, resource_id: str,
 ) -> PositionScoreImplementation:
     resource = repo.get_resource(resource_id)
-    scan.do_noregion_histograms(resource)
+    scan_noregion.do_noregion_histograms(resource)
     return PositionScoreImplementation(repo.get_resource(resource_id))
 
 

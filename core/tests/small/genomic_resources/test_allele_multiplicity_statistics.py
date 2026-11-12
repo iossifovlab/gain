@@ -15,7 +15,10 @@ from gain.genomic_resources import resource_types
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.genomic_scores import AlleleMultiplicityError
 from gain.genomic_resources.histogram import NumberHistogramConfig
-from gain.genomic_resources.implementations.genomic_scores_impl import scan
+from gain.genomic_resources.implementations.genomic_scores_impl import (
+    scan,
+    scan_histograms,
+)
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_types import (
     ALLELE_MULTIPLICITY_ENFORCEMENT_RELEASE,
@@ -249,6 +252,7 @@ def batch_size(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch,
 ) -> int:
     monkeypatch.setattr(scan, "_SCAN_BATCH_SIZE", request.param)
+    monkeypatch.setattr(scan_histograms, "_SCAN_BATCH_SIZE", request.param)
     return int(request.param)
 
 
@@ -305,6 +309,7 @@ def test_a_key_straddling_a_batch_boundary_is_repeated(
     # Batches of two: [chr1:10, chr1:20 A>G], [chr1:20 A>G, chr1:30] --
     # neither batch holds the key twice.
     monkeypatch.setattr(scan, "_SCAN_BATCH_SIZE", 2)
+    monkeypatch.setattr(scan_histograms, "_SCAN_BATCH_SIZE", 2)
     data = """
         chrom  pos_begin  reference  alternative  score
         chr1   10         C          T            0.1
@@ -406,8 +411,9 @@ def test_a_region_reports_no_key_it_does_not_own(
         "number_of_bins": 10,
     })}
 
-    owner = scan.do_histogram_task(resource, confs, "chr1", 1, 20)
-    neighbour = scan.do_histogram_task(resource, confs, "chr1", 21, 40)
+    owner = scan_histograms.do_histogram_task(resource, confs, "chr1", 1, 20)
+    neighbour = scan_histograms.do_histogram_task(
+        resource, confs, "chr1", 21, 40)
 
     assert owner.alleles is not None
     assert neighbour.alleles is not None

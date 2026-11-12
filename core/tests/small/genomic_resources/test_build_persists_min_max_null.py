@@ -23,6 +23,8 @@ from gain.genomic_resources.genomic_scores import (
 from gain.genomic_resources.histogram import NullHistogram
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     scan,
+    scan_histograms,
+    scan_min_max,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.repository_factory import (
@@ -141,12 +143,13 @@ def test_recording_a_nullified_score_does_not_widen_what_the_scan_reads(
         .build_resource(tmp_path)
     )
     min_max_scores, hist_confs = scan.unpack_score_defs(resource)
-    hist_confs = scan.merge_min_max(
+    hist_confs = scan_min_max.merge_min_max(
         min_max_scores, hist_confs,
-        scan.do_min_max_task(resource, min_max_scores, "1", 1, 100))
+        scan_min_max.do_min_max_task(resource, min_max_scores, "1", 1, 100))
     reads = mocker.spy(PositionScore, read)
 
-    result = scan.do_histogram_task(resource, hist_confs, "1", 1, 100)
+    result = scan_histograms.do_histogram_task(
+        resource, hist_confs, "1", 1, 100)
 
     assert isinstance(result.histograms["score"], NullHistogram)
     # Empty on no read at all, so a scan that never asked cannot pass.
@@ -173,11 +176,12 @@ def test_a_score_the_min_max_pass_refused_records_the_refusal_as_its_reason(
         .build_resource(tmp_path)
     )
     min_max_scores, hist_confs = scan.unpack_score_defs(resource)
-    hist_confs = scan.merge_min_max(
+    hist_confs = scan_min_max.merge_min_max(
         min_max_scores, hist_confs,
         {"score": NullMinMaxValue("score", "Cannot add non numerical value")})
-    scan.merge_and_save_histograms(
-        resource, scan.do_histogram_task(resource, hist_confs, "1", 1, 100))
+    scan_histograms.merge_and_save_histograms(
+        resource,
+        scan_histograms.do_histogram_task(resource, hist_confs, "1", 1, 100))
     refresh_manifest(resource)
 
     histogram = build_score_from_resource(resource).get_score_histogram(

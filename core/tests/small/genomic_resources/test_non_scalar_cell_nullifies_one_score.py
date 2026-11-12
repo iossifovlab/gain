@@ -24,7 +24,8 @@ from gain.genomic_resources.histogram import (
     NumberHistogramConfig,
 )
 from gain.genomic_resources.implementations.genomic_scores_impl import (
-    scan,
+    scan_histograms,
+    scan_min_max,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.min_max import (
@@ -64,14 +65,17 @@ def resource(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
 ) -> GenomicResource:
     monkeypatch.setattr(
-        scan, "scan_region", lambda *_args, **_kwargs: iter(_RECORDS))
+        scan_min_max, "scan_region", lambda *_args, **_kwargs: iter(_RECORDS))
+    monkeypatch.setattr(
+        scan_histograms, "scan_region",
+        lambda *_args, **_kwargs: iter(_RECORDS))
     return a_vcf_info_score().with_data(_VCF).build_resource(tmp_path)
 
 
 def test_the_min_max_pass_nullifies_the_tuple_score_and_folds_the_rest(
     resource: GenomicResource,
 ) -> None:
-    result = scan.do_min_max(resource, ["SC", "OK"], *_REGION)
+    result = scan_min_max.do_min_max(resource, ["SC", "OK"], *_REGION)
 
     assert isinstance(result["SC"], NullMinMaxValue)
     assert "(2.5, 3.5) (<class 'tuple'>)" in result["SC"].reason
@@ -87,7 +91,7 @@ def test_the_histogram_pass_nullifies_the_tuple_score_and_bins_the_rest(
         "OK": NumberHistogramConfig(view_range=(0, 1), number_of_bins=4),
     }
 
-    result = scan.do_histogram(resource, confs, *_REGION)
+    result = scan_histograms.do_histogram(resource, confs, *_REGION)
 
     assert isinstance(result["SC"], NullHistogram)
     assert "(2.5, 3.5) (<class 'tuple'>)" in result["SC"].reason

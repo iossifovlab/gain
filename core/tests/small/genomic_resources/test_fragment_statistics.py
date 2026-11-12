@@ -7,7 +7,8 @@ import pytest
 from gain.genomic_resources.histogram import NumberHistogramConfig
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     build_score_implementation_from_resource,
-    scan,
+    scan_histograms,
+    scan_noregion,
 )
 from gain.genomic_resources.repository import (
     GenomicResource,
@@ -97,7 +98,7 @@ def test_an_unknown_record_round_trips_as_unknown_not_as_empty(
     # the writer are pinned against each other and not against a fixture
     # that could drift from either.
     resource = _fragments(tmp_path)
-    scan.do_noregion_histograms(resource)
+    scan_noregion.do_noregion_histograms(resource)
     known = _stored(resource)
     unknown = FragmentStatistics()
     for chrom, count in known.fragments_by_chromosome().items():
@@ -123,7 +124,7 @@ def test_every_row_counts_as_one_fragment_per_chromosome_and_global(
     # ``cnv_collection`` is the deprecated one, hence the marker.
     resource = _fragments(tmp_path, resource_type)
 
-    scan.do_noregion_histograms(resource)
+    scan_noregion.do_noregion_histograms(resource)
 
     stats = _stored(resource)
     assert stats.fragments_by_chromosome() == {"chr1": 4, "chr2": 1}
@@ -156,7 +157,7 @@ def test_the_file_stores_each_chromosomes_fragment_lengths_exactly(
     rows, counted twice by two different routes."""
     resource = _fragments(tmp_path)
 
-    scan.do_noregion_histograms(resource)
+    scan_noregion.do_noregion_histograms(resource)
 
     content = resource.get_file_content(FRAGMENT_STATISTICS_FILE)
     data = json.loads(content)
@@ -179,7 +180,7 @@ def test_fragment_lengths_bin_the_rows_own_span_and_merge_exactly(
     # chromosomes' records: nothing is re-scanned.
     resource = _fragments(tmp_path)
 
-    scan.do_noregion_histograms(resource)
+    scan_noregion.do_noregion_histograms(resource)
 
     stats = _stored(resource)
     assert stats.fragment_lengths_by_chromosome() == {
@@ -198,7 +199,7 @@ def test_a_read_file_serializes_back_byte_for_byte(
     # bytes the scan wrote, or a resource whose statistics are merely
     # re-saved would look rebuilt.
     resource = _fragments(tmp_path)
-    scan.do_noregion_histograms(resource)
+    scan_noregion.do_noregion_histograms(resource)
     written = resource.get_file_content(FRAGMENT_STATISTICS_FILE)
 
     resaved = FragmentStatistics.deserialize(written).serialize()
@@ -219,7 +220,7 @@ def test_reading_the_file_builds_no_array_tally(
     # block per contig (gain#1565).  Pinned as a count of constructions
     # rather than a memory bound, which would be a flaky pin.
     resource = _fragments(tmp_path)
-    scan.do_noregion_histograms(resource)
+    scan_noregion.do_noregion_histograms(resource)
     content = resource.get_file_content(FRAGMENT_STATISTICS_FILE)
     built = mocker.spy(LengthArrayTally, "__init__")
 
@@ -251,10 +252,10 @@ def test_bulk_and_per_record_scans_produce_the_same_fragment_statistics(
     per_record = RegionFragments("chr1", 1, 200)
     bulk = RegionFragments("chr1", 1, 200)
 
-    scan.do_histogram(
+    scan_histograms.do_histogram(
         resource, confs, "chr1", 1, 200, fragments=per_record)
     assert not batches, f"the per-record path made an array call: {batches}"
-    scan.do_histogram_bulk(
+    scan_histograms.do_histogram_bulk(
         resource, confs, "chr1", 1, 200, fragments=bulk)
 
     assert batches == [[11, 11, 31, 91]]
@@ -278,12 +279,12 @@ def test_the_per_record_fragment_scan_normalizes_no_values(
     def _refuse(values: object) -> tuple:
         raise AssertionError(f"a fragment row was normalized: {values}")
 
-    monkeypatch.setattr(scan, "normalize_values", _refuse)
+    monkeypatch.setattr(scan_histograms, "normalize_values", _refuse)
     resource = _fragments(tmp_path)
     fragments = RegionFragments("chr1", 1, 200)
 
-    scan.do_histogram(resource, {"s": _hist_conf()}, "chr1", 1, 200,
-                      fragments=fragments)
+    scan_histograms.do_histogram(resource, {"s": _hist_conf()}, "chr1", 1, 200,
+                                 fragments=fragments)
 
     assert fragments.fragments == 4
 
@@ -307,7 +308,7 @@ def test_a_position_score_publishes_no_fragment_statistics(
         .build_resource(tmp_path)
     )
 
-    scan.do_noregion_histograms(resource)
+    scan_noregion.do_noregion_histograms(resource)
 
     assert not resource.file_exists(FRAGMENT_STATISTICS_FILE)
 
@@ -322,7 +323,7 @@ def test_the_info_page_renders_a_fragments_section(
     # Per-chromosome counts, a global row and ONE global length image --
     # no per-chromosome images.
     resource = _fragments(tmp_path)
-    scan.do_noregion_histograms(resource)
+    scan_noregion.do_noregion_histograms(resource)
 
     page = _info_page(resource)
     table = table_after(page, "<h2>Fragments</h2>")
@@ -357,7 +358,7 @@ def test_the_info_page_tables_the_fragment_lengths_exactly(
     straight off the fixture's rows: lengths 4, 11, 11, 31 and 91 have
     a mean of 29.6 and a median of 11."""
     resource = _fragments(tmp_path)
-    scan.do_noregion_histograms(resource)
+    scan_noregion.do_noregion_histograms(resource)
 
     page = _info_page(resource)
 
@@ -387,7 +388,7 @@ def test_a_median_past_the_clamp_renders_as_a_floor(
         .with_tabix()
         .build_resource(tmp_path)
     )
-    scan.do_noregion_histograms(resource)
+    scan_noregion.do_noregion_histograms(resource)
 
     page = _info_page(resource)
 
@@ -413,7 +414,7 @@ def test_the_fragments_section_is_absent_on_a_position_score(
         .with_tabix()
         .build_resource(tmp_path)
     )
-    scan.do_noregion_histograms(resource)
+    scan_noregion.do_noregion_histograms(resource)
 
     assert "Fragments" not in _info_page(resource)
 
@@ -425,7 +426,7 @@ def test_a_fragment_resource_with_no_statistics_file_says_not_computed(
     # histograms and no fragment file at all.  The section is still
     # there; it just has nothing to show.
     resource = _fragments(tmp_path)
-    scan.do_noregion_histograms(resource)
+    scan_noregion.do_noregion_histograms(resource)
     proto = resource.proto
     assert isinstance(proto, ReadWriteRepositoryProtocol)
     proto.delete_resource_file(
@@ -471,7 +472,7 @@ def test_a_version_1_file_keeps_its_counts_and_reads_lengths_unknown(
     no compatibility branch.  Not "no fragments": the table right above
     says there are five."""
     resource = _fragments(tmp_path)
-    scan.do_noregion_histograms(resource)
+    scan_noregion.do_noregion_histograms(resource)
     with resource.proto.open_raw_file(
             resource, FRAGMENT_STATISTICS_FILE, mode="wt") as outfile:
         outfile.write(_version_1_file())
@@ -548,15 +549,15 @@ def test_fragment_statistics_are_chunk_invariant(
     )
 
     results = [
-        scan.do_histogram_task(
+        scan_histograms.do_histogram_task(
             resource, confs, "chr1", start,
             min(start + region_size - 1, _FRAGMENT_CONTIG_END))
         for start in starts
     ]
-    whole = scan.do_histogram_task(
+    whole = scan_histograms.do_histogram_task(
         resource, confs, "chr1", 1, _FRAGMENT_CONTIG_END)
 
-    merged = scan.merge_histograms(
+    merged = scan_histograms.merge_histograms(
         resource, *(result.histograms for result in results))
     assert as_number(merged["s"]).bars.tolist() == \
         as_number(whole.histograms["s"]).bars.tolist()

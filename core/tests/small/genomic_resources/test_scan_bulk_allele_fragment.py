@@ -1,6 +1,7 @@
 # pylint: disable=C0114,C0116,W0212,W0621
 import pathlib
 from collections.abc import Callable
+from types import ModuleType
 from typing import Any
 
 import numpy as np
@@ -19,6 +20,8 @@ from gain.genomic_resources.histogram import (
 )
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     scan,
+    scan_histograms,
+    scan_min_max,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_types import FRAGMENT_SCORE_TYPES
@@ -79,8 +82,8 @@ def test_bulk_histogram_matches_per_record_allele_shared_position(
     # allele score IS, and what the position-score overlap guard rejects.
     resource = _allele_tabix(tmp_path)
     confs: dict = {"s": _hist_conf()}
-    ref = scan.do_histogram(resource, confs, "chr1", 1, 20)
-    bulk = scan.do_histogram_bulk(resource, confs, "chr1", 1, 20)
+    ref = scan_histograms.do_histogram(resource, confs, "chr1", 1, 20)
+    bulk = scan_histograms.do_histogram_bulk(resource, confs, "chr1", 1, 20)
     _assert_hists_equal(bulk, ref)
     # Every record weighs 1, so the bars hold one count per record.
     assert as_number(bulk["s"]).bars.sum() == 4
@@ -100,8 +103,8 @@ def test_bulk_min_max_matches_per_record_allele_shared_position(
     tmp_path: pathlib.Path,
 ) -> None:
     resource = _allele_tabix(tmp_path)
-    ref = scan.do_min_max(resource, ["s"], "chr1", 1, 20)
-    bulk = scan.do_min_max_bulk(resource, ["s"], "chr1", 1, 20)
+    ref = scan_min_max.do_min_max(resource, ["s"], "chr1", 1, 20)
+    bulk = scan_min_max.do_min_max_bulk(resource, ["s"], "chr1", 1, 20)
     _assert_min_max_equal(bulk, ref)
     assert (bulk["s"].min, bulk["s"].max) == (0.1, 0.9)
 
@@ -114,11 +117,11 @@ def test_bulk_allele_matches_per_record_when_region_clips_the_edges(
     resource = _allele_tabix(tmp_path)
     confs: dict = {"s": _hist_conf()}
     _assert_hists_equal(
-        scan.do_histogram_bulk(resource, confs, "chr1", 10, 14),
-        scan.do_histogram(resource, confs, "chr1", 10, 14))
+        scan_histograms.do_histogram_bulk(resource, confs, "chr1", 10, 14),
+        scan_histograms.do_histogram(resource, confs, "chr1", 10, 14))
     _assert_min_max_equal(
-        scan.do_min_max_bulk(resource, ["s"], "chr1", 10, 14),
-        scan.do_min_max(resource, ["s"], "chr1", 10, 14))
+        scan_min_max.do_min_max_bulk(resource, ["s"], "chr1", 10, 14),
+        scan_min_max.do_min_max(resource, ["s"], "chr1", 10, 14))
 
 
 def _allele_multibase_tabix(tmp_path: pathlib.Path) -> GenomicResource:
@@ -147,8 +150,8 @@ def test_multi_base_allele_record_weighs_one_not_its_span(
     # in bulk would silently produce a different histogram.
     resource = _allele_multibase_tabix(tmp_path)
     confs: dict = {"s": _hist_conf()}
-    ref = scan.do_histogram(resource, confs, "chr1", 1, 40)
-    bulk = scan.do_histogram_bulk(resource, confs, "chr1", 1, 40)
+    ref = scan_histograms.do_histogram(resource, confs, "chr1", 1, 40)
+    bulk = scan_histograms.do_histogram_bulk(resource, confs, "chr1", 1, 40)
     _assert_hists_equal(bulk, ref)
     # Three records, one count each -- not 10 + 1 + 1 for the spans.
     assert as_number(bulk["s"]).bars.sum() == 3
@@ -166,13 +169,15 @@ def test_a_multi_base_record_is_owned_by_the_region_holding_its_begin(
     resource = _allele_multibase_tabix(tmp_path)
     confs: dict = {"s": _hist_conf()}
 
-    reaching = scan.do_histogram(resource, confs, "chr1", 15, 25)
-    owning = scan.do_histogram(resource, confs, "chr1", 5, 15)
+    reaching = scan_histograms.do_histogram(resource, confs, "chr1", 15, 25)
+    owning = scan_histograms.do_histogram(resource, confs, "chr1", 5, 15)
 
     _assert_hists_equal(
-        scan.do_histogram_bulk(resource, confs, "chr1", 15, 25), reaching)
+        scan_histograms.do_histogram_bulk(resource, confs, "chr1", 15, 25),
+        reaching)
     _assert_hists_equal(
-        scan.do_histogram_bulk(resource, confs, "chr1", 5, 15), owning)
+        scan_histograms.do_histogram_bulk(resource, confs, "chr1", 5, 15),
+        owning)
     assert as_number(reaching["s"]).bars.sum() == 0
     assert as_number(owning["s"]).bars.sum() == 2
 
@@ -243,8 +248,8 @@ def test_bulk_histogram_matches_per_record_fragment(
 ) -> None:
     resource = _fragment_tabix(tmp_path, resource_type)
     confs: dict = {"s": _hist_conf()}
-    ref = scan.do_histogram(resource, confs, "chr1", 1, 300)
-    bulk = scan.do_histogram_bulk(resource, confs, "chr1", 1, 300)
+    ref = scan_histograms.do_histogram(resource, confs, "chr1", 1, 300)
+    bulk = scan_histograms.do_histogram_bulk(resource, confs, "chr1", 1, 300)
     _assert_hists_equal(bulk, ref)
     # Three fragments, one count each; their spans (91, 11, 176) stay out.
     assert as_number(bulk["s"]).bars.sum() == 3
@@ -254,8 +259,8 @@ def test_bulk_min_max_matches_per_record_fragment(
     tmp_path: pathlib.Path,
 ) -> None:
     resource = _fragment_tabix(tmp_path)
-    ref = scan.do_min_max(resource, ["s"], "chr1", 1, 300)
-    bulk = scan.do_min_max_bulk(resource, ["s"], "chr1", 1, 300)
+    ref = scan_min_max.do_min_max(resource, ["s"], "chr1", 1, 300)
+    bulk = scan_min_max.do_min_max_bulk(resource, ["s"], "chr1", 1, 300)
     _assert_min_max_equal(bulk, ref)
     assert (bulk["s"].min, bulk["s"].max) == (0.1, 0.9)
 
@@ -266,11 +271,11 @@ def test_bulk_fragment_matches_per_record_when_region_clips_the_edges(
     resource = _fragment_tabix(tmp_path)
     confs: dict = {"s": _hist_conf()}
     _assert_hists_equal(
-        scan.do_histogram_bulk(resource, confs, "chr1", 26, 150),
-        scan.do_histogram(resource, confs, "chr1", 26, 150))
+        scan_histograms.do_histogram_bulk(resource, confs, "chr1", 26, 150),
+        scan_histograms.do_histogram(resource, confs, "chr1", 26, 150))
     _assert_min_max_equal(
-        scan.do_min_max_bulk(resource, ["s"], "chr1", 26, 150),
-        scan.do_min_max(resource, ["s"], "chr1", 26, 150))
+        scan_min_max.do_min_max_bulk(resource, ["s"], "chr1", 26, 150),
+        scan_min_max.do_min_max(resource, ["s"], "chr1", 26, 150))
 
 
 def test_vcf_backed_allele_score_is_not_bulk_scan_eligible(
@@ -331,8 +336,8 @@ def test_a_str_score_and_a_float_score_scan_together(
     }
     assert scan.can_bulk_histogram(resource, confs)
 
-    ref = scan.do_histogram(resource, confs, "chr1", 1, 20)
-    bulk = scan.do_histogram_bulk(resource, confs, "chr1", 1, 20)
+    ref = scan_histograms.do_histogram(resource, confs, "chr1", 1, 20)
+    bulk = scan_histograms.do_histogram_bulk(resource, confs, "chr1", 1, 20)
 
     assert set(bulk) == set(ref) == {"s", "other"}
     assert np.array_equal(as_number(bulk["s"]).bars, as_number(ref["s"]).bars)
@@ -388,17 +393,17 @@ def _spy_on_bulk(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """
     calls: list[str] = []
 
-    def wrap(name: str) -> None:
-        original = getattr(scan, name)
+    def wrap(module: ModuleType, name: str) -> None:
+        original = getattr(module, name)
 
         def spy(*args: Any, **kwargs: Any) -> Any:
             calls.append(name)
             return original(*args, **kwargs)
 
-        monkeypatch.setattr(scan, name, spy)
+        monkeypatch.setattr(module, name, spy)
 
-    wrap("do_histogram_bulk")
-    wrap("do_min_max_bulk")
+    wrap(scan_histograms, "do_histogram_bulk")
+    wrap(scan_min_max, "do_min_max_bulk")
     return calls
 
 
@@ -415,17 +420,18 @@ def test_dispatch_uses_bulk_for_allele_and_fragment(
     # both must reproduce the per-record numbers exactly.
     resource = make_resource(tmp_path)
     confs: dict = {"s": _hist_conf()}
-    ref_hist = scan.do_histogram(resource, confs, "chr1", 1, 300)
-    ref_min_max = scan.do_min_max(resource, ["s"], "chr1", 1, 300)
+    ref_hist = scan_histograms.do_histogram(resource, confs, "chr1", 1, 300)
+    ref_min_max = scan_min_max.do_min_max(resource, ["s"], "chr1", 1, 300)
 
     calls = _spy_on_bulk(monkeypatch)
     assert scan.can_bulk_histogram(resource, confs)
     assert scan.bulk_scan_eligible(resource, ["s"])
     _assert_hists_equal(
-        scan.do_histogram_task(
+        scan_histograms.do_histogram_task(
             resource, confs, "chr1", 1, 300).histograms, ref_hist)
     _assert_min_max_equal(
-        scan.do_min_max_task(resource, ["s"], "chr1", 1, 300), ref_min_max)
+        scan_min_max.do_min_max_task(resource, ["s"], "chr1", 1, 300),
+        ref_min_max)
     assert calls == ["do_histogram_bulk", "do_min_max_bulk"]
 
 
@@ -448,8 +454,8 @@ def test_dispatch_keeps_an_ineligible_score_off_the_bulk_path(
     assert not scan.bulk_scan_eligible(resource, ["score"])
     confs: dict = {"score": _hist_conf()}
     calls = _spy_on_bulk(monkeypatch)
-    scan.do_histogram_task(resource, confs, "1", 1, 20)
-    scan.do_min_max_task(resource, ["score"], "1", 1, 20)
+    scan_histograms.do_histogram_task(resource, confs, "1", 1, 20)
+    scan_min_max.do_min_max_task(resource, ["score"], "1", 1, 20)
     assert not calls, calls
 
 
@@ -461,8 +467,8 @@ def test_dispatch_keeps_an_unbounded_region_off_the_bulk_path(
     resource = _fragment_tabix(tmp_path)
     confs: dict = {"s": _hist_conf()}
     calls = _spy_on_bulk(monkeypatch)
-    scan.do_histogram_task(resource, confs, "chr1", None, None)
-    scan.do_min_max_task(resource, ["s"], "chr1", None, None)
+    scan_histograms.do_histogram_task(resource, confs, "chr1", None, None)
+    scan_min_max.do_min_max_task(resource, ["s"], "chr1", None, None)
     assert not calls, calls
 
 
@@ -611,13 +617,16 @@ def _assert_bulk_agrees_at_batch_size(
     """Scan ``region`` both ways at ``batch_size`` and assert they agree."""
     start, end = region
     confs: dict = {"s": _hist_conf()}
-    ref_hist = scan.do_histogram(resource, confs, "chr1", start, end)
-    ref_min_max = scan.do_min_max(resource, ["s"], "chr1", start, end)
+    ref_hist = scan_histograms.do_histogram(resource, confs, "chr1", start, end)
+    ref_min_max = scan_min_max.do_min_max(resource, ["s"], "chr1", start, end)
 
     monkeypatch.setattr(scan, "_SCAN_BATCH_SIZE", batch_size)
+    monkeypatch.setattr(scan_histograms, "_SCAN_BATCH_SIZE", batch_size)
     batches = _count_bulk_batches(monkeypatch)
-    bulk_hist = scan.do_histogram_bulk(resource, confs, "chr1", start, end)
-    bulk_min_max = scan.do_min_max_bulk(resource, ["s"], "chr1", start, end)
+    bulk_hist = scan_histograms.do_histogram_bulk(
+        resource, confs, "chr1", start, end)
+    bulk_min_max = scan_min_max.do_min_max_bulk(
+        resource, ["s"], "chr1", start, end)
 
     _assert_hists_equal(bulk_hist, ref_hist)
     _assert_min_max_equal(bulk_min_max, ref_min_max)
@@ -699,10 +708,11 @@ def test_an_all_na_fragment_column_folds_to_nothing(
         .build_resource(tmp_path)
     )
     confs: dict = {"s": _hist_conf()}
-    ref_hist = scan.do_histogram(resource, confs, "chr1", 1, 300)
-    ref_min_max = scan.do_min_max(resource, ["s"], "chr1", 1, 300)
-    bulk_hist = scan.do_histogram_bulk(resource, confs, "chr1", 1, 300)
-    bulk_min_max = scan.do_min_max_bulk(resource, ["s"], "chr1", 1, 300)
+    ref_hist = scan_histograms.do_histogram(resource, confs, "chr1", 1, 300)
+    ref_min_max = scan_min_max.do_min_max(resource, ["s"], "chr1", 1, 300)
+    bulk_hist = scan_histograms.do_histogram_bulk(
+        resource, confs, "chr1", 1, 300)
+    bulk_min_max = scan_min_max.do_min_max_bulk(resource, ["s"], "chr1", 1, 300)
 
     _assert_hists_equal(bulk_hist, ref_hist)
     _assert_min_max_equal(bulk_min_max, ref_min_max)
@@ -723,10 +733,12 @@ def test_a_region_past_the_end_of_the_table_scans_to_nothing(
     # number, or a histogram seeded with a bar, would show up here.
     resource = make_resource(tmp_path)
     confs: dict = {"s": _hist_conf()}
-    ref_hist = scan.do_histogram(resource, confs, "chr1", 5000, 6000)
-    ref_min_max = scan.do_min_max(resource, ["s"], "chr1", 5000, 6000)
-    bulk_hist = scan.do_histogram_bulk(resource, confs, "chr1", 5000, 6000)
-    bulk_min_max = scan.do_min_max_bulk(resource, ["s"], "chr1", 5000, 6000)
+    ref_hist = scan_histograms.do_histogram(resource, confs, "chr1", 5000, 6000)
+    ref_min_max = scan_min_max.do_min_max(resource, ["s"], "chr1", 5000, 6000)
+    bulk_hist = scan_histograms.do_histogram_bulk(
+        resource, confs, "chr1", 5000, 6000)
+    bulk_min_max = scan_min_max.do_min_max_bulk(
+        resource, ["s"], "chr1", 5000, 6000)
 
     _assert_hists_equal(bulk_hist, ref_hist)
     _assert_min_max_equal(bulk_min_max, ref_min_max)
@@ -753,10 +765,12 @@ def test_a_region_holding_a_single_record(
     # think about rather than the only row the backend returned.
     start, end = (14, 14) if make_resource is _allele_tabix else (24, 30)
     confs: dict = {"s": _hist_conf()}
-    ref_hist = scan.do_histogram(resource, confs, "chr1", start, end)
-    ref_min_max = scan.do_min_max(resource, ["s"], "chr1", start, end)
-    bulk_hist = scan.do_histogram_bulk(resource, confs, "chr1", start, end)
-    bulk_min_max = scan.do_min_max_bulk(resource, ["s"], "chr1", start, end)
+    ref_hist = scan_histograms.do_histogram(resource, confs, "chr1", start, end)
+    ref_min_max = scan_min_max.do_min_max(resource, ["s"], "chr1", start, end)
+    bulk_hist = scan_histograms.do_histogram_bulk(
+        resource, confs, "chr1", start, end)
+    bulk_min_max = scan_min_max.do_min_max_bulk(
+        resource, ["s"], "chr1", start, end)
 
     _assert_hists_equal(bulk_hist, ref_hist)
     _assert_min_max_equal(bulk_min_max, ref_min_max)
@@ -779,8 +793,9 @@ def test_values_outside_the_view_range_reach_the_out_of_range_bins(
     # both sides.
     resource = make_resource(tmp_path)
     confs: dict = {"s": _hist_conf(0.25, 0.55)}
-    ref_hist = scan.do_histogram(resource, confs, "chr1", 1, 300)
-    bulk_hist = scan.do_histogram_bulk(resource, confs, "chr1", 1, 300)
+    ref_hist = scan_histograms.do_histogram(resource, confs, "chr1", 1, 300)
+    bulk_hist = scan_histograms.do_histogram_bulk(
+        resource, confs, "chr1", 1, 300)
 
     _assert_hists_equal(bulk_hist, ref_hist)
     assert as_number(bulk_hist["s"]).out_of_range_bins == [below, above]
@@ -793,8 +808,8 @@ def test_multi_base_allele_record_min_max_reads_the_same_selection(
     # min/max is the other consumer of the same selection code, so it
     # gets the same fixture.
     resource = _allele_multibase_tabix(tmp_path)
-    ref = scan.do_min_max(resource, ["s"], "chr1", 1, 40)
-    bulk = scan.do_min_max_bulk(resource, ["s"], "chr1", 1, 40)
+    ref = scan_min_max.do_min_max(resource, ["s"], "chr1", 1, 40)
+    bulk = scan_min_max.do_min_max_bulk(resource, ["s"], "chr1", 1, 40)
     _assert_min_max_equal(bulk, ref)
     assert (bulk["s"].min, bulk["s"].max) == (0.1, 0.9)
 
@@ -803,8 +818,10 @@ def test_multi_base_allele_record_min_max_reads_the_same_selection(
     # must agree, or a region would measure differently by which one
     # served it.
     for start, end, extremes in ((15, 25, None), (20, 40, (0.5, 0.5))):
-        region_ref = scan.do_min_max(resource, ["s"], "chr1", start, end)
-        region_bulk = scan.do_min_max_bulk(resource, ["s"], "chr1", start, end)
+        region_ref = scan_min_max.do_min_max(
+            resource, ["s"], "chr1", start, end)
+        region_bulk = scan_min_max.do_min_max_bulk(
+            resource, ["s"], "chr1", start, end)
         _assert_min_max_equal(region_bulk, region_ref)
         if extremes is None:
             assert np.isnan(region_bulk["s"].min)

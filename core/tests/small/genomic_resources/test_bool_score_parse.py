@@ -24,7 +24,9 @@ from gain.genomic_resources.histogram import (
     CategoricalHistogram,
     CategoricalHistogramConfig,
 )
-from gain.genomic_resources.implementations.genomic_scores_impl import scan
+from gain.genomic_resources.implementations.genomic_scores_impl import (
+    scan_histograms,
+)
 from gain.genomic_resources.testing.builders import (
     PositionScoreBuilder,
     a_position_score,
@@ -250,7 +252,7 @@ def test_a_bool_columns_categorical_histogram_counts_both_values(
         .build_resource(tmp_path)
     )
 
-    hists = scan.do_histogram(
+    hists = scan_histograms.do_histogram(
         resource, {"flag": CategoricalHistogramConfig()}, "chr1", 1, 30)
 
     hist = hists["flag"]

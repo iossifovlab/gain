@@ -41,7 +41,7 @@ from collections.abc import Callable
 import pytest
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     build_score_implementation_from_resource,
-    scan,
+    scan_noregion,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing.builders import (
@@ -161,7 +161,7 @@ def built_page(repo: GenomicResourceRepo, resource_id: str) -> str:
     fraction and another none.
     """
     resource = repo.get_resource(resource_id)
-    scan.do_noregion_histograms(resource)
+    scan_noregion.do_noregion_histograms(resource)
     impl = build_score_implementation_from_resource(
         repo.get_resource(resource_id))
     return impl.get_info(repo=repo)
