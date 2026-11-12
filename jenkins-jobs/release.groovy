@@ -60,7 +60,8 @@ pipelineJob('gain-release') {
         booleanParam(
             'DRY_RUN',
             false,
-            'Run every pre-flight (tag checkout, master CI gate, ' +
+            'Run every pre-flight (tag checkout, release notes, ' +
+            'master CI gate, ' +
             'conda integration gate, tag freshness, credentials) ' +
             'and stop: nothing is built past the conda-builder ' +
             'image and nothing is published. An already-published ' +
