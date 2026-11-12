@@ -20,10 +20,10 @@ from gain.genomic_resources.genomic_scores import (
     build_score_from_resource,
 )
 from gain.genomic_resources.repository import (
-    GR_MANIFEST_FILE_NAME,
     GenomicResource,
     GenomicResourceRepo,
 )
+from gain.genomic_resources.repository_ids import GR_MANIFEST_FILE_NAME
 from gain.genomic_resources.testing import build_filesystem_test_protocol
 from gain.genomic_resources.testing.builders import (
     PositionScoreBuilder,

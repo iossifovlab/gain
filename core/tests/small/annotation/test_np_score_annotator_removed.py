@@ -27,10 +27,8 @@ from gain.annotation.annotation_factory import (
     get_available_annotator_types,
     load_pipeline_from_yaml,
 )
-from gain.genomic_resources.repository import (
-    GR_CONF_FILE_NAME,
-    GenomicResourceProtocolRepo,
-)
+from gain.genomic_resources.repository import GenomicResourceProtocolRepo
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.resource_types import (
     RETIRED_ANNOTATOR_NAMES,
     retired_annotator_message,

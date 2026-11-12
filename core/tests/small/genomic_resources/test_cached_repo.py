@@ -28,7 +28,6 @@ from gain.genomic_resources.fsspec_protocol import (
 from gain.genomic_resources.genomic_scores import build_score_from_resource
 from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
 from gain.genomic_resources.repository import (
-    GR_CONF_FILE_NAME,
     GenomicResource,
     GenomicResourceProtocolRepo,
     GenomicResourceRepo,
@@ -36,6 +35,7 @@ from gain.genomic_resources.repository import (
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,
     build_filesystem_test_repository,

@@ -16,8 +16,8 @@ from gain.genomic_resources.ann_data_10x import (
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
-    Manifest,
 )
+from gain.genomic_resources.repository_manifest import Manifest
 from gain.utils.url_redaction import strip_url_userinfo
 
 logger = logging.getLogger(__name__)

@@ -21,16 +21,18 @@ from gain.utils.helpers import convert_size
 
 from .dvc import is_dvc_sidecar
 from .repository import (
+    GenomicResource,
+    GenomicResourceRepo,
+    _description_in,
+    _summary_in,
+)
+from .repository_ids import (
     GR_INDEX_FILE_NAME,
     GR_INDEX_NON_LABEL_COLUMNS,
     GR_INDEX_RESOURCE_FIELDS,
     GR_STATISTICS_INDEX_FILE_NAME,
     INDEX_COLUMN_PATTERN,
     INDEX_COLUMN_RE,
-    GenomicResource,
-    GenomicResourceRepo,
-    _description_in,
-    _summary_in,
 )
 from .resource_errors import MalformedResourceError
 from .resource_query import label_alternatives

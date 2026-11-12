@@ -21,10 +21,8 @@ import pathlib
 from typing import Any
 
 import pytest
-from gain.genomic_resources.repository import (
-    GenomicResource,
-    Manifest,
-)
+from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.repository_manifest import Manifest
 from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,
     setup_directories,

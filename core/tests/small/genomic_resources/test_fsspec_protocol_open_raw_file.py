@@ -1,9 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 
-from gain.genomic_resources.repository import (
-    GR_CONF_FILE_NAME,
-    RepositoryProtocol,
-)
+from gain.genomic_resources.repository import RepositoryProtocol
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 
 
 def test_open_raw_files(

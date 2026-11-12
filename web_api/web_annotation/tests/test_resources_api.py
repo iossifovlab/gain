@@ -13,10 +13,12 @@ from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
 from gain.genomic_resources.repository import (
     GenomicResourceProtocolRepo,
     GenomicResourceRepo,
-    SearchIndexUnavailableError,
 )
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
+)
+from gain.genomic_resources.repository_search import (
+    SearchIndexUnavailableError,
 )
 from gain.genomic_resources.testing import build_filesystem_test_protocol
 from gain.genomic_resources.testing.builders import (

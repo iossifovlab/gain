@@ -35,7 +35,6 @@ from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_resource,
 )
 from gain.genomic_resources.repository import (
-    GR_MANIFEST_FILE_NAME,
     GenomicResource,
     GenomicResourceProtocolRepo,
 )
@@ -46,6 +45,7 @@ from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
     redact_definition,
 )
+from gain.genomic_resources.repository_ids import GR_MANIFEST_FILE_NAME
 from gain.genomic_resources.testing import (
     build_faulty_test_protocol,
     build_filesystem_test_protocol,

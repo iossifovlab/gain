@@ -12,10 +12,8 @@ from gain.genomic_resources.fsspec_protocol import (
     RetryableCopyError,
     TruncatedDownloadError,
 )
-from gain.genomic_resources.repository import (
-    GR_CONF_FILE_NAME,
-    GenomicResource,
-)
+from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import (
     build_faulty_test_protocol,
     build_inmemory_test_protocol,

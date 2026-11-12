@@ -34,11 +34,11 @@ from gain.genomic_resources.histogram import (
     plot_histogram,
 )
 from gain.genomic_resources.repository import (
-    GR_INDEX_SCORE_FIELDS,
     GenomicResource,
     GenomicResourceRepo,
     ReadWriteRepositoryProtocol,
 )
+from gain.genomic_resources.repository_ids import GR_INDEX_SCORE_FIELDS
 from gain.genomic_resources.resource_implementation import (
     DEFAULT_STATISTICS_REGION_SIZE,
     GenomicResourceImplementation,

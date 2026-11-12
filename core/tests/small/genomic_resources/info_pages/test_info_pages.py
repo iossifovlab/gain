@@ -41,14 +41,12 @@ from gain.genomic_resources import get_resource_implementation_builder
 from gain.genomic_resources.implementations.reference_genome_impl import (
     REFERENCE_GENOME_STATISTIC,
 )
-from gain.genomic_resources.repository import (
-    GR_CONF_FILE_NAME,
-    GenomicResourceRepo,
-)
+from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
     build_resource_implementation,
 )
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.statistics.alleles import ALLELE_STATISTIC
 from gain.genomic_resources.statistics.coverage import COVERAGE_STATISTIC
 from gain.genomic_resources.statistics.fragments import FRAGMENT_STATISTIC

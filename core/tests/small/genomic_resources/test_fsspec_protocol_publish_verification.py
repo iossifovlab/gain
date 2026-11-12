@@ -7,7 +7,7 @@ from gain.genomic_resources.fsspec_protocol import (
     CorruptedPublishError,
     FsspecReadWriteProtocol,
 )
-from gain.genomic_resources.repository import GR_CONTENTS_FILE_NAME
+from gain.genomic_resources.repository_ids import GR_CONTENTS_FILE_NAME
 from gain.genomic_resources.testing import build_inmemory_test_protocol
 from pytest_mock import MockerFixture
 

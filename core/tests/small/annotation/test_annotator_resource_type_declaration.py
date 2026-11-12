@@ -41,10 +41,8 @@ from gain.annotation.gene_set_annotator import build_gene_set_annotator
 from gain.annotation.position_score_annotator import (
     build_position_score_annotator,
 )
-from gain.genomic_resources.repository import (
-    GR_CONF_FILE_NAME,
-    GenomicResourceRepo,
-)
+from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import build_inmemory_test_repository
 
 #: The opening of the wrong-type refusal, for the two tests that assert a

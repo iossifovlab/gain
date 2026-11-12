@@ -14,11 +14,11 @@ from gain.genomic_resources.cli import (
     cli_manage,
 )
 from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
-from gain.genomic_resources.repository import (
+from gain.genomic_resources.repository import GenomicResourceProtocolRepo
+from gain.genomic_resources.repository_ids import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
     GR_LEGACY_CONTENTS_FILE_NAME,
-    GenomicResourceProtocolRepo,
 )
 from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,

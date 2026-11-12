@@ -3,8 +3,8 @@ from collections.abc import Iterable
 from itertools import islice
 from typing import ClassVar
 
-from gain.genomic_resources.repository import (
-    GenomicResource,
+from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.repository_search import (
     SearchIndexUnavailableError,
     SearchTermError,
     drain_search,

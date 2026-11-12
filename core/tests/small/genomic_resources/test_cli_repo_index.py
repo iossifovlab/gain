@@ -5,9 +5,7 @@ from typing import Any
 
 import pytest
 from gain.genomic_resources.cli import cli_manage
-from gain.genomic_resources.repository import (
-    GR_SQLITE_META_FILE_NAME,
-)
+from gain.genomic_resources.repository_ids import GR_SQLITE_META_FILE_NAME
 from gain.genomic_resources.score_implementation import ScoreImplementationBase
 
 from .conftest import (

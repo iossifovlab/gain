@@ -8,6 +8,8 @@ from gain import logging
 from .repository import (
     GenomicResource,
     GenomicResourceRepo,
+)
+from .repository_search import (
     SearchIndexUnavailableError,
     SearchTermError,
     _map_relaying_skips,

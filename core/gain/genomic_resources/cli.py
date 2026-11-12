@@ -34,19 +34,11 @@ from gain.genomic_resources.fsspec_protocol import (
     build_fsspec_protocol,
 )
 from gain.genomic_resources.repository import (
-    GR_CONF_FILE_NAME,
-    GR_CONTENTS_FILE_NAME,
-    GR_INDEX_FILE_NAME,
-    GR_LEGACY_CONTENTS_FILE_NAME,
-    GR_SQLITE_META_FILE_NAME,
-    GR_STATISTICS_INDEX_FILE_NAME,
     GenomicResource,
     GenomicResourceRepo,
     ReadOnlyRepositoryProtocol,
     ReadWriteRepositoryProtocol,
     collect_dvc_entries,
-    parse_gr_id_version_token,
-    version_tuple_to_string,
 )
 from gain.genomic_resources.repository_factory import (
     DEFAULT_DEFINITION,
@@ -56,6 +48,16 @@ from gain.genomic_resources.repository_factory import (
     get_default_grr_definition_path,
     load_definition_file,
     redact_definition,
+)
+from gain.genomic_resources.repository_ids import (
+    GR_CONF_FILE_NAME,
+    GR_CONTENTS_FILE_NAME,
+    GR_INDEX_FILE_NAME,
+    GR_LEGACY_CONTENTS_FILE_NAME,
+    GR_SQLITE_META_FILE_NAME,
+    GR_STATISTICS_INDEX_FILE_NAME,
+    parse_gr_id_version_token,
+    version_tuple_to_string,
 )
 from gain.genomic_resources.resource_implementation import (
     DEFAULT_STATISTICS_REGION_SIZE,

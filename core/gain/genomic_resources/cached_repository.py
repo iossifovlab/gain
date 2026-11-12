@@ -20,16 +20,18 @@ from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,
 )
 from gain.genomic_resources.repository import (
-    GR_CONF_FILE_NAME,
     GenomicResource,
     GenomicResourceRepo,
-    Manifest,
     ReadOnlyRepositoryProtocol,
-    _map_relaying_skips,
     escape_unsafe_characters,
-    is_safe_repo_id,
     resolve_tabix_index_filename_for_read,
 )
+from gain.genomic_resources.repository_ids import (
+    GR_CONF_FILE_NAME,
+    is_safe_repo_id,
+)
+from gain.genomic_resources.repository_manifest import Manifest
+from gain.genomic_resources.repository_search import _map_relaying_skips
 from gain.utils.url_redaction import (
     strip_url_credentials,
     strip_url_userinfo,

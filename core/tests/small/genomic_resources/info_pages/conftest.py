@@ -15,7 +15,7 @@ from dataclasses import dataclass
 import pytest
 from filelock import FileLock
 from gain.genomic_resources.cli import cli_manage
-from gain.genomic_resources.repository import GR_CONF_FILE_NAME
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 
 from tests.small.genomic_resources.info_pages.supplement import (
     add_supplement_resources,

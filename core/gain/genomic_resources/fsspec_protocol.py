@@ -45,30 +45,36 @@ from gain.genomic_resources.dvc import (
     parse_dvc_pointer_out,
 )
 from gain.genomic_resources.repository import (
+    GenomicResource,
+    Mode,
+    ReadOnlyRepositoryProtocol,
+    ReadWriteRepositoryProtocol,
+    escape_unsafe_characters,
+    resolve_tabix_index_filename_for_read,
+)
+from gain.genomic_resources.repository_ids import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
     GR_INDEX_FILE_NAME,
     GR_LEGACY_CONTENTS_FILE_NAME,
     GR_MANIFEST_FILE_NAME,
     GR_SQLITE_META_FILE_NAME,
-    GenomicResource,
-    Manifest,
-    ManifestEntry,
-    Mode,
-    ReadOnlyRepositoryProtocol,
-    ReadWriteRepositoryProtocol,
-    ResourceFileState,
-    ResourceScan,
-    SearchIndexUnavailableError,
-    escape_unsafe_characters,
     is_generated_info_page,
     is_gr_id_token,
     malformed_resource_id_reason,
     parse_gr_id_version_token,
-    resolve_tabix_index_filename_for_read,
     uncontained_resource_id_reason,
     validate_resource_file_name,
     validate_resource_id,
+)
+from gain.genomic_resources.repository_manifest import (
+    Manifest,
+    ManifestEntry,
+    ResourceFileState,
+    ResourceScan,
+)
+from gain.genomic_resources.repository_search import (
+    SearchIndexUnavailableError,
 )
 from gain.templates import get_template
 from gain.templates.markdown_support import render_markdown as markdown

@@ -19,7 +19,7 @@ import pathlib
 import apsw
 import pytest
 from gain.genomic_resources.cli import cli_manage
-from gain.genomic_resources.repository import (
+from gain.genomic_resources.repository_ids import (
     GR_INDEX_FILE_NAME,
     GR_SQLITE_META_FILE_NAME,
 )

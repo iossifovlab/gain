@@ -126,6 +126,10 @@ COPY --chown=mambauser:mambauser scripts/release_notes.py \
 COPY --chown=mambauser:mambauser scripts/coverage_badge.py \
     /testbed/scripts/
 COPY --chown=mambauser:mambauser docs/build_docs.sh /testbed/docs/
+# tests/small/test_check_pure_move.py runs scripts/check_pure_move.py and
+# fails, not skips, when the script is absent (#2266).
+COPY --chown=mambauser:mambauser scripts/check_pure_move.py \
+    /testbed/scripts/
 RUN chmod -R a+rwX /testbed
 COPY --chown=mambauser:mambauser core/conda-integration/run.sh \
     core/conda-integration/assert_installed.py /opt/conda-integration/

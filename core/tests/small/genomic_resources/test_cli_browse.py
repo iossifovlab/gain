@@ -6,10 +6,8 @@ import textwrap
 import pytest
 import pytest_mock
 from gain.genomic_resources.cli import cli_browse
-from gain.genomic_resources.repository import (
-    GR_CONF_FILE_NAME,
-    GenomicResourceProtocolRepo,
-)
+from gain.genomic_resources.repository import GenomicResourceProtocolRepo
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     setup_directories,

@@ -19,7 +19,7 @@ from gain.genomic_resources.liftover_chain import (
 from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_resource,
 )
-from gain.genomic_resources.repository import GR_CONF_FILE_NAME
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.resource_errors import MalformedResourceError
 from gain.genomic_resources.resource_implementation import (
     get_required_filename_schema,

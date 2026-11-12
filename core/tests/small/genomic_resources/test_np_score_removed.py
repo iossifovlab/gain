@@ -42,10 +42,10 @@ from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     build_score_from_resource,
 )
-from gain.genomic_resources.repository import GR_CONF_FILE_NAME
 from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
 )
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.resource_types import (
     retired_resource_type_message,
 )

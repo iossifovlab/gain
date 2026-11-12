@@ -22,7 +22,7 @@ import textwrap
 import pytest
 from gain.genomic_resources.cli import _create_contents_db, cli_manage
 from gain.genomic_resources.genomic_scores import build_score_from_resource
-from gain.genomic_resources.repository import GR_CONF_FILE_NAME
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,
     setup_directories,

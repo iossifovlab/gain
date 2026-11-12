@@ -52,10 +52,10 @@ from typing import Any, ClassVar, Protocol, Self, runtime_checkable
 import yaml
 
 from gain.genomic_resources.repository import (
-    GR_CONF_FILE_NAME,
     GenomicResource,
     GenomicResourceProtocolRepo,
 )
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.resource_types import (
     require_fragment_score_type,
 )

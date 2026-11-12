@@ -15,7 +15,7 @@ import re
 import string
 
 import pytest
-from gain.genomic_resources.repository import RESOURCE_ID_CHARACTER_CLASS
+from gain.genomic_resources.repository_ids import RESOURCE_ID_CHARACTER_CLASS
 from gain.utils.resource_id_order import resource_id_collation_key
 
 

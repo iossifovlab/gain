@@ -24,7 +24,7 @@ import dataclasses
 import pathlib
 from typing import Self
 
-from gain.genomic_resources.repository import GR_CONF_FILE_NAME
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import setup_directories
 from gain.genomic_resources.testing.score_specs import ResourceValidationError
 

@@ -35,8 +35,8 @@ from gain.genomic_resources.genomic_context import (
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
-    Manifest,
 )
+from gain.genomic_resources.repository_manifest import Manifest
 from gain.genomic_resources.testing.builders import (
     a_grr,
     a_position_score,

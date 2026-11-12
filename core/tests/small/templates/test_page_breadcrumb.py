@@ -21,10 +21,10 @@ import pytest
 from gain.genomic_resources.implementations.basic_resource_impl import (
     BasicResourceImplementation,
 )
-from gain.genomic_resources.repository import (
+from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.repository_ids import (
     GR_INDEX_FILE_NAME,
     GR_STATISTICS_INDEX_FILE_NAME,
-    GenomicResource,
 )
 from gain.genomic_resources.testing import build_inmemory_test_repository
 from gain.templates.breadcrumb import Crumb, page_breadcrumb

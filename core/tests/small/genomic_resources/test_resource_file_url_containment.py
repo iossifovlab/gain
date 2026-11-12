@@ -28,18 +28,22 @@ from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,
 )
 from gain.genomic_resources.repository import (
+    GenomicResource,
+    GenomicResourceProtocolRepo,
+    collect_dvc_entries,
+    escape_unsafe_characters,
+    report_uncontained_manifest_entries,
+)
+from gain.genomic_resources.repository_ids import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
     GR_MANIFEST_FILE_NAME,
     GR_SQLITE_META_FILE_NAME,
-    GenomicResource,
-    GenomicResourceProtocolRepo,
+    validate_resource_id,
+)
+from gain.genomic_resources.repository_manifest import (
     Manifest,
     ResourceFileState,
-    collect_dvc_entries,
-    escape_unsafe_characters,
-    report_uncontained_manifest_entries,
-    validate_resource_id,
 )
 from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,

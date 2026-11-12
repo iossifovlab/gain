@@ -39,7 +39,8 @@ from gain.genomic_resources.fsspec_protocol import (
     _build_filesystem,
     build_fsspec_protocol,
 )
-from gain.genomic_resources.repository import GR_CONF_FILE_NAME, Mode
+from gain.genomic_resources.repository import Mode
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import setup_directories
 
 #: Every way a keyword can be read out of a ``**kwargs`` dict: ``.get`` with or

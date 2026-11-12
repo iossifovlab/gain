@@ -18,14 +18,16 @@ from gain.genomic_resources.fsspec_protocol import (
     build_fsspec_protocol,
 )
 from gain.genomic_resources.repository import (
+    GenomicResource,
+    ReadWriteRepositoryProtocol,
+    collect_dvc_entries,
+)
+from gain.genomic_resources.repository_ids import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
     GR_MANIFEST_FILE_NAME,
-    GenomicResource,
-    ReadWriteRepositoryProtocol,
-    ResourceFileState,
-    collect_dvc_entries,
 )
+from gain.genomic_resources.repository_manifest import ResourceFileState
 from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,
     build_inmemory_test_protocol,

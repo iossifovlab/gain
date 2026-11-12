@@ -18,15 +18,17 @@ from gain.genomic_resources.histogram import (
     NumberHistogram,
 )
 from gain.genomic_resources.repository import (
-    GR_CONF_FILE_NAME,
-    GR_SQLITE_META_FILE_NAME,
     GenomicResource,
     GenomicResourceRepo,
-    Manifest,
 )
 from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
 )
+from gain.genomic_resources.repository_ids import (
+    GR_CONF_FILE_NAME,
+    GR_SQLITE_META_FILE_NAME,
+)
+from gain.genomic_resources.repository_manifest import Manifest
 from gain.genomic_resources.resource_errors import HistogramError
 from gain.genomic_resources.resource_implementation import (
     DEFAULT_STATISTICS_REGION_SIZE,

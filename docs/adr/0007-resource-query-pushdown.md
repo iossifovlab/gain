@@ -40,8 +40,9 @@ paths then agree with no guard.
 
 **Do not restate the comparisons in SQL.** A parsed query carries its clauses
 as data rather than closures, and each clause's own `matches` is registered
-as a scalar function on the metadata connection. `*` and `in` are defined
-once, whichever engine runs the query.
+as a scalar function on the metadata connection
+(`_resource_query_condition` in `repository_search.py`). `*` and `in` are
+defined once, whichever engine runs the query.
 
 **Settle an unknown label key by asking the clause about `""`.** A key with
 no label column — because no resource carries it, or because the name belongs

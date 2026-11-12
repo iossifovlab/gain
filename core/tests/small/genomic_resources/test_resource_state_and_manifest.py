@@ -10,12 +10,14 @@ from gain.genomic_resources.dvc import (
     UnsupportedDvcDirectoryOutputError,
 )
 from gain.genomic_resources.repository import (
-    GR_CONF_FILE_NAME,
     GenomicResource,
-    Manifest,
     ReadWriteRepositoryProtocol,
-    ResourceScan,
     collect_dvc_entries,
+)
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
+from gain.genomic_resources.repository_manifest import (
+    Manifest,
+    ResourceScan,
 )
 from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,

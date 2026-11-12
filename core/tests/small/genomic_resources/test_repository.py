@@ -7,11 +7,13 @@ from gain.genomic_resources.cli import _create_contents_db, cli_manage
 from gain.genomic_resources.repository import (
     GenomicResourceProtocolRepo,
     GenomicResourceRepo,
-    parse_gr_id_version_token,
-    parse_resource_id_version,
 )
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
+)
+from gain.genomic_resources.repository_ids import (
+    parse_gr_id_version_token,
+    parse_resource_id_version,
 )
 from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,

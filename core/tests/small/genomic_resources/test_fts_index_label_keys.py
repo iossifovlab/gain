@@ -10,10 +10,12 @@ from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceProtocolRepo,
-    SearchIndexUnavailableError,
 )
 from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
+)
+from gain.genomic_resources.repository_search import (
+    SearchIndexUnavailableError,
 )
 from gain.genomic_resources.resource_implementation import (
     INDEX_COLUMN_PATTERN,

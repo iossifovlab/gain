@@ -103,7 +103,7 @@ Closing a repository does not automatically close specialized Python objects cre
 The resource manifest
 ---------------------
 
-Each resource can have a :class:`~gain.genomic_resources.repository.Manifest`, which records its files, sizes, and checksums. GAIn uses this information to detect changed files and to determine whether a cached or mirrored copy is out of date, without having to read the full contents of each file during that comparison.
+Each resource can have a :class:`~gain.genomic_resources.repository_manifest.Manifest`, which records its files, sizes, and checksums. GAIn uses this information to detect changed files and to determine whether a cached or mirrored copy is out of date, without having to read the full contents of each file during that comparison.
 
 Two methods provide access to a resource's manifest:
 

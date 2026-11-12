@@ -14,9 +14,9 @@ from gain.genomic_resources.cached_repository import (
     GenomicResourceCachedRepo,
 )
 from gain.genomic_resources.fsspec_protocol import FsspecRepositoryProtocol
-from gain.genomic_resources.repository import (
+from gain.genomic_resources.repository import Mode
+from gain.genomic_resources.repository_ids import (
     GR_CONF_FILE_NAME,
-    Mode,
     is_safe_repo_id,
 )
 from gain.genomic_resources.testing import (

@@ -9,7 +9,7 @@ import pysam
 import pytest
 import pytest_mock
 from dask.distributed import Client
-from gain.genomic_resources.repository import GR_CONF_FILE_NAME
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import (
     FsspecReadWriteProtocol,
     build_filesystem_test_protocol,
