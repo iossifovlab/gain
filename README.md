@@ -1,6 +1,6 @@
 # GAIn: Genomic Annotation Infrastructure
 
-[![PyPI](https://img.shields.io/pypi/v/gain-core)](https://pypi.org/project/gain-core) [![Bioconda](https://img.shields.io/conda/vn/bioconda/gain-core)](https://anaconda.org/bioconda/gain-core) ![coverage](https://img.shields.io/endpoint?url=https://iossifovlab.com/gaindocs/_badges/coverage.json)
+[![PyPI](https://img.shields.io/pypi/v/gain-core)](https://pypi.org/project/gain-core) [![Bioconda](https://img.shields.io/conda/vn/bioconda/gain-core)](https://anaconda.org/bioconda/gain-core) ![coverage](https://img.shields.io/endpoint?url=https://iossifovlab.com/gaindocs/_badges/coverage.json) [![install with bioconda](https://img.shields.io/badge/install%20with-bioconda-brightgreen.svg?style=flat)](https://bioconda.github.io/recipes/gain-core/README.html) [![downloads](https://img.shields.io/conda/dn/bioconda/gain-core.svg?style=flat)](https://anaconda.org/bioconda/gain-core)
 
 GAIn is the annotation engine and genomic resource
 framework used by the GPF (Genotypes and Phenotypes in
