@@ -1,6 +1,49 @@
 Release Notes
 =============
 
+* 2026.11.1
+    * Annotation: the new ``binning_tracks_annotator`` takes a
+      ``binners:`` list spelled as a ``binning_tool`` run definition and
+      gives each track as one attribute of every annotatable, named
+      ``<prefix>_<binner_index>_<track_index>``. Gene and genomic scores
+      parse ``default_annotation`` the same way, so a gene score honours
+      ``aggregator:`` and ``name:``, a genomic score honours
+      ``description:``, and an unknown ``source`` is refused.
+    * ``binning_tool``: ``gain.binning`` is a public Python API that
+      builds a ``fragment_score_binner`` entry from dicts or spec
+      classes such as ``FragmentEntry`` and answers ``cell_groups`` and
+      ``fragment_tracks`` without a run. A fragment resource without a
+      ``sample_id`` label bins over its whole cell table with a warning
+      instead of failing.
+    * GRR: the statistics of a reference genome are stored in one
+      ``statistics/reference_genome.json`` instead of one YAML file per
+      contig, so a genome built before this shows "Statistics not
+      computed." until ``grr_manage resource-stats -f`` rebuilds it.
+      ``pandas>=3.1`` is required, so a gene score statistics hash no
+      longer depends on the pandas version. A remote tabix or VCF index
+      is fetched into a temporary directory instead of the working
+      directory, where a later open of the same file name read the wrong
+      index.
+    * Task graph: a dask config that still holds ``dae_named_cluster``
+      is refused with an error that names ``gain_named_cluster``; the
+      named clusters page has a migration note.
+    * gainweb: login, registration, the editor attribute and aggregator
+      endpoints and a pipeline update with an unknown id answer 400
+      instead of 500, a temporary pipeline file is named by the session
+      id alone, and the status bar shows a placeholder while the
+      pipeline status loads. ``web_ui`` moves to Angular 22, TypeScript
+      6.0, monaco-editor 0.57 and ESLint 9.
+    * Docs: the Python binning chapter has an introduction and topic
+      pages, including a reference page for ``gain.binning``, and the
+      README shows the PyPI, bioconda and coverage badges.
+    * **Issues closed in this release:** `all issues
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+is%3Aclos
+      ed+reason%3Acompleted+closed%3A2026-11-03T07%3A54%3A24Z..2026-11-1
+      0T14%3A53%3A04Z>`__, `bug issues
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+label%3Ab
+      ug+is%3Aclosed+reason%3Acompleted+closed%3A2026-11-03T07%3A54%3A24
+      Z..2026-11-10T14%3A53%3A04Z>`__.
+
 * 2026.11.0
     * Distribution: ``gain-core`` is published to PyPI and bioconda, the
       install docs take it from bioconda and keep the ``iossifovlab``
