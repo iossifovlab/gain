@@ -17,6 +17,8 @@ import pytest
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceProtocolRepo,
+)
+from gain.genomic_resources.repository_manifest import (
     SearchIndexUnavailableError,
 )
 from gain.genomic_resources.resource_types import FRAGMENT_SCORE_TYPES

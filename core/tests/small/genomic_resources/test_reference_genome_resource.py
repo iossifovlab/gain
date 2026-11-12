@@ -24,10 +24,10 @@ from gain.genomic_resources.reference_genome import (
     reference_genome_files,
 )
 from gain.genomic_resources.repository import (
-    GR_CONF_FILE_NAME,
     GenomicResource,
     GenomicResourceRepo,
 )
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.resource_types import (
     LEGACY_VOCABULARY_REMOVAL_RELEASE,
 )

@@ -36,10 +36,8 @@ from typing import Any
 
 import yaml
 
-from gain.genomic_resources.repository import (
-    GR_CONF_FILE_NAME,
-    GenomicResource,
-)
+from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import setup_directories
 from gain.genomic_resources.testing.builders import _build_single_resource
 from gain.genomic_resources.testing.resource_meta import MetaMixin

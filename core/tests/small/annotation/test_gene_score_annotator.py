@@ -17,10 +17,8 @@ from gain.annotation.gene_score_annotator import (
     GeneScoreAnnotator,
     build_gene_score_annotator,
 )
-from gain.genomic_resources.repository import (
-    GR_CONF_FILE_NAME,
-    GenomicResourceRepo,
-)
+from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import build_inmemory_test_repository
 
 from tests.small.annotation.conftest import (

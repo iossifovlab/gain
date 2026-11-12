@@ -9,12 +9,12 @@ from gain.genomic_resources.fsspec_protocol import (
     GRR_INTERNAL_DIR,
     FsspecReadWriteProtocol,
 )
-from gain.genomic_resources.repository import (
+from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.repository_ids import (
     GR_CONTENTS_FILE_NAME,
     GR_INDEX_FILE_NAME,
     GR_MANIFEST_FILE_NAME,
     GR_SQLITE_META_FILE_NAME,
-    GenomicResource,
 )
 from gain.genomic_resources.testing import (
     build_faulty_test_protocol,

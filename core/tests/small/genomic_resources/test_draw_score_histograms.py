@@ -18,10 +18,10 @@ from gain.genomic_resources.histogram import (
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     GenomicScoreImplementation,
 )
-from gain.genomic_resources.repository import GR_CONF_FILE_NAME
 from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
 )
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing.builders import (
     PositionScoreBuilder,
     a_gene_score,

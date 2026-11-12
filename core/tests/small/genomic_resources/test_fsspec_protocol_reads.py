@@ -7,10 +7,8 @@ from typing import Any
 import pysam
 import pytest
 import pytest_mock
-from gain.genomic_resources.repository import (
-    GR_CONF_FILE_NAME,
-    RepositoryProtocol,
-)
+from gain.genomic_resources.repository import RepositoryProtocol
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,
     build_http_test_protocol,

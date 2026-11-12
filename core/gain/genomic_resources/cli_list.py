@@ -23,6 +23,8 @@ from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
     ReadOnlyRepositoryProtocol,
+)
+from gain.genomic_resources.repository_manifest import (
     SearchIndexUnavailableError,
     SearchTermError,
 )

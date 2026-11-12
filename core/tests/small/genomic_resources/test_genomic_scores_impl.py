@@ -31,10 +31,8 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
     build_score_implementation_from_resource,
     scan,
 )
-from gain.genomic_resources.repository import (
-    GR_CONF_FILE_NAME,
-    GenomicResource,
-)
+from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.statistics.min_max import MinMaxValue
 from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,

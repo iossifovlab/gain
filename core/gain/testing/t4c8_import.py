@@ -5,13 +5,11 @@ import textwrap
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.gene_models import GeneModels
 from gain.genomic_resources.reference_genome import ReferenceGenome
-from gain.genomic_resources.repository import (
-    GR_CONF_FILE_NAME,
-    GenomicResourceRepo,
-)
+from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import (
     setup_directories,
     setup_gene_models,

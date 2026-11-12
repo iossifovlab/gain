@@ -26,14 +26,12 @@ from gain.genomic_resources.genomic_scores import (
 from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_resource,
 )
-from gain.genomic_resources.repository import (
-    GR_CONF_FILE_NAME,
-    GenomicResourceProtocolRepo,
-)
+from gain.genomic_resources.repository import GenomicResourceProtocolRepo
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
     build_resource_implementation,
 )
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.resource_errors import MalformedResourceError
 from gain.genomic_resources.testing.builders import (
     ResourceValidationError,

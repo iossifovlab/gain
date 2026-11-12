@@ -24,7 +24,8 @@ still reads outside the GRR root.
 The gap is real, and larger than the original report claimed. Confirmed by
 execution against a local directory GRR:
 
-- `uncontained_resource_file_name_reason("sneak.txt")` returned `None`, and
+- `uncontained_resource_file_name_reason("sneak.txt")` (in
+  `repository_ids.py`) returned `None`, and
   reading it returned the outside file's content. `file_exists` agreed.
 - The same through a symlinked *directory* — `up -> /outside`, then
   `up/secret.txt`.

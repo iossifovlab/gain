@@ -10,10 +10,8 @@ import shutil
 
 import pytest
 from gain import grr
-from gain.genomic_resources.repository import (
-    GR_CONF_FILE_NAME,
-    GenomicResourceRepo,
-)
+from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 
 #: ``parents[4]`` is the repository root: this file is at
 #: ``core/tests/small/python_interface/conftest.py``.

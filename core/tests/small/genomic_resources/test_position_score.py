@@ -6,7 +6,7 @@ from gain.genomic_resources import GenomicResource
 from gain.genomic_resources.genomic_scores import (
     PositionScore,
 )
-from gain.genomic_resources.repository import GR_CONF_FILE_NAME
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import build_inmemory_test_resource
 from gain.genomic_resources.testing.builders import a_grr, a_position_score
 

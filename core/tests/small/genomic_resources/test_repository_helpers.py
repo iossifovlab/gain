@@ -1,6 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import pytest
-from gain.genomic_resources.repository import (
+from gain.genomic_resources.repository_ids import (
     is_version_constraint_satisfied,
     parse_gr_id_version_token,
 )

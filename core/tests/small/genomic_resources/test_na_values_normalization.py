@@ -19,7 +19,7 @@ import pytest
 from gain.genomic_resources.genomic_scores import (
     PositionScore,
 )
-from gain.genomic_resources.repository import GR_CONF_FILE_NAME
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.score_def import (
     GenomicScoreDef,
     normalize_na_values,

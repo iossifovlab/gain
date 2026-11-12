@@ -21,7 +21,8 @@ from gain.genomic_resources.genomic_scores import (
     GenomicScore,
     PositionScore,
 )
-from gain.genomic_resources.repository import GR_CONF_FILE_NAME, GenomicResource
+from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.resource_errors import MalformedResourceError
 from gain.genomic_resources.score_def import (
     build_genomic_score_schema,

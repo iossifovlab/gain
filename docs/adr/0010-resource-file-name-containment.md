@@ -38,7 +38,8 @@ path. Reproduced against a local directory GRR before the fix:
 
 ## Decision
 
-Containment is enforced in `validate_resource_file_name`, called from the
+Containment is enforced in `validate_resource_file_name`
+(`repository_ids.py`), called from the
 shared join in `get_resource_file_url` — so every protocol, every scheme and
 every sink inherits it — plus the two internal paths that build a location by
 joining the resource url *themselves* and so would not have inherited

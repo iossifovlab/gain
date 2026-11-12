@@ -1381,7 +1381,7 @@ def load_transcript_models(
             # A resource built straight from a local file has no meaningful
             # id, and naming it adds noise rather than help. Both spellings
             # of the repository root are per
-            # `repository.uncontained_resource_id_reason`.
+            # `repository_ids.uncontained_resource_id_reason`.
             identity = escape_unsafe_characters(filename)
             if resource.resource_id not in {"", "."}:
                 identity = (

@@ -26,7 +26,7 @@ reading-the-source tests here are the fast, JS-free pins beside it.
 """
 from __future__ import annotations
 
-from gain.genomic_resources.repository import version_tuple_to_string
+from gain.genomic_resources.repository_ids import version_tuple_to_string
 from gain.templates import get_template
 from gain.utils.helpers import convert_size
 

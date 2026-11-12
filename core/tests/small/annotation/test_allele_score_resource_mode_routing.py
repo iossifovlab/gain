@@ -29,10 +29,8 @@ from typing import Any
 import pytest
 from gain.annotation.annotatable import VCFAllele
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
-from gain.genomic_resources.repository import (
-    GR_CONF_FILE_NAME,
-    GenomicResourceRepo,
-)
+from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import build_inmemory_test_repository
 
 _DATA = """

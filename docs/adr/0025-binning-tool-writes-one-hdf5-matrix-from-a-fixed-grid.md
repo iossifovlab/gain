@@ -106,7 +106,7 @@ decisions F1–F21; F7 and F12 are the ones this amendment carries.
   resource-id order. A position-score track and an unpooled fragment track
   hold one id and no comma; a pooled track holds every matched id. The
   separator is safe because a resource id is restricted to `a-zA-Z0-9/._-`
-  (`RESOURCE_ID_CHARACTER_CLASS` in `repository.py`, one constant since
+  (`RESOURCE_ID_CHARACTER_CLASS` in `repository_ids.py`, one constant since
   #1352), so a comma never occurs inside one. The `resource_query` string a pooled track was named after
   is not stored; it is the track's `name` prefix.
 - A run whose fragment entry reads its cell metadata from a local file

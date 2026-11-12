@@ -33,8 +33,8 @@ from .repository import (
     GenomicResource,
     GenomicResourceProtocolRepo,
     GenomicResourceRepo,
-    is_safe_repo_id,
 )
+from .repository_ids import is_safe_repo_id
 from .resource_implementation import GenomicResourceImplementation
 from .resource_types import reject_retired_resource
 

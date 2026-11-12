@@ -14,10 +14,10 @@ from typing import Any
 import pytest
 from gain.genomic_resources import cli, register_implementation
 from gain.genomic_resources.repository import (
-    GR_CONF_FILE_NAME,
     GenomicResource,
     GenomicResourceRepo,
 )
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.resource_implementation import (
     DEFAULT_STATISTICS_REGION_SIZE,
 )

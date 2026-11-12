@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 from gain.genomic_resources.cli import cli_manage
-from gain.genomic_resources.repository import (
+from gain.genomic_resources.repository_ids import (
     GR_CONF_FILE_NAME,
     GR_MANIFEST_FILE_NAME,
 )

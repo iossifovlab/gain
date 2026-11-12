@@ -19,14 +19,12 @@ from gain.genomic_resources.genomic_scores import (
     PositionScore,
 )
 from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
-from gain.genomic_resources.repository import (
-    GR_CONF_FILE_NAME,
-    GenomicResourceProtocolRepo,
-)
+from gain.genomic_resources.repository import GenomicResourceProtocolRepo
 from gain.genomic_resources.repository_factory import (
     _build_group_from_definition,
     build_genomic_resource_repository,
 )
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     convert_to_tab_separated,

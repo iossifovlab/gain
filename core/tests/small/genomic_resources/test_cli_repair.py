@@ -16,7 +16,7 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
     GenomicScoreImplementation,
     scan,
 )
-from gain.genomic_resources.repository import (
+from gain.genomic_resources.repository_ids import (
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
     GR_LEGACY_CONTENTS_FILE_NAME,

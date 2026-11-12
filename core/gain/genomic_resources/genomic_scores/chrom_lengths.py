@@ -47,7 +47,8 @@ from gain.utils.log_safety import escape_unsafe_characters
 
 if TYPE_CHECKING:
     from gain.genomic_resources.reference_genome import ReferenceGenome
-    from gain.genomic_resources.repository import GenomicResource, Manifest
+    from gain.genomic_resources.repository import GenomicResource
+    from gain.genomic_resources.repository_manifest import Manifest
 
     from .base import GenomicScore
 

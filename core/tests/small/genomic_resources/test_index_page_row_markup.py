@@ -21,7 +21,7 @@ import re
 from typing import NamedTuple
 
 import pytest
-from gain.genomic_resources.repository import GR_INDEX_FILE_NAME
+from gain.genomic_resources.repository_ids import GR_INDEX_FILE_NAME
 from gain.genomic_resources.testing import build_filesystem_test_protocol
 from gain.genomic_resources.testing.info_page_fixtures import (
     BROWSE_RESOURCE_IDS,

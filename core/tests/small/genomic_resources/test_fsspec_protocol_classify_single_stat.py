@@ -25,10 +25,8 @@ from gain.genomic_resources.fsspec_protocol import (
     FileCacheVerdict,
     FsspecReadWriteProtocol,
 )
-from gain.genomic_resources.repository import (
-    GenomicResource,
-    ResourceFileState,
-)
+from gain.genomic_resources.repository import GenomicResource
+from gain.genomic_resources.repository_manifest import ResourceFileState
 
 from .conftest import (
     CACHED_FILE,

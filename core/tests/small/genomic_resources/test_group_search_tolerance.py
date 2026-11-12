@@ -25,10 +25,12 @@ from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceProtocolRepo,
     GenomicResourceRepo,
+)
+from gain.genomic_resources.repository_manifest import (
     SearchIndexUnavailableError,
     SearchTermError,
-    drain_search,
 )
+from gain.genomic_resources.repository_search import drain_search
 from gain.genomic_resources.testing import build_filesystem_test_protocol
 from gain.genomic_resources.testing.builders import (
     a_grr,

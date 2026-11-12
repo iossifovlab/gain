@@ -30,11 +30,11 @@ from gain.genomic_resources.cached_repository import (
     GenomicResourceCachedRepo,
     cache_resources,
 )
-from gain.genomic_resources.repository import (
+from gain.genomic_resources.repository import GenomicResourceProtocolRepo
+from gain.genomic_resources.repository_ids import (
     _RESOURCE_ID_WITH_VERSION_PATH_RE,
     GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
-    GenomicResourceProtocolRepo,
     malformed_resource_id_reason,
 )
 from gain.genomic_resources.testing import (

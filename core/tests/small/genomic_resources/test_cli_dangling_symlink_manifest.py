@@ -6,7 +6,9 @@ from typing import NoReturn
 
 import pytest
 from gain.genomic_resources.cli import cli_manage
-from gain.genomic_resources.repository import UnreadableResourceFilesError
+from gain.genomic_resources.repository_manifest import (
+    UnreadableResourceFilesError,
+)
 from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,
     build_inmemory_test_protocol,

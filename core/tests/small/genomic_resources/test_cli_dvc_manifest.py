@@ -12,13 +12,15 @@ from gain.genomic_resources import cli as cli_module
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 from gain.genomic_resources.repository import (
+    GenomicResource,
+    ReadWriteRepositoryProtocol,
+)
+from gain.genomic_resources.repository_ids import (
     GR_GENERATED_INFO_PAGES,
     GR_INDEX_FILE_NAME,
     GR_STATISTICS_INDEX_FILE_NAME,
-    GenomicResource,
-    ReadWriteRepositoryProtocol,
-    ResourceFileState,
 )
+from gain.genomic_resources.repository_manifest import ResourceFileState
 from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,
     setup_directories,

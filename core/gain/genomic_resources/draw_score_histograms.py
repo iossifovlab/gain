@@ -16,13 +16,13 @@ from gain.genomic_resources.histogram import (
     plot_histogram,
 )
 from gain.genomic_resources.repository import (
-    GR_CONTENTS_FILE_NAME,
     GenomicResource,
     ReadWriteRepositoryProtocol,
 )
 from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
 )
+from gain.genomic_resources.repository_ids import GR_CONTENTS_FILE_NAME
 from gain.genomic_resources.score_implementation import (
     ScoreImplementationBase,
 )

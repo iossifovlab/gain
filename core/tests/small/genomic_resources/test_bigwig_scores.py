@@ -26,7 +26,7 @@ from gain.genomic_resources.bigwig_scores import (
 )
 from gain.genomic_resources.genomic_position_table.record import PAYLOAD
 from gain.genomic_resources.genomic_scores import PositionScore
-from gain.genomic_resources.repository import GR_CONF_FILE_NAME
+from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.score_def import GenomicScoreDef
 from gain.genomic_resources.testing import (
     build_filesystem_test_repository,

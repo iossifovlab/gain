@@ -33,10 +33,8 @@ from gain.annotation.annotation_config import (
 )
 from gain.genomic_resources.cli import _create_contents_db
 from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
-from gain.genomic_resources.repository import (
-    GR_SQLITE_META_FILE_NAME,
-    GenomicResourceProtocolRepo,
-)
+from gain.genomic_resources.repository import GenomicResourceProtocolRepo
+from gain.genomic_resources.repository_ids import GR_SQLITE_META_FILE_NAME
 from gain.genomic_resources.resource_query import ResourceQueryParseError
 from gain.genomic_resources.testing import build_filesystem_test_protocol
 from gain.genomic_resources.testing.builders import (

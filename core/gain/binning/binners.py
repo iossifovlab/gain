@@ -41,6 +41,8 @@ from gain.genomic_resources.genomic_scores.position import PositionScore
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
+)
+from gain.genomic_resources.repository_manifest import (
     SearchIndexUnavailableError,
     SearchTermError,
 )
