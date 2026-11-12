@@ -20,8 +20,8 @@ import pysam
 from s3fs.core import S3FileSystem
 
 from gain import logging
+from gain.genomic_resources.fsspec_errors import GRR_INTERNAL_DIR
 from gain.genomic_resources.fsspec_protocol import (
-    GRR_INTERNAL_DIR,
     FsspecReadOnlyProtocol,
     FsspecReadWriteProtocol,
     FsspecRepositoryProtocol,

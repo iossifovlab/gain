@@ -25,9 +25,9 @@ from gain.genomic_resources.fsspec_protocol import (
     FsspecReadOnlyProtocol,
     FsspecReadWriteProtocol,
     FsspecRepositoryProtocol,
-    _RedactingFile,
     build_fsspec_protocol,
 )
+from gain.genomic_resources.fsspec_redaction import _RedactingFile
 from gain.genomic_resources.genomic_position_table.table_tabix import (
     TabixGenomicPositionTable,
 )

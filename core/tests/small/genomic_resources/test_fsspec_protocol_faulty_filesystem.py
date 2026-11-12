@@ -5,13 +5,13 @@ from typing import Any
 
 import pytest
 from fsspec.exceptions import FSTimeoutError
-from gain.genomic_resources.fsspec_protocol import (
+from gain.genomic_resources.fsspec_errors import (
     GRR_INTERNAL_DIR,
     ChecksumMismatchError,
-    FsspecReadWriteProtocol,
     RetryableCopyError,
     TruncatedDownloadError,
 )
+from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import (
