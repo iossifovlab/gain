@@ -108,8 +108,6 @@ def get_chromosome_length_tabix(
             next(riter)
         except StopIteration:
             return False
-        except ValueError:
-            return False
 
         return True
     try:
