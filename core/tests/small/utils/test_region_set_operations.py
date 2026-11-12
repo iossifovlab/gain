@@ -7,6 +7,7 @@ from gain.utils.regions import (
     collapse_no_chrom,
     connected_component,
     difference,
+    intersection,
 )
 
 
@@ -246,3 +247,23 @@ def test_symmetric_difference_sorts_an_open_start_first() -> None:
     )
 
     assert result == [Region("1", None, 10), Region("1", 20, 30)]
+
+
+def test_intersection_keeps_each_region_inside_a_wider_region() -> None:
+    result = intersection(
+        [Region("1", 1, 10), Region("1", 20, 30)], [Region("1", 1, 100)],
+    )
+
+    assert result == [Region("1", 1, 10), Region("1", 20, 30)]
+
+
+def test_difference_with_an_empty_second_list_keeps_an_open_start() -> None:
+    result = difference([Region("1", None, 10)], [])
+
+    assert result == [Region("1", None, 10)]
+
+
+def test_collapse_sorts_an_open_start_before_a_start_of_zero() -> None:
+    result = collapse([Region("1", 0, 5), Region("1", None, 3)])
+
+    assert result == [Region("1", None, 5)]
