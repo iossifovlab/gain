@@ -159,6 +159,11 @@ def test_connected_component_joins_regions_that_touch(
             [Region("1", 21, 50)],
         ),
         (
+            [Region("1", 50, 60)],
+            [Region("1", 10, None)],
+            [],
+        ),
+        (
             [
                 Region("chr1", 1, 10), Region("chr2", 1, 100),
                 Region("chr3", 1, 10),
@@ -169,6 +174,45 @@ def test_connected_component_joins_regions_that_touch(
                 Region("chr2", 21, 100), Region("chr3", 1, 10),
             ],
         ),
+        (
+            [Region("1", None, 10), Region("1", 20, 30)],
+            [Region("1", 5, 25)],
+            [Region("1", 1, 4), Region("1", 26, 30)],
+        ),
+        (
+            [Region("chr1", 1, 100), Region("chr2", 1, 100)],
+            [Region("chr1", 10, 20), Region("chr2", 10, 20)],
+            [
+                Region("chr1", 1, 9), Region("chr1", 21, 100),
+                Region("chr2", 1, 9), Region("chr2", 21, 100),
+            ],
+        ),
+        (
+            [Region("chr1", 1, None), Region("chr2", 1, 100)],
+            [Region("chr1", 10, 20), Region("chr2", 10, 20)],
+            [
+                Region("chr1", 1, 9), Region("chr1", 21, None),
+                Region("chr2", 1, 9), Region("chr2", 21, 100),
+            ],
+        ),
+        (
+            [Region("chr1", 1, None), Region("chr2", 1, 100)],
+            [Region("chr1", 10, None), Region("chr2", 10, 20)],
+            [
+                Region("chr1", 1, 9),
+                Region("chr2", 1, 9), Region("chr2", 21, 100),
+            ],
+        ),
+        (
+            [Region("1", 1, None)],
+            [Region("1", 20, None)],
+            [Region("1", 1, 19)],
+        ),
+        (
+            [Region("1", None, None)],
+            [Region("1", None, None)],
+            [],
+        ),
     ],
     ids=[
         "touch_at_the_stop",
@@ -178,7 +222,14 @@ def test_connected_component_joins_regions_that_touch(
         "open_start_in_the_first_list",
         "open_stop_in_the_first_list",
         "open_start_in_the_second_list",
+        "open_stop_in_the_second_list",
         "second_list_on_other_chroms",
+        "open_start_before_a_closed_start_in_the_first_list",
+        "next_cut_on_the_next_chrom",
+        "open_stop_before_a_cut_on_the_next_chrom",
+        "open_stop_cut_before_a_cut_on_the_next_chrom",
+        "open_stop_cut_on_one_chrom",
+        "whole_chrom_cut_out_of_the_whole_chrom",
     ],
 )
 def test_difference_cuts_the_second_list_out_of_the_first(
@@ -187,3 +238,11 @@ def test_difference_cuts_the_second_list_out_of_the_first(
     result = difference(regions1, regions2)
 
     assert result == expected
+
+
+def test_symmetric_difference_sorts_an_open_start_first() -> None:
+    result = difference(
+        [Region("1", None, 10)], [Region("1", 20, 30)], symmetric=True,
+    )
+
+    assert result == [Region("1", None, 10), Region("1", 20, 30)]

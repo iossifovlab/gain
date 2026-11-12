@@ -520,6 +520,11 @@ def bundle_regions(
     return bundles
 
 
+def _chrom_start_key(region: Region) -> tuple[str, int]:
+    """Sort key that puts an open start before each closed start."""
+    return (region.chrom, coalesce(region.start, -1))
+
+
 def intersection(
     regions1: list[Region], regions2: list[Region],
 ) -> list[Region]:
@@ -530,8 +535,8 @@ def intersection(
     """
     s1_c = collapse(regions1)
     s2_c = collapse(regions2)
-    s1_c.sort(key=lambda x: (x.chrom, x.start))
-    s2_c.sort(key=lambda x: (x.chrom, x.start))
+    s1_c.sort(key=_chrom_start_key)
+    s2_c.sort(key=_chrom_start_key)
 
     intersect: list[Region] = []
 
@@ -544,7 +549,7 @@ def intersection(
                     k += 1
                     continue
                 break
-            if coalesce(i.stop, 1) < coalesce(s1_c[k].start, 1):
+            if coalesce(i.stop, MAX_POSITION) < coalesce(s1_c[k].start, 1):
                 break
             if coalesce(i.start, 1) > coalesce(s1_c[k].stop, MAX_POSITION):
                 k += 1
@@ -623,7 +628,7 @@ def _subtract_contained(
                 reg_a.chrom, prev,
                 coalesce(regions_b[k].start, 1) - 1)
             result.append(new_a)
-        prev = coalesce(regions_b[k].stop, 1) + 1
+        prev = coalesce(regions_b[k].stop, MAX_POSITION) + 1
         k += 1
     return k, prev
 
@@ -639,8 +644,6 @@ def _diff(
             result.append(reg_a)
             continue
         k, prev = _subtract_contained(reg_a, regions_b, k, result)
-        if k < len(regions_b) and regions_b[k].chrom != reg_a.chrom:
-            continue
         if prev <= coalesce(reg_a.stop, MAX_POSITION):
             result.append(Region(reg_a.chrom, prev, reg_a.stop))
 
@@ -653,12 +656,8 @@ def difference(
     symmetric: bool = False,
 ) -> list[Region]:
     """Compute difference between two list of regions."""
-    if not symmetric:
-        left = collapse(regions1)
-        left.sort(key=lambda x: (x.chrom, x.start))
-    else:
-        left = union(regions1, regions2)
-        left.sort(key=lambda x: (x.chrom, x.start))
+    left = union(regions1, regions2) if symmetric else collapse(regions1)
+    left.sort(key=_chrom_start_key)
 
     right = intersection(regions1, regions2)
 
