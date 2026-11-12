@@ -1,9 +1,8 @@
-"""The manifest model of a genomic resource.
+"""The manifest model of a genomic resource and the errors of a search.
 
 A manifest lists the files of a resource with their sizes and MD5
 checksums. The other classes describe the state of a stored file, a
-change to a manifest, one scan of a resource directory and the error
-for resource files that cannot be read.
+change to a manifest and one scan of a resource directory.
 """
 from __future__ import annotations
 
