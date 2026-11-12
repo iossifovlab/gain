@@ -27,8 +27,8 @@ from gain.genomic_resources.resource_implementation import (
     DerivedFilesState,
 )
 from gain.genomic_resources.testing import build_filesystem_test_protocol
-from gain.genomic_resources.testing.builders import (
-    a_basic_resource,
+from gain.genomic_resources.testing.builders import a_basic_resource
+from gain.genomic_resources.testing.reference_genome_builder import (
     a_reference_genome,
 )
 

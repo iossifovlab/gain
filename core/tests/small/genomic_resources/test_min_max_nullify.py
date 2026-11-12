@@ -17,7 +17,7 @@ from gain.genomic_resources.statistics.min_max import (
     MinMaxValue,
     NullMinMaxValue,
 )
-from gain.genomic_resources.testing.builders import a_position_score
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 #: Enough records that a per-record refusal is unmistakably not a per-score
 #: one.  The latch is invisible on a single-record region.

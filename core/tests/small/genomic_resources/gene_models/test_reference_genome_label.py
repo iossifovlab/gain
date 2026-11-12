@@ -50,11 +50,11 @@ from gain.annotation.annotation_pipeline import AnnotationPipeline
 from gain.annotation.utils import find_annotator_reference_genome
 from gain.genomic_resources.gene_models.gene_models import GeneModels
 from gain.genomic_resources.repository import GenomicResource
-from gain.genomic_resources.testing.builders import (
-    a_grr,
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.gene_models_builder import a_gene_models
+from gain.genomic_resources.testing.reference_genome_builder import (
     a_reference_genome,
 )
-from gain.genomic_resources.testing.gene_models_builder import a_gene_models
 
 from ..conftest import captured_warnings
 

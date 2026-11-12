@@ -19,12 +19,14 @@ from gain.genomic_resources.testing import (
     setup_bigwig,
     setup_directories,
 )
-from gain.genomic_resources.testing.builders import (
-    PositionScoreBuilder,
-    a_bigwig_score,
-    a_grr,
-    a_position_score,
+from gain.genomic_resources.testing.bigwig_score_builder import a_bigwig_score
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.reference_genome_builder import (
     a_reference_genome,
+)
+from gain.genomic_resources.testing.table_score_builder import (
+    PositionScoreBuilder,
+    a_position_score,
 )
 
 from .conftest import (

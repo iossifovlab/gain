@@ -52,11 +52,10 @@ from gain.genomic_resources.testing import (
     s3_test_protocol,
     setup_directories,
 )
-from gain.genomic_resources.testing.builders import (
-    ResourceBuilder,
+from gain.genomic_resources.testing.builders import ResourceBuilder, a_grr
+from gain.genomic_resources.testing.table_score_builder import a_position_score
+from gain.genomic_resources.testing.vcf_info_score_builder import (
     VcfInfoScoreBuilder,
-    a_grr,
-    a_position_score,
 )
 
 logger = logging.getLogger(__name__)

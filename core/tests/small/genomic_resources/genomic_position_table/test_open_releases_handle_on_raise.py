@@ -33,9 +33,9 @@ from gain.genomic_resources.genomic_position_table.table import (
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_errors import MalformedResourceError
-from gain.genomic_resources.testing.builders import (
-    a_bigwig_score,
-    a_position_score,
+from gain.genomic_resources.testing.bigwig_score_builder import a_bigwig_score
+from gain.genomic_resources.testing.table_score_builder import a_position_score
+from gain.genomic_resources.testing.vcf_info_score_builder import (
     a_vcf_info_score,
 )
 

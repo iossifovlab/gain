@@ -16,7 +16,9 @@ from gain.genomic_resources.implementations.reference_genome_impl import (
     GenomeStatistic,
     ReferenceGenomeImplementation,
 )
-from gain.genomic_resources.testing.builders import a_reference_genome
+from gain.genomic_resources.testing.reference_genome_builder import (
+    a_reference_genome,
+)
 from gain.genomic_resources.testing.statistics import build_statistics
 
 from tests.small.genomic_resources.info_page_html import table_after

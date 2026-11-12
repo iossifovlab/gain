@@ -49,9 +49,9 @@ from gain.genomic_resources.resource_implementation import (
     CONFIG_VALIDATOR_CACHE,
     ResourceConfigValidationMixin,
 )
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import (
     PositionScoreBuilder,
-    a_grr,
     a_position_score,
 )
 

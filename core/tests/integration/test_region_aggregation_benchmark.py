@@ -55,10 +55,8 @@ from gain.genomic_resources.genomic_scores import (
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.score_def import ScoreValue
-from gain.genomic_resources.testing.builders import (
-    a_grr,
-    a_position_score,
-)
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 # The case the issue quotes: a 500 kb region carrying 2,000 back-to-back
 # 250 bp records.  Replicated, that is 500,000 aggregator steps; weighted,

@@ -37,12 +37,13 @@ from gain.genomic_resources.repository import (
     GenomicResourceRepo,
 )
 from gain.genomic_resources.score_resource import ScoreResource
-from gain.genomic_resources.testing.builders import a_grr, a_position_score
+from gain.genomic_resources.testing.builders import a_grr
 from gain.genomic_resources.testing.statistics import (
     a_score_with_no_values,
     a_score_with_too_many_categories,
     publish_statistics,
 )
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 PIPELINE = "- position_score: scores/pos1\n"
 

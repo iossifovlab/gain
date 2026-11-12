@@ -8,7 +8,7 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
     scan_noregion,
 )
 from gain.genomic_resources.repository import GenomicResource
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.table_score_builder import (
     a_fragment_score,
     a_position_score,
     an_allele_score,

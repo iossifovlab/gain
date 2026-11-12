@@ -15,8 +15,9 @@ from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
-from gain.genomic_resources.testing.builders import a_grr, a_position_score
+from gain.genomic_resources.testing.builders import a_grr
 from gain.genomic_resources.testing.group_builder import a_grr_group
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 
 def a_repo_over_the_raw_directory(directory: str) -> GenomicResourceRepo:

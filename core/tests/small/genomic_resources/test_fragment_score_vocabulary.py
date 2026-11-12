@@ -50,7 +50,8 @@ from gain.genomic_resources.testing import (
     convert_to_tab_separated,
     setup_directories,
 )
-from gain.genomic_resources.testing.builders import a_fragment_score, a_grr
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import a_fragment_score
 
 FRAGMENT_SCORE_TYPE = "fragment_score"
 LEGACY_RESOURCE_TYPE = "cnv_collection"

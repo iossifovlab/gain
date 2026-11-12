@@ -15,10 +15,8 @@ import pytest
 import pytest_mock
 from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 from gain.genomic_resources.testing import build_s3_test_protocol
-from gain.genomic_resources.testing.builders import (
-    a_grr,
-    a_position_score,
-)
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 from gain.utils.fs_utils import S3_PRESIGN_EXPIRATION_SECONDS
 
 # S3 refuses a SigV4 presigned url that would live longer than seven days.

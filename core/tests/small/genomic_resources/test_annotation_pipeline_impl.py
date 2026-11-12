@@ -10,8 +10,8 @@ from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     setup_directories,
 )
-from gain.genomic_resources.testing.builders import a_position_score
 from gain.genomic_resources.testing.statistics import publish_statistics
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 
 @pytest.fixture

@@ -7,10 +7,8 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
     scan_min_max,
 )
 from gain.genomic_resources.repository import GenomicResource
-from gain.genomic_resources.testing.builders import (
-    a_bigwig_score,
-    a_position_score,
-)
+from gain.genomic_resources.testing.bigwig_score_builder import a_bigwig_score
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 
 def _assert_min_max_equal(bulk: dict, ref: dict) -> None:

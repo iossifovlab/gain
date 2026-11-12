@@ -22,13 +22,13 @@ from gain.genomic_resources.statistics.moments import (
     MOMENT_KEYS,
     MomentsSummary,
 )
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.gene_score_builder import a_gene_score
+from gain.genomic_resources.testing.statistics import publish_statistics
+from gain.genomic_resources.testing.table_score_builder import (
     a_fragment_score,
-    a_gene_score,
     a_position_score,
     an_allele_score,
 )
-from gain.genomic_resources.testing.statistics import publish_statistics
 
 from tests.small.genomic_resources.info_page_html import (
     section_after,

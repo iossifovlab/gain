@@ -36,7 +36,8 @@ from gain.genomic_resources.genomic_position_table.record import Record
 from gain.genomic_resources.genomic_position_table.table_bigwig import (
     BigWigTable,
 )
-from gain.genomic_resources.testing.builders import a_bigwig_score, a_grr
+from gain.genomic_resources.testing.bigwig_score_builder import a_bigwig_score
+from gain.genomic_resources.testing.builders import a_grr
 
 
 @contextlib.contextmanager

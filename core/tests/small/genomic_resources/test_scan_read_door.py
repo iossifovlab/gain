@@ -48,9 +48,9 @@ from gain.genomic_resources.testing import (
     setup_directories,
     setup_tabix,
 )
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import (
     a_fragment_score,
-    a_grr,
     a_position_score,
     an_allele_score,
 )

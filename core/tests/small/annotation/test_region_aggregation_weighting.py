@@ -44,9 +44,9 @@ from gain.genomic_resources.genomic_scores import (
     build_position_score_from_resource,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import (
     a_fragment_score,
-    a_grr,
     a_position_score,
     an_allele_score,
 )

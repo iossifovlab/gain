@@ -28,7 +28,9 @@ from gain.genomic_resources.reference_genome import (
     ReferenceGenome,
     build_reference_genome_from_resource,
 )
-from gain.genomic_resources.testing.builders import a_reference_genome
+from gain.genomic_resources.testing.reference_genome_builder import (
+    a_reference_genome,
+)
 
 MALFORMED_RECORDS: list[dict[str, Any]] = [
     # no converter matches the keys

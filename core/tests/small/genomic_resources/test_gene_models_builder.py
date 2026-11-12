@@ -16,13 +16,15 @@ from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing.builders import (
     ResourceBuilder,
     a_grr,
-    a_reference_genome,
     build_resource_tempdir,
 )
 from gain.genomic_resources.testing.gene_models_builder import (
     GENE_MODELS_FORMATS,
     ResourceValidationError,
     a_gene_models,
+)
+from gain.genomic_resources.testing.reference_genome_builder import (
+    a_reference_genome,
 )
 
 #: What the two transcripts a bare builder authors must parse to, in

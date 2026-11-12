@@ -14,7 +14,8 @@ from gain.binning.binners import (
 )
 from gain.genomic_resources.genomic_scores.position import PositionScore
 from gain.genomic_resources.repository import GenomicResourceRepo
-from gain.genomic_resources.testing.builders import a_grr, a_position_score
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 from gain.utils.regions import BedRegion
 
 BIN_SIZE = 10

@@ -28,7 +28,7 @@ from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,
     setup_directories,
 )
-from gain.genomic_resources.testing.builders import a_position_score
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 from .conftest import (
     a_resource_whose_meta_is,

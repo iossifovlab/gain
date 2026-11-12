@@ -41,7 +41,9 @@ from gain.genomic_resources.testing import (
     setup_genome,
     setup_genome_bgz,
 )
-from gain.genomic_resources.testing.builders import a_reference_genome
+from gain.genomic_resources.testing.reference_genome_builder import (
+    a_reference_genome,
+)
 from gain.genomic_resources.testing.statistics import build_statistics
 from gain.utils.regions import Region
 

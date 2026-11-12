@@ -11,13 +11,15 @@ from gain.genomic_resources.reference_genome import (
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing import build_filesystem_test_repository
-from gain.genomic_resources.testing.builders import (
-    a_fragment_score,
-    a_grr,
-    a_position_score,
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.data_frame_builder import a_data_frame
+from gain.genomic_resources.testing.reference_genome_builder import (
     a_reference_genome,
 )
-from gain.genomic_resources.testing.data_frame_builder import a_data_frame
+from gain.genomic_resources.testing.table_score_builder import (
+    a_fragment_score,
+    a_position_score,
+)
 
 
 def kind_def(track: Any) -> Any:

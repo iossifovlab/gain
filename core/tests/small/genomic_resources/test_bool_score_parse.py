@@ -27,9 +27,11 @@ from gain.genomic_resources.histogram import (
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     scan_histograms,
 )
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.table_score_builder import (
     PositionScoreBuilder,
     a_position_score,
+)
+from gain.genomic_resources.testing.vcf_info_score_builder import (
     a_vcf_info_score,
 )
 

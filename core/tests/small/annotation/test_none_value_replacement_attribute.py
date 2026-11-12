@@ -23,10 +23,8 @@ from gain.annotation.annotation_pipeline import AnnotationPipeline
 from gain.annotation.position_score_annotator import PositionScoreAnnotator
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing import build_inmemory_test_repository
-from gain.genomic_resources.testing.builders import (
-    a_grr,
-    a_position_score,
-)
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 
 @pytest.fixture

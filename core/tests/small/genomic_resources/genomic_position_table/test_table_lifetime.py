@@ -132,11 +132,9 @@ from gain.genomic_resources.testing import (
     setup_tabix,
     setup_vcf,
 )
-from gain.genomic_resources.testing.builders import (
-    a_bigwig_score,
-    a_grr,
-    a_position_score,
-)
+from gain.genomic_resources.testing.bigwig_score_builder import a_bigwig_score
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 from .test_backend_record_contract import (
     _BACKENDS,

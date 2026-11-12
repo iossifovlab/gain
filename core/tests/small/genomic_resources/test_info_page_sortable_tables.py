@@ -44,16 +44,18 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
     scan_noregion,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
-from gain.genomic_resources.testing.builders import (
-    a_fragment_score,
-    a_grr,
-    a_position_score,
-    a_reference_genome,
-    an_allele_score,
-)
+from gain.genomic_resources.testing.builders import a_grr
 from gain.genomic_resources.testing.info_page_fixtures import (
     COVERED_POSITIONS,
     a_coverage_repo,
+)
+from gain.genomic_resources.testing.reference_genome_builder import (
+    a_reference_genome,
+)
+from gain.genomic_resources.testing.table_score_builder import (
+    a_fragment_score,
+    a_position_score,
+    an_allele_score,
 )
 
 from tests.small.genomic_resources.info_page_html import (

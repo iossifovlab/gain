@@ -13,8 +13,8 @@ import pytest
 import yaml
 from gain.genomic_resources.genomic_scores import AlleleScore, PositionScore
 from gain.genomic_resources.repository import GenomicResource
-from gain.genomic_resources.testing.builders import (
-    ResourceValidationError,
+from gain.genomic_resources.testing.builders import ResourceValidationError
+from gain.genomic_resources.testing.table_score_builder import (
     a_fragment_score,
     a_position_score,
     an_allele_score,

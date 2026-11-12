@@ -31,14 +31,14 @@ from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
 )
 from gain.genomic_resources.statistics.min_max import NullMinMaxValue
-from gain.genomic_resources.testing.builders import (
-    PositionScoreBuilder,
-    a_position_score,
-)
 from gain.genomic_resources.testing.statistics import (
     a_score_with_no_values,
     publish_statistics,
     refresh_manifest,
+)
+from gain.genomic_resources.testing.table_score_builder import (
+    PositionScoreBuilder,
+    a_position_score,
 )
 
 from tests.small.genomic_resources.info_page_html import table_after

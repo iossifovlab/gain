@@ -32,16 +32,20 @@ from gain.genomic_resources.statistics.fragments import (
     FRAGMENT_STATISTICS_FILE,
 )
 from gain.genomic_resources.testing.builders import (
-    AlleleScoreBuilder,
-    FragmentScoreBuilder,
     GRRBuilder,
-    PositionScoreBuilder,
     ResourceBuilder,
     a_basic_resource,
-    a_fragment_score,
     a_grr,
-    a_position_score,
+)
+from gain.genomic_resources.testing.reference_genome_builder import (
     a_reference_genome,
+)
+from gain.genomic_resources.testing.table_score_builder import (
+    AlleleScoreBuilder,
+    FragmentScoreBuilder,
+    PositionScoreBuilder,
+    a_fragment_score,
+    a_position_score,
     an_allele_score,
 )
 

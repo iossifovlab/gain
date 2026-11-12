@@ -28,7 +28,7 @@ from gain.genomic_resources.statistics.fragments import (
     merge_region_fragments,
     save_and_plot_fragments,
 )
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.table_score_builder import (
     a_fragment_score,
     a_position_score,
 )

@@ -10,10 +10,8 @@ from gain.genomic_resources.genomic_position_table.record import (
 from gain.genomic_resources.genomic_scores import (
     build_position_score_from_resource,
 )
-from gain.genomic_resources.testing.builders import (
-    a_bigwig_score,
-    a_position_score,
-)
+from gain.genomic_resources.testing.bigwig_score_builder import a_bigwig_score
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 
 def test_region_value_arrays_one_based(tmp_path: pathlib.Path) -> None:

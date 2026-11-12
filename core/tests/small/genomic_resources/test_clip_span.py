@@ -10,7 +10,7 @@ from gain.genomic_resources.genomic_scores import (
     clip_to_region,
     overlap_fractions_admit,
 )
-from gain.genomic_resources.testing.builders import an_allele_score
+from gain.genomic_resources.testing.table_score_builder import an_allele_score
 
 
 def test_a_record_overhanging_both_edges_is_clipped_to_the_region() -> None:

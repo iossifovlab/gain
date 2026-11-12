@@ -20,7 +20,7 @@ ADR 0012 names ``-s 'summary: foo'`` as a portable filter.
 import pathlib
 
 import pytest
-from gain.genomic_resources.testing.builders import a_position_score
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 from .conftest import index_row, indexed_repo
 

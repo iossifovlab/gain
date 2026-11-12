@@ -44,11 +44,11 @@ from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing import build_filesystem_test_repository
-from gain.genomic_resources.testing.builders import (
-    a_fragment_score,
-    a_grr,
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.reference_genome_builder import (
     a_reference_genome,
 )
+from gain.genomic_resources.testing.table_score_builder import a_fragment_score
 from gain.utils.regions import BedRegion
 
 from tests.small.binning.conftest import S1_FRAGMENTS, S2_FRAGMENTS

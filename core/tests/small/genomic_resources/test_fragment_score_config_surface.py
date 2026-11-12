@@ -62,10 +62,10 @@ from gain.genomic_resources.testing import (
     convert_to_tab_separated,
     setup_directories,
 )
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import (
     FragmentScoreBuilder,
     a_fragment_score,
-    a_grr,
 )
 from gain.task_graph.cli_tools import task_graph_run
 from gain.task_graph.graph import TaskGraph

@@ -31,7 +31,8 @@ from gain import grr
 from gain.gene_scores.gene_scores import GeneScore, GeneScoreDef
 from gain.genomic_resources.histogram import NumberHistogram
 from gain.genomic_resources.repository import GenomicResourceRepo
-from gain.genomic_resources.testing.builders import a_gene_score, a_grr
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.gene_score_builder import a_gene_score
 
 GENE_SCORE = "mini_genescore"
 SCORE_ID = "my_genescore"

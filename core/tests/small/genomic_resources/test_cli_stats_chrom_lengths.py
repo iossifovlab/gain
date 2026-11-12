@@ -17,10 +17,8 @@ import pytest
 import pytest_mock
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.genomic_scores import GenomicScore
-from gain.genomic_resources.testing.builders import (
-    a_bigwig_score,
-    a_grr,
-)
+from gain.genomic_resources.testing.bigwig_score_builder import a_bigwig_score
+from gain.genomic_resources.testing.builders import a_grr
 
 from .conftest import md5_of
 from .test_genomic_scores_impl_chrom_lengths import (

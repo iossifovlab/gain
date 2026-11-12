@@ -17,8 +17,8 @@ from gain.genomic_resources.testing import (
     setup_tabix,
     setup_vcf,
 )
-from gain.genomic_resources.testing.builders import (
-    a_grr,
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.vcf_info_score_builder import (
     a_vcf_info_score,
 )
 

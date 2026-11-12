@@ -62,7 +62,7 @@ from gain.genomic_resources.testing import (
     setup_tabix,
     setup_vcf,
 )
-from gain.genomic_resources.testing.builders import a_position_score
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 from .test_table_lifetime import _a_mapped_vcf_table
 

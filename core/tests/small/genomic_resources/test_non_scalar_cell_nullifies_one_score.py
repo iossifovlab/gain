@@ -32,7 +32,9 @@ from gain.genomic_resources.statistics.min_max import (
     MinMaxValue,
     NullMinMaxValue,
 )
-from gain.genomic_resources.testing.builders import a_vcf_info_score
+from gain.genomic_resources.testing.vcf_info_score_builder import (
+    a_vcf_info_score,
+)
 
 #: ``SC`` is declared scalar; ``OK`` is the well-formed neighbour whose
 #: statistics the build used to lose with it.  The VCF itself is well

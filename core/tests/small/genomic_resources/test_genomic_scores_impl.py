@@ -44,15 +44,19 @@ from gain.genomic_resources.testing import (
     setup_genome,
     setup_vcf,
 )
-from gain.genomic_resources.testing.builders import (
-    PositionScoreBuilder,
-    a_bigwig_score,
-    a_grr,
-    a_position_score,
+from gain.genomic_resources.testing.bigwig_score_builder import a_bigwig_score
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.reference_genome_builder import (
     a_reference_genome,
-    a_vcf_info_score,
 )
 from gain.genomic_resources.testing.statistics import build_statistics
+from gain.genomic_resources.testing.table_score_builder import (
+    PositionScoreBuilder,
+    a_position_score,
+)
+from gain.genomic_resources.testing.vcf_info_score_builder import (
+    a_vcf_info_score,
+)
 from gain.task_graph.cli_tools import task_graph_run
 from gain.task_graph.executor import (
     TaskGraphExecutor,

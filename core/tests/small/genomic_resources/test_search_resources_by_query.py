@@ -37,12 +37,11 @@ from gain.genomic_resources.repository import GenomicResourceProtocolRepo
 from gain.genomic_resources.repository_ids import GR_SQLITE_META_FILE_NAME
 from gain.genomic_resources.resource_query import ResourceQueryParseError
 from gain.genomic_resources.testing import build_filesystem_test_protocol
-from gain.genomic_resources.testing.builders import (
-    GRRBuilder,
-    a_grr,
-    a_position_score,
+from gain.genomic_resources.testing.builders import GRRBuilder, a_grr
+from gain.genomic_resources.testing.reference_genome_builder import (
     a_reference_genome,
 )
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 
 @pytest.fixture(scope="module")

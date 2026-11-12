@@ -12,7 +12,7 @@ from gain.genomic_resources.genomic_scores import (
     build_position_score_from_resource,
 )
 from gain.genomic_resources.score_filter import ScoreFilterError
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.table_score_builder import (
     a_fragment_score,
     a_position_score,
     an_allele_score,

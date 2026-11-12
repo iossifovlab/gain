@@ -19,11 +19,11 @@ import pytest
 from gain.genomic_resources.genomic_position_table.record import ALT, REF
 from gain.genomic_resources.genomic_scores import AlleleScore
 from gain.genomic_resources.repository import GenomicResource
-from gain.genomic_resources.testing.builders import (
-    a_bigwig_score,
-    a_grr,
+from gain.genomic_resources.testing.bigwig_score_builder import a_bigwig_score
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import an_allele_score
+from gain.genomic_resources.testing.vcf_info_score_builder import (
     a_vcf_info_score,
-    an_allele_score,
 )
 
 _VCF_ALLELE_DATA = "\n".join([

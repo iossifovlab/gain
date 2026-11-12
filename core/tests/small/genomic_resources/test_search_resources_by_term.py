@@ -18,10 +18,8 @@ from gain.genomic_resources.repository import GenomicResourceProtocolRepo
 from gain.genomic_resources.repository_ids import GR_SQLITE_META_FILE_NAME
 from gain.genomic_resources.repository_search import SearchTermError
 from gain.genomic_resources.testing import build_filesystem_test_protocol
-from gain.genomic_resources.testing.builders import (
-    a_grr,
-    a_position_score,
-)
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 
 @pytest.fixture

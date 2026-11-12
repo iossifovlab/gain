@@ -29,8 +29,8 @@ import pathlib
 
 import pytest
 from gain.genomic_resources.genomic_scores import AlleleScore
-from gain.genomic_resources.testing.builders import (
-    a_grr,
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.vcf_info_score_builder import (
     a_vcf_info_score,
 )
 

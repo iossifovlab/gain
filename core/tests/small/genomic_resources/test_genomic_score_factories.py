@@ -29,10 +29,10 @@ from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
 )
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.gene_score_builder import a_gene_score
+from gain.genomic_resources.testing.table_score_builder import (
     a_fragment_score,
-    a_gene_score,
-    a_grr,
     a_position_score,
     an_allele_score,
 )

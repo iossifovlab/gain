@@ -7,7 +7,7 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
     scan_histograms,
 )
 from gain.genomic_resources.repository import GenomicResource
-from gain.genomic_resources.testing.builders import a_fragment_score
+from gain.genomic_resources.testing.table_score_builder import a_fragment_score
 
 from tests.small.genomic_resources.histogram_parity import as_number
 

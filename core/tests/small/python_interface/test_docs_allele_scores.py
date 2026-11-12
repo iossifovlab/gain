@@ -48,7 +48,8 @@ from gain.genomic_resources.genomic_scores import (
     AlleleScore,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
-from gain.genomic_resources.testing.builders import a_grr, an_allele_score
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import an_allele_score
 
 ALLELE_SCORE = "mini_allelescore_tabix_1"
 NUM = "allele_tsv_1_num"

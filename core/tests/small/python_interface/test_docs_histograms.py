@@ -59,7 +59,8 @@ from gain.genomic_resources.histogram import (
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.score_def import parse_scoredef_config
-from gain.genomic_resources.testing.builders import a_grr, a_position_score
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 NUMBER_SCORE = "mini_positionscore_bedgraph_tabix_0"
 NUMBER_SCORE_ID = "pos_bedgraph_0"

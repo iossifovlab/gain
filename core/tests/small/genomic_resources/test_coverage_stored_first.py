@@ -18,9 +18,9 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
     GenomicScoreImplementation,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
-from gain.genomic_resources.testing.builders import (
-    a_bigwig_score,
-    a_grr,
+from gain.genomic_resources.testing.bigwig_score_builder import a_bigwig_score
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.reference_genome_builder import (
     a_reference_genome,
 )
 

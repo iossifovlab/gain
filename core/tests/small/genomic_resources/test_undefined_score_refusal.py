@@ -23,11 +23,9 @@ from gain.gene_scores.gene_scores import (
 from gain.genomic_resources.aggregators import PositionScoreAggregationQuery
 from gain.genomic_resources.genomic_scores import PositionScore
 from gain.genomic_resources.score_filter import ScoreFilterError
-from gain.genomic_resources.testing.builders import (
-    a_gene_score,
-    a_grr,
-    a_position_score,
-)
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.gene_score_builder import a_gene_score
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 from tests.small.genomic_resources.conftest import phrase_sites
 

@@ -25,11 +25,13 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_types import FRAGMENT_SCORE_TYPES
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.gene_score_builder import a_gene_score
+from gain.genomic_resources.testing.table_score_builder import (
     a_fragment_score,
-    a_gene_score,
-    a_vcf_info_score,
     an_allele_score,
+)
+from gain.genomic_resources.testing.vcf_info_score_builder import (
+    a_vcf_info_score,
 )
 
 from tests.small.genomic_resources.histogram_parity import (

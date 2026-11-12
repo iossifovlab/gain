@@ -33,21 +33,27 @@ from gain.genomic_resources.repository_factory import (
 )
 from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.resource_errors import MalformedResourceError
+from gain.genomic_resources.testing.bigwig_score_builder import a_bigwig_score
 from gain.genomic_resources.testing.builders import (
     ResourceValidationError,
-    a_bigwig_score,
-    a_fragment_score,
-    a_gene_score,
     a_grr,
-    a_position_score,
-    a_reference_genome,
-    a_vcf_info_score,
-    an_allele_score,
     build_repo_tempdir,
     build_resource_tempdir,
 )
 from gain.genomic_resources.testing.data_frame_builder import a_data_frame
+from gain.genomic_resources.testing.gene_score_builder import a_gene_score
+from gain.genomic_resources.testing.reference_genome_builder import (
+    a_reference_genome,
+)
 from gain.genomic_resources.testing.resource_meta import append_config_block
+from gain.genomic_resources.testing.table_score_builder import (
+    a_fragment_score,
+    a_position_score,
+    an_allele_score,
+)
+from gain.genomic_resources.testing.vcf_info_score_builder import (
+    a_vcf_info_score,
+)
 
 
 def test_bare_default_is_a_readable_minimal_score(

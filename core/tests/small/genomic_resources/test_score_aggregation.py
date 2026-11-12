@@ -50,8 +50,8 @@ from gain.genomic_resources.genomic_scores.aggregation import (
     resolve_aggregation_queries,
 )
 from gain.genomic_resources.score_def import GenomicScoreDef, ScoreValue
-from gain.genomic_resources.testing.builders import (
-    a_grr,
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import (
     a_position_score,
     an_allele_score,
 )

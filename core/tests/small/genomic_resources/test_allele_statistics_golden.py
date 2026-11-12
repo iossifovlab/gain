@@ -42,7 +42,8 @@ import pathlib
 
 import pytest
 from gain.genomic_resources.cli import cli_manage
-from gain.genomic_resources.testing.builders import a_grr, an_allele_score
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import an_allele_score
 
 from tests.small.genomic_resources.conftest import assert_golden
 

@@ -10,7 +10,7 @@ column serves ``search_term`` alone.
 import pathlib
 
 import pytest
-from gain.genomic_resources.testing.builders import a_position_score
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 from .conftest import index_row, indexed_repo
 

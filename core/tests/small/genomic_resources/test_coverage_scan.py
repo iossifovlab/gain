@@ -32,8 +32,8 @@ from gain.genomic_resources.statistics.exact_lengths import (
 from gain.genomic_resources.statistics.fragments import (
     FRAGMENT_STATISTICS_FILE,
 )
-from gain.genomic_resources.testing.builders import (
-    a_bigwig_score,
+from gain.genomic_resources.testing.bigwig_score_builder import a_bigwig_score
+from gain.genomic_resources.testing.table_score_builder import (
     a_fragment_score,
     a_position_score,
     an_allele_score,

@@ -28,7 +28,8 @@ from gain.genomic_resources.statistics.alleles import (
     AlleleStatistics,
     RepeatedAllele,
 )
-from gain.genomic_resources.testing.builders import a_grr, an_allele_score
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import an_allele_score
 
 _RESOURCE_ID = "scores/repeated"
 

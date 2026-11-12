@@ -49,7 +49,7 @@ from gain.genomic_resources.statistics.coverage import (
 from gain.genomic_resources.statistics.fragments import (
     FRAGMENT_LENGTHS_IMAGE_FILE,
 )
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.table_score_builder import (
     a_fragment_score,
     a_position_score,
     an_allele_score,

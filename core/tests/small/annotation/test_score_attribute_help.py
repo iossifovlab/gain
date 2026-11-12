@@ -14,8 +14,9 @@ from gain.annotation.genomic_score_annotator_base import (
     GenomicScoreAnnotatorBase,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
-from gain.genomic_resources.testing.builders import a_grr, a_position_score
+from gain.genomic_resources.testing.builders import a_grr
 from gain.genomic_resources.testing.statistics import publish_statistics
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 PUBLIC_URL = "http://grr.example.org"
 

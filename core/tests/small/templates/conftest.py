@@ -20,10 +20,8 @@ from gain.gene_scores.implementations.gene_scores_impl import (
     GeneScoreImplementation,
 )
 from gain.genomic_resources.repository import GenomicResource
-from gain.genomic_resources.testing.builders import (
-    a_basic_resource,
-    a_gene_score,
-)
+from gain.genomic_resources.testing.builders import a_basic_resource
+from gain.genomic_resources.testing.gene_score_builder import a_gene_score
 from gain.templates import reset_caches
 
 

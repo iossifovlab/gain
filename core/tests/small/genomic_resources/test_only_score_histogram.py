@@ -23,15 +23,13 @@ from gain.genomic_resources.testing import (
     build_inmemory_test_resource,
     convert_to_tab_separated,
 )
-from gain.genomic_resources.testing.builders import (
-    a_gene_score,
-    a_grr,
-    a_position_score,
-)
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.gene_score_builder import a_gene_score
 from gain.genomic_resources.testing.statistics import (
     a_score_with_too_many_categories,
     publish_statistics,
 )
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 
 def test_a_one_score_position_score_reads_its_only_score_histogram(

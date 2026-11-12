@@ -34,7 +34,7 @@ from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     setup_directories,
 )
-from gain.genomic_resources.testing.builders import GeneScoreBuilder
+from gain.genomic_resources.testing.gene_score_builder import GeneScoreBuilder
 
 from tests.small.templates.page_dom import parse_page
 

@@ -13,9 +13,9 @@ from gain.genomic_resources.testing.annotation_pipeline_builder import (
     ResourceValidationError,
     an_annotation_pipeline,
 )
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import (
     PositionScoreBuilder,
-    a_grr,
     a_position_score,
 )
 
