@@ -366,9 +366,9 @@ def test_get_chromosome_length_tabix_avoid_infinite_loop(
     # The original test triggered "all fetches empty" by feeding a
     # malformed file to setup_tabix; pysam>=0.24 (htslib) now rejects
     # that at index-build time. Same effect via a valid file + a chrom
-    # that's not in the index — every fetch raises ValueError, which
-    # any_records() swallows, so the binary search halves pos down to
-    # 0 and the guard at regions.py must fire.
+    # that's not in the index: the first fetch raises ValueError, and
+    # the outer ValueError handler of get_chromosome_length_tabix
+    # catches it, logs a warning and returns None.
     in_content = textwrap.dedent("""
         #chrom pos
         chr1   23
@@ -435,6 +435,18 @@ def test_get_chrom_length_vcf(
     assert one_length is not None
     assert one_length >= 30_000_000
     assert abs(one_length - 30_000_000) <= precision
+
+
+def test_get_chrom_length_vcf_declared_contig_without_records(
+    sample_vcf: pathlib.Path,
+) -> None:
+    # The header declares contig 2, so every fetch returns an empty
+    # iterator; pos halves to 0 and the pos == 0 guard gives up.
+    variant_file = pysam.VariantFile(str(sample_vcf))
+
+    length = get_chromosome_length_tabix(variant_file, "2")
+
+    assert length is None
 
 
 # Additional tests for better coverage
