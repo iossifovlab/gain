@@ -6,7 +6,7 @@ The ``Pre-flight: release notes`` stage of ``Jenkinsfile.release`` runs
 the script on a ``builder`` agent, outside of a CI image, so the script
 uses the Python standard library only.
 
-``check`` reads the first ``* <version>`` heading of ``--changes``
+``check`` reads the first column-0 ``* `` heading of ``--changes``
 (default ``docs/source/changes.rst``). The check exits 0 when that
 heading is the tag. Otherwise the check prints one line that names the
 tag and the first section, and exits 1.
@@ -20,12 +20,14 @@ from collections.abc import Sequence
 DEFAULT_CHANGES = "docs/source/changes.rst"
 
 # A section heading starts at column 0. The items under a section are
-# indented, so a nested ``* `` bullet never matches.
-_SECTION = re.compile(r"^\* (\S+)\s*$")
+# indented, so a nested ``* `` bullet never matches. The first heading
+# is the section, also when its text is not a bare version: a heading
+# such as ``* 2026.12.0 (draft)`` then fails the check.
+_SECTION = re.compile(r"^\* (.*\S)\s*$")
 
 
 def first_section(text: str) -> str | None:
-    """Return the version of the first section heading, or None."""
+    """Return the text of the first section heading, or None."""
     for line in text.splitlines():
         match = _SECTION.match(line)
         if match:

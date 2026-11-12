@@ -223,6 +223,7 @@ The notes are an index into the issues, not a second write-up: a reader skims th
 4. **Closing bullet.** `**Issues closed in this release:**` with two GitHub query links, `all issues` and `bug issues`, over the window between the two tags' commit times in UTC (`git log -1 --format=%cI <tag>`): `issues?q=is%3Aissue+is%3Aclosed+reason%3Acompleted+closed%3A<a>..<b>`, and the same with `label%3Abug`. The query is the full list; the section enumerates no issues.
 5. **Check.** `uv run --no-sync bash docs/build_docs.sh` passes (a bare `bash` call exits 127 and leaves stale HTML), and the first `<dt>` of `docs/build/html/changes.html` is the new version.
 6. **Commit.** Straight to `master`, titled `docs: release notes for <version>`, then bump the meta-repo pin. Deploy docs publishes it to `iossifovlab.com/gaindocs/changes.html`.
+7. **Release.** The pushed tag starts `gain-release` at once, and its `Pre-flight: release notes` stage aborts while the first section of `changes.rst` on `master` is not the tag. After step 6 lands on `master`, re-run `gain-release` for the tag by hand.
 </important>
 
 <important if="you are changing or extending an area that has an ADR, or naming a concept in an issue or docstring">

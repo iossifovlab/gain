@@ -102,6 +102,67 @@ def test_check_ignores_a_nested_bullet_that_looks_like_a_version(
         ["check", "2026.11.1", "--changes", str(changes)]) == 0
 
 
+def test_check_fails_when_the_first_heading_is_not_a_bare_version(
+    release_notes: ModuleType, tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    changes = tmp_path / "changes.rst"
+    changes.write_text(textwrap.dedent("""\
+        Release Notes
+        =============
+
+        * 2026.12.0 (draft)
+
+        * 2026.11.1
+            * Annotation: a new annotator.
+    """))
+
+    code = release_notes.main(
+        ["check", "2026.11.1", "--changes", str(changes)])
+
+    assert code != 0
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 1
+    assert "2026.12.0 (draft)" in lines[0]
+
+
+def test_check_fails_when_the_file_has_no_section(
+    release_notes: ModuleType, tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    changes = tmp_path / "changes.rst"
+    changes.write_text(textwrap.dedent("""\
+        Release Notes
+        =============
+
+          * 2026.11.1
+              * Annotation: a new annotator.
+    """))
+
+    code = release_notes.main(
+        ["check", "2026.11.1", "--changes", str(changes)])
+
+    assert code != 0
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 1
+    assert "2026.11.1" in lines[0]
+    assert "no section" in lines[0]
+
+
+def test_check_reads_docs_source_changes_rst_by_default(
+    release_notes: ModuleType, tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The Jenkins stage runs `check <tag>` without --changes.
+    changes = tmp_path / "docs" / "source" / "changes.rst"
+    changes.parent.mkdir(parents=True)
+    changes.write_text(CHANGES)
+    monkeypatch.chdir(tmp_path)
+
+    assert release_notes.main(["check", "2026.11.1"]) == 0
+    assert release_notes.main(["check", "2026.11.0"]) != 0
+
+
 JENKINSFILE = REPO_ROOT / "Jenkinsfile.release"
 RELEASE_JOB = REPO_ROOT / "jenkins-jobs" / "release.groovy"
 STAGE = "Pre-flight: release notes"
