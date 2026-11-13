@@ -14,6 +14,7 @@
   [gain#1961](https://github.com/iossifovlab/gain/issues/1961) (LICENSE in the sdist),
   [gain#1962](https://github.com/iossifovlab/gain/issues/1962) (the bioconda-recipes PR),
   [gain#1963](https://github.com/iossifovlab/gain/issues/1963) (this record)
+  and [gain#1967](https://github.com/iossifovlab/gain/issues/1967) (the amendment)
 
 ## Context
 
