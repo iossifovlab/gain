@@ -7,8 +7,9 @@
 // (#2062). It is report only: it archives the report and the mutator
 // snapshot, and a survivor never fails it. Triggered nightly from the
 // last stage of the gain-nightly orchestrator (no parameters, so
-// BRANCH_NAME defaults to master), with `propagate: false`, so the job
-// never changes the result of gain-nightly. It sends no Zulip alert.
+// BRANCH_NAME defaults to master and FULL_RUN defaults to false),
+// with `propagate: false`, so the job never changes the result of
+// gain-nightly. It sends no Zulip alert.
 
 // Declared at the Jenkins root (not under `iossifovlab/`): that
 // path is a GitHub Organization Folder and rejects Job-DSL-managed
@@ -20,7 +21,8 @@ pipelineJob('gain-mutator') {
         'mutator, with tests/small/utils as the test command. Report ' +
         'only: survivors never fail the build, and a failed baseline ' +
         'marks it UNSTABLE. Keeps the mutator snapshot as an artifact, ' +
-        'so each run is differential. Triggered nightly via gain-nightly.')
+        'so each run is differential, unless FULL_RUN (default false) ' +
+        'is true. Triggered nightly via gain-nightly.')
 
     logRotator {
         numToKeep(40)
@@ -32,6 +34,14 @@ pipelineJob('gain-mutator') {
             'master',
             'Branch to load Jenkinsfile.mutator from and test. ' +
             'Default master is what the gain-nightly trigger runs.',
+        )
+        booleanParam(
+            'FULL_RUN',
+            false,
+            'true skips the snapshot restore and makes a full mutator ' +
+            'run, and the build archives the new snapshot as usual. ' +
+            'Default false restores the snapshot of the last build that ' +
+            'archived one and makes a differential run.',
         )
     }
 

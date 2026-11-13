@@ -18,13 +18,16 @@
 // the restore still passes the restored snapshot on. A build that
 // archived nothing is skipped by the selector.
 //
+// To force a full run, start the job with the FULL_RUN parameter set
+// to true. The build then skips the restore, makes a full run and
+// archives its snapshot as usual, so the next nightly build restores
+// the snapshot of the full run. The default of FULL_RUN is false, and
+// a build without a FULL_RUN value restores the snapshot.
+//
 // To reset a bad snapshot, delete in Jenkins the first build that
 // archived it and every later build of this job, because each later
 // build archives a snapshot made from the one that it restored. The
-// next run then
-// restores the snapshot of an older build, or none, and makes a full
-// run. To force a full run, delete every build that archived a
-// snapshot.
+// next run then restores the snapshot of an older build, or none.
 
 pipeline {
     // builder = general build agents; deploy targets don't carry it
@@ -61,14 +64,22 @@ pipeline {
                 '''
                 sh 'git submodule update --init test_fixtures/mini-GRR'
                 // The snapshot of the last build that archived one. The
-                // first run has none, so the copy is optional.
-                copyArtifacts(
-                    projectName: env.JOB_NAME,
-                    selector: lastWithArtifacts(),
-                    filter: '.metrics/mutate/**',
-                    optional: true,
-                    fingerprintArtifacts: false,
-                )
+                // first run has none, so the copy is optional. FULL_RUN
+                // set to true skips the restore. A build without a
+                // FULL_RUN value has a null param and restores.
+                script {
+                    if (params.FULL_RUN != true) {
+                        copyArtifacts(
+                            projectName: env.JOB_NAME,
+                            selector: lastWithArtifacts(),
+                            filter: '.metrics/mutate/**',
+                            optional: true,
+                            fingerprintArtifacts: false,
+                        )
+                    } else {
+                        echo 'FULL_RUN is true: no snapshot restore'
+                    }
+                }
                 sh 'echo "restored snapshot files: $(find .metrics/mutate -type f | wc -l)"'
             }
         }
