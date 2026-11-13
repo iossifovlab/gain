@@ -424,8 +424,16 @@ _Avoid_: classification, cell typing
 **Contribution**:
 What one fragment adds to its bin of a fragment **track**: the value of a
 numeric score of the fragment, or a constant, which is 1 when the **entry**
-gives none. The `value` key of an entry sets it.
+gives none. The `value` key of an entry sets it. A *normalized*
+contribution is that value divided by the **fragment total** of the track.
 _Avoid_: value (a score value is any value of a score), weight
+
+**Fragment total**:
+The number of fragments of one fragment **track**: the fragments of its
+**group** in all the resources of its **entry**, over the whole genome. The
+fragment statistics of the resources give it. A normalized **contribution**
+divides by it.
+_Avoid_: library size, depth, N
 
 **Fragment mode**:
 The rule that decides which fragments reach a bin of a fragment **track**,
