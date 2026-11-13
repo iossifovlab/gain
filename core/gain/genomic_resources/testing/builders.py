@@ -49,10 +49,12 @@ import contextlib
 import dataclasses
 import importlib
 import pathlib
+import sys
 import tempfile
+import types
 import warnings
 from collections.abc import Generator
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import yaml
 
@@ -103,25 +105,36 @@ _MOVED: dict[str, str] = {
 }
 
 
-def __getattr__(name: str) -> Any:
-    """Serve a name that moved out of this module, with a warning.
+class _MovedNamesModule(types.ModuleType):
+    """This module, warning when a caller reads a name that moved out.
 
-    Python calls this module ``__getattr__`` (PEP 562) only for a name
-    that this module does not define.  The moved names are not defined
-    here, so a read of one finds its sibling module and returns the object
-    from there.  An import statement and ``module.name`` both read through
-    here, and type checkers see the names through the ``Any`` return.  The
-    sibling is imported only when a caller reads a moved name: the siblings
-    import this module, and this module imports none of them when it loads.
+    The moved names are not defined here, so a read of one finds its
+    sibling module and returns the object from there.  An import statement
+    and ``module.name`` both read through here.  The sibling is imported
+    only when a caller reads a moved name: the siblings import this
+    module, and this module imports none of them when it loads.
     """
-    moved_to = _MOVED.get(name)
-    if moved_to is None:
-        raise AttributeError(
-            f"module {__name__!r} has no attribute {name!r}")
-    new_module = f"{__package__}.{moved_to}"
-    warnings.warn(
-        f"{name} moved to {new_module}", DeprecationWarning, stacklevel=2)
-    return getattr(importlib.import_module(new_module), name)
+
+    def __getattribute__(self, name: str) -> Any:
+        moved_to = _MOVED.get(name)
+        if moved_to is None:
+            return super().__getattribute__(name)
+        package = super().__getattribute__("__package__")
+        new_module = f"{package}.{moved_to}"
+        warnings.warn(
+            f"{name} moved to {new_module}", DeprecationWarning, stacklevel=2)
+        return getattr(importlib.import_module(new_module), name)
+
+
+sys.modules[__name__].__class__ = _MovedNamesModule
+
+if TYPE_CHECKING:
+    # Type checkers do not see the ``__getattribute__`` above, so gpf's
+    # ``from ...builders import a_gene_score`` would fail mypy.  This stub
+    # lets them see the moved names.  It does not exist at run time, and
+    # it does not warn, so the warns-at-import fence of
+    # ``tests/test_architecture.py`` does not flag this module.
+    def __getattr__(name: str) -> Any: ...
 
 
 @runtime_checkable
