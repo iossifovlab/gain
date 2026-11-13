@@ -24,8 +24,7 @@
 //                                      tests/integration) against
 //                                      the master rebuild's archived
 //                                      gain-core .conda, one run per
-//                                      Python pin (3.12/3.13 today;
-//                                      3.14 waits on #1515). The
+//                                      Python pin (3.12/3.13/3.14). The
 //                                      per-push run leaves Python
 //                                      unpinned (what a user's `mamba
 //                                      create` resolves to today);
@@ -252,15 +251,7 @@ pipeline {
                     // `matrix` axis cannot be shared across pipeline
                     // scripts, so the two lists are kept in step by hand.
                     // Bump both together.
-                    //
-                    // 3.14 is deliberately absent (#1515): bioconda's
-                    // pybigwig has no cp314 build, so gain-core's conda
-                    // package cannot solve on 3.14 at all — the pin was
-                    // red at the solver, not in a test (gain-conda-
-                    // integration #7), and a red here blocks the staging
-                    // deploy below. The matrix job passes on 3.14 only
-                    // because its 3.14 cell builds pyBigWig from source.
-                    List<String> pinnedPythons = ['3.12', '3.13']
+                    List<String> pinnedPythons = ['3.12', '3.13', '3.14']
 
                     // Empty only when `Rebuild master` tripped its
                     // catchError, so no build number was captured; the job
