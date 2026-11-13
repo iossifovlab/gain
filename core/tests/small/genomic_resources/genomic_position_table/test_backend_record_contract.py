@@ -69,10 +69,10 @@ from gain.genomic_resources.score_def import (
     ValueExtractor,
     extract_column_value,
 )
-from gain.genomic_resources.testing.builders import (
-    a_bigwig_score,
-    a_grr,
-    a_position_score,
+from gain.genomic_resources.testing.bigwig_score_builder import a_bigwig_score
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import a_position_score
+from gain.genomic_resources.testing.vcf_info_score_builder import (
     a_vcf_info_score,
 )
 from gain.genomic_resources.vcf_scores import (

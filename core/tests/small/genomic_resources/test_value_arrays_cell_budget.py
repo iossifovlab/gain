@@ -22,10 +22,11 @@ from gain.genomic_resources.histogram import (
     NumberHistogramConfig,
 )
 from gain.genomic_resources.implementations.genomic_scores_impl import (
-    scan,
+    scan_histograms,
+    scan_min_max,
 )
 from gain.genomic_resources.repository import GenomicResource
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.table_score_builder import (
     a_position_score,
     an_allele_score,
 )
@@ -179,10 +180,12 @@ def test_both_bulk_passes_over_budgeted_batches_match_the_record_passes(
         for score_id in score_ids
     }
 
-    bulk_hists = scan.do_histogram_bulk(resource, confs, "chr1", 1, 45)
-    record_hists = scan.do_histogram(resource, confs, "chr1", 1, 45)
-    bulk_min_max = scan.do_min_max_bulk(resource, score_ids, "chr1", 1, 45)
-    record_min_max = scan.do_min_max(resource, score_ids, "chr1", 1, 45)
+    bulk_hists = scan_histograms.do_histogram_bulk(
+        resource, confs, "chr1", 1, 45)
+    record_hists = scan_histograms.do_histogram(resource, confs, "chr1", 1, 45)
+    bulk_min_max = scan_min_max.do_min_max_bulk(
+        resource, score_ids, "chr1", 1, 45)
+    record_min_max = scan_min_max.do_min_max(resource, score_ids, "chr1", 1, 45)
 
     for score_id in score_ids:
         bulk_hist = bulk_hists[score_id]

@@ -24,7 +24,8 @@ from gain.genomic_resources.testing import (
     build_http_test_protocol,
     build_s3_test_protocol,
 )
-from gain.genomic_resources.testing.builders import a_bigwig_score, a_grr
+from gain.genomic_resources.testing.bigwig_score_builder import a_bigwig_score
+from gain.genomic_resources.testing.builders import a_grr
 
 _BIGWIG_FILE_NAME = "data.bw"
 

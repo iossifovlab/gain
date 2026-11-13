@@ -32,7 +32,7 @@ import pytest
 from gain.genomic_resources.aggregators import ScoreAggregationQuery
 from gain.genomic_resources.genomic_scores import FragmentScore
 from gain.genomic_resources.genomic_scores.aggregation import fold_into_bins
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.table_score_builder import (
     FragmentScoreBuilder,
     a_fragment_score,
 )

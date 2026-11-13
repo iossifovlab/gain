@@ -12,9 +12,10 @@ import logging
 import pathlib
 
 import pytest
-from gain.genomic_resources.cli import _create_contents_db
+from gain.genomic_resources.cli_manifest import _create_contents_db
 from gain.genomic_resources.testing import build_filesystem_test_protocol
-from gain.genomic_resources.testing.builders import a_grr, a_position_score
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 from .conftest import a_resource_whose_meta_is, captured_warnings
 

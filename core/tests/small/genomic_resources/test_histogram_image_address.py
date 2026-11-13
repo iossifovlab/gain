@@ -25,14 +25,14 @@ from gain.genomic_resources.repository import (
 )
 from gain.genomic_resources.repository_ids import GR_MANIFEST_FILE_NAME
 from gain.genomic_resources.testing import build_filesystem_test_protocol
-from gain.genomic_resources.testing.builders import (
-    PositionScoreBuilder,
-    a_grr,
-    a_position_score,
-)
+from gain.genomic_resources.testing.builders import a_grr
 from gain.genomic_resources.testing.statistics import (
     a_score_with_no_values,
     publish_statistics,
+)
+from gain.genomic_resources.testing.table_score_builder import (
+    PositionScoreBuilder,
+    a_position_score,
 )
 
 PUBLIC_URL = "http://grr.example.org"

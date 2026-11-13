@@ -25,12 +25,9 @@ from gain.genomic_resources.score_def import (
     normalize_na_values,
 )
 from gain.genomic_resources.testing import build_inmemory_test_resource
-from gain.genomic_resources.testing.builders import (
-    ResourceBuilder,
-    a_bigwig_score,
-    a_grr,
-    a_position_score,
-)
+from gain.genomic_resources.testing.bigwig_score_builder import a_bigwig_score
+from gain.genomic_resources.testing.builders import ResourceBuilder, a_grr
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 
 def _open_position(

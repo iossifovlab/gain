@@ -34,11 +34,13 @@ from __future__ import annotations
 import pathlib
 
 from gain.genomic_resources.repository import GenomicResourceRepo
-from gain.genomic_resources.testing.builders import (
-    PositionScoreBuilder,
-    a_grr,
-    a_position_score,
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.reference_genome_builder import (
     a_reference_genome,
+)
+from gain.genomic_resources.testing.table_score_builder import (
+    PositionScoreBuilder,
+    a_position_score,
 )
 
 #: The resource whose Coverage table both suites drive, and the genome it

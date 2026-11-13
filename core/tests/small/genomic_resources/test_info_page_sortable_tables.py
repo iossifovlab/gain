@@ -41,19 +41,21 @@ from collections.abc import Callable
 import pytest
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     build_score_implementation_from_resource,
-    scan,
+    scan_noregion,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
-from gain.genomic_resources.testing.builders import (
-    a_fragment_score,
-    a_grr,
-    a_position_score,
-    a_reference_genome,
-    an_allele_score,
-)
+from gain.genomic_resources.testing.builders import a_grr
 from gain.genomic_resources.testing.info_page_fixtures import (
     COVERED_POSITIONS,
     a_coverage_repo,
+)
+from gain.genomic_resources.testing.reference_genome_builder import (
+    a_reference_genome,
+)
+from gain.genomic_resources.testing.table_score_builder import (
+    a_fragment_score,
+    a_position_score,
+    an_allele_score,
 )
 
 from tests.small.genomic_resources.info_page_html import (
@@ -161,7 +163,7 @@ def built_page(repo: GenomicResourceRepo, resource_id: str) -> str:
     fraction and another none.
     """
     resource = repo.get_resource(resource_id)
-    scan.do_noregion_histograms(resource)
+    scan_noregion.do_noregion_histograms(resource)
     impl = build_score_implementation_from_resource(
         repo.get_resource(resource_id))
     return impl.get_info(repo=repo)

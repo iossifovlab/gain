@@ -31,14 +31,17 @@ from gain.genomic_resources.implementations.genomic_scores_impl import (
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import build_filesystem_test_repository
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.bigwig_score_builder import (
     BigWigScoreBuilder,
-    GRRBuilder,
-    PositionScoreBuilder,
     a_bigwig_score,
-    a_grr,
-    a_position_score,
+)
+from gain.genomic_resources.testing.builders import GRRBuilder, a_grr
+from gain.genomic_resources.testing.reference_genome_builder import (
     a_reference_genome,
+)
+from gain.genomic_resources.testing.table_score_builder import (
+    PositionScoreBuilder,
+    a_position_score,
 )
 
 from .conftest import (

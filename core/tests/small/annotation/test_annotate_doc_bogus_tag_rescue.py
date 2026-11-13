@@ -24,7 +24,7 @@ import pytest
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     PositionScoreImplementation,
 )
-from gain.genomic_resources.testing.builders import a_position_score
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 from tests.small.annotation.test_annotate_doc_trust import RENDERERS
 from tests.small.templates.page_dom import parse_page

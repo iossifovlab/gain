@@ -4,10 +4,7 @@ import sys
 from collections.abc import Sequence
 
 from gain import logging
-from gain.genomic_resources.cli import (
-    _create_proto,
-    _find_resources,
-)
+from gain.genomic_resources.cli_common import _create_proto, _find_resources
 from gain.genomic_resources.cli_errors import (
     report_resource_failure,
 )

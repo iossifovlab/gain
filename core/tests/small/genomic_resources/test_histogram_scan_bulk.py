@@ -1,6 +1,7 @@
 # pylint: disable=C0114,C0116,W0212,W0621
 import logging
 import pathlib
+from collections.abc import Callable
 
 import pytest
 from gain.genomic_resources.histogram import (
@@ -12,12 +13,14 @@ from gain.genomic_resources.histogram import (
 )
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     scan,
+    scan_histograms,
+    scan_min_max,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_errors import MalformedResourceError
-from gain.genomic_resources.testing.builders import (
-    a_bigwig_score,
-    a_grr,
+from gain.genomic_resources.testing.bigwig_score_builder import a_bigwig_score
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import (
     a_position_score,
     an_allele_score,
 )
@@ -66,9 +69,9 @@ def test_bulk_histogram_matches_per_record_tabix_multiscore(
     resource = _multiscore_tabix(tmp_path)
     confs: dict = {"s1": _hist_conf(), "s2": _hist_conf()}
 
-    ref = scan.do_histogram(
+    ref = scan_histograms.do_histogram(
         resource, confs, "chr1", 1, 20)
-    bulk = scan.do_histogram_bulk(
+    bulk = scan_histograms.do_histogram_bulk(
         resource, confs, "chr1", 1, 20)
 
     _assert_hists_equal(bulk, ref)
@@ -95,9 +98,9 @@ def test_bulk_histogram_matches_per_record_zero_based(
         .build_resource(tmp_path)
     )
     confs: dict = {"s": _hist_conf()}
-    ref = scan.do_histogram(
+    ref = scan_histograms.do_histogram(
         resource, confs, "chr1", 1, 7)
-    bulk = scan.do_histogram_bulk(
+    bulk = scan_histograms.do_histogram_bulk(
         resource, confs, "chr1", 1, 7)
     _assert_hists_equal(bulk, ref)
 
@@ -122,9 +125,9 @@ def test_bulk_histogram_matches_per_record_configured_na(
         .build_resource(tmp_path)
     )
     confs: dict = {"s": _hist_conf()}
-    ref = scan.do_histogram(
+    ref = scan_histograms.do_histogram(
         resource, confs, "chr1", 1, 6)
-    bulk = scan.do_histogram_bulk(
+    bulk = scan_histograms.do_histogram_bulk(
         resource, confs, "chr1", 1, 6)
     _assert_hists_equal(bulk, ref)
     assert as_number(bulk["s"]).bars.sum() == as_number(ref["s"]).bars.sum()
@@ -136,9 +139,9 @@ def test_bulk_histogram_matches_per_record_subregion_clip(
     resource = _multiscore_tabix(tmp_path)
     confs: dict = {"s1": _hist_conf(), "s2": _hist_conf()}
     # A sub-region that clips the first and last spanning records.
-    ref = scan.do_histogram(
+    ref = scan_histograms.do_histogram(
         resource, confs, "chr1", 3, 15)
-    bulk = scan.do_histogram_bulk(
+    bulk = scan_histograms.do_histogram_bulk(
         resource, confs, "chr1", 3, 15)
     _assert_hists_equal(bulk, ref)
 
@@ -161,9 +164,9 @@ def test_bulk_histogram_matches_per_record_bigwig(
     confs: dict = {"bw": NumberHistogramConfig.from_dict({
         "type": "number", "view_range": {"min": 0, "max": 4},
         "number_of_bins": 4, "x_log_scale": False, "y_log_scale": False})}
-    ref = scan.do_histogram(
+    ref = scan_histograms.do_histogram(
         resource, confs, "chr1", 1, 6)
-    bulk = scan.do_histogram_bulk(
+    bulk = scan_histograms.do_histogram_bulk(
         resource, confs, "chr1", 1, 6)
     _assert_hists_equal(bulk, ref)
 
@@ -189,13 +192,15 @@ def test_bulk_histogram_overlap_guard_across_batch_boundary(
     confs: dict = {"s": _hist_conf()}
     monkeypatch.setattr(
         scan, "_SCAN_BATCH_SIZE", 1)
+    monkeypatch.setattr(
+        scan_histograms, "_SCAN_BATCH_SIZE", 1)
 
     # The per-record path rejects this fixture; the bulk path must too.
     with pytest.raises(ValueError, match="multiple values"):
-        scan.do_histogram(
+        scan_histograms.do_histogram(
             resource, confs, "chr1", 1, 7)
     with pytest.raises(ValueError, match="multiple values"):
-        scan.do_histogram_bulk(
+        scan_histograms.do_histogram_bulk(
             resource, confs, "chr1", 1, 7)
 
 
@@ -204,9 +209,9 @@ def test_dispatch_uses_bulk_for_float_tabix(tmp_path: pathlib.Path) -> None:
     confs: dict = {"s1": _hist_conf(), "s2": _hist_conf()}
 
     assert scan.can_bulk_histogram(resource, confs)
-    via_task = scan.do_histogram_task(
+    via_task = scan_histograms.do_histogram_task(
         resource, confs, "chr1", 1, 20).histograms
-    ref = scan.do_histogram(
+    ref = scan_histograms.do_histogram(
         resource, confs, "chr1", 1, 20)
     _assert_hists_equal(via_task, ref)
 
@@ -220,9 +225,9 @@ def test_dispatch_falls_back_for_whole_table_scan(
     # used to be spelled ``chrom=None``.
     resource = _multiscore_tabix(tmp_path)
     confs: dict = {"s1": _hist_conf(), "s2": _hist_conf()}
-    via_task = scan.do_histogram_task(
+    via_task = scan_histograms.do_histogram_task(
         resource, confs, "chr1", None, None).histograms
-    ref = scan.do_histogram(
+    ref = scan_histograms.do_histogram(
         resource, confs, "chr1", None, None)
     _assert_hists_equal(via_task, ref)
 
@@ -273,9 +278,9 @@ def test_bulk_histogram_matches_per_record_int_score(
     resource = _int_position_tabix(tmp_path)
     confs: dict = {"s": _int_hist_conf()}
 
-    ref = scan.do_histogram(
+    ref = scan_histograms.do_histogram(
         resource, confs, "chr1", 1, 20)
-    bulk = scan.do_histogram_bulk(
+    bulk = scan_histograms.do_histogram_bulk(
         resource, confs, "chr1", 1, 20)
 
     _assert_hists_equal(bulk, ref)
@@ -291,9 +296,9 @@ def test_bulk_histogram_matches_per_record_int_score_via_the_task(
     resource = _int_position_tabix(tmp_path)
     confs: dict = {"s": _int_hist_conf()}
 
-    via_task = scan.do_histogram_task(
+    via_task = scan_histograms.do_histogram_task(
         resource, confs, "chr1", 1, 20).histograms
-    ref = scan.do_histogram(
+    ref = scan_histograms.do_histogram(
         resource, confs, "chr1", 1, 20)
 
     _assert_hists_equal(via_task, ref)
@@ -351,9 +356,9 @@ def test_bulk_categorical_matches_per_record_str_score(
     resource = _str_position_tabix(tmp_path)
     confs: dict = {"s": CategoricalHistogramConfig.default_config()}
 
-    ref = scan.do_histogram(
+    ref = scan_histograms.do_histogram(
         resource, confs, "chr1", 1, 20)
-    bulk = scan.do_histogram_bulk(
+    bulk = scan_histograms.do_histogram_bulk(
         resource, confs, "chr1", 1, 20)
 
     _assert_categorical_equal(bulk, ref)
@@ -376,9 +381,9 @@ def test_bulk_categorical_matches_per_record_str_score_selected(
     resource = _str_position_tabix(tmp_path)
     confs: dict = {"s": CategoricalHistogramConfig.default_config()}
 
-    ref = scan.do_histogram(
+    ref = scan_histograms.do_histogram(
         resource, confs, "chr1", 2, 13)
-    bulk = scan.do_histogram_bulk(
+    bulk = scan_histograms.do_histogram_bulk(
         resource, confs, "chr1", 2, 13)
 
     _assert_categorical_equal(bulk, ref)
@@ -392,9 +397,9 @@ def test_bulk_categorical_matches_per_record_via_the_task(
     resource = _str_position_tabix(tmp_path)
     confs: dict = {"s": CategoricalHistogramConfig.default_config()}
 
-    via_task = scan.do_histogram_task(
+    via_task = scan_histograms.do_histogram_task(
         resource, confs, "chr1", 1, 20).histograms
-    ref = scan.do_histogram(
+    ref = scan_histograms.do_histogram(
         resource, confs, "chr1", 1, 20)
 
     _assert_categorical_equal(via_task, ref)
@@ -416,7 +421,7 @@ def test_an_int_score_with_a_categorical_histogram_keeps_the_per_record_path(
     assert not scan.can_bulk_histogram(resource, confs)
 
     # ...and the per-record path it stays on does build the histogram.
-    ref = scan.do_histogram(
+    ref = scan_histograms.do_histogram(
         resource, confs, "chr1", 1, 20)
     assert as_categorical(ref["s"]).raw_values == {3: 3, 7: 1, 1000: 4, 123: 2}
 
@@ -438,7 +443,7 @@ def test_a_str_score_with_a_number_histogram_keeps_the_per_record_path(
 
     assert not scan.can_bulk_histogram(resource, confs)
 
-    ref = scan.do_histogram_task(
+    ref = scan_histograms.do_histogram_task(
         resource, confs, "chr1", 1, 20).histograms
     assert isinstance(ref["s"], NullHistogram)
 
@@ -470,9 +475,9 @@ def test_bulk_categorical_nullifies_exactly_as_per_record_does(
     resource = _many_valued_str_tabix(tmp_path, distinct)
     confs: dict = {"s": CategoricalHistogramConfig.default_config()}
 
-    ref = scan.do_histogram(
+    ref = scan_histograms.do_histogram(
         resource, confs, "chr1", 1, distinct)
-    bulk = scan.do_histogram_bulk(
+    bulk = scan_histograms.do_histogram_bulk(
         resource, confs, "chr1", 1, distinct)
 
     assert isinstance(ref["s"], NullHistogram)
@@ -497,10 +502,12 @@ def test_a_nullified_score_is_skipped_by_every_later_batch(
     confs: dict = {"s": CategoricalHistogramConfig.default_config()}
     monkeypatch.setattr(
         scan, "_SCAN_BATCH_SIZE", 10)
+    monkeypatch.setattr(
+        scan_histograms, "_SCAN_BATCH_SIZE", 10)
 
-    ref = scan.do_histogram(
+    ref = scan_histograms.do_histogram(
         resource, confs, "chr1", 1, distinct)
-    bulk = scan.do_histogram_bulk(
+    bulk = scan_histograms.do_histogram_bulk(
         resource, confs, "chr1", 1, distinct)
 
     assert isinstance(bulk["s"], NullHistogram)
@@ -532,9 +539,9 @@ def test_a_nullified_score_does_not_cost_the_others_theirs(
         "f": _hist_conf(),
     }
 
-    ref = scan.do_histogram(
+    ref = scan_histograms.do_histogram(
         resource, confs, "chr1", 1, limit + 30)
-    bulk = scan.do_histogram_bulk(
+    bulk = scan_histograms.do_histogram_bulk(
         resource, confs, "chr1", 1, limit + 30)
 
     assert isinstance(bulk["s"], NullHistogram)
@@ -563,9 +570,9 @@ def test_bulk_matches_per_record_float_underscore_token(
     confs: dict = {"s": NumberHistogramConfig.from_dict({
         "type": "number", "view_range": {"min": 0, "max": 2000},
         "number_of_bins": 10, "x_log_scale": False, "y_log_scale": False})}
-    ref = scan.do_histogram(
+    ref = scan_histograms.do_histogram(
         resource, confs, "chr1", 1, 4)
-    bulk = scan.do_histogram_bulk(
+    bulk = scan_histograms.do_histogram_bulk(
         resource, confs, "chr1", 1, 4)
     _assert_hists_equal(bulk, ref)
     assert as_number(bulk["s"]).max_value == 1000.0
@@ -592,9 +599,9 @@ def test_a_score_without_column_arrays_is_not_bulk_eligible(
     confs: dict = {"score": _hist_conf()}
     assert not scan.can_bulk_histogram(resource, confs)
 
-    via_task = scan.do_histogram_task(
+    via_task = scan_histograms.do_histogram_task(
         resource, confs, "1", 1, 20).histograms
-    ref = scan.do_histogram(
+    ref = scan_histograms.do_histogram(
         resource, confs, "1", 1, 20)
     _assert_hists_equal(via_task, ref)
 
@@ -625,11 +632,11 @@ def test_bulk_histogram_overlap_guard_within_one_batch(
     confs: dict = {"s": _hist_conf()}
     # Default batch size: both rows land in the same batch.
     with pytest.raises(ValueError, match="multiple values for positions"):
-        scan.do_histogram_bulk(
+        scan_histograms.do_histogram_bulk(
             resource, confs, "chr1", 1, 10)
     # ...and the per-record path rejects it the same way.
     with pytest.raises(ValueError, match="multiple values for positions"):
-        scan.do_histogram(
+        scan_histograms.do_histogram(
             resource, confs, "chr1", 1, 10)
 
 
@@ -653,10 +660,10 @@ def test_bulk_histogram_overlap_guard_rejects_adjacency_within_one_batch(
     )
     confs: dict = {"s": _hist_conf()}
     with pytest.raises(ValueError, match="multiple values for positions"):
-        scan.do_histogram_bulk(
+        scan_histograms.do_histogram_bulk(
             resource, confs, "chr1", 1, 10)
     with pytest.raises(ValueError, match="multiple values for positions"):
-        scan.do_histogram(
+        scan_histograms.do_histogram(
             resource, confs, "chr1", 1, 10)
 
 
@@ -691,7 +698,7 @@ def test_the_bulk_guard_names_the_offender_within_one_batch(
     confs: dict = {"s": _hist_conf()}
 
     with pytest.raises(MalformedResourceError) as excinfo:
-        scan.do_histogram_bulk(
+        scan_histograms.do_histogram_bulk(
             resource, confs, "chr1", 1, 10)
 
     message = str(excinfo.value)
@@ -717,9 +724,11 @@ def test_the_bulk_guard_names_the_offender_across_a_batch_boundary(
     confs: dict = {"s": _hist_conf()}
     monkeypatch.setattr(
         scan, "_SCAN_BATCH_SIZE", 1)
+    monkeypatch.setattr(
+        scan_histograms, "_SCAN_BATCH_SIZE", 1)
 
     with pytest.raises(MalformedResourceError) as excinfo:
-        scan.do_histogram_bulk(
+        scan_histograms.do_histogram_bulk(
             resource, confs, "chr1", 1, 10)
 
     message = str(excinfo.value)
@@ -730,13 +739,13 @@ def test_the_bulk_guard_names_the_offender_across_a_batch_boundary(
 
 
 @pytest.mark.parametrize("task,args", [
-    ("do_min_max_task", ["s"]),
-    ("do_histogram_task", {"s": None}),
-])
+    (scan_min_max.do_min_max_task, ["s"]),
+    (scan_histograms.do_histogram_task, {"s": None}),
+], ids=["do_min_max_task", "do_histogram_task"])
 def test_a_statistics_task_reports_the_malformed_resource_and_re_raises(
     tmp_path: pathlib.Path,
     caplog: pytest.LogCaptureFixture,
-    task: str,
+    task: Callable[..., object],
     args: object,
 ) -> None:
     # The two task seams are the only entry points into region scanning, so
@@ -752,7 +761,7 @@ def test_a_statistics_task_reports_the_malformed_resource_and_re_raises(
 
     with caplog.at_level(logging.ERROR, logger="grr_manage"), \
             pytest.raises(MalformedResourceError):
-        getattr(scan, task)(
+        task(
             resource, payload, "chr1", 1, 10)
 
     assert any(

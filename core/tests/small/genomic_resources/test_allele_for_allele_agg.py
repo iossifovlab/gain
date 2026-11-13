@@ -25,10 +25,8 @@ from gain.genomic_resources.genomic_scores import (
 )
 from gain.genomic_resources.genomic_scores.aggregation import AggregateValue
 from gain.genomic_resources.score_filter import ScoreFilterError
-from gain.genomic_resources.testing.builders import (
-    a_grr,
-    an_allele_score,
-)
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import an_allele_score
 
 
 @pytest.fixture(params=[False, True], ids=["mem", "tabix"])

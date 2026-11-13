@@ -36,7 +36,7 @@ from gain.genomic_resources.genomic_scores import (
     build_allele_score_from_resource,
 )
 from gain.genomic_resources.score_filter import ScoreFilterError
-from gain.genomic_resources.testing.builders import an_allele_score
+from gain.genomic_resources.testing.table_score_builder import an_allele_score
 
 
 @pytest.fixture

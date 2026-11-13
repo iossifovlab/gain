@@ -33,11 +33,11 @@ from gain.genomic_resources.testing import (
     setup_bigwig,
     setup_directories,
 )
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.bigwig_score_builder import (
     BigWigScoreBuilder,
     a_bigwig_score,
-    a_grr,
 )
+from gain.genomic_resources.testing.builders import a_grr
 
 _DATA = """
     chr1  0   10  0.11
@@ -415,7 +415,9 @@ def test_a_tabix_float_score_keeps_the_text_na_default(
     The other half of the previous test: this is a change to what ONE backend
     defaults to, not to ``normalize_na_values``.
     """
-    from gain.genomic_resources.testing.builders import a_position_score
+    from gain.genomic_resources.testing.table_score_builder import (
+        a_position_score,
+    )
     builder = (
         a_position_score()
         .with_score("s", "float")

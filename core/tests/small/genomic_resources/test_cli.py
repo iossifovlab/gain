@@ -7,12 +7,9 @@ import textwrap
 
 import pytest
 import pytest_mock
-from gain.genomic_resources.cli import (
-    _create_contents_db,
-    _create_grr_repo,
-    _find_resources,
-    cli_manage,
-)
+from gain.genomic_resources.cli import _create_grr_repo, cli_manage
+from gain.genomic_resources.cli_common import _find_resources
+from gain.genomic_resources.cli_manifest import _create_contents_db
 from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
 from gain.genomic_resources.repository import GenomicResourceProtocolRepo
 from gain.genomic_resources.repository_ids import (
@@ -25,10 +22,8 @@ from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     setup_directories,
 )
-from gain.genomic_resources.testing.builders import (
-    a_grr,
-    a_position_score,
-)
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 from gain.utils.fs_utils import find_directory_with_a_file
 
 

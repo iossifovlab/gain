@@ -59,11 +59,11 @@ from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     setup_directories,
 )
-from gain.genomic_resources.testing.builders import (
-    a_grr,
-    a_position_score,
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.reference_genome_builder import (
     a_reference_genome,
 )
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 from gain.templates import get_jinja_env
 from gain.testing.foobar_import import foobar_genes, foobar_genome
 

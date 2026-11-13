@@ -61,11 +61,13 @@ from gain.genomic_resources.reference_genome import (
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing import setup_vcf
-from gain.genomic_resources.testing.builders import (
-    a_fragment_score,
-    a_grr,
-    a_position_score,
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.reference_genome_builder import (
     a_reference_genome,
+)
+from gain.genomic_resources.testing.table_score_builder import (
+    a_fragment_score,
+    a_position_score,
 )
 from gain.templates.markdown_support import render_markdown
 

@@ -16,7 +16,9 @@ from gain.genomic_resources.testing import (
     setup_genome_bgz,
     setup_tabix,
 )
-from gain.genomic_resources.testing.builders import a_reference_genome
+from gain.genomic_resources.testing.reference_genome_builder import (
+    a_reference_genome,
+)
 
 from .conftest import RunInThreads
 

@@ -2,11 +2,11 @@
 from typing import Any
 
 import pytest
-from gain.genomic_resources.fsspec_protocol import (
+from gain.genomic_resources.fsspec_errors import (
     _COPY_MAX_ATTEMPTS,
     CorruptedPublishError,
-    FsspecReadWriteProtocol,
 )
+from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 from gain.genomic_resources.repository_ids import GR_CONTENTS_FILE_NAME
 from gain.genomic_resources.testing import build_inmemory_test_protocol
 from pytest_mock import MockerFixture

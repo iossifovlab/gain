@@ -406,8 +406,8 @@ so the two region reads now agree.
 
 **The whole-table mode is not gone, only moved.**  It is live -- ``grr_manage
 --region-size 0`` computes statistics in a single pass -- but it is expressed
-by ITERATING contigs, in ``scan.do_noregion_histograms``, rather than by
-handing a null contig down.  No member of the region-read family takes
+by ITERATING contigs, in ``scan_noregion.do_noregion_histograms``, rather
+than by handing a null contig down.  No member of the region-read family takes
 ``chrom=None``:
 ``GenomicScore.fetch_records`` and ``fetch_region_segments_scores`` both
 require a contig, and a caller that wants every record of a table asks the

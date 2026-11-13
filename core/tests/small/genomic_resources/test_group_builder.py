@@ -17,9 +17,9 @@ from gain.genomic_resources.repository_factory import (
 from gain.genomic_resources.testing.builders import (
     ResourceValidationError,
     a_grr,
-    a_position_score,
 )
 from gain.genomic_resources.testing.group_builder import a_grr_group
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 
 def test_each_child_of_a_group_advertises_its_own_host(

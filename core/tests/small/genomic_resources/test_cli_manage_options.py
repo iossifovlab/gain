@@ -12,7 +12,7 @@ import pathlib
 from typing import Any
 
 import pytest
-from gain.genomic_resources import cli, register_implementation
+from gain.genomic_resources import cli, cli_stats, register_implementation
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
@@ -116,7 +116,7 @@ def test_the_task_graph_options_reach_the_task_graph_and_grr_manages_do_not(
 
 
 def test_the_stats_core_has_no_default_region_size() -> None:
-    signature = inspect.signature(cli._run_stats_core)
+    signature = inspect.signature(cli_stats._run_stats_core)
 
     with pytest.raises(TypeError, match="region_size"):
         signature.bind(

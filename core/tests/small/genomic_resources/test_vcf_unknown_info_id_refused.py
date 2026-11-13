@@ -20,7 +20,10 @@ import textwrap
 import pytest
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.resource_errors import MalformedResourceError
-from gain.genomic_resources.testing.builders import a_grr, a_vcf_info_score
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.vcf_info_score_builder import (
+    a_vcf_info_score,
+)
 
 from tests.small.genomic_resources.conftest import named_allele_score
 

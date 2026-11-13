@@ -15,11 +15,13 @@ from collections.abc import Generator
 import pytest
 from gain.genomic_resources.aggregators import PositionScoreAggregationQuery
 from gain.genomic_resources.genomic_scores import PositionScore
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.bigwig_score_builder import (
     BigWigScoreBuilder,
-    PositionScoreBuilder,
     a_bigwig_score,
-    a_grr,
+)
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import (
+    PositionScoreBuilder,
     a_position_score,
 )
 

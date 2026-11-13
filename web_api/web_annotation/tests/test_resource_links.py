@@ -11,8 +11,9 @@ on the wrong host (#838).
 """
 import pathlib
 
-from gain.genomic_resources.testing.builders import a_grr, a_position_score
+from gain.genomic_resources.testing.builders import a_grr
 from gain.genomic_resources.testing.group_builder import a_grr_group
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 from web_annotation.single_allele_annotation.views import resource_index_url
 

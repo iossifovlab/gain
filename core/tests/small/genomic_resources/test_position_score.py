@@ -8,7 +8,8 @@ from gain.genomic_resources.genomic_scores import (
 )
 from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import build_inmemory_test_resource
-from gain.genomic_resources.testing.builders import a_grr, a_position_score
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 
 def test_the_simplest_position_score() -> None:

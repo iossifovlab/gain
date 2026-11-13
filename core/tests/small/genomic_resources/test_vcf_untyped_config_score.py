@@ -18,7 +18,9 @@ import textwrap
 import pytest
 from gain.genomic_resources.genomic_scores import AlleleScore
 from gain.genomic_resources.score_def import ScoreValue
-from gain.genomic_resources.testing.builders import a_vcf_info_score
+from gain.genomic_resources.testing.vcf_info_score_builder import (
+    a_vcf_info_score,
+)
 
 from tests.small.genomic_resources.conftest import opened_allele_score
 

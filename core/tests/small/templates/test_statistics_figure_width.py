@@ -34,7 +34,7 @@ from collections.abc import Callable
 import pytest
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     build_score_implementation_from_resource,
-    scan,
+    scan_noregion,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.statistics.alleles import (
@@ -49,7 +49,7 @@ from gain.genomic_resources.statistics.coverage import (
 from gain.genomic_resources.statistics.fragments import (
     FRAGMENT_LENGTHS_IMAGE_FILE,
 )
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.table_score_builder import (
     a_fragment_score,
     a_position_score,
     an_allele_score,
@@ -233,7 +233,7 @@ def _dense_complex_allele_score(tmp_path: pathlib.Path) -> GenomicResource:
 
 
 def _built_page(resource: GenomicResource) -> str:
-    scan.do_noregion_histograms(resource)
+    scan_noregion.do_noregion_histograms(resource)
     return build_score_implementation_from_resource(resource).get_info()
 
 

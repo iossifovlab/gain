@@ -18,16 +18,16 @@ import pysam
 import pytest
 import pytest_mock
 import yarl
-from gain.genomic_resources import cli as grr_cli
-from gain.genomic_resources.cli import cli_browse
+from gain.genomic_resources import cli_browse as grr_cli
+from gain.genomic_resources.cli_browse import cli_browse
 from gain.genomic_resources.cli_errors import RESOURCE_ERRORS
 from gain.genomic_resources.fsspec_protocol import (
     FsspecReadOnlyProtocol,
     FsspecReadWriteProtocol,
     FsspecRepositoryProtocol,
-    _RedactingFile,
     build_fsspec_protocol,
 )
+from gain.genomic_resources.fsspec_redaction import _RedactingFile
 from gain.genomic_resources.genomic_position_table.table_tabix import (
     TabixGenomicPositionTable,
 )

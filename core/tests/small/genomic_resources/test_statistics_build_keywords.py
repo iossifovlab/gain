@@ -23,9 +23,11 @@ from gain.genomic_resources.testing.builders import (
     ResourceBuilder,
     a_basic_resource,
     a_grr,
-    a_position_score,
+)
+from gain.genomic_resources.testing.reference_genome_builder import (
     a_reference_genome,
 )
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 
 @pytest.mark.parametrize("builder", [

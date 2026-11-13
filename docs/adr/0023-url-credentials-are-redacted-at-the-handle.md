@@ -69,6 +69,10 @@ transparent, delegating unknown attributes to the handle it wraps, because
 that handle escapes to `gzip.open`, pandas, `json.load`, `LiftOver` and the
 gene-set and gene-model readers.
 
+`_RedactingFile` and the other redaction helpers of this ADR live in
+`fsspec_redaction.py`. The protocol classes in `fsspec_protocol.py` import
+them.
+
 `readall` earns its place by a route worth recording, because wrapping the
 obvious methods does not cover it. `io.BufferedReader(handle).read()`
 resolves to `readall`; a *delegated* `readall` executes on the inner handle
@@ -253,7 +257,7 @@ files. Three of them raise an `OSError` subclass, which is in
 `RESOURCE_ERRORS`, so the credential lands in the log at ERROR.
 
 **Decided.** The three pysam opens route their *remote* library call through
-`_open_htslib_file`, which closes both channels:
+`_open_htslib_file` (`fsspec_redaction.py`), which closes both channels:
 
 - the raised error goes through `_run_redacting_userinfo`, as everything else
   in this family does; and
@@ -352,8 +356,8 @@ own `fprintf` from C, so it holds fd 2 directly. Rebinding `sys.stderr` or
 using `contextlib.redirect_stderr` swaps a Python object the C code never
 consults: they suppress nothing while appearing to work, which makes a test
 written against either of them pass identically on unfixed code. So
-`_open_libbigwig_file` points fd 2 at the null device for the duration of the
-open and restores it in a `finally`. It is the first fd-level suppression in
+`_open_libbigwig_file` (`fsspec_redaction.py`) points fd 2 at the null device
+for the duration of the open and restores it in a `finally`. It is the first fd-level suppression in
 this tree.
 
 It is a separate function from `_open_htslib_file` because *neither* half of

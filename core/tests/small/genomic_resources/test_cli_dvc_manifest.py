@@ -8,7 +8,7 @@ import textwrap
 from collections import Counter
 
 import pytest
-from gain.genomic_resources import cli as cli_module
+from gain.genomic_resources import cli_info as cli_module
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 from gain.genomic_resources.repository import (
@@ -25,10 +25,8 @@ from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,
     setup_directories,
 )
-from gain.genomic_resources.testing.builders import (
-    a_grr,
-    a_position_score,
-)
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 from .conftest import dvc_sidecar, md5_of, size_of
 

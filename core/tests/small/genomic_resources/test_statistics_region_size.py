@@ -15,10 +15,10 @@ from gain.genomic_resources.genomic_scores.chrom_lengths import (
 from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
 )
-from gain.genomic_resources.testing.builders import (
-    a_position_score,
+from gain.genomic_resources.testing.reference_genome_builder import (
     a_reference_genome,
 )
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 
 def _task_shape(impl: Any, **build_kwargs: Any) -> list[tuple[str, list]]:

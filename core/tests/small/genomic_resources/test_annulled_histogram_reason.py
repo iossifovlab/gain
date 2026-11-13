@@ -17,12 +17,12 @@ from gain.genomic_resources.histogram import (
     truncated_histogram_filename,
 )
 from gain.genomic_resources.repository import GenomicResource
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.gene_score_builder import a_gene_score
+from gain.genomic_resources.testing.statistics import publish_statistics
+from gain.genomic_resources.testing.table_score_builder import (
     PositionScoreBuilder,
-    a_gene_score,
     a_position_score,
 )
-from gain.genomic_resources.testing.statistics import publish_statistics
 
 
 def an_opted_out_score() -> PositionScoreBuilder:

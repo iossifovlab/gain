@@ -30,10 +30,8 @@ from gain.genomic_resources.testing import (
     build_inmemory_test_repository,
     setup_directories,
 )
-from gain.genomic_resources.testing.builders import (
-    a_gene_score,
-    a_grr,
-)
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.gene_score_builder import a_gene_score
 from gain.task_graph.graph import TaskDesc
 
 from tests.small.genomic_resources.test_genomic_scores_impl import (

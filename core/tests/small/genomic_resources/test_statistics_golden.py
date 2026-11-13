@@ -48,14 +48,15 @@ from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     build_score_implementation_from_resource,
 )
-from gain.genomic_resources.testing.builders import (
-    GRRBuilder,
-    a_bigwig_score,
+from gain.genomic_resources.testing.bigwig_score_builder import a_bigwig_score
+from gain.genomic_resources.testing.builders import GRRBuilder, a_grr
+from gain.genomic_resources.testing.table_score_builder import (
     a_fragment_score,
-    a_grr,
     a_position_score,
-    a_vcf_info_score,
     an_allele_score,
+)
+from gain.genomic_resources.testing.vcf_info_score_builder import (
+    a_vcf_info_score,
 )
 
 from tests.small.genomic_resources.conftest import assert_golden

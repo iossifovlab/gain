@@ -28,9 +28,9 @@ from gain.genomic_resources.resource_types import (
     ALLELE_MULTIPLICITY_ENFORCEMENT_RELEASE,
 )
 from gain.genomic_resources.score_filter import ScoreFilterError
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import (
     AlleleScoreBuilder,
-    a_grr,
     an_allele_score,
 )
 

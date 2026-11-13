@@ -17,12 +17,10 @@ from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.genomic_scores import PositionScore
 from gain.genomic_resources.score_resource import ScoreResource
 from gain.genomic_resources.testing import build_filesystem_test_repository
-from gain.genomic_resources.testing.builders import (
-    a_gene_score,
-    a_grr,
-    a_position_score,
-)
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.gene_score_builder import a_gene_score
 from gain.genomic_resources.testing.statistics import publish_statistics
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 
 @pytest.fixture

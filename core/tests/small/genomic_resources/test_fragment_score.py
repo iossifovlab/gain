@@ -21,7 +21,8 @@ from gain.genomic_resources.histogram import (
 )
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     FragmentScoreImplementation,
-    scan,
+    scan_histograms,
+    scan_min_max,
 )
 from gain.genomic_resources.repository import (
     GenomicResource,
@@ -37,9 +38,7 @@ from gain.genomic_resources.testing import (
     convert_to_tab_separated,
     setup_directories,
 )
-from gain.genomic_resources.testing.builders import (
-    a_fragment_score,
-)
+from gain.genomic_resources.testing.table_score_builder import a_fragment_score
 from gain.task_graph.cli_tools import task_graph_run
 from gain.task_graph.sequential_executor import SequentialExecutor
 from gain.task_graph.graph import TaskGraph
@@ -342,7 +341,7 @@ def test_fragment_score_histogram_scan(
 
     hist_confs = {"freq": hist_conf}
 
-    histograms = scan.do_histogram(
+    histograms = scan_histograms.do_histogram(
         fragments_resource, hist_confs, "2", 0, 300,
     )
 
@@ -369,7 +368,7 @@ def test_fragment_score_min_max_scan(
     })
     assert isinstance(hist_conf, HistogramConfig)
 
-    statistics = scan.do_min_max(
+    statistics = scan_min_max.do_min_max(
         fragments_resource, ["freq"], "2", 0, 300,
     )
 

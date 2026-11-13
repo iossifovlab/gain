@@ -9,12 +9,13 @@ import textwrap
 from typing import Any
 
 import pytest
-from gain.genomic_resources import cli
+from gain.genomic_resources import cli, cli_info, cli_manifest, cli_stats
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     GenomicScoreImplementation,
     scan,
+    scan_histograms,
 )
 from gain.genomic_resources.repository_ids import (
     GR_CONF_FILE_NAME,
@@ -28,11 +29,11 @@ from gain.genomic_resources.testing import (
     setup_directories,
     setup_tabix,
 )
-from gain.genomic_resources.testing.builders import (
-    a_grr,
-    a_position_score,
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.reference_genome_builder import (
     a_reference_genome,
 )
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 from .conftest import overlap_warnings
 
@@ -306,7 +307,8 @@ def test_repo_repair_keeps_the_traceback_of_an_unexpected_error(
     def boom(_resource: object) -> None:
         raise RuntimeError("something GAIn did not expect")
 
-    monkeypatch.setattr(cli, "build_resource_implementation", boom)
+    for module in (cli_stats, cli_manifest, cli_info):
+        monkeypatch.setattr(module, "build_resource_implementation", boom)
 
     with caplog.at_level(logging.INFO, logger="grr_manage"), \
             pytest.raises(SystemExit) as excinfo:
@@ -362,7 +364,8 @@ def test_a_message_less_failure_still_names_its_cause(
     def boom(_resource: object) -> None:
         raise ValueError
 
-    monkeypatch.setattr(cli, "build_resource_implementation", boom)
+    for module in (cli_stats, cli_manifest, cli_info):
+        monkeypatch.setattr(module, "build_resource_implementation", boom)
 
     with caplog.at_level(logging.INFO, logger="grr_manage"), \
             pytest.raises(SystemExit) as excinfo:
@@ -378,7 +381,7 @@ def test_a_message_less_failure_still_names_its_cause(
 # ---------------------------------------------------------------------------
 
 def _histogram_that_raises(resource_id: str) -> Any:
-    real = scan.do_histogram
+    real = scan_histograms.do_histogram
 
     def patched(
         resource: Any, *args: Any, **kwargs: Any,
@@ -405,11 +408,11 @@ def test_repo_repair_reports_a_statistics_task_that_fails_while_running(
     # bar the one the task explodes on, so nothing else can carry the
     # non-zero status.
     path, _proto = proto_fixture
-    # The histogram task enters through ``scan.do_histogram_task``
+    # The histogram task enters through ``scan_histograms.do_histogram_task``
     # (which routes eligible resources to the bulk scan); that is the
     # seam a failing task must be injected at.
     monkeypatch.setattr(
-        scan, "do_histogram_task", _histogram_that_raises("one"))
+        scan_histograms, "do_histogram_task", _histogram_that_raises("one"))
 
     with caplog.at_level(logging.INFO, logger="grr_manage"), \
             pytest.raises(SystemExit) as excinfo:
@@ -441,7 +444,7 @@ def test_a_failing_statistics_task_leaves_the_info_page_alone(
     good_page = "<html>the good page</html>"
     (path / "one" / "index.html").write_text(good_page)
     monkeypatch.setattr(
-        scan, "do_histogram_task", _histogram_that_raises("one"))
+        scan_histograms, "do_histogram_task", _histogram_that_raises("one"))
 
     with pytest.raises(SystemExit):
         cli_manage(["repo-repair", "-R", str(path), "-j", "1"])
@@ -490,7 +493,7 @@ def test_repo_repair_fails_when_the_statistics_hash_is_not_stored(
     def never_stores(_proto: object, _resource: object) -> bool:
         return False
 
-    monkeypatch.setattr(cli, "_store_stats_hash", never_stores)
+    monkeypatch.setattr(cli_stats, "_store_stats_hash", never_stores)
 
     with caplog.at_level(logging.INFO, logger="grr_manage"), \
             pytest.raises(SystemExit) as excinfo:
@@ -532,7 +535,7 @@ def test_a_forced_repair_names_the_resource_whose_task_failed(
     # Every hash is current going in, so only the forced run's own clearing
     # of it lets the failure be pinned on `one`.
     monkeypatch.setattr(
-        scan, "do_histogram_task", _histogram_that_raises("one"))
+        scan_histograms, "do_histogram_task", _histogram_that_raises("one"))
 
     with caplog.at_level(logging.INFO, logger="grr_manage"), \
             pytest.raises(SystemExit) as excinfo:
@@ -555,7 +558,7 @@ def test_a_forced_resource_command_names_the_resource_whose_task_failed(
     command: str,
 ) -> None:
     monkeypatch.setattr(
-        scan, "do_histogram_task", _histogram_that_raises("one"))
+        scan_histograms, "do_histogram_task", _histogram_that_raises("one"))
 
     with caplog.at_level(logging.INFO, logger="grr_manage"), \
             pytest.raises(SystemExit) as excinfo:
@@ -574,7 +577,7 @@ def _failed_forced_repair(
 ) -> None:
     with monkeypatch.context() as patch:
         patch.setattr(
-            scan, "do_histogram_task", _histogram_that_raises("one"))
+            scan_histograms, "do_histogram_task", _histogram_that_raises("one"))
         with pytest.raises(SystemExit):
             cli_manage(["repo-repair", "-f", "-R", str(path), "-j", "1"])
 

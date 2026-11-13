@@ -81,9 +81,9 @@ from gain.genomic_resources.genomic_scores import (
     GenomicScore,
     build_score_from_resource,
 )
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import (
     PositionScoreBuilder,
-    a_grr,
     a_position_score,
 )
 

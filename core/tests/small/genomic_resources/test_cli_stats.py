@@ -9,9 +9,10 @@ from typing import Any
 
 import pytest
 import pytest_mock
-from gain.genomic_resources import cli as cli_module
+from gain.genomic_resources import cli_manifest as cli_module
 from gain.genomic_resources import register_implementation
-from gain.genomic_resources.cli import _create_contents_db, cli_manage
+from gain.genomic_resources.cli import cli_manage
+from gain.genomic_resources.cli_manifest import _create_contents_db
 from gain.genomic_resources.genomic_scores import build_score_from_resource
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
@@ -41,9 +42,9 @@ from gain.genomic_resources.testing import (
     setup_directories,
     setup_tabix,
 )
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import (
     PositionScoreBuilder,
-    a_grr,
     a_position_score,
 )
 from gain.task_graph.graph import TaskDesc, TaskGraph

@@ -41,7 +41,8 @@ from gain.genomic_resources.genomic_scores.aggregation import (
 )
 from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.repository import GenomicResourceRepo
-from gain.genomic_resources.testing.builders import a_fragment_score, a_grr
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import a_fragment_score
 from gain.utils.regions import BedRegion
 
 BIN_SIZE = 10

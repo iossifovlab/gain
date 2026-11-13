@@ -16,11 +16,9 @@ from gain.genomic_resources.cached_repository import (
     GenomicResourceCachedRepo,
     cache_resources,
 )
-from gain.genomic_resources.cli import (
-    _create_contents_db,
-    cli_manage,
-)
+from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.cli_list import run_list_command
+from gain.genomic_resources.cli_manifest import _create_contents_db
 from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,
     build_fsspec_protocol,
@@ -43,9 +41,9 @@ from gain.genomic_resources.testing import (
     convert_to_tab_separated,
     setup_directories,
 )
-from gain.genomic_resources.testing.builders import (
-    a_grr,
-    a_position_score,
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import a_position_score
+from gain.genomic_resources.testing.vcf_info_score_builder import (
     a_vcf_info_score,
 )
 from pytest_mock import MockerFixture

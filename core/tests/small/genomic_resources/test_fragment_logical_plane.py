@@ -21,9 +21,7 @@ from gain.genomic_resources.genomic_scores import (
     aggregation,
 )
 from gain.genomic_resources.genomic_scores import fragment as fragment_module
-from gain.genomic_resources.testing.builders import (
-    a_fragment_score,
-)
+from gain.genomic_resources.testing.table_score_builder import a_fragment_score
 
 from tests.small.genomic_resources.conftest import count_calls
 

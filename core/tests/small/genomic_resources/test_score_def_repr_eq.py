@@ -15,8 +15,8 @@ from gain.genomic_resources.genomic_scores import (
     build_position_score_from_resource,
 )
 from gain.genomic_resources.repository import GenomicResource
-from gain.genomic_resources.testing.builders import (
-    a_position_score,
+from gain.genomic_resources.testing.table_score_builder import a_position_score
+from gain.genomic_resources.testing.vcf_info_score_builder import (
     a_vcf_info_score,
 )
 

@@ -14,7 +14,7 @@ from gain.gene_scores.gene_scores import (
     build_gene_score_from_resource,
 )
 from gain.genomic_resources.histogram import NullHistogram
-from gain.genomic_resources.testing.builders import a_gene_score
+from gain.genomic_resources.testing.gene_score_builder import a_gene_score
 from gain.genomic_resources.testing.statistics import (
     a_gene_score_with_too_many_categories,
     publish_statistics,

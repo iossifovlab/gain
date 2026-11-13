@@ -49,10 +49,8 @@ from gain.genomic_resources.genomic_scores import (
     PositionScore,
     build_score_from_resource,
 )
-from gain.genomic_resources.testing.builders import (
-    a_bigwig_score,
-    a_grr,
-)
+from gain.genomic_resources.testing.bigwig_score_builder import a_bigwig_score
+from gain.genomic_resources.testing.builders import a_grr
 
 # The case the issue quotes: 1 Mb carrying 20,000 back-to-back 50 bp runs.
 # At the old 50 bp chunk size that is exactly one range query per record.

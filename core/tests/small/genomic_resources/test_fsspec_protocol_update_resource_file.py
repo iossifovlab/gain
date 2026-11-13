@@ -6,11 +6,11 @@ from typing import Any, Literal
 
 import pytest
 from fsspec.exceptions import FSTimeoutError
-from gain.genomic_resources.fsspec_protocol import (
+from gain.genomic_resources.fsspec_errors import (
     ChecksumMismatchError,
-    FsspecReadWriteProtocol,
     TruncatedDownloadError,
 )
+from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing import build_inmemory_test_protocol
 from pytest_mock import MockerFixture

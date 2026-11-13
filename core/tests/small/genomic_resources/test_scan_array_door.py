@@ -31,7 +31,8 @@ from gain.genomic_resources.genomic_scores import (
 )
 from gain.genomic_resources.histogram import NumberHistogramConfig
 from gain.genomic_resources.implementations.genomic_scores_impl import (
-    scan,
+    scan_histograms,
+    scan_min_max,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.resource_errors import MalformedResourceError
@@ -39,9 +40,9 @@ from gain.genomic_resources.statistics.record_validation import (
     validate_record_arrays,
     validate_records,
 )
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import (
     a_fragment_score,
-    a_grr,
     a_position_score,
     an_allele_score,
 )
@@ -282,7 +283,7 @@ def test_the_bulk_histogram_scan_applies_the_allele_rule(
         AlleleScore, "fetch_region_value_arrays", _backwards_arrays)
 
     with pytest.raises(MalformedResourceError, match="move backwards"):
-        scan.do_histogram_bulk(
+        scan_histograms.do_histogram_bulk(
             resource, {"s": _hist_conf()}, "chr1", 1, 20)
 
 
@@ -307,7 +308,7 @@ def test_the_bulk_min_max_scan_applies_the_allele_rule(
         AlleleScore, "fetch_region_value_arrays", _backwards_arrays)
 
     with pytest.raises(MalformedResourceError, match="move backwards"):
-        scan.do_min_max_bulk(
+        scan_min_max.do_min_max_bulk(
             resource, ["s"], "chr1", 1, 20)
 
 
@@ -397,10 +398,10 @@ def test_a_malformed_resource_is_refused_the_same_way_down_both_paths(
     confs: dict = {"s": _hist_conf()}
 
     with pytest.raises(MalformedResourceError) as per_record:
-        scan.do_histogram(
+        scan_histograms.do_histogram(
             resource, confs, "chr1", 1, 9)
     with pytest.raises(MalformedResourceError) as bulk:
-        scan.do_histogram_bulk(
+        scan_histograms.do_histogram_bulk(
             resource, confs, "chr1", 1, 9)
 
     assert str(bulk.value) == str(per_record.value)
@@ -523,9 +524,9 @@ def test_the_histogram_scan_refuses_the_inverted_row_down_both_paths(
     confs: dict = {"s": _hist_conf()}
 
     with pytest.raises(OSError) as per_record:
-        scan.do_histogram(resource, confs, "chr1", 1, 100)
+        scan_histograms.do_histogram(resource, confs, "chr1", 1, 100)
     with pytest.raises(OSError) as bulk:
-        scan.do_histogram_bulk(resource, confs, "chr1", 1, 100)
+        scan_histograms.do_histogram_bulk(resource, confs, "chr1", 1, 100)
 
     assert str(bulk.value) == str(per_record.value)
     assert "chr1:30-29" in str(bulk.value)

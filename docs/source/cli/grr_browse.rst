@@ -43,6 +43,6 @@ Option reference
 ----------------
 
 .. argparse::
-    :module: gain.genomic_resources.cli
+    :module: gain.genomic_resources.cli_browse
     :func: _build_browse_argument_parser
     :prog: grr_browse

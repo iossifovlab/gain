@@ -21,7 +21,7 @@ from gain.genomic_resources.resource_types import (
     ALLELE_MULTIPLICITY_ENFORCEMENT_RELEASE,
     allele_multiplicity_enforced,
 )
-from gain.genomic_resources.testing.builders import an_allele_score
+from gain.genomic_resources.testing.table_score_builder import an_allele_score
 
 
 @pytest.mark.parametrize(

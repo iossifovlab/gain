@@ -21,13 +21,15 @@ from gain.binning.fragment_binner import (
     SAMPLE_ID_COLUMN,
     SAMPLE_ID_LABEL,
 )
-from gain.genomic_resources.testing.builders import (
-    FragmentScoreBuilder,
-    a_fragment_score,
-    a_grr,
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.data_frame_builder import a_data_frame
+from gain.genomic_resources.testing.reference_genome_builder import (
     a_reference_genome,
 )
-from gain.genomic_resources.testing.data_frame_builder import a_data_frame
+from gain.genomic_resources.testing.table_score_builder import (
+    FragmentScoreBuilder,
+    a_fragment_score,
+)
 
 from tests.small.binning.conftest import CELL_META, S1_FRAGMENTS
 from tests.small.binning.test_binning_tool_cli import binning_tool

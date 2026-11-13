@@ -21,9 +21,9 @@ from gain.genomic_resources.genomic_scores import (
     PositionScore,
 )
 from gain.genomic_resources.repository import GenomicResource
-from gain.genomic_resources.testing.builders import (
-    a_bigwig_score,
-    a_position_score,
+from gain.genomic_resources.testing.bigwig_score_builder import a_bigwig_score
+from gain.genomic_resources.testing.table_score_builder import a_position_score
+from gain.genomic_resources.testing.vcf_info_score_builder import (
     a_vcf_info_score,
 )
 
@@ -183,7 +183,7 @@ def test_eligible_scan_uses_the_array_producer_not_the_record_path(
     ~8x (bigWig) this PR exists for.  This test is the only thing that notices.
     """
     from gain.genomic_resources.implementations.genomic_scores_impl import (
-        scan,
+        scan_min_max,
     )
 
     resource = _multiscore_tabix(tmp_path)
@@ -197,7 +197,7 @@ def test_eligible_scan_uses_the_array_producer_not_the_record_path(
 
     monkeypatch.setattr(
         PositionScore, "fetch_region_value_arrays", counting_fetch)
-    scan.do_min_max_bulk(resource, ["s1"], "chr1", 1, 20)
+    scan_min_max.do_min_max_bulk(resource, ["s1"], "chr1", 1, 20)
 
     assert calls == 1, (
         f"bulk scan used the array producer {calls} times; expected 1 "

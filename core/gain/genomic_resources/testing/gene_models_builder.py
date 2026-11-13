@@ -1,16 +1,10 @@
 """Fluent, immutable test-data builder for ``gene_models`` resources.
 
-A sibling of :mod:`gain.genomic_resources.testing.builders` for the same
-reason :mod:`.data_frame_builder` and :mod:`.ann_data_builder` are ones:
-``builders`` is already past pylint's ``max-module-lines`` and carries a
-``too-many-lines`` suppression to say so, so a new builder there would
-be growing a module that is over the limit rather than finding room in
-one.  (Both siblings describe ``builders`` as sitting AT the ceiling;
-that stopped being true when the suppression went in.)  The
-dependency runs ONE WAY -- this
-module imports the shared single-realize seam from ``builders`` and
-``builders`` does not import back -- so ``a_gene_models`` is imported from
-here.
+A sibling of :mod:`gain.genomic_resources.testing.builders`, like
+:mod:`.data_frame_builder` and :mod:`.ann_data_builder`: each resource kind
+has its own builder module.  The dependency runs ONE WAY -- this module
+imports the shared single-realize seam from ``builders`` and ``builders``
+does not import back -- so ``a_gene_models`` is imported from here.
 
 The axis this builder exists to vary is the INTERCHANGE FORMAT.  A
 ``gene_models`` resource names its format in the config, and each of the

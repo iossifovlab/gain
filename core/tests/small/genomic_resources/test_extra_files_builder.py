@@ -11,15 +11,21 @@ is pinned on the ``basic`` builder, whose payload it is.
 import pathlib
 
 import pytest
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.bigwig_score_builder import (
     BigWigScoreBuilder,
-    GeneScoreBuilder,
-    PositionScoreBuilder,
-    ResourceValidationError,
-    VcfInfoScoreBuilder,
     a_bigwig_score,
+)
+from gain.genomic_resources.testing.builders import ResourceValidationError
+from gain.genomic_resources.testing.gene_score_builder import (
+    GeneScoreBuilder,
     a_gene_score,
+)
+from gain.genomic_resources.testing.table_score_builder import (
+    PositionScoreBuilder,
     a_position_score,
+)
+from gain.genomic_resources.testing.vcf_info_score_builder import (
+    VcfInfoScoreBuilder,
     a_vcf_info_score,
 )
 

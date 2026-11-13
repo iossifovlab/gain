@@ -11,7 +11,7 @@ import re
 from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
 )
-from gain.genomic_resources.testing.builders import a_position_score
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 
 def _default_annotation_cells(tmp_path: pathlib.Path) -> dict[str, str]:

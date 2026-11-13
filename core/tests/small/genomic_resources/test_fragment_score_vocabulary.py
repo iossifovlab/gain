@@ -31,7 +31,8 @@ from gain.annotation.annotation_config import (
 )
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources import get_resource_implementation_builder
-from gain.genomic_resources.cli import _create_contents_db, cli_manage
+from gain.genomic_resources.cli import cli_manage
+from gain.genomic_resources.cli_manifest import _create_contents_db
 from gain.genomic_resources.genomic_scores import (
     FragmentScore,
     build_score_from_resource,
@@ -49,7 +50,8 @@ from gain.genomic_resources.testing import (
     convert_to_tab_separated,
     setup_directories,
 )
-from gain.genomic_resources.testing.builders import a_fragment_score, a_grr
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import a_fragment_score
 
 FRAGMENT_SCORE_TYPE = "fragment_score"
 LEGACY_RESOURCE_TYPE = "cnv_collection"

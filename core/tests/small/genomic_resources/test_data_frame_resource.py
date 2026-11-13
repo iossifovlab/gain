@@ -17,11 +17,9 @@ from gain.genomic_resources.testing import (
     s3_test_protocol,
     setup_directories,
 )
-from gain.genomic_resources.testing.builders import (
-    a_grr,
-    a_position_score,
-)
+from gain.genomic_resources.testing.builders import a_grr
 from gain.genomic_resources.testing.data_frame_builder import a_data_frame
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 from pandas.testing import assert_frame_equal
 
 # The one table every format test authors, and the frame it must produce.

@@ -31,11 +31,13 @@ from gain.genomic_resources.score_def import (
     validate_scoredefs,
 )
 from gain.genomic_resources.testing import build_inmemory_test_resource
-from gain.genomic_resources.testing.builders import (
-    a_grr,
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import (
     a_position_score,
-    a_vcf_info_score,
     an_allele_score,
+)
+from gain.genomic_resources.testing.vcf_info_score_builder import (
+    a_vcf_info_score,
 )
 
 

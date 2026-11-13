@@ -23,11 +23,11 @@ from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_resource,
 )
 from gain.genomic_resources.repository import GenomicResourceRepo
-from gain.genomic_resources.testing.builders import (
-    a_fragment_score,
-    a_grr,
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.reference_genome_builder import (
     a_reference_genome,
 )
+from gain.genomic_resources.testing.table_score_builder import a_fragment_score
 from gain.utils.regions import BedRegion
 
 from tests.small.binning.conftest import kind_def

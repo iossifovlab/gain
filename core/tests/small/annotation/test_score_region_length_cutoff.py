@@ -18,8 +18,8 @@ import pytest
 from gain.annotation.annotatable import Annotatable, Region, VCFAllele
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources.repository import GenomicResourceRepo
-from gain.genomic_resources.testing.builders import (
-    a_grr,
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import (
     a_position_score,
     an_allele_score,
 )

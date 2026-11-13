@@ -22,12 +22,12 @@ from gain.genomic_resources.testing import (
     setup_directories,
     setup_gzip,
 )
-from gain.genomic_resources.testing.builders import (
-    a_grr,
-    a_reference_genome,
-)
+from gain.genomic_resources.testing.builders import a_grr
 from gain.genomic_resources.testing.liftover_chain_builder import (
     a_liftover_chain,
+)
+from gain.genomic_resources.testing.reference_genome_builder import (
+    a_reference_genome,
 )
 
 from tests.small.annotation.conftest import assert_refuses_empty_resource_id

@@ -467,9 +467,8 @@ def reject_retired_resource(resource: RetirableResource) -> None:
 def require_fragment_score_type(resource_type: str) -> str:
     """Return ``resource_type``, or raise if it names no fragment score.
 
-    Lives here rather than at its one call site (the test-data builder's
-    ``with_resource_type``) because ``builders.py`` sits four lines under
-    pylint's 1500-line module ceiling, and because the rule it enforces is
+    Lives here rather than at its one call site (``with_resource_type`` in
+    ``testing/table_score_builder.py``) because the rule it enforces is
     this module's to state.
     """
     if resource_type not in FRAGMENT_SCORE_TYPES:

@@ -18,8 +18,8 @@ import pytest
 from gain.genomic_resources.cached_repository import (
     GenomicResourceCachedRepo,
 )
-from gain.genomic_resources.cli import _create_contents_db
 from gain.genomic_resources.cli_list import run_list_command
+from gain.genomic_resources.cli_manifest import _create_contents_db
 from gain.genomic_resources.group_repository import GenomicResourceGroupRepo
 from gain.genomic_resources.repository import (
     GenomicResource,
@@ -32,10 +32,8 @@ from gain.genomic_resources.repository_search import (
     drain_search,
 )
 from gain.genomic_resources.testing import build_filesystem_test_protocol
-from gain.genomic_resources.testing.builders import (
-    a_grr,
-    a_position_score,
-)
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 
 def _build_child(

@@ -49,9 +49,7 @@ from gain.genomic_resources.testing import (
     setup_tabix,
     setup_vcf,
 )
-from gain.genomic_resources.testing.builders import (
-    a_bigwig_score,
-)
+from gain.genomic_resources.testing.bigwig_score_builder import a_bigwig_score
 
 
 def _assert_dispatches_to_bigwig(resource: GenomicResource) -> None:

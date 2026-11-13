@@ -1,20 +1,21 @@
 from __future__ import annotations
 
-import functools
+import importlib
+import sys
+import types
+import warnings
 from collections.abc import Callable, Generator, Iterable
 from typing import Any, NamedTuple, cast
 
 import numpy as np
 
 from gain import logging
-from gain.genomic_resources.cli_errors import report_resource_failure
 from gain.genomic_resources.genomic_scores import (
     AlleleScore,
     GenomicScore,
     RecordArrays,
     build_score_from_resource,
     owned_records_mask,
-    owns_record,
 )
 from gain.genomic_resources.histogram import (
     CategoricalHistogram,
@@ -25,46 +26,24 @@ from gain.genomic_resources.histogram import (
     NullHistogramConfig,
     NumberHistogram,
     NumberHistogramConfig,
-    build_empty_histogram,
 )
 from gain.genomic_resources.repository import (
     GenomicResource,
 )
 from gain.genomic_resources.resource_errors import (
     HistogramError,
-    MalformedResourceError,
 )
 from gain.genomic_resources.score_def import ScoreValue
-from gain.genomic_resources.score_implementation import (
-    save_and_plot_histograms,
-)
 from gain.genomic_resources.statistics.alleles import (
     RegionAlleles,
     allele_arrays_folded_into,
-    merge_region_alleles,
     records_folded_into,
-    region_alleles_for,
-    save_allele_statistics,
-    serves_allele_arrays,
 )
 from gain.genomic_resources.statistics.coverage import (
     RegionCoverage,
-    accumulate_coverage,
-    merge_region_coverage,
-    normalize_values,
-    region_coverage_for,
-    save_and_plot_coverage,
 )
 from gain.genomic_resources.statistics.fragments import (
     RegionFragments,
-    accumulate_fragments,
-    merge_region_fragments,
-    region_fragments_for,
-    save_and_plot_fragments,
-)
-from gain.genomic_resources.statistics.min_max import (
-    MinMaxValue,
-    NullMinMaxValue,
 )
 from gain.genomic_resources.statistics.record_validation import (
     validate_record_arrays,
@@ -76,38 +55,74 @@ logger = logging.getLogger(__name__)
 #: What this module publishes.  Stated rather than left to be inferred
 #: from which names happen to lack a leading underscore.
 #:
-#: Four kinds of thing, sorted here but worth naming: the task bodies
-#: ``impl``'s task graph schedules (``do_*_task``,
-#: ``do_noregion_histograms``, ``merge_min_max``,
-#: ``merge_and_save_histograms``); the two passes and their vectorized
-#: twins (``scan_region``, ``do_histogram``/``do_min_max`` and the
-#: ``*_bulk`` pair, over the shared ``bulk_region_scan`` driver); the
-#: gates that choose between them (``bulk_scan_eligible``,
-#: ``can_bulk_*``); and the config and merge steps.
+#: Three kinds of thing, sorted here but worth naming: the per-record read
+#: (``scan_region``) and the result a region's task hands to the merge
+#: (``RegionScanResult``); the shared driver of the vectorized passes
+#: (``bulk_region_scan``) and the gates that choose it
+#: (``bulk_scan_eligible``, ``can_bulk_*``); and the config step
+#: (``unpack_score_defs``).  The passes themselves and their task bodies
+#: live in ``scan_min_max``, ``scan_histograms`` and ``scan_noregion``,
+#: which import this module, never the reverse.
 #:
 #: Everything absent is a per-batch inner step (``_accumulate_arrays``,
-#: ``_select_and_weigh``, ...) that no caller outside this module has any
-#: business reaching for.
+#: ``_select_and_weigh``, ...) that no caller outside the scan modules
+#: has any business reaching for.
 __all__ = [
     "RegionScanResult",
     "bulk_region_scan",
     "bulk_scan_eligible",
     "can_bulk_histogram",
     "can_bulk_min_max",
-    "do_histogram",
-    "do_histogram_bulk",
-    "do_histogram_task",
-    "do_min_max",
-    "do_min_max_bulk",
-    "do_min_max_task",
-    "do_noregion_histograms",
-    "merge_and_save_histograms",
-    "merge_histograms",
-    "merge_min_max",
     "scan_region",
     "unpack_score_defs",
-    "update_hist_confs",
 ]
+
+#: The public names that moved out of this module (gain#2269), each with
+#: its new sibling module.  They stay importable from here for one release,
+#: with a ``DeprecationWarning`` that names the new module.  The siblings
+#: are named relative to this package, so this module names no module of
+#: its own package (see ``tests/test_architecture.py``).
+_MOVED: dict[str, str] = {
+    **dict.fromkeys((
+        "do_min_max",
+        "do_min_max_bulk",
+        "do_min_max_task",
+        "merge_min_max",
+    ), "scan_min_max"),
+    **dict.fromkeys((
+        "do_histogram",
+        "do_histogram_bulk",
+        "do_histogram_task",
+        "merge_and_save_histograms",
+        "merge_histograms",
+        "update_hist_confs",
+    ), "scan_histograms"),
+    "do_noregion_histograms": "scan_noregion",
+}
+
+
+class _MovedNamesModule(types.ModuleType):
+    """This module, warning when a caller reads a name that moved out.
+
+    The moved names are not defined here, so a read of one finds its
+    sibling module and returns the object from there.  An import statement
+    and ``module.name`` both read through here.  The sibling is imported
+    only when a caller reads a moved name: the siblings import this
+    module, and this module imports none of them when it loads.
+    """
+
+    def __getattribute__(self, name: str) -> Any:
+        moved_to = _MOVED.get(name)
+        if moved_to is None:
+            return super().__getattribute__(name)
+        package = super().__getattribute__("__package__")
+        new_module = f"{package}.{moved_to}"
+        warnings.warn(
+            f"{name} moved to {new_module}", DeprecationWarning, stacklevel=2)
+        return getattr(importlib.import_module(new_module), name)
+
+
+sys.modules[__name__].__class__ = _MovedNamesModule
 
 #: Which score value types each histogram kind can accumulate a whole BATCH
 #: of -- the pairing :func:`can_bulk_histogram` gates the vectorized
@@ -154,13 +169,14 @@ def _score_for(
     the call site, and bounded by it.
 
     **Why the sharing stops at the task frame.** Not because the score
-    could not survive the trip: ``do_noregion_histograms`` calls the two
-    task functions in-process, with no task graph between them, and a
-    score would reach them intact.  It stops because a ``do_*_task``
-    signature is a SCHEDULING CONTRACT -- ``impl`` hands those arguments
-    to ``TaskGraph.make_task``, and under a distributed executor they are
-    serialized.  A parameter that cannot appear in that list does not
-    belong in that signature, whoever the caller happens to be.
+    could not survive the trip: ``scan_noregion.do_noregion_histograms``
+    calls the two task functions in-process, with no task graph between
+    them, and a score would reach them intact.  It stops because a
+    ``do_*_task`` signature is a SCHEDULING CONTRACT -- ``impl`` hands
+    those arguments to ``TaskGraph.make_task``, and under a distributed
+    executor they are serialized.  A parameter that cannot appear in that
+    list does not belong in that signature, whoever the caller happens to
+    be.
 
     **The pair must match.** ``resource`` is ignored when a ``score`` is
     given, so the two must describe the same resource; handing a score
@@ -213,46 +229,6 @@ class RegionScanResult(NamedTuple):
     alleles: RegionAlleles | None
 
 
-def do_noregion_histograms(
-    resource: GenomicResource,
-) -> None:
-    """Compute a resource's statistics in one task, contig by contig.
-
-    The ``--region-size 0`` path: one task, no splitting *within* a
-    contig.  The region-read family requires a contig, so the iteration
-    over contigs is stated here rather than smuggled down as a null.
-
-    Each contig is scanned through the very task functions a split run
-    calls and folded together by the very functions that fold those
-    tasks' results, so this produces what a split run produces -- not
-    something merely believed to match, and a resource either of them
-    refuses is attributed there rather than reaching the reader as a
-    reason-less "statistics were not built".  An empty contig (an
-    unscored alt, of which hg38 has hundreds) contributes an empty
-    histogram, which merges cleanly; ``merge_histograms`` only
-    nullifies on a genuine error.
-    """
-    all_min_max_scores, all_hist_confs = unpack_score_defs(resource)
-
-    with build_score_from_resource(resource).open() as score:
-        chroms = list(score.get_all_chromosomes())
-
-    if all_min_max_scores:
-        all_hist_confs = merge_min_max(
-            all_min_max_scores,
-            all_hist_confs,
-            *(do_min_max_task(
-                resource, all_min_max_scores, chrom, None, None)
-              for chrom in chroms),
-        )
-    merge_and_save_histograms(
-        resource,
-        *(do_histogram_task(
-            resource, all_hist_confs, chrom, None, None)
-          for chrom in chroms),
-    )
-
-
 def unpack_score_defs(
     resource: GenomicResource,
 ) -> tuple[list[str], dict[str, HistogramConfig]]:
@@ -262,9 +238,10 @@ def unpack_score_defs(
     definition resolves to a null histogram (a stated ``type: null``, or a
     value type with no default) is left out, so a ``NullHistogramConfig``
     among them is always one the build itself produced
-    (:func:`update_hist_confs`), and is recorded as such.  The definition's
-    null stays unrecorded, decided from the config alone (gain#305); the
-    save stage drops what an earlier build left for it.
+    (:func:`.scan_histograms.update_hist_confs`), and is recorded as
+    such.  The definition's null stays unrecorded, decided from the config
+    alone (gain#305); the save stage drops what an earlier build left for
+    it.
 
     It refuses nothing.  A configured NUMBER histogram over a value type no
     number histogram can fold used to be nullified here (gain#1285), which
@@ -272,9 +249,9 @@ def unpack_score_defs(
     the reason only in the log (gain#1307); gain#1336 moved that to score
     CONSTRUCTION, so a resource whose config states the pairing never
     reaches a statistics build at all.  What is still left to the per-value
-    catch in :func:`do_histogram` is the other direction -- a CATEGORICAL
-    histogram meeting a value it cannot fold -- because that is a fact
-    about a value rather than about the config.
+    catch in :func:`.scan_histograms.do_histogram` is the other direction
+    -- a CATEGORICAL histogram meeting a value it cannot fold -- because
+    that is a fact about a value rather than about the config.
     """
     score = build_score_from_resource(resource)
     all_min_max_scores = []
@@ -337,353 +314,10 @@ def scan_region(
     yield from score.values_from_records(records, chrom, score_ids)
 
 
-def do_min_max(
-    resource: GenomicResource,
-    score_ids: list[str],
-    chrom: str,
-    start: int | None,
-    end: int | None,
-    *,
-    score: GenomicScore | None = None,
-) -> dict[str, MinMaxValue]:
-    """Reduce a region to a min and a max per score, record by record.
-
-    The per-record min/max pass, and the floor the vectorized
-    :func:`do_min_max_bulk` is required to match.  Reads through
-    :func:`scan_region`, so the validation every pass composes is
-    composed here too (ADR 0008), and reduces only the records the
-    region OWNS -- min/max would survive double-counting, but a
-    region measuring differently by which path served it is what the
-    parity tests refuse.
-
-    A value the reducer refuses nullifies THAT score and the pass carries
-    on, exactly as :func:`do_histogram` has always done -- the asymmetry
-    between the two was what made a single unfoldable value cost a whole
-    statistics build (gain#1285, gain#1313).  The refused score is replaced
-    with a :class:`~gain.genomic_resources.statistics.min_max.NullMinMaxValue`,
-    which is the latch as much as the outcome: its ``add_value`` is a no-op,
-    so the refusal costs one exception per region rather than one per record.
-
-    A ``score`` handed in is opened here and closed on return; see
-    :func:`_score_for`.
-    """
-    result = {
-        scr_id: MinMaxValue(scr_id)
-        for scr_id in score_ids
-    }
-    with _score_for(resource, score).open() as opened:
-        for left, _right, rec in scan_region(
-                opened, chrom, start, end, score_ids):
-            # The same record partition every statistic reads: a
-            # region reduces the records it OWNS.  min/max is
-            # idempotent under duplication, so the merged result
-            # would survive without this -- but the bulk twin
-            # selects, and a region measuring differently by which
-            # path served it is what the parity tests refuse.
-            if not owns_record(left, start, end):
-                continue
-            for score_index, score_id in enumerate(score_ids):
-                try:
-                    result[score_id].add_value(
-                        rec[score_index],  # type: ignore
-                    )
-                except TypeError as err:
-                    # The containment ``do_histogram`` has had all along: one
-                    # score the reducer refuses costs THAT score, not the
-                    # resource's whole statistics build (gain#1285).  The
-                    # replacement is the latch as much as the outcome --
-                    # ``NullMinMaxValue.add_value`` is a no-op, so the refusal
-                    # is paid once per region per score rather than once per
-                    # record, which is the only reason a per-value catch is
-                    # affordable in this loop.
-                    logger.exception(
-                        "Failed adding value %s to the min/max of %s in "
-                        "<%s> at %s:%s-%s; nullify the score's min/max",
-                        rec[score_index] if rec else None, score_id,
-                        resource.resource_id, chrom, start, end)
-                    result[score_id] = NullMinMaxValue(score_id, str(err))
-    return result
-
-
-def merge_min_max(
-    score_ids: list[str],
-    all_hist_confs: dict[str, HistogramConfig],
-    *calculate_tasks: dict[str, MinMaxValue],
-) -> dict[str, HistogramConfig]:
-    """Fold every region's min/max together and view-range the confs.
-
-    The merge stage between the min/max tasks and the histogram
-    tasks: each region hands up its own ``MinMaxValue`` per score,
-    they combine into one, and :func:`update_hist_confs` writes the
-    result into the histogram configs the histogram pass will build
-    from.  A histogram whose config already carries a view range
-    never scheduled a min/max task and is not touched.
-
-    A region that REFUSED a score nullifies it for the whole fold, the way
-    ``merge_histograms`` lets one region's ``NullHistogram`` nullify a score:
-    the regions that folded values cannot answer for the one that could not.
-    """
-    res: dict[str, MinMaxValue] = {}
-    for score_id in score_ids:
-        for min_max_region in calculate_tasks:
-            region_min_max = min_max_region[score_id]
-            # A refusal travels, exactly as a region's ``NullHistogram`` does
-            # in ``merge_histograms``: the regions that DID fold values
-            # cannot answer for the one that could not, and a view range
-            # built from the survivors alone would bin the score as if
-            # nothing had been refused.  Only this direction needs saying --
-            # ``NullMinMaxValue.merge`` is a no-op, so a score already
-            # refused stays refused whatever is folded into it.
-            if res.get(score_id) is None \
-                    or isinstance(region_min_max, NullMinMaxValue):
-                res[score_id] = region_min_max
-            else:
-                res[score_id].merge(region_min_max)
-    return update_hist_confs(
-        all_hist_confs, res)
-
-
-def update_hist_confs(
-    all_hist_confs: dict[str, HistogramConfig],
-    minmax_task: dict[str, MinMaxValue] | None,
-) -> dict[str, HistogramConfig]:
-    """Give each number histogram the view range its min/max found.
-
-    ``None`` means no min/max pass ran, so the configs stand as they
-    are.  A score whose min or max came back nan has no values to
-    bin -- its histogram is nullified with that as the reason, which
-    is a resource fact worth reporting, not a failure to raise on.
-
-    A score the min/max pass REFUSED arrives here the same way, since a
-    refusal leaves the nan seed untouched, but it is a different fact about
-    the resource -- values that could not be folded, rather than no values --
-    so it is nullified with the refusal as the reason instead.
-    """
-    if minmax_task is None:
-        return all_hist_confs
-
-    for score_id, min_max in minmax_task.items():
-        hist_conf = all_hist_confs[score_id]
-        assert isinstance(hist_conf, NumberHistogramConfig)
-        assert not hist_conf.has_view_range()
-        if isinstance(min_max, NullMinMaxValue):
-            # Same nullify, different resource fact: a score with no values in
-            # the region and a score whose values could not be folded both
-            # arrive here with nothing to bin, and a curator reading the
-            # reason has to be able to tell them apart.
-            logger.warning(
-                "min/max for %s was refused; "
-                "nullify the histogram: %s", score_id, min_max.reason)
-            all_hist_confs[score_id] = NullHistogramConfig(
-                f"min/max for {score_id} refused: {min_max.reason}")
-        elif np.isnan(min_max.min) or np.isnan(min_max.max):
-            logger.warning(
-                "min/max value for %s not found; "
-                "nullify the histogram", score_id)
-            all_hist_confs[score_id] = NullHistogramConfig(
-                f"min/max for {score_id} not found")
-        else:
-            hist_conf.view_range = (min_max.min, min_max.max)
-    logger.info("histogram configs updated: %s", all_hist_confs)
-    return all_hist_confs
-
-
-def _add_record_values(
-    result: dict[str, Histogram],
-    score_ids: list[str],
-    rec: list[ScoreValue],
-    weight: int,
-    *,
-    resource: GenomicResource,
-    chrom: str,
-    start: int | None,
-    end: int | None,
-) -> None:
-    """Add the score values of one record to their histograms.
-
-    Each score of the record goes to its own histogram in ``result``,
-    at ``weight``.  A histogram that refuses its value is replaced IN
-    PLACE in ``result`` by a null histogram, and the other scores of
-    the record carry on.
-    """
-    for scr_index, scr_id in enumerate(score_ids):
-
-        try:
-            result[scr_id].add_value(
-                rec[scr_index],  # type: ignore
-                weight,
-            )
-        except TypeError as err:
-            logger.exception(
-                "Failed adding value %s to histogram of %s; "
-                "%s:%s-%s", rec[scr_index] if rec else None,
-                resource.resource_id,
-                chrom, start, end)
-            result[scr_id] = NullHistogram(
-                NullHistogramConfig(str(err)),
-            )
-        except HistogramError as err:
-            logger.warning(
-                "Histogram for %s nullified",
-                scr_id,
-            )
-            result[scr_id] = NullHistogram(
-                NullHistogramConfig(str(err)),
-            )
-
-
-def do_histogram(
-    resource: GenomicResource,
-    all_hist_confs: dict[str, HistogramConfig],
-    chrom: str,
-    start: int | None,
-    end: int | None,
-    *,
-    coverage: RegionCoverage | None = None,
-    fragments: RegionFragments | None = None,
-    alleles: RegionAlleles | None = None,
-    score: GenomicScore | None = None,
-) -> dict[str, Histogram]:
-    """Histogram a region record by record, per score.
-
-    The per-record histogram pass, and the floor
-    :func:`do_histogram_bulk` is required to match to the bit.  Reads
-    through :func:`scan_region` and weighs each owned record the way
-    the score's kind weighs it (``record_weight``).
-
-    ``coverage``, ``fragments`` and ``alleles`` ride the same read
-    rather than costing the region a second one, and are accumulated IN
-    PLACE -- the caller owns them, because it is the task's return value
-    that has to travel under a distributed executor.
-
-    A histogram that refuses a value is nullified on its own and the
-    resource's other scores carry on.
-
-    A ``score`` handed in is opened here and closed on return; see
-    :func:`_score_for`.
-    """
-    result: dict[str, Histogram] = {}
-
-    logger.info("updated hist confs: %s", all_hist_confs)
-
-    for score_id, hist_conf in all_hist_confs.items():
-        if isinstance(hist_conf, NullHistogramConfig):
-            continue
-        result[score_id] = build_empty_histogram(hist_conf)
-
-    score_ids = list(result.keys())
-    with _score_for(resource, score).open() as opened:
-        for left, right, rec in scan_region(
-                opened, chrom, start, end, score_ids,
-                alleles=alleles):
-            owned = owns_record(left, start, end)
-            if not owned:
-                continue
-            if coverage is not None:
-                # The row at its full span, on the same record
-                # partition as every other statistic: coverage-scanned
-                # rows are pairwise disjoint, so the union is exact
-                # unclipped (see ``RegionCoverage``).
-                coverage.add_interval(
-                    left, right, normalize_values(rec))
-            if fragments is not None:
-                # A fragment is the row as stored, at its own span.
-                fragments.add_fragment(right - left + 1)
-            # The kind's ONE statement of the weight rule, called per
-            # record here and broadcast over a whole batch by the bulk
-            # path -- the two cannot drift because there is nothing to
-            # drift from.  Measured at the record's FULL span, never
-            # clipped to the region: see `_select_and_weigh`, which says
-            # why selecting beats clipping here (gain#816).
-            weight = opened.record_weight(left, right)
-            _add_record_values(
-                result, score_ids, rec, weight,
-                resource=resource, chrom=chrom, start=start, end=end)
-    return result
-
-
 #: The most rows one bulk read pulls per batch.  The score's read caps it
 #: further by its cell budget (``genomic_scores.batch_budget``), so a wide
 #: score gets fewer rows per batch than a narrow one.
 _SCAN_BATCH_SIZE = 100_000
-
-
-def do_histogram_bulk(
-    resource: GenomicResource,
-    all_hist_confs: dict[str, HistogramConfig],
-    chrom: str,
-    start: int,
-    end: int,
-    *,
-    coverage: RegionCoverage | None = None,
-    fragments: RegionFragments | None = None,
-    alleles: RegionAlleles | None = None,
-    score: GenomicScore | None = None,
-) -> dict[str, Histogram]:
-    """Vectorized equivalent of :func:`do_histogram`.
-
-    Reads a region as batches of column arrays -- tabix pulls raw pysam
-    rows directly and bigWig converts each fetched interval chunk in one
-    shot, neither building a ``Record`` per row -- and accumulates each
-    score's histogram with the histogram's own ``add_batch`` rather than a
-    per-record ``add_value``.  The selection, the weight, the overlap rule
-    and the value coercion are identical to the per-record path (pinned
-    by the bulk-vs-per-record tests, and by both paths reading one
-    statement of the per-kind rules); the dispatch restricts this to the
-    score and histogram combinations :func:`can_bulk_histogram`
-    admits, over tabix/bigWig tables -- everything else keeps
-    :func:`do_histogram`.
-    """
-    result: dict[str, Histogram] = {}
-    for score_id, hist_conf in all_hist_confs.items():
-        if isinstance(hist_conf, NullHistogramConfig):
-            continue
-        result[score_id] = build_empty_histogram(hist_conf)
-
-    accumulate = _accumulate_arrays
-    if coverage is not None or fragments is not None:
-
-        def accumulate_with_statistics(
-            arrays: RecordArrays,
-            result: dict[str, Histogram],
-            region: tuple[str, int | None, int | None],
-            # Shadows this function's own ``score`` parameter, and must.
-            # ``accumulate``'s type is INFERRED from the
-            # ``_accumulate_arrays`` assigned to it just above -- a
-            # ``def``, whose parameter names are part of that type -- so
-            # renaming this one is an assignment error, not a style
-            # choice.  (``bulk_region_scan``'s own ``Callable[...]``
-            # annotation carries no names; this is not that type.)
-            # Harmless -- nothing in here reads the outer one; the
-            # ``bulk_region_scan`` call that does is below, at this
-            # function's own scope.
-            score: GenomicScore,
-        ) -> None:
-            _accumulate_arrays(
-                arrays, result, region, score)
-            # Both statistics ride the record partition -- the rows the
-            # region owns, at their full span -- but neither implies
-            # the other: a fragment score takes this branch with no
-            # coverage at all (gain#1127), a position score with no
-            # fragments.
-            if coverage is not None:
-                accumulate_coverage(arrays, coverage, region)
-            if fragments is not None:
-                accumulate_fragments(arrays, fragments, region)
-
-        accumulate = accumulate_with_statistics
-
-    batches = None
-    if alleles is not None:
-        # The widened read, folding the nucleotides off each batch on
-        # its way to the shared door; what the door and this scan see
-        # is the same three-column batch as ever.
-        batches = functools.partial(
-            _allele_batches, alleles=alleles,
-            batch_size=_SCAN_BATCH_SIZE)
-    return bulk_region_scan(
-        resource, result, chrom, start, end, accumulate,
-        batches=batches, score=score)
 
 
 # ``AccT`` is the per-batch accumulator target of a bulk region scan -- a
@@ -707,13 +341,13 @@ def bulk_region_scan[AccT](
 ) -> dict[str, AccT]:
     """Drive a bulk region scan, folding each batch into ``result``.
 
-    Public though only this module calls it: ADR 0001 names it as
+    Public, and called by the sibling pass modules: ADR 0001 names it as
     the shared driver behind both bulk passes, so it is part of what
     ``scan`` states about itself rather than a helper.
 
-    The shared skeleton of :func:`do_histogram_bulk` and
-    :func:`do_min_max_bulk`: open the score and stream the region's
-    column-array batches through ``accumulate`` (which mutates
+    The shared skeleton of :func:`.scan_histograms.do_histogram_bulk` and
+    :func:`.scan_min_max.do_min_max_bulk`: open the score and stream the
+    region's column-array batches through ``accumulate`` (which mutates
     ``result``).  The caller supplies the pre-built ``result`` -- empty
     histograms or seeded ``MinMaxValue`` -- and the matching accumulator.
     Batches are keyed by SCORE ID: the score resolves each id to its
@@ -776,10 +410,11 @@ def _accumulate_arrays(
     here, by the door's ``validate_record_arrays``.
 
     A histogram that refuses its batch is nullified and the rest of the
-    resource's scores carry on, exactly as :func:`do_histogram` nullifies
-    one that refuses a value: a categorical histogram raises once its
-    values outgrow ``UNIQUE_VALUES_LIMIT``, and the score it belongs to
-    must not cost the others their statistics.  A nullified score is
+    resource's scores carry on, exactly as
+    :func:`.scan_histograms.do_histogram` nullifies one that refuses a
+    value: a categorical histogram raises once its values outgrow
+    ``UNIQUE_VALUES_LIMIT``, and the score it belongs to must not cost
+    the others their statistics.  A nullified score is
     skipped by every later batch, which is what the per-record path gets
     from ``NullHistogram.add_value`` being a no-op.
     """
@@ -868,7 +503,8 @@ def can_bulk_histogram(
     one score, whereas a batch of the wrong shape is not a value the
     histogram can refuse -- it is a coercion failure inside ``add_batch``.
     So a categorical histogram over an ``int`` score keeps
-    :func:`do_histogram`, which handles it as it always has.
+    :func:`.scan_histograms.do_histogram`, which handles it as it always
+    has.
 
     A number histogram over a ``str`` score never reaches either path: such
     a config is refused when the score is CONSTRUCTED
@@ -976,302 +612,3 @@ def bulk_scan_eligible(
     this (see :func:`_score_for` for why it would want to).
     """
     return _score_for(resource, score).supports_region_value_arrays(score_ids)
-
-
-def do_min_max_task(
-    resource: GenomicResource,
-    score_ids: list[str],
-    chrom: str,
-    start: int | None,
-    end: int | None,
-) -> dict[str, MinMaxValue]:
-    """Compute a region's min/max, bulk-vectorized where eligible.
-
-    Mirrors :func:`do_histogram_task`: the bulk path needs a bounded
-    region -- a concrete contig for its overlap guard, and concrete bounds
-    because that is what the score's bulk read takes -- so any unbounded
-    scan keeps the per-record :func:`do_min_max`.
-
-    A resource the scan refuses is reported here and the refusal
-    re-raised: this is the only frame that knows both which resource the
-    scan was reading and that the reading is what failed, and the task
-    graph's own report names no resource.
-
-    ONE score, built here and threaded to the gate and to whichever scan
-    serves the region -- see :func:`_score_for`.  Built inside the
-    ``try``, because a construction that refuses the resource is exactly
-    the failure this frame exists to attribute.  (Its histogram sibling
-    builds outside, for a reason its own docstring gives.)
-    """
-    try:
-        score = build_score_from_resource(resource)
-        if chrom is not None and start is not None and end is not None \
-                and can_bulk_min_max(
-                    resource, score_ids, score=score):
-            return do_min_max_bulk(
-                resource, score_ids, chrom, start, end, score=score)
-        return do_min_max(
-            resource, score_ids, chrom, start, end, score=score)
-    except MalformedResourceError as err:
-        report_resource_failure(
-            err, "could not scan the values of", resource.resource_id)
-        raise
-
-
-def do_histogram_task(
-    resource: GenomicResource,
-    all_hist_confs: dict[str, HistogramConfig],
-    chrom: str,
-    start: int | None,
-    end: int | None,
-) -> RegionScanResult:
-    """Compute a region's histograms, bulk-vectorized where eligible.
-
-    The bulk path needs a bounded region: a concrete contig, because its
-    overlap guard runs along a single chromosome's records, and concrete
-    bounds, because that is what the score's bulk read takes.  Any
-    unbounded scan keeps the per-record path.
-
-    A resource the scan refuses is reported here and the refusal
-    re-raised, for the reason :func:`do_min_max_task` gives.
-
-    The per-region statistics ride the same read, each accumulated by
-    whichever path serves the histograms and carried out in the task's
-    RETURN value — a mutated argument would not travel under a
-    distributed executor, whose task results arrive serialized.  Which
-    kinds get which accumulator is not decided here: each statistics
-    module answers for its own, gated on the built score's class --
-    :func:`~gain.genomic_resources.statistics.coverage.region_coverage_for`,
-    :func:`~gain.genomic_resources.statistics.fragments.region_fragments_for`
-    and
-    :func:`~gain.genomic_resources.statistics.alleles.region_alleles_for`
-    -- and the three are asked independently, so a kind publishes any
-    of them without the others.  An allele score's :class:`RegionAlleles`
-    has one extra condition on the bulk path: it needs the nucleotides,
-    so a backend that will not serve them sends the region back to the
-    per-record read rather than to a statistic with no class data.
-
-    A score the min/max pass nullified rides along as its
-    ``NullHistogram`` -- unscanned, but in the result, so the merge
-    carries the reason to the save (:func:`_build_nullified_histograms`).
-
-    ONE score serves the whole invocation -- the three gates, the allele
-    probe below, the bulk gate, and whichever scan takes the region; see
-    :func:`_score_for`.  An allele score's probe OPENS it and hands it
-    on closed; the scan reopens it, as it would have opened a fresh one.
-
-    Built BEFORE the ``try``, unlike :func:`do_min_max_task`'s, because
-    the gates and the allele probe need it and both precede the ``try``.
-    So a construction that refuses this resource is not attributed here.
-    """
-    score = build_score_from_resource(resource)
-    coverage = region_coverage_for(score, chrom, start, end)
-    fragments = region_fragments_for(score, chrom, start, end)
-    alleles = region_alleles_for(score, chrom, start, end)
-    nucleotides = True
-    if alleles is not None:
-        # Asked of an OPEN score, and of the score ids a bulk read
-        # would ask for -- the filter ``do_histogram_bulk`` builds
-        # its result from, since a null histogram has nothing to
-        # accumulate.  Unopened, a table naming its key columns
-        # nowhere but in its own header answers False and costs the
-        # whole region the bulk scan for no gain in correctness.
-        with score.open():
-            nucleotides = serves_allele_arrays(score, [
-                score_id for score_id, conf in all_hist_confs.items()
-                if not isinstance(conf, NullHistogramConfig)])
-    try:
-        if chrom is not None and start is not None and end is not None \
-                and nucleotides \
-                and can_bulk_histogram(
-                    resource, all_hist_confs, score=score):
-            histograms = do_histogram_bulk(
-                resource, all_hist_confs, chrom, start, end,
-                coverage=coverage, fragments=fragments,
-                alleles=alleles, score=score)
-        else:
-            histograms = do_histogram(
-                resource, all_hist_confs, chrom, start, end,
-                coverage=coverage, fragments=fragments,
-                alleles=alleles, score=score)
-        histograms.update(_build_nullified_histograms(all_hist_confs))
-        return RegionScanResult(histograms, coverage, fragments, alleles)
-    except MalformedResourceError as err:
-        report_resource_failure(
-            err, "could not build the histograms of",
-            resource.resource_id)
-        raise
-
-
-def _build_nullified_histograms(
-    all_hist_confs: dict[str, HistogramConfig],
-) -> dict[str, NullHistogram]:
-    """The null histograms of the scores the build nullified.
-
-    A ``NullHistogramConfig`` here is the min/max pass's own
-    (:func:`update_hist_confs`; :func:`unpack_score_defs` admits no
-    other), so it is recorded the way a histogram nullified accumulating
-    is: a ``NullHistogram`` carrying the reason, serialised with the
-    resource's statistics.
-    """
-    return {
-        score_id: NullHistogram(hist_conf)
-        for score_id, hist_conf in all_hist_confs.items()
-        if isinstance(hist_conf, NullHistogramConfig)
-    }
-
-
-def do_min_max_bulk(
-    resource: GenomicResource,
-    score_ids: list[str],
-    chrom: str,
-    start: int,
-    end: int,
-    *,
-    score: GenomicScore | None = None,
-) -> dict[str, MinMaxValue]:
-    """Vectorized equivalent of :func:`do_min_max`.
-
-    Reads the region as column-array batches of already-parsed values
-    (the same producer the histogram bulk path uses) and reduces each score
-    with ``min()``/``max()`` over the batch's non-nan subset, rather than a
-    per-record ``MinMaxValue.add_value``.  The parse, the region selection,
-    the overlap rule and the record count are identical to the per-record
-    path -- both read the same per-kind facts off the score class.
-    """
-    result: dict[str, MinMaxValue] = {
-        score_id: MinMaxValue(score_id) for score_id in score_ids}
-    return bulk_region_scan(
-        resource, result, chrom, start, end,
-        _accumulate_min_max, score=score)
-
-
-def _accumulate_min_max(
-    arrays: RecordArrays,
-    result: dict[str, MinMaxValue],
-    region: tuple[str, int | None, int | None],
-    score: GenomicScore,
-) -> None:
-    """Fold one batch of column arrays into the per-score min/max.
-
-    Shares the record selection with the histogram path, and the door it
-    is read through with every pass; the reduction takes ``min()``/``max()``
-    over the owned values
-    with the nans dropped first -- an empty remainder contributes nothing --
-    folded into the running ``MinMaxValue`` exactly as ``add_value`` seeds
-    and combines them.
-
-    An extremum of an ``int`` score is converted back to ``int``, because
-    that is the type the per-record ``add_value`` folds in and therefore
-    what ``MinMaxValue.serialize`` writes (``min: 3``, not ``min: 3.0``).
-    The column arrives as ``float64`` -- the array's non-value has to be a
-    nan -- so the round trip is exact up to 2**53 and the correctly
-    rounded integer above it.
-    """
-    pos_begin, _pos_end, value_cells = arrays
-    # The selection alone: min/max reduces the records this region
-    # owns and weighs nothing, so it reads the mask directly rather
-    # than asking for weights it would discard.
-    _chrom, start, end = region
-    keep = owned_records_mask(pos_begin, start, end)
-
-    for score_id, min_max in result.items():
-        values = value_cells[score_id][keep]
-        finite = values[~np.isnan(values)]
-        if finite.size:
-            is_int = \
-                score.score_definitions[score_id].value_type == "int"
-            low: float = int(finite.min()) if is_int \
-                else float(finite.min())
-            high: float = int(finite.max()) if is_int \
-                else float(finite.max())
-            min_max.min = low if np.isnan(min_max.min) \
-                else min(min_max.min, low)
-            min_max.max = high if np.isnan(min_max.max) \
-                else max(min_max.max, high)
-
-
-def merge_histograms(
-    resource: GenomicResource,  # ruff: ignore[unused-function-argument]
-    *calculated_histograms: dict[str, Any],
-) -> dict[str, Histogram]:
-    """Fold each region's histograms into one histogram per score.
-
-    A score that cannot be histogrammed is nullified on its own, exactly
-    as the per-region accumulation path nullifies its own overflow: the
-    merge of a resource's scores is per score, so one un-histogrammable
-    score must not cost the rest of the resource its histograms
-    (gain#465).  A categorical score can stay within
-    ``UNIQUE_VALUES_LIMIT`` in every single region and exceed it only in
-    their union, so the merge is the first place its failure appears.
-    """
-    result: dict[str, Histogram] = {}
-
-    for histogram_region in calculated_histograms:
-        for score_id, hist in histogram_region.items():
-            if result.get(score_id) is None:
-                # The accumulator aliases the first region's histogram
-                # and later regions are merged into it in place, so that
-                # region's dict ends up holding the merged -- or, when
-                # the merge raises, the partially merged -- object.
-                # Safe as written: the per-region dicts are dependency
-                # task results, handed to this merge once and never read
-                # again, and under a distributed executor they arrive
-                # deserialized, so nothing observes the mutation.
-                result[score_id] = hist
-                continue
-            if isinstance(result[score_id], NullHistogram):
-                continue
-            if isinstance(hist, NullHistogram):
-                result[score_id] = NullHistogram(NullHistogramConfig(
-                    f"Empty histogram for {score_id} in a region: "
-                    f"{hist.reason}"))
-            else:
-                try:
-                    result[score_id].merge(hist)
-                except HistogramError as err:
-                    logger.warning(
-                        "Histogram for %s nullified while merging "
-                        "regions: %s", score_id, err)
-                    result[score_id] = NullHistogram(
-                        NullHistogramConfig(str(err)),
-                    )
-
-    return result
-
-
-def _save_histograms(
-    resource: GenomicResource, merged_histograms: dict[str, Histogram],
-) -> dict[str, Histogram]:
-    save_and_plot_histograms(
-        resource, build_score_from_resource(resource),
-        merged_histograms)
-    return merged_histograms
-
-
-def merge_and_save_histograms(
-    resource: GenomicResource,
-    *results: RegionScanResult,
-) -> dict[str, Histogram]:
-    """Fold every region's scan results together and save all four.
-
-    The scan's last task.  Histograms, coverage, fragments and alleles
-    each merge across the regions and are written into the resource --
-    the one place any of the four is produced, so no SECOND code path
-    can refresh one of them and leave the others stale.  Within this
-    one the writes are sequential and there is no rollback, so a raise
-    partway does leave a mixture.
-    """
-    merged_histograms = merge_histograms(
-        resource, *(result.histograms for result in results))
-    save_and_plot_coverage(resource, merge_region_coverage(
-        resource.resource_id,
-        (result.coverage for result in results)))
-    save_and_plot_fragments(resource, merge_region_fragments(
-        resource.resource_id,
-        (result.fragments for result in results)))
-    save_allele_statistics(resource, merge_region_alleles(
-        resource.resource_id,
-        (result.alleles for result in results)))
-    return _save_histograms(
-        resource, merged_histograms)

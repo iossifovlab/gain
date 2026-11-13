@@ -20,7 +20,7 @@ from gain.genomic_resources.genomic_scores import (
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import build_inmemory_test_resource
-from gain.genomic_resources.testing.builders import an_allele_score
+from gain.genomic_resources.testing.table_score_builder import an_allele_score
 
 
 def build_allele_resource(config: str, data: str) -> GenomicResource:

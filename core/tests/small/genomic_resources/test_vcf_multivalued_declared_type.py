@@ -31,9 +31,9 @@ from collections.abc import Callable
 import pytest
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.genomic_scores import AlleleScore
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.vcf_info_score_builder import (
     VcfInfoScoreBuilder,
-    a_grr,
     a_vcf_info_score,
 )
 

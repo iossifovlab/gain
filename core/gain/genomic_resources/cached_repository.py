@@ -15,10 +15,8 @@ import pysam
 from tqdm import tqdm
 
 from gain import logging
-from gain.genomic_resources.fsspec_protocol import (
-    FileCacheVerdict,
-    FsspecReadWriteProtocol,
-)
+from gain.genomic_resources.fsspec_errors import FileCacheVerdict
+from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,

@@ -21,7 +21,9 @@ from gain.genomic_resources.implementations.reference_genome_impl import (
 from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
 )
-from gain.genomic_resources.testing.builders import a_reference_genome
+from gain.genomic_resources.testing.reference_genome_builder import (
+    a_reference_genome,
+)
 from gain.genomic_resources.testing.statistics import build_statistics
 from gain.task_graph.cli_tools import task_graph_run
 from gain.task_graph.graph import TaskGraph

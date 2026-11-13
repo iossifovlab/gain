@@ -37,12 +37,12 @@ from gain.binning.run_definition import resolve_binners
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing import build_filesystem_test_repository
-from gain.genomic_resources.testing.builders import (
-    a_fragment_score,
-    a_grr,
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.data_frame_builder import a_data_frame
+from gain.genomic_resources.testing.reference_genome_builder import (
     a_reference_genome,
 )
-from gain.genomic_resources.testing.data_frame_builder import a_data_frame
+from gain.genomic_resources.testing.table_score_builder import a_fragment_score
 
 from tests.small.binning.conftest import (
     CELL_META,

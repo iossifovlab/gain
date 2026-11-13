@@ -8,7 +8,7 @@ the full parser of its tool without running the tool.
 import argparse
 
 import pytest
-from gain.genomic_resources import cli, cli_cache_repo
+from gain.genomic_resources import cli, cli_browse, cli_cache_repo
 
 
 def _subcommands(parser: argparse.ArgumentParser) -> set[str]:
@@ -31,7 +31,7 @@ def test_manage_parser_holds_every_subcommand() -> None:
 
 
 def test_browse_parser_reads_the_listing_filters() -> None:
-    parser = cli._build_browse_argument_parser()
+    parser = cli_browse._build_browse_argument_parser()
 
     args = parser.parse_args(
         ["-g", "grr.yaml", "-t", "position_score", "--bytes"])

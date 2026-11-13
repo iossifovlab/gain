@@ -35,7 +35,7 @@ import pytest
 from gain.genomic_resources.genomic_scores import FragmentScore
 from gain.genomic_resources.genomic_scores.records import RecordArrays
 from gain.genomic_resources.score_def import ScoreValue
-from gain.genomic_resources.testing.builders import a_fragment_score
+from gain.genomic_resources.testing.table_score_builder import a_fragment_score
 
 FRAGMENTS = """
     chrom  pos_begin  pos_end  cell  count

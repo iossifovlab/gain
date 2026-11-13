@@ -28,10 +28,12 @@ from gain.genomic_resources.repository import (
 from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
 )
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.gene_score_builder import (
     GeneScoreBuilder,
-    PositionScoreBuilder,
     a_gene_score,
+)
+from gain.genomic_resources.testing.table_score_builder import (
+    PositionScoreBuilder,
     a_position_score,
 )
 from gain.task_graph.cli_tools import task_graph_run

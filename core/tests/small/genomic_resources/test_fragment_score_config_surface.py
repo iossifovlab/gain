@@ -35,7 +35,8 @@ from gain.genomic_resources import (
     get_resource_implementation_builder,
     resource_types,
 )
-from gain.genomic_resources.cli import _create_contents_db, cli_manage
+from gain.genomic_resources.cli import cli_manage
+from gain.genomic_resources.cli_manifest import _create_contents_db
 from gain.genomic_resources.genomic_scores import (
     FragmentScore,
     build_score_from_resource,
@@ -61,10 +62,10 @@ from gain.genomic_resources.testing import (
     convert_to_tab_separated,
     setup_directories,
 )
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.table_score_builder import (
     FragmentScoreBuilder,
     a_fragment_score,
-    a_grr,
 )
 from gain.task_graph.cli_tools import task_graph_run
 from gain.task_graph.graph import TaskGraph

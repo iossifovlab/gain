@@ -18,7 +18,7 @@ from gain.genomic_resources.histogram import (
     load_histogram,
 )
 from gain.genomic_resources.statistics.min_max import MinMaxValue
-from gain.genomic_resources.testing.builders import a_position_score
+from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 
 def _a_number_histogram() -> NumberHistogram:

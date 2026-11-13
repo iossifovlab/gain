@@ -37,9 +37,11 @@ from gain.genomic_resources.histogram import (
 )
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     scan,
+    scan_histograms,
+    scan_min_max,
 )
 from gain.genomic_resources.repository import GenomicResource
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.table_score_builder import (
     a_position_score,
     an_allele_score,
 )
@@ -153,14 +155,19 @@ def _allele_tabix(tmp_path: pathlib.Path) -> GenomicResource:
 def _spy_on_score_builds(mocker: pytest_mock.MockerFixture) -> Any:
     """Count the scan's score constructions, still building real scores.
 
-    Every construction in ``scan`` goes through the module-global
-    ``build_score_from_resource``, so wrapping that name counts them all
-    -- and ``wraps`` delegates to the real factory, so the task under
-    test does its real work and its result stays checkable.
+    Every construction in ``scan``, ``scan_min_max`` and
+    ``scan_histograms`` goes through the module-global
+    ``build_score_from_resource``, so one spy on that name in each of the
+    three modules counts them all -- and ``wraps`` delegates to the real
+    factory, so the task under test does its real work and its result
+    stays checkable.
     """
-    return mocker.patch.object(
+    spy = mocker.patch.object(
         scan, "build_score_from_resource",
         wraps=scan.build_score_from_resource)
+    for module in (scan_min_max, scan_histograms):
+        mocker.patch.object(module, "build_score_from_resource", spy)
+    return spy
 
 
 def test_histogram_task_builds_the_score_once_on_the_bulk_path(
@@ -173,7 +180,7 @@ def test_histogram_task_builds_the_score_once_on_the_bulk_path(
         "fixture must reach the bulk path for this test to mean anything"
 
     spy = _spy_on_score_builds(mocker)
-    result = scan.do_histogram_task(resource, confs, "chr1", 1, 20)
+    result = scan_histograms.do_histogram_task(resource, confs, "chr1", 1, 20)
 
     assert spy.call_count == 1
     assert as_number(result.histograms["s1"]).bars.sum() > 0
@@ -187,8 +194,8 @@ def test_histogram_task_builds_the_score_once_on_the_per_record_path(
 
     An ``int`` score under a categorical histogram: a pairing
     :func:`scan.can_bulk_histogram` keeps off the bulk path, so the task
-    reaches :func:`scan.do_histogram` -- the other of the two scans that
-    used to build a score of its own.
+    reaches :func:`scan_histograms.do_histogram` -- the other of the two
+    scans that used to build a score of its own.
     """
     resource = _int_tabix(tmp_path)
     confs: dict = {"s": CategoricalHistogramConfig.default_config()}
@@ -196,7 +203,7 @@ def test_histogram_task_builds_the_score_once_on_the_per_record_path(
         "fixture must reach the per-record path for this test to mean anything"
 
     spy = _spy_on_score_builds(mocker)
-    result = scan.do_histogram_task(resource, confs, "chr1", 1, 20)
+    result = scan_histograms.do_histogram_task(resource, confs, "chr1", 1, 20)
 
     assert spy.call_count == 1
     assert as_categorical(result.histograms["s"]).raw_values == {3: 3, 7: 1}
@@ -211,7 +218,7 @@ def test_min_max_task_builds_the_score_once_on_the_bulk_path(
         "fixture must reach the bulk path for this test to mean anything"
 
     spy = _spy_on_score_builds(mocker)
-    result = scan.do_min_max_task(resource, ["s1", "s2"], "chr1", 1, 20)
+    result = scan_min_max.do_min_max_task(resource, ["s1", "s2"], "chr1", 1, 20)
 
     assert spy.call_count == 1
     assert (result["s1"].min, result["s1"].max) == (0.1, 1.0)
@@ -224,7 +231,7 @@ def test_min_max_task_builds_the_score_once_on_the_per_record_path(
     """A bounded region whose backend the bulk gate refuses.
 
     The task asks the gate -- and is then served by the per-record
-    :func:`scan.do_min_max`: the pair of calls that used to build two
+    :func:`scan_min_max.do_min_max`: the pair of calls that used to build two
     scores between them.
     """
     resource = _plain_text_score(tmp_path)
@@ -232,7 +239,7 @@ def test_min_max_task_builds_the_score_once_on_the_per_record_path(
         "fixture must reach the per-record path for this test to mean anything"
 
     spy = _spy_on_score_builds(mocker)
-    result = scan.do_min_max_task(resource, ["s"], "chr1", 1, 10)
+    result = scan_min_max.do_min_max_task(resource, ["s"], "chr1", 1, 10)
 
     assert spy.call_count == 1
     assert (result["s"].min, result["s"].max) == (0.1, 1.0)
@@ -251,7 +258,8 @@ def test_min_max_task_builds_the_score_once_for_an_unbounded_region(
     resource = _float_tabix(tmp_path)
 
     spy = _spy_on_score_builds(mocker)
-    result = scan.do_min_max_task(resource, ["s1", "s2"], "chr1", None, None)
+    result = scan_min_max.do_min_max_task(
+        resource, ["s1", "s2"], "chr1", None, None)
 
     assert spy.call_count == 1
     assert (result["s1"].min, result["s1"].max) == (0.1, 1.0)
@@ -276,7 +284,7 @@ def test_histogram_task_reopens_the_shared_score_for_an_allele_scan(
         "fixture must reach the bulk path for this test to mean anything"
 
     spy = _spy_on_score_builds(mocker)
-    result = scan.do_histogram_task(resource, confs, "chr1", 1, 40)
+    result = scan_histograms.do_histogram_task(resource, confs, "chr1", 1, 40)
 
     assert spy.call_count == 1
     assert result.alleles is not None, \
@@ -348,7 +356,8 @@ def test_a_scan_closes_the_score_it_was_handed(
     score = build_score_from_resource(resource)
     score.open()
 
-    result = scan.do_min_max(resource, ["s1"], "chr1", 1, 20, score=score)
+    result = scan_min_max.do_min_max(
+        resource, ["s1"], "chr1", 1, 20, score=score)
 
     assert (result["s1"].min, result["s1"].max) == (0.1, 1.0), \
         "the scan must still read the region it was handed a score for"

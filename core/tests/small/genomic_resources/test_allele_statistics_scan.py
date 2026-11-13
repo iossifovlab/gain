@@ -10,6 +10,7 @@ from gain.genomic_resources.histogram import NumberHistogramConfig
 from gain.genomic_resources.implementations.genomic_scores_impl import (
     build_score_implementation_from_resource,
     scan,
+    scan_histograms,
 )
 from gain.genomic_resources.repository import (
     GenomicResource,
@@ -24,7 +25,7 @@ from gain.genomic_resources.statistics.alleles import (
     AlleleStatistics,
     serves_allele_arrays,
 )
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.table_score_builder import (
     AlleleScoreBuilder,
     a_fragment_score,
     a_position_score,
@@ -394,8 +395,8 @@ def test_a_backend_refusing_the_nucleotides_takes_the_per_record_path(
     def refuse(*_args: Any, **_kwargs: Any) -> dict:
         raise AssertionError("the bulk path must not serve this region")
 
-    monkeypatch.setattr(scan, "do_histogram_bulk", refuse)
-    result = scan.do_histogram_task(
+    monkeypatch.setattr(scan_histograms, "do_histogram_bulk", refuse)
+    result = scan_histograms.do_histogram_task(
         resource, confs, "chr1", 1, 100)
 
     assert result.alleles is not None
@@ -410,9 +411,9 @@ def test_the_reroute_leaves_the_histograms_unchanged(
     # The two paths must still agree on what they build.
     resource = _keyless_score(tmp_path, tabix=True)
 
-    per_record = scan.do_histogram(
+    per_record = scan_histograms.do_histogram(
         resource, {"score": _hist_conf()}, "chr1", 1, 100)
-    bulk = scan.do_histogram_bulk(
+    bulk = scan_histograms.do_histogram_bulk(
         resource, {"score": _hist_conf()}, "chr1", 1, 100)
 
     assert per_record["score"].to_dict() == bulk["score"].to_dict()

@@ -31,14 +31,17 @@ from gain.genomic_resources.histogram import (
     NumberHistogram,
     NumberHistogramConfig,
 )
-from gain.genomic_resources.implementations.genomic_scores_impl import scan
+from gain.genomic_resources.implementations.genomic_scores_impl import (
+    scan_histograms,
+    scan_min_max,
+)
 from gain.genomic_resources.testing import (
     build_filesystem_test_resource,
     setup_directories,
     setup_vcf,
 )
-from gain.genomic_resources.testing.builders import (
-    a_grr,
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.vcf_info_score_builder import (
     a_vcf_info_score,
 )
 
@@ -577,8 +580,8 @@ chr1   9   .  A   T    .    .      SC=4.5;OK=30
         "y_log_scale": False,
     })
 
-    min_max = scan.do_min_max(resource, ["SC", "OK"], "chr1", 1, 10)
-    histograms = scan.do_histogram(
+    min_max = scan_min_max.do_min_max(resource, ["SC", "OK"], "chr1", 1, 10)
+    histograms = scan_histograms.do_histogram(
         resource, {"SC": hist_conf, "OK": hist_conf}, "chr1", 1, 10)
 
     assert (min_max["SC"].min, min_max["SC"].max) == (1.5, 4.5)

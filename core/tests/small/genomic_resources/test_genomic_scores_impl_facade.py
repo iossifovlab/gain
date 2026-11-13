@@ -34,7 +34,7 @@ from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     setup_directories,
 )
-from gain.genomic_resources.testing.builders import (
+from gain.genomic_resources.testing.table_score_builder import (
     a_fragment_score,
     a_position_score,
     an_allele_score,
@@ -175,6 +175,9 @@ def test_the_package_is_laid_out_one_module_per_kind() -> None:
     assert {path.stem for path in package_dir.glob("*.py")} == {
         *(_module_stem(module) for module in DEFINING_MODULES.values()),
         "scan",
+        "scan_histograms",
+        "scan_min_max",
+        "scan_noregion",
         "__init__",
     }
 

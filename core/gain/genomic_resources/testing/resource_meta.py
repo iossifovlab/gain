@@ -95,7 +95,7 @@ class MetaMixin:
         ``with_labels(reference_genome="genome")`` -- the label vocabulary
         is a convention of the GRR content, not of the resource schema, so
         the builder models none of it.  The mapping REPLACES any previously
-        declared one (the :meth:`~.builders._TableScoreBuilder`
+        declared one (the :meth:`~.table_score_builder._TableScoreBuilder`
         ``with_chrom_mapping`` precedent) and is deep-copied, so neither the
         mapping nor a mutable value inside it stays shared with the caller.
         """

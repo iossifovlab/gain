@@ -8,8 +8,8 @@ from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources.fsspec_protocol import build_fsspec_protocol
 from gain.genomic_resources.repository import GenomicResourceProtocolRepo
 from gain.genomic_resources.testing import setup_directories, setup_vcf
-from gain.genomic_resources.testing.builders import (
-    a_grr,
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.vcf_info_score_builder import (
     a_vcf_info_score,
 )
 

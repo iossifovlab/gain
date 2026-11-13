@@ -22,11 +22,13 @@ from gain.genomic_resources.repository_search import (
     SearchIndexUnavailableError,
 )
 from gain.genomic_resources.resource_types import FRAGMENT_SCORE_TYPES
-from gain.genomic_resources.testing.builders import (
-    a_fragment_score,
-    a_grr,
-    a_position_score,
+from gain.genomic_resources.testing.builders import a_grr
+from gain.genomic_resources.testing.reference_genome_builder import (
     a_reference_genome,
+)
+from gain.genomic_resources.testing.table_score_builder import (
+    a_fragment_score,
+    a_position_score,
 )
 
 
