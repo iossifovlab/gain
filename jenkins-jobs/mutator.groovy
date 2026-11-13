@@ -8,8 +8,8 @@
 // snapshot, and a survivor never fails it. Triggered nightly from the
 // last stage of the gain-nightly orchestrator (no parameters, so
 // BRANCH_NAME defaults to master and FULL_RUN defaults to false),
-// with `propagate: false`, so the job
-// never changes the result of gain-nightly. It sends no Zulip alert.
+// with `propagate: false`, so the job never changes the result of
+// gain-nightly. It sends no Zulip alert.
 
 // Declared at the Jenkins root (not under `iossifovlab/`): that
 // path is a GitHub Organization Folder and rejects Job-DSL-managed
