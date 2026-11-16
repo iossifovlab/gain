@@ -87,15 +87,20 @@ def grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
 OTHER_PUBLIC_URL = "http://other-grr.example.org"
 
 
-@pytest.fixture
-def other_grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
-    """A second, unmanaged GRR -- nothing in it is addressable relatively."""
+def an_unmanaged_grr(root_path: pathlib.Path) -> GenomicResourceRepo:
+    """A GRR at *root_path* holding ``other_score``, mirrored elsewhere."""
     return (
         a_grr()
         .with_resource("other_score", a_score_resource())
         .with_public_url(OTHER_PUBLIC_URL)
-        .build_repo(tmp_path / "other_grr")
+        .build_repo(root_path)
     )
+
+
+@pytest.fixture
+def other_grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
+    """A second, unmanaged GRR -- nothing in it is addressable relatively."""
+    return an_unmanaged_grr(tmp_path / "other_grr")
 
 
 def test_a_managed_resource_is_addressed_relative_to_the_repository_root(
@@ -224,12 +229,7 @@ def sibling_grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
     ``grr_encode`` begins with ``grr``: a containment test done on the
     raw string, not on whole path segments, takes it for the managed GRR.
     """
-    return (
-        a_grr()
-        .with_resource("other_score", a_score_resource())
-        .with_public_url(OTHER_PUBLIC_URL)
-        .build_repo(tmp_path / "grr_encode")
-    )
+    return an_unmanaged_grr(tmp_path / "grr_encode")
 
 
 def test_a_sibling_grr_sharing_the_path_prefix_is_not_managed(
