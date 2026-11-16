@@ -23,6 +23,9 @@ from gain.annotation.pipeline_doc import (
 )
 from gain.genomic_resources.genomic_scores import build_score_from_resource
 from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.repository_factory import (
+    build_genomic_resource_repository,
+)
 from gain.genomic_resources.testing import (
     build_filesystem_test_repository,
     setup_directories,
@@ -212,3 +215,72 @@ def test_the_prefix_climbs_once_per_level_of_the_pages_own_id(
     assert addresses.histogram_url(score, "s1") == (
         f"{prefix}/one/statistics/histogram_s1.png"
     )
+
+
+@pytest.fixture
+def sibling_grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
+    """An unmanaged GRR whose path starts with the managed GRR's path.
+
+    ``grr_encode`` begins with ``grr``: a containment test done on the
+    raw string, not on whole path segments, takes it for the managed GRR.
+    """
+    return (
+        a_grr()
+        .with_resource("other_score", a_score_resource())
+        .with_public_url(OTHER_PUBLIC_URL)
+        .build_repo(tmp_path / "grr_encode")
+    )
+
+
+def test_a_sibling_grr_sharing_the_path_prefix_is_not_managed(
+    grr: GenomicResourceRepo,
+    sibling_grr: GenomicResourceRepo,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    addresses = RepositoryRelativeAddresses(grr.get_resource("pipeline"))
+    stranger = sibling_grr.get_resource("other_score")
+
+    url = addresses.resource_url(stranger)
+
+    assert url == f"{OTHER_PUBLIC_URL}/other_score"
+    assert "Referencing resource outside managed GRR" in caplog.text
+
+
+def test_a_histogram_in_a_sibling_grr_sharing_the_path_prefix_is_not_managed(
+    grr: GenomicResourceRepo,
+    sibling_grr: GenomicResourceRepo,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    addresses = RepositoryRelativeAddresses(grr.get_resource("pipeline"))
+    stranger = build_score_from_resource(
+        sibling_grr.get_resource("other_score"))
+
+    url = addresses.histogram_url(stranger, "s1")
+
+    assert url == (
+        f"{OTHER_PUBLIC_URL}/other_score/statistics/histogram_s1.png"
+    )
+    assert "Referencing resource outside managed GRR" in caplog.text
+
+
+def test_a_trailing_slash_on_the_managed_grr_directory_keeps_it_managed(
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A `directory` definition keeps its trailing "/" in the repo url,
+    # while a resource url under it has a single "/" after the root.
+    root_path = tmp_path / "grr"
+    setup_directories(root_path, {"pipeline": a_pipeline()})
+    a_score_resource().realize_into(root_path / "one")
+    grr = build_genomic_resource_repository({
+        "type": "directory",
+        "directory": f"{root_path}/",
+    })
+    pipeline = grr.get_resource("pipeline")
+    assert pipeline.get_repo_url().endswith("/")
+    addresses = RepositoryRelativeAddresses(pipeline)
+
+    url = addresses.resource_url(grr.get_resource("one"))
+
+    assert url == "../one"
+    assert "Referencing resource outside managed GRR" not in caplog.text
