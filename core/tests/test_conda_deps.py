@@ -502,24 +502,44 @@ def test_conda_integration_pins_the_locked_pytest() -> None:
         "the specs=(...) array")
 
 
-def test_conda_integration_asks_for_conda_names(
-    conda_env: ModuleType,
-) -> None:
+def _check_conda_names(conda_env: ModuleType, run_sh: pathlib.Path) -> None:
     # The specs=(...) array goes to the conda solver, so a PyPI name that
     # CONDA_NAMES maps elsewhere asks for the wrong package (#2400).
-    if not CONDA_INTEGRATION_RUN.exists():
-        pytest.fail(
-            f"{CONDA_INTEGRATION_RUN} is missing; the CI image must copy it")
-
     wrong = [
         f"{spec!r} (ask for {conda_env.conda_name(name)!r})"
-        for spec in _solver_specs(CONDA_INTEGRATION_RUN)
+        for spec in _solver_specs(run_sh)
         if (name := re.split(r"[<>=!~\s]", spec, maxsplit=1)[0])
         != conda_env.conda_name(name)]
 
     assert wrong == [], (
-        f"{CONDA_INTEGRATION_RUN} asks the solver for PyPI names in the "
+        f"{run_sh} asks the solver for PyPI names in the "
         f"specs=(...) array: {', '.join(wrong)}")
+
+
+def test_conda_integration_asks_for_conda_names(
+    conda_env: ModuleType,
+) -> None:
+    if not CONDA_INTEGRATION_RUN.exists():
+        pytest.fail(
+            f"{CONDA_INTEGRATION_RUN} is missing; the CI image must copy it")
+
+    _check_conda_names(conda_env, CONDA_INTEGRATION_RUN)
+
+
+def test_conda_names_check_names_each_pypi_spec_and_its_conda_name(
+    conda_env: ModuleType, tmp_path: pathlib.Path,
+) -> None:
+    run_sh = tmp_path / "run.sh"
+    run_sh.write_text(
+        'specs=(\n  "pytest==9.2.0"\n  "brotli"\n  "dask>=2026"\n)\n')
+
+    with pytest.raises(AssertionError) as error:
+        _check_conda_names(conda_env, run_sh)
+
+    message = str(error.value).splitlines()[0]
+    assert message.endswith(
+        "specs=(...) array: 'brotli' (ask for 'brotli-python'), "
+        "'dask>=2026' (ask for 'dask-core')")
 
 
 RECIPE_PACKAGES = ("core", *PLUGINS)
