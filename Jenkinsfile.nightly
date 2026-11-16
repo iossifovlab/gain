@@ -276,10 +276,8 @@ pipeline {
                     // failing downstream, not just the first. A null
                     // parameter value would throw instead of running.
                     String upstreamBuild = env.MASTER_REBUILD_NUMBER ?: ''
-                    // The commit of that rebuild, so each run tests the
-                    // sources of the package it copies (gain#2411). Empty
-                    // when the read failed: the job then checks out the
-                    // master tip and its package-commit guard decides.
+                    // The commit of that rebuild (gain#2411); see `Rebuild
+                    // master` for why, and for the empty value.
                     String upstreamSha = env.MASTER_REBUILD_SHA ?: ''
 
                     Map<String, Closure> pins = [:]

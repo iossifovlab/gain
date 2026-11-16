@@ -551,9 +551,11 @@ pipeline {
                     // Also publishes env.BUILD_COMMIT_SHA, which
                     // Jenkinsfile.nightly reads through buildVariables and
                     // passes as COMMIT_SHA to its pinned
-                    // gain-conda-integration runs (gain#2411). Keep this
-                    // stage free of a `when`: every non-tag build must set
-                    // the variable.
+                    // gain-conda-integration runs (gain#2411), so their
+                    // tests come from the commit of the .conda they copy.
+                    // Keep this stage free of a `when`: every non-tag build
+                    // must set the variable, and a docs-only build archives
+                    // a .conda too.
                     //
                     // Empty changeset (first build, manual rebuild, no
                     // commits since last build) → DOCS_ONLY='false' →
@@ -571,13 +573,6 @@ pipeline {
                                 !changedFiles.isEmpty() &&
                                 changedFiles.every { it.startsWith('docs/') }
                             env.DOCS_ONLY = isDocsOnly ? 'true' : 'false'
-                            // The commit this build checked out, published
-                            // through buildVariables (gain#2411): the
-                            // nightly passes it as COMMIT_SHA to its pinned
-                            // gain-conda-integration runs, so their tests
-                            // come from the commit of the .conda they copy.
-                            // Set here, not in a DOCS_ONLY-gated stage: a
-                            // docs-only build archives a .conda too.
                             env.BUILD_COMMIT_SHA = env.GIT_COMMIT ?: ''
                             echo "Changeset: ${changedFiles.size()} file(s); " +
                                  "DOCS_ONLY=${env.DOCS_ONLY}; " +
