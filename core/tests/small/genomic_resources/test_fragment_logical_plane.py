@@ -784,10 +784,10 @@ def test_no_queries_means_every_score_with_its_own_default(
 
     Each by its own default aggregator, which differ by value type here:
     ``freq`` is a float and takes ``max``, ``collection`` is a string and
-    takes ``join(,)``.
+    takes ``list``.
     """
     with two_score_fragments.open() as score:
         aggregate = score.get_fragment_scores_overlapping_region_agg(
             "1", 100, 199)
 
-    assert aggregate == FragmentAggregate(count=1, values=(0.25, "SSC"))
+    assert aggregate == FragmentAggregate(count=1, values=(0.25, ["SSC"]))

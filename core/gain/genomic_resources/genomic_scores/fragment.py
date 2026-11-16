@@ -240,17 +240,17 @@ class FragmentScore(GenomicScore):
     #: The unit that the histograms of this kind count: ``"fragments"``.
     HISTOGRAM_COUNT_UNIT: ClassVar[str] = "fragments"
 
-    # As AlleleScore, except that strings join rather than list -- a fragment
-    # score's string attributes are rendered into one cell.  Owned by the
-    # score class, so no score-definition subclass is needed to carry them.
+    # As AlleleScore: a fragment score's strings list, one value for each
+    # fragment.  Owned by the score class, so no score-definition subclass
+    # is needed to carry them.
     #
     #: The default aggregator for each value type, for a score whose
     #: configuration states no ``aggregator``: ``max`` for ``float`` and
-    #: ``int``, ``join(,)`` for ``str`` and none for ``bool``.
+    #: ``int``, ``list`` for ``str`` and none for ``bool``.
     DEFAULT_AGGREGATORS: ClassVar[dict[str, str | None]] = {
         "float": "max",
         "int": "max",
-        "str": "join(,)",
+        "str": "list",
         "bool": None,
     }
 
@@ -1063,7 +1063,7 @@ class FragmentScore(GenomicScore):
     #   by how many values a resource has rather than by how many fragments a
     #   region holds;
     # - one entry per FRAGMENT -- ``list``, ``median``, ``concatenate`` and
-    #   ``join``. ``join(,)`` is the DEFAULT for a ``str`` score, which makes
+    #   ``join``. ``list`` is the DEFAULT for a ``str`` score, which makes
     #   this the ordinary case for a CNV collection rather than an exotic one.
     #
     # Under the last group the fold still allocates per fragment. What this read
@@ -1086,7 +1086,7 @@ class FragmentScore(GenomicScore):
         counts once, however long it is. The read folds the fragments as they
         arrive and does not keep them. A few aggregators keep one entry for each
         fragment while they run: ``list``, ``median``, ``concatenate`` and
-        ``join``. The default aggregator of a ``str`` score is ``join(,)``,
+        ``join``. The default aggregator of a ``str`` score is ``list``,
         which is one of them.
 
         The ``count`` of the result counts fragments. A query with the

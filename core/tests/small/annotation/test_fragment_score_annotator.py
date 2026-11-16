@@ -255,14 +255,14 @@ def test_fragment_filter_naming_an_unknown_score_is_refused(
 
 @pytest.mark.parametrize(
     "annotatable, fragment_count, status, status2, collection", [
-        (Position("1", 15), 1, "affected", "affected", "SSC"),
+        (Position("1", 15), 1, "affected", "affected", ["SSC"]),
         (Region("1", 15, 60), 2,
-         "affected,affected", "affected", "SSC,AGRE"),
-        (Region("1", 30, 40), 0, None, None, None),
+         "affected,affected", "affected", ["SSC", "AGRE"]),
+        (Region("1", 30, 40), 0, None, None, []),
     ])
 def test_fragment_filter_and_attribute(
     annotatable: Annotatable, fragment_count: int,
-    status: str, status2: str, collection: str,
+    status: str, status2: str, collection: list[str],
     grr: GenomicResourceRepo,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
@@ -300,7 +300,8 @@ def test_fragment_filter_and_attribute(
 
     assert "aggregator: join(,)" in status_info.documentation
     assert "aggregator: mode" in status2_info.documentation
-    assert "aggregator: join(,)" in collection_info.documentation
+    assert "aggregator: list" in collection_info.documentation
+    assert collection_info.get_value_type() == "list"
 
 
 def test_fragment_aggregators(

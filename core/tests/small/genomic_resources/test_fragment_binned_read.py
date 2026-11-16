@@ -179,9 +179,9 @@ def test_a_numeric_only_aggregator_on_the_barcode_is_refused(
 def test_a_default_that_cannot_answer_a_float_is_refused(
     fragments: FragmentScore,
 ) -> None:
-    """A ``str`` score's default is ``join``, which the fold does not take."""
+    """A ``str`` score's default is ``list``, which the fold does not take."""
     with fragments.open() as score, pytest.raises(
-            ValueError, match=r"join\(,\).*float"):
+            ValueError, match=r"with list:.*float"):
         score.get_scores_in_bins(
             "1", 1, 40, 10, [ScoreAggregationQuery("cell")])
 
