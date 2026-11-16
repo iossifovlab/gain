@@ -112,8 +112,8 @@ test -f "$CHANNEL/noarch/repodata.json" \
     || { echo "ERROR: rattler-index wrote no noarch/repodata.json" >&2; exit 1; }
 
 # Test-only packages: what the tiers import that gain-core does not pull
-# in. pytest-xdist for the small tier's -n 5; fonttools + brotli because
-# the vendored-fonts tests decode WOFF2 directly; scanpy for the
+# in. pytest-xdist for the small tier's -n 5; fonttools + brotli-python
+# because the vendored-fonts tests decode WOFF2 directly; scanpy for the
 # integration tier's reader-drift tests. pytestarch is deliberately
 # absent: test_architecture.py is excluded below. pytest is pinned to
 # the version uv.lock pins, so a red here reproduces in a local uv venv;
@@ -121,7 +121,7 @@ test -f "$CHANNEL/noarch/repodata.json" \
 # no user installs pytest. tests/test_conda_deps.py fails the uv gate
 # when the two versions differ (#2057).
 specs=("gain-core==$VERSION" "pytest==9.2.0" "pytest-mock" "pytest-xdist"
-       "fonttools" "brotli" "scanpy")
+       "fonttools" "brotli-python" "scanpy")
 if [ -n "$PYTHON_VERSION" ]; then
     specs+=("python=$PYTHON_VERSION")
 fi
