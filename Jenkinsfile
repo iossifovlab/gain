@@ -548,6 +548,13 @@ pipeline {
                     // alone, so neither consults DOCS_ONLY or the
                     // changeset (gain#1139).
                     //
+                    // Also publishes env.BUILD_COMMIT_SHA, which
+                    // Jenkinsfile.nightly reads through buildVariables and
+                    // passes as COMMIT_SHA to its pinned
+                    // gain-conda-integration runs (gain#2411). Keep this
+                    // stage free of a `when`: every non-tag build must set
+                    // the variable.
+                    //
                     // Empty changeset (first build, manual rebuild, no
                     // commits since last build) → DOCS_ONLY='false' →
                     // full CI. Conservative default — only short-circuit

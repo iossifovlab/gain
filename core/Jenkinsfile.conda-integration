@@ -316,6 +316,11 @@ pipeline {
         // Only a MOVED BRANCH justifies that. If the tip is still our SHA then
         // the checkout failed for some other reason (network, disk,
         // credentials) and the build must stay red — so rethrow.
+        //
+        // master is never force-pushed, so a COMMIT_SHA on master is never
+        // superseded: a moved master tip is the usual case for the nightly's
+        // pinned runs (gain#2411), not evidence of an orphaned commit. On
+        // master every checkout failure is real — rethrow.
         stage('Checkout') {
             steps {
                 script {
@@ -358,7 +363,8 @@ pipeline {
                                     '| cut -f1',
                             returnStdout: true,
                         ).trim()
-                        if (!sha || tip == sha) {
+                        if (!sha || tip == sha ||
+                                params.BRANCH_NAME == 'master') {
                             throw err
                         }
                         env.SUPERSEDED = 'true'

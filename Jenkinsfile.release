@@ -83,8 +83,8 @@ def findUpstreamBuildForCommit(String project, String sha) {
 // already-approved API signatures as findUpstreamBuildForCommit —
 // the job does a real `checkout` of the commit it tests, so its
 // BuildData carries that commit whether the run was the per-push
-// one, a manual re-run, or the nightly's pinned fan-out against
-// master head (#1430).
+// one, a manual re-run, or the nightly's pinned fan-out (#1430),
+// which checks out the commit of the master rebuild (gain#2411).
 //
 // getBuilds() is newest first. A run whose result is still null is
 // in progress. NOT_BUILT is "superseded" in that job — the commit
