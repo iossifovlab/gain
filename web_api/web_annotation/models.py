@@ -727,7 +727,7 @@ class Job(BaseJob):
         super().update_job_failed(args, exc)
 
         send_email(
-            "GPFWA: Annotation job failed",
+            "GAIn: Annotation job failed",
             (
                 "Your job has failed. "
                 "Visit the web site to try running it again: "
@@ -740,7 +740,7 @@ class Job(BaseJob):
         """Update a job's state to success."""
         super().update_job_success(args)
         send_email(
-            "GPFWA: Annotation job finished successfully",
+            "GAIn: Annotation job finished successfully",
             (
                 "Your job has finished successfully. "
                 "Visit the web site to download the results: "

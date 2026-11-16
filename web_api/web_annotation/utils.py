@@ -58,12 +58,12 @@ def _create_confirmation_email(
     endpoint: str, path: str, verification_path: str,
 ) -> dict[str, str]:
     message = (
-        "Welcome to GPFWA: Genotype and Phenotype in Families Web Annotation! "
+        "Welcome to GAIn: Genomic Annotation Infrastructure! "
         "Click the link below to activate your new account:\n {link}"
     )
 
     email_settings = {
-        "subject": "GPFWA: Registration validation",
+        "subject": "GAIn: Registration validation",
         "initial_message": message,
         "endpoint": endpoint,
         "path": path,
@@ -113,13 +113,13 @@ def _create_reset_mail(
     """Create email template for password reset."""
     message = (
         "Hello. You have requested to reset your password for "
-        "your GPF Web Annotation account. To do so, please "
+        "your GAIn account. To do so, please "
         "follow the link below:\n {link}\n"
-        "If you did not request for your GPF account password to be reset, "
+        "If you did not request for your GAIn account password to be reset, "
         "please ignore this email."
     )
     email_settings = {
-        "subject": "GPFWA: Password reset request",
+        "subject": "GAIn: Password reset request",
         "initial_message": message,
         "endpoint": endpoint,
         "path": path,

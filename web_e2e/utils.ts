@@ -207,7 +207,7 @@ export async function registerUser(page: Page, email: string, password: string):
 
   await registerResponse;
 
-  const href = await getLinkInEmail(page, email, 'GPFWA: Registration validation');
+  const href = await getLinkInEmail(page, email, 'GAIn: Registration validation');
   await page.goto(href, {waitUntil: 'load'});
 
   // 30s timeout (vs default 5s): page just navigated to the email-confirmation
