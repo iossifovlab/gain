@@ -161,8 +161,23 @@ pipeline {
                         } catch (ignored) {
                             env.MASTER_REBUILD_DOCS_ONLY = 'unknown'
                         }
+                        // The commit the rebuild built and packaged
+                        // (gain#2411). The pinned gain-conda-integration
+                        // runs check it out instead of the master tip of
+                        // their own start time, which can be a later
+                        // commit than the .conda they copy. Empty on a
+                        // failed read: the job's package-commit guard
+                        // then decides.
+                        try {
+                            env.MASTER_REBUILD_SHA =
+                                rebuild.buildVariables?.get(
+                                    'BUILD_COMMIT_SHA') ?: ''
+                        } catch (ignored) {
+                            env.MASTER_REBUILD_SHA = ''
+                        }
                         echo "Master rebuild #${env.MASTER_REBUILD_NUMBER} " +
-                             "(DOCS_ONLY=${env.MASTER_REBUILD_DOCS_ONLY})"
+                             "(DOCS_ONLY=${env.MASTER_REBUILD_DOCS_ONLY}, " +
+                             "commit ${env.MASTER_REBUILD_SHA ?: 'unknown'})"
                     }
                 }
             }
@@ -261,6 +276,11 @@ pipeline {
                     // failing downstream, not just the first. A null
                     // parameter value would throw instead of running.
                     String upstreamBuild = env.MASTER_REBUILD_NUMBER ?: ''
+                    // The commit of that rebuild, so each run tests the
+                    // sources of the package it copies (gain#2411). Empty
+                    // when the read failed: the job then checks out the
+                    // master tip and its package-commit guard decides.
+                    String upstreamSha = env.MASTER_REBUILD_SHA ?: ''
 
                     Map<String, Closure> pins = [:]
                     for (String py in pinnedPythons) {
@@ -279,6 +299,10 @@ pipeline {
                                         string(
                                             name: 'BRANCH_NAME',
                                             value: 'master',
+                                        ),
+                                        string(
+                                            name: 'COMMIT_SHA',
+                                            value: upstreamSha,
                                         ),
                                         string(
                                             name: 'UPSTREAM_PROJECT',
