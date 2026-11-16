@@ -1218,7 +1218,7 @@ class FragmentScore(GenomicScore):
     #
     # ``aggregator`` of ``None`` on a query is the score's configured default,
     # as everywhere a :class:`~..aggregators.ScoreAggregationQuery` is read; a
-    # default the fold does not accept (``join`` for a ``str`` score) is refused
+    # default the fold does not accept (``list`` for a ``str`` score) is refused
     # like a named one. A numeric-only aggregator on a non-numeric score is
     # refused by :func:`~..aggregators.validate_aggregator`.
     #
