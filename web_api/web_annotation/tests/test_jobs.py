@@ -157,7 +157,7 @@ def test_job_failure_starts_email_task(
     test_job.update_job_failed("", "")
 
     subject, message, recipient = mocked.call_args_list[0].args
-    assert "GPFWA" in subject
+    assert subject == "GAIn: Annotation job failed"
     assert "try running it again: http://testserver//jobs" in message
     assert recipient == ["user@example.com"]
 
@@ -180,7 +180,7 @@ def test_job_success_starts_email_task(
     test_job.update_job_success("")
 
     subject, message, recipient = mocked.call_args_list[0].args
-    assert "GPFWA" in subject
+    assert subject == "GAIn: Annotation job finished successfully"
     assert "results: http://testserver//jobs" in message
     assert recipient == ["user@example.com"]
 

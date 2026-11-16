@@ -156,7 +156,7 @@ test.describe('Login tests', () => {
     await page.locator('input[value="Reset password"]').click();
     await expect(page.locator('div.message.success')).toContainText(`An e-mail has been sent to ${randomEmail}`);
 
-    const href = await utils.getLinkInEmail(page, randomEmail, 'GPFWA: Password reset request');
+    const href = await utils.getLinkInEmail(page, randomEmail, 'GAIn: Password reset request');
     await page.goto(href, {waitUntil: 'load'});
 
     const newPassword = 'newpassword321';
