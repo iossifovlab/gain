@@ -7,8 +7,9 @@ stay hand-written, and a second guard fails whenever a recipe's run list
 differs from its pyproject's dependencies under the same name mapping.
 A third guard reads the pytest version from the repo-root ``uv.lock`` and
 fails unless ``core/conda-integration/run.sh`` asks the solver for exactly
-that version. The remaining tests pin the first two sets of rules on a
-throwaway workspace.
+that version. A fourth guard fails when that solver list names a PyPI
+package that the name mapping renames on conda. The remaining tests pin
+the first two sets of rules on a throwaway workspace.
 """
 import importlib.util
 import pathlib
@@ -499,6 +500,26 @@ def test_conda_integration_pins_the_locked_pytest() -> None:
         f"{CONDA_INTEGRATION_RUN} asks the solver for {pytest_specs}, "
         f"but uv.lock pins pytest {locked}; pin pytest=={locked} in "
         "the specs=(...) array")
+
+
+def test_conda_integration_asks_for_conda_names(
+    conda_env: ModuleType,
+) -> None:
+    # The specs=(...) array goes to the conda solver, so a PyPI name that
+    # CONDA_NAMES maps elsewhere asks for the wrong package (#2400).
+    if not CONDA_INTEGRATION_RUN.exists():
+        pytest.fail(
+            f"{CONDA_INTEGRATION_RUN} is missing; the CI image must copy it")
+
+    wrong = [
+        f"{spec!r} (ask for {conda_env.conda_name(name)!r})"
+        for spec in _solver_specs(CONDA_INTEGRATION_RUN)
+        if (name := re.split(r"[<>=!~\s]", spec, maxsplit=1)[0])
+        != conda_env.conda_name(name)]
+
+    assert wrong == [], (
+        f"{CONDA_INTEGRATION_RUN} asks the solver for PyPI names in the "
+        f"specs=(...) array: {', '.join(wrong)}")
 
 
 RECIPE_PACKAGES = ("core", *PLUGINS)
