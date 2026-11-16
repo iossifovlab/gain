@@ -184,6 +184,36 @@ def test_many_answers_a_key_per_differing_suffix(
     assert result == {"allele": ["chr1:10:A:C:0.2", "chr1:10:A:C:0.4"]}
 
 
+def test_many_counts_one_allele_key_for_two_rows(
+    many_repo: GenomicResourceRepo,
+) -> None:
+    """``count`` on ``allele`` counts the allele keys, not the rows."""
+    with _pipeline(many_repo, """
+        - source: allele
+          aggregator: count
+    """) as pipeline:
+        result = pipeline.annotate(TWO_ROWS)
+
+    assert result == {"allele": 1}
+
+
+def test_many_counts_no_allele_key_when_the_filter_rejects_every_row(
+    many_repo: GenomicResourceRepo,
+) -> None:
+    """The rows are an empty selection, so ``count`` answers ``0``."""
+    with load_pipeline_from_yaml(textwrap.dedent("""
+        - allele_score:
+            resource_id: alleles
+            allele_filter: "freq > 1.0"
+            attributes:
+            - source: allele
+              aggregator: count
+        """), many_repo) as pipeline:
+        result = pipeline.annotate(TWO_ROWS)
+
+    assert result == {"allele": 0}
+
+
 def test_many_refuses_a_bool_attribute_naming_no_aggregator_at_load(
     many_repo: GenomicResourceRepo,
 ) -> None:

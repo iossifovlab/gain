@@ -289,8 +289,8 @@ class AnnotatorBase(Annotator):
         The rename the base used to do to every result, kept as something
         an annotator asks for.  The non-folding twin of
         :func:`fold_own_values`: for values that are final as they stand
-        -- a point read's one value per score, a tool's output row, the
-        allele keys an exact match synthesises -- where a ``list`` is the
+        -- a point read's one value per score, a tool's output row, a
+        value the annotator has already folded -- where a ``list`` is the
         answer and must not be reduced.  An attribute whose source is
         absent answers ``None``.
         """
