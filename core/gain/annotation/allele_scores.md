@@ -143,6 +143,29 @@ there, naming the valid ids.
 
 `include_attributes` works the same way as for exact match.
 
+#### Aggregator on `allele`
+
+An `aggregator` on the `allele` attribute reduces the allele keys, not the
+lines, on every read path: the region fold, the exact match on a `many`
+resource and the exact match on a `one` resource (#2409). Without an
+aggregator the value is the list of keys. With `aggregator: mode` the
+attribute reports the value type `str`.
+
+- No line selected: `None`, as for every other attribute.
+- A `one` exact match whose line `allele_filter` rejects: `None`.
+- A region fold, or a `many` exact match, whose lines `allele_filter`
+  rejects in full: the aggregator answers for an empty key list, so
+  `count` answers `0`.
+
+```yaml
+- allele_score:
+    resource_id: my_score
+    mode: region
+    attributes:
+    - source: allele
+      aggregator: count   # the number of distinct alleles in the region
+```
+
 ### `allele_filter`
 
 `allele_filter` is an annotator-level parameter (not an attribute parameter).

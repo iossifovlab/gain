@@ -95,12 +95,15 @@ class AlleleScoreAnnotator(GenomicScoreAnnotatorBase):
     :func:`~gain.genomic_resources.genomic_scores.allele.allele_key`, so
     the two modes cannot drift.
 
-    An aggregator named on this attribute reduces nothing, in either
-    mode.  It is not a score: its value is the keys the annotator
-    synthesised, and ``region`` mode has always answered them beside the
-    reductions rather than as one of them.  Exact-match mode used to
-    differ -- the base folded its one-element list -- and stopped in
-    gain#1133, so the two modes now agree.
+    An aggregator named on this attribute reduces the allele keys, not
+    the lines, on every read path and in either mode: ``count`` counts
+    alleles, ``join`` joins the keys.  The keys are the annotator's own
+    values, so the annotator folds them itself
+    (:meth:`~gain.annotation.annotation_config.Attribute.fold`); without
+    an aggregator the value is the list of keys.  When no line is
+    selected the value is ``None``, as for every attribute; when a
+    folding read's lines are all rejected by ``allele_filter`` the
+    aggregator answers for an empty key list.
 
     ``allele_filter``
     -----------------
@@ -211,6 +214,7 @@ Non-``VCFAllele`` annotatables always use region aggregation.
         result["allele"] = AttributeSpec(
             source="allele",
             value_type="list",
+            folded_value_type="str",
             description="The allele in the format 'chr:pos:ref:alt'",
             is_default=False,
             internal_default=False,
@@ -245,9 +249,10 @@ Non-``VCFAllele`` annotatables always use region aggregation.
     ) -> AnnotatedValues:
         """Answer the only row of one allele on a ``one`` resource.
 
-        The row's values as they stand, nothing folded; ``None`` under
-        every attribute when no row holds the allele or the filter rejects
-        it.
+        The row's values as they stand; the ``allele`` attribute's one
+        key is folded when the attribute names an aggregator.  ``None``
+        under every attribute when no row holds the allele or the filter
+        rejects it.
         """
         values = self.allele_score.get_allele_scores_for_allele(
             annotatable.chrom,
@@ -267,13 +272,14 @@ Non-``VCFAllele`` annotatables always use region aggregation.
         if self.allele_attribute is not None:
             # The same helper the region read builds its keys with, so
             # the two paths spell an allele identically.
-            scores[self.allele_attribute.source] = [allele_key(
-                annotatable.chromosome, annotatable.position,
-                annotatable.reference, annotatable.alternative,
-                [scores[a] for a in self.attrs_to_include])]
+            scores[self.allele_attribute.source] = self._allele_value([
+                allele_key(
+                    annotatable.chromosome, annotatable.position,
+                    annotatable.reference, annotatable.alternative,
+                    [scores[a] for a in self.attrs_to_include])])
 
-        # Not ``fold_own_values``: the virtual ``allele`` attribute's
-        # key list is the answer, not something to reduce.
+        # Not ``fold_own_values``: the score values are the row's as they
+        # stand, and the allele keys are already folded above.
         return self._from_sources(scores)
 
     def _annotate_allele_rows(
@@ -312,7 +318,8 @@ Non-``VCFAllele`` annotatables always use region aggregation.
         different: records were there and the filter rejected them all,
         so each aggregator has answered for an empty selection and the
         keys are empty.  The values are paired back over the attributes
-        that built the queries, the ``allele`` attribute taking the keys.
+        that built the queries, the ``allele`` attribute taking the keys,
+        folded by its aggregator when it names one.
         """
         if aggregate is None:
             return self._empty_result()
@@ -320,7 +327,20 @@ Non-``VCFAllele`` annotatables always use region aggregation.
             aggregate.values, len(self._region_queries),
             resource_id=self.allele_score.resource_id,
             reduced=lambda attr: attr is not self.allele_attribute,
-            otherwise=lambda _attr: list(aggregate.allele_keys or ()))
+            otherwise=lambda _attr: self._allele_value(
+                list(aggregate.allele_keys or ())))
+
+    def _allele_value(self, keys: list[str]) -> Any:
+        """Answer the ``allele`` attribute for the selected allele keys.
+
+        The keys themselves when the attribute names no aggregator, else
+        the keys reduced by that aggregator.  An empty list is reduced
+        too: the aggregator answers for an empty selection.
+        """
+        attr = self.allele_attribute
+        if attr is None or attr.aggregator is None:
+            return keys
+        return attr.fold(keys)
 
     def _annotate_region(
         self, annotatable: Annotatable,

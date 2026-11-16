@@ -404,46 +404,143 @@ def test_allele_score_exact_match_allele_attribute(
     assert result["allele"] == ["1:10:A:G"]
 
 
-def test_the_allele_attribute_is_not_folded_in_either_mode(
+def _annotate_allele_attribute(
+    repo: GenomicResourceRepo,
+    annotatable: Annotatable,
+    *,
+    mode: str,
+    aggregator: str,
+    allele_filter: str | None = None,
+) -> object:
+    """Annotate with the ``allele`` attribute alone, under ``aggregator``."""
+    filter_line = (
+        f'allele_filter: "{allele_filter}"' if allele_filter else "")
+    pipeline = load_pipeline_from_yaml(
+        textwrap.dedent(f"""
+            - allele_score:
+                resource_id: allele_score
+                mode: {mode}
+                {filter_line}
+                attributes:
+                - source: allele
+                  aggregator: {aggregator}
+        """),
+        repo,
+    )
+    with pipeline.open() as work_pipeline:
+        result = work_pipeline.annotate(annotatable)
+    return result["allele"]
+
+
+@pytest.mark.parametrize(("mode", "expected"), [
+    ("allele", 1),
+    ("region", 3),
+])
+def test_count_on_the_allele_attribute_counts_the_allele_keys(
+    allele_score_repository: GenomicResourceRepo,
+    mode: str,
+    expected: int,
+) -> None:
+    """The exact match selects one line, the region fold all three."""
+    value = _annotate_allele_attribute(
+        allele_score_repository, VCFAllele("1", 10, "A", "G"),
+        mode=mode, aggregator="count")
+
+    assert value == expected
+
+
+@pytest.mark.parametrize(("mode", "expected"), [
+    ("allele", "1:10:A:G"),
+    ("region", "1:10:A:C;1:10:A:G;1:10:A:T"),
+])
+def test_join_on_the_allele_attribute_joins_the_allele_keys(
+    allele_score_repository: GenomicResourceRepo,
+    mode: str,
+    expected: str,
+) -> None:
+    """A bare string, the keys in the order the table serves the lines."""
+    value = _annotate_allele_attribute(
+        allele_score_repository, VCFAllele("1", 10, "A", "G"),
+        mode=mode, aggregator="join(;)")
+
+    assert value == expected
+
+
+@pytest.mark.parametrize(("mode", "expected"), [
+    ("allele", None),
+    ("region", 0),
+])
+def test_count_on_the_allele_attribute_with_every_line_filtered_out(
+    allele_score_repository: GenomicResourceRepo,
+    mode: str,
+    expected: int | None,
+) -> None:
+    """A ``one`` exact match rejected by the filter is no line: ``None``.
+
+    The region fold reduces lines, so ``count`` answers for an empty key
+    list.
+    """
+    value = _annotate_allele_attribute(
+        allele_score_repository, VCFAllele("1", 10, "A", "G"),
+        mode=mode, aggregator="count", allele_filter="freq > 2.0")
+
+    assert value == expected
+
+
+def test_count_on_the_allele_attribute_of_a_region_with_no_lines(
     allele_score_repository: GenomicResourceRepo,
 ) -> None:
-    """An aggregator on the virtual ``allele`` attribute reduces nothing.
+    value = _annotate_allele_attribute(
+        allele_score_repository, Region("1", 1, 5),
+        mode="region", aggregator="count")
 
-    The attribute is not a score and its value is the allele KEYS, which
-    the annotator synthesises rather than reads.  ``region`` mode has
-    never folded them -- they come back beside the reductions, not as one
-    of them -- and since gain#1133 ``allele`` mode does not either, so
-    the two modes agree.  Before that, the base folded the exact-match
-    branch's one-element list, and a ``join`` here answered a bare
-    string in one mode and a list in the other.
-    """
-    def annotate(mode: str) -> object:
-        pipeline = load_pipeline_from_yaml(
-            textwrap.dedent(f"""
+    assert value is None
+
+
+@pytest.mark.parametrize(("aggregator", "expected"), [
+    ("mode", "str"),
+    ("most_common(2)", "list"),
+])
+def test_value_type_of_the_allele_attribute_under_an_aggregator(
+    allele_score_repository: GenomicResourceRepo,
+    aggregator: str,
+    expected: str,
+) -> None:
+    """``mode`` answers one allele key; ``most_common`` declares a list."""
+    pipeline = load_pipeline_from_yaml(
+        textwrap.dedent(f"""
+            - allele_score:
+                resource_id: allele_score
+                attributes:
+                - source: allele
+                  aggregator: {aggregator}
+        """),
+        allele_score_repository,
+    )
+
+    attribute = pipeline.get_attribute_info("allele")
+
+    assert attribute is not None
+    assert attribute.get_value_type() == expected
+
+
+def test_the_pipeline_refuses_max_on_the_allele_attribute_at_load(
+    allele_score_repository: GenomicResourceRepo,
+) -> None:
+    with pytest.raises(
+        AnnotationConfigurationError,
+        match="Aggregator 'max' requires a numeric value type",
+    ):
+        load_pipeline_from_yaml(
+            textwrap.dedent("""
                 - allele_score:
                     resource_id: allele_score
-                    mode: {mode}
                     attributes:
-                    - source: freq
-                      name: allele_freq
-                      aggregator: max
                     - source: allele
-                      aggregator: join(;)
+                      aggregator: max
             """),
             allele_score_repository,
         )
-        with pipeline.open() as work_pipeline:
-            result: object = work_pipeline.annotate(
-                VCFAllele("1", 10, "A", "G"))
-        return result
-
-    # The two modes select different lines -- exact match takes one,
-    # region takes every line overlapping the position -- but neither
-    # joins what it selected into a string.
-    assert annotate("allele")["allele"] == ["1:10:A:G"]  # type: ignore[index]
-    assert sorted(annotate("region")["allele"]) == [  # type: ignore[index]
-        "1:10:A:C", "1:10:A:G", "1:10:A:T",
-    ]
 
 
 def test_allele_score_exact_match_allele_attribute_renamed(

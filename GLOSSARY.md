@@ -108,6 +108,17 @@ _Avoid_: region aggregation, region path, region mode (the `mode` setting of
 an allele score annotator picks the fold for every VCF allele and is not the
 fold itself)
 
+**Allele key**:
+The identity of one allele as annotation output spells it:
+`chrom:pos:ref:alt`, or a bare `chrom:pos` when the reference or the
+alternative is absent, followed by `:` and the values of the
+`include_attributes` scores when there are any. The `allele` attribute of an
+allele score annotator answers the distinct allele keys of the lines it
+selected: two lines of one allele give one key, unless an appended score
+differs between them. An aggregator on the `allele` attribute reduces these
+keys, not the lines, so `count` counts alleles and not rows.
+_Avoid_: allele id, variant key, allele string
+
 **Region length cutoff**:
 The longest annotatable that a score annotator folds. Past it the annotator
 declines the fold before it reads a record, logs a warning and answers no
