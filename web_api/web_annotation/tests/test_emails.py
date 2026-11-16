@@ -1,4 +1,4 @@
-# pylint: disable=C0114,C0116,W0212
+# pylint: disable=C0116
 from web_annotation.utils import (
     _create_confirmation_email,
     _create_reset_mail,
