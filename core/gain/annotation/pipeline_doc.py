@@ -116,7 +116,11 @@ class RepositoryRelativeAddresses:
         *probe* differs per address -- see the call sites -- but the test
         and the warning are decided once, here.
         """
-        if self.resource.get_repo_url() in url:
+        # Whole path segments: a sibling GRR at `<root>_encode` shares the
+        # prefix but not the root. The repo url of a `directory`
+        # definition can end in "/", which the resource urls do not repeat.
+        root = self.resource.get_repo_url().rstrip("/")
+        if url == root or url.startswith(f"{root}/"):
             return True
         logger.warning(
             "Referencing resource outside managed GRR %s", target.get_id(),
