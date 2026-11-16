@@ -887,8 +887,8 @@ def finish_scoredefs(
 
     The default depends on how the score is reduced, which is fixed by
     the resource type -- ``mean`` over a region of positions, ``max``
-    over the alleles at one, ``join(,)`` rather than ``list`` for a
-    fragment score's strings -- so it cannot be decided from a definition
+    over the alleles at one or over the fragments of a fragment score
+    -- so it cannot be decided from a definition
     alone.  ``default_aggregators`` is that decision, made by the caller:
     each score class passes its own ``DEFAULT_AGGREGATORS``.  Resolving it
     here rather than in ``GenomicScoreDef.__post_init__`` is what lets one

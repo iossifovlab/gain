@@ -147,7 +147,7 @@ def test_a_score_kind_must_state_its_own_record_rules(
         """A new score kind whose author stated no record rule."""
 
         DEFAULT_AGGREGATORS: ClassVar[dict[str, str | None]] = {
-            "float": "max", "int": "max", "str": "join(,)", "bool": None,
+            "float": "max", "int": "max", "str": "list", "bool": None,
         }
 
     kind = _KindStatingNothing(  # type: ignore[abstract]
