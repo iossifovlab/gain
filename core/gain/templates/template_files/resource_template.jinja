@@ -32,9 +32,15 @@
         margin-left: 8px;
       }
 
+      {# A label never wraps: the shared `th` rule breaks words anywhere,
+         and a bold "Description" is wider than the 80px this column
+         leaves for text (gain#2407), so the column widens instead.  A
+         label sits beside the first line of its value, however tall. #}
       #resource-table th {
         text-align: end;
         width: 100px;
+        white-space: nowrap;
+        vertical-align: top;
       }
 
       .modal {
