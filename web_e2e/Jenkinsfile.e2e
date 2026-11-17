@@ -515,19 +515,21 @@ pipeline {
                                 returnStatus: true,
                             ) == 0
                         }
-                        if (fastForwarded &&
-                                params.SUPERSEDE_ON_FAST_FORWARD == false) {
-                            echo(
-                                "COMMIT_SHA ${head} has been " +
-                                'fast-forwarded past on ' +
-                                "${params.BRANCH_NAME} (tip is now " +
-                                "${tip}). SUPERSEDE_ON_FAST_FORWARD is " +
-                                'false, so the suite runs anyway.'
-                            )
-                        } else if (fastForwarded) {
-                            markSuperseded(
-                                head, tip, 'has been fast-forwarded past on'
-                            )
+                        if (fastForwarded) {
+                            if (params.SUPERSEDE_ON_FAST_FORWARD == false) {
+                                echo(
+                                    "COMMIT_SHA ${head} has been " +
+                                    'fast-forwarded past on ' +
+                                    "${params.BRANCH_NAME} (tip is now " +
+                                    "${tip}). SUPERSEDE_ON_FAST_FORWARD " +
+                                    'is false, so the suite runs anyway.'
+                                )
+                            } else {
+                                markSuperseded(
+                                    head, tip,
+                                    'has been fast-forwarded past on'
+                                )
+                            }
                         }
                     }
                 }
