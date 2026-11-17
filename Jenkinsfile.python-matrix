@@ -181,9 +181,40 @@ pipeline {
         // 40 to match Jenkinsfile.nightly's retention — same
         // ~6-week window for trend analysis.
         buildDiscarder(logRotator(numToKeepStr: '40'))
+        // The explicit `Checkout` stage checks out COMMIT_SHA or the
+        // BRANCH_NAME tip. The implicit checkout would check out the
+        // tip first, a second commit in the log of a pinned run
+        // (gain#2412). Nothing before `Checkout` reads the workspace.
+        skipDefaultCheckout(true)
     }
 
     stages {
+        stage('Checkout') {
+            // COMMIT_SHA and BRANCH_NAME are declared only in the Job
+            // DSL (jenkins-jobs/python_matrix.groovy). Not shallow: a
+            // shallow fetch of refs/heads/* holds only branch tips, so a
+            // COMMIT_SHA that the branch has moved past would not
+            // resolve (gain#414). The timeout (minutes) covers a cold
+            // full clone.
+            steps {
+                script {
+                    String ref = params.COMMIT_SHA?.trim() ?:
+                        (params.BRANCH_NAME?.trim() ?: 'master')
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: ref]],
+                        userRemoteConfigs: [[
+                            url: 'https://github.com/iossifovlab/gain.git',
+                        ]],
+                        extensions: [[$class: 'CloneOption',
+                                      shallow: false,
+                                      noTags: true,
+                                      timeout: 60]],
+                    ])
+                }
+            }
+        }
+
         stage('Prepare workspace') {
             steps {
                 sh 'rm -rf reports && mkdir -p reports'

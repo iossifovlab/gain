@@ -118,6 +118,15 @@ pipeline {
                 'wheel artefacts from. Empty = use the ' +
                 'last successful build of UPSTREAM_PROJECT.',
         )
+        booleanParam(
+            name: 'SUPERSEDE_ON_FAST_FORWARD',
+            defaultValue: true,
+            description: 'Skip the suite (NOT_BUILT) when ' +
+                'BRANCH_NAME has fast-forwarded past ' +
+                'COMMIT_SHA. gain-nightly sends false: it ' +
+                'tests the commit of its master rebuild even ' +
+                'after a later push.',
+        )
     }
 
     options {
@@ -379,7 +388,18 @@ pipeline {
         // above has always treated manual runs the same way — and the
         // display name says `(superseded)` rather than failing, so the
         // reason is legible. To force a suite run against an old
-        // commit, point BRANCH_NAME at a ref whose tip IS that commit.
+        // commit, set SUPERSEDE_ON_FAST_FORWARD to false.
+        //
+        // gain-nightly sends SUPERSEDE_ON_FAST_FORWARD=false (gain#2412).
+        // It pins this job to the commit of its master rebuild, because
+        // `Deploy on pooh` deploys the images of that rebuild and its
+        // gate reads this job's result. A push during the nightly moves
+        // master past that commit, and the fast-forward detection would
+        // then skip the very suite the gate needs. A per-push master run
+        // sends the same other parameters as the nightly, so only this
+        // parameter tells the two runs apart. The false value turns off
+        // only the fast-forward detection: an orphaned SHA still goes
+        // through the `catch` above.
         stage('Checkout') {
             steps {
                 script {
@@ -495,7 +515,16 @@ pipeline {
                                 returnStatus: true,
                             ) == 0
                         }
-                        if (fastForwarded) {
+                        if (fastForwarded &&
+                                params.SUPERSEDE_ON_FAST_FORWARD == false) {
+                            echo(
+                                "COMMIT_SHA ${head} has been " +
+                                'fast-forwarded past on ' +
+                                "${params.BRANCH_NAME} (tip is now " +
+                                "${tip}). SUPERSEDE_ON_FAST_FORWARD is " +
+                                'false, so the suite runs anyway.'
+                            )
+                        } else if (fastForwarded) {
                             markSuperseded(
                                 head, tip, 'has been fast-forwarded past on'
                             )
@@ -660,7 +689,9 @@ EOF
             //      locally.
             //   3. Manual run with no upstream link — container-
             //      build the wheels from source, then build
-            //      prod images locally.
+            //      prod images locally. gain-nightly takes this
+            //      path too when its master rebuild was docs-only
+            //      and so pushed no images (gain#2412).
             // After either build path, the local images are tagged
             // as $BACKEND_IMAGE / $FRONTEND_IMAGE so the
             // compose-jenkins stack and `post.cleanup` don't have

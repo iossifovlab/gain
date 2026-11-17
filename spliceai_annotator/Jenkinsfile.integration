@@ -88,6 +88,11 @@ pipeline {
     options {
         timeout(time: 2, unit: 'HOURS')
         buildDiscarder(logRotator(numToKeepStr: '20'))
+        // The explicit `Checkout` stage is the only checkout the job
+        // depends on. The implicit one would check out the BRANCH_NAME
+        // tip first, a second commit in the log of a pinned run
+        // (gain#2412). Nothing before `Checkout` reads the workspace.
+        skipDefaultCheckout(true)
     }
 
     parameters {
@@ -180,10 +185,16 @@ pipeline {
                         userRemoteConfigs: [[
                             url: 'https://github.com/iossifovlab/gain.git',
                         ]],
+                        // No shallow clone (gain#2412): a shallow fetch
+                        // of refs/heads/* holds only branch tips, so a
+                        // pinned COMMIT_SHA that the branch has moved past
+                        // does not resolve (gain#414). The timeout
+                        // (minutes) covers the one cold full clone on an
+                        // agent that this job has never run on.
                         extensions: [[$class: 'CloneOption',
-                                      shallow: true,
+                                      shallow: false,
                                       noTags: true,
-                                      depth: 1]],
+                                      timeout: 60]],
                     ])
                 }
             }

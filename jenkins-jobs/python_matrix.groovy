@@ -5,11 +5,11 @@
 // The matrix re-runs each project's pytest suite under
 // Python 3.12, 3.13, and 3.14 to catch forward-compatibility
 // breakage on newer interpreters before migration time.
-// Triggered nightly from the gain-nightly orchestrator (no
-// parameters, so BRANCH_NAME defaults to master); can also be run
-// on demand against a branch. Sends a Zulip alert on failure (topic:
-// nightly) — same topic as the orchestrator so all nightly
-// breakage lands in one thread.
+// Triggered nightly from the gain-nightly orchestrator, with
+// BRANCH_NAME master and COMMIT_SHA the commit of its master rebuild
+// (gain#2412); can also be run on demand against a branch. Sends a
+// Zulip alert on failure (topic: nightly) — same topic as the
+// orchestrator so all nightly breakage lands in one thread.
 //
 // The job also carries the free-threaded (3.14t) readiness probe
 // added in #151. That stage is informational: it colours its own
@@ -41,6 +41,13 @@ pipelineJob('gain-python-matrix') {
             'master',
             'Branch to load Jenkinsfile.python-matrix from and test. ' +
             'Default master is what the gain-nightly trigger runs.',
+        )
+        stringParam(
+            'COMMIT_SHA',
+            '',
+            'Specific commit SHA to test (takes precedence over ' +
+            'BRANCH_NAME). Empty = use BRANCH_NAME HEAD. gain-nightly ' +
+            'passes the commit of its master rebuild.',
         )
     }
 

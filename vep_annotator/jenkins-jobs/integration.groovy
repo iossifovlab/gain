@@ -29,6 +29,13 @@ pipelineJob('gain-vep-integration') {
 
     parameters {
         stringParam(
+            'COMMIT_SHA',
+            '',
+            'Commit of master to test. Empty = the master tip. Pass the ' +
+            'commit of UPSTREAM_BUILD, so that the recipe and the wheel ' +
+            'come from one commit.',
+        )
+        stringParam(
             'UPSTREAM_PROJECT',
             '',
             'Root gain build job whose archived vep wheel and gain-core .conda ' +
