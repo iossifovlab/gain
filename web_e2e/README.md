@@ -45,14 +45,16 @@ sides.
 
 ## Counts the specs pin
 
-The suite runs against the node-local grr-sync mirror of the live
-`iossifovlab/grr`, so a few assertions pin a *count* that belongs to that
-GRR's inventory, not to the UI: how many resources a search matches, how
+The suite runs against the node-local grr-sync mirrors of the live
+`iossifovlab/grr` and `grr_encode`, read as one group
+(`grr-definition-dir.yaml`, the GRR shape of production), so a few
+assertions pin a *count* that belongs to that group's inventory, not to
+the UI: how many resources a search matches, how
 many `genome` resources fill a selector, how many `*clinical*` pipelines a
 dropdown offers. Those literals are kept on purpose and move the day the
 GRR does. Each goes through `expectInventoryCountText` /
 `expectInventoryOptionCount` in `utils.ts`, whose failure starts with
-`GRR inventory drift` and names what to count against the mirror; the
+`GRR inventory drift` and names what to count against the mirrors; the
 helpers' docstring says which failures are drift and which stay UI
 failures, and `tests/inventory-pin.spec.ts` pins that contract. A new
 inventory pin goes through the same helpers. The unfiltered resource

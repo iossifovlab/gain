@@ -52,12 +52,12 @@ ENV PATH=/opt/gpf/bin:$PATH \
     DJANGO_SETTINGS_MODULE=web_annotation.settings_daphne
 
 # GRR config files (env var GRR_DEFINITION_FILE selects which one
-# each compose file consumes): grr-definition-dir.yaml is the prod
-# group (main GRR + grr_encode on CSHL's on-host GRR), and
-# grr-definition.yaml is the single main-GRR repo the Jenkins e2e
-# stack selects -- it now reads a node-local grr-sync directory tree
-# (mounted read-only at /grr), the same single-repo shape it used
-# pre-#271, instead of the interim http+cache GRR.
+# each compose file consumes): grr-definition-dir.yaml is the group
+# of the main GRR (/grr) and grr_encode (/grr_encode). Production
+# reads it from CSHL's on-host GRR, and the Jenkins e2e stack reads
+# it from the node-local grr-sync trees, mounted read-only
+# (gain#2415). grr-definition.yaml is the main GRR alone, as a
+# single directory repo at /grr; no compose file of gain selects it.
 COPY web_api/scripts/grr-definition.yaml \
      web_api/scripts/grr-definition-dir.yaml /
 

@@ -154,8 +154,9 @@ async function withInventoryDrift(
     throw new Error(
       `${GRR_INVENTORY_DRIFT}: ${what} -- pinned ${pinned}, received ${received}. ` +
       'This number is a property of the GRR the suite reads (the node-local ' +
-      'grr-sync mirror of iossifovlab/grr, synced daily), not of the UI. ' +
-      'Verify the new value against the mirror\'s inventory, then re-baseline ' +
+      'grr-sync mirrors of iossifovlab/grr and grr_encode, synced daily), not ' +
+      'of the UI. Verify the new value against the inventory of both mirrors, ' +
+      'then re-baseline ' +
       `the literal in this spec -- this is not a UI bug.\n\n${detail}`
     );
   }

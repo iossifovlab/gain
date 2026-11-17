@@ -84,8 +84,8 @@ test.describe('Single annotation annotator modal', () => {
     await singleAnnotation.infoIcons.nth(1).click();
     await page.getByRole('link', { name: 'hg38/variant_frequencies/gnomAD_4.1.0/exomes/ALL' }).click();
     // The host comes from the `public_url` of the GRR definition the
-    // stack mounts (`/grr-definition.yaml`), not from a setting baked
-    // into the image -- see gain#838.
+    // stack mounts (`/grr-definition-dir.yaml`, child `grr.sync`), not
+    // from a setting baked into the image -- see gain#838.
     await expect(page.getByRole('link', { name: 'hg38/variant_frequencies/gnomAD_4.1.0/exomes/ALL' })).toHaveAttribute(
       'href', 'https://grr.iossifovlab.com/hg38/variant_frequencies/gnomAD_4.1.0/exomes/ALL/index.html'
     );

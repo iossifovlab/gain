@@ -69,9 +69,10 @@ services:
         condition: service_healthy
     volumes:
       - ${GRR_ROOT:?GRR_ROOT must point at the grr-sync root}/grr:/grr:ro
+      - ${GRR_ROOT:?GRR_ROOT must point at the grr-sync root}/grr_encode:/grr_encode:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_daphne
-      GRR_DEFINITION_FILE: /grr-definition.yaml
+      GRR_DEFINITION_FILE: /grr-definition-dir.yaml
       HOME: /tmp
       # Non-root: settings_default.py creates DATA_STORAGE_DIR at
       # import time, and its default lives inside site-packages,
@@ -106,11 +107,12 @@ services:
         condition: service_healthy
     volumes:
       - ${GRR_ROOT:?GRR_ROOT must point at the grr-sync root}/grr:/grr:ro
+      - ${GRR_ROOT:?GRR_ROOT must point at the grr-sync root}/grr_encode:/grr_encode:ro
       - ../web_api/admin_panel:/web_api_src/admin_panel:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
       PYTHONPATH: /web_api_src
-      GRR_DEFINITION_FILE: /grr-definition.yaml
+      GRR_DEFINITION_FILE: /grr-definition-dir.yaml
       HOME: /tmp
       # Non-root: settings_default.py creates DATA_STORAGE_DIR at
       # import time, and its default lives inside site-packages,
@@ -156,19 +158,24 @@ services:
     volumes:
       - ./gpfwa-data:/data
       - ./gpfwa-logs:/logs
-      # Node-local, read-only main GRR published by grr-sync (atomic
+      # Node-local, read-only GRR trees published by grr-sync (atomic
       # mode, iossifovlab/grr-sync#20) and provisioned per agent by
       # seqpipe/infra#71. Replaces the dead /mnt/cephfs/seqpipe/grr NFS
       # bind AND the interim http+cache GRR. GRR_ROOT is the node-local
       # grr-sync root (per-agent: /tank/grr on pooh, /data/grr on
-      # piglet+eyoree), resolved in Jenkinsfile.e2e. This is the same
-      # single-repo grr.sync mount the e2e stack used pre-#271 (only
-      # /grr; grr-definition.yaml, NOT the prod grr+grr_encode group).
+      # piglet+eyoree), resolved in Jenkinsfile.e2e. The stack mounts
+      # /grr and /grr_encode and reads grr-definition-dir.yaml: the
+      # group `local` of grr.sync and grr_encode.sync, the same GRR
+      # shape as production (gain#2415). Every service that builds a
+      # GRR carries both binds and the group definition: a service
+      # with the group but no /grr_encode bind would fail its GRR
+      # build.
       - ${GRR_ROOT:?GRR_ROOT must point at the grr-sync root}/grr:/grr:ro
+      - ${GRR_ROOT:?GRR_ROOT must point at the grr-sync root}/grr_encode:/grr_encode:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_daphne
       GPFWA_EMAIL_HOST: mail
-      GRR_DEFINITION_FILE: /grr-definition.yaml
+      GRR_DEFINITION_FILE: /grr-definition-dir.yaml
       # The image has no passwd entry for the agent uid, so HOME would
       # default to `/` (root-owned, unwritable). Point it somewhere
       # writable for any library that reaches for a dotfile cache.
@@ -208,11 +215,12 @@ services:
         condition: service_completed_successfully
     volumes:
       - ${GRR_ROOT:?GRR_ROOT must point at the grr-sync root}/grr:/grr:ro
+      - ${GRR_ROOT:?GRR_ROOT must point at the grr-sync root}/grr_encode:/grr_encode:ro
       - ../web_api/admin_panel:/web_api_src/admin_panel:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
       PYTHONPATH: /web_api_src
-      GRR_DEFINITION_FILE: /grr-definition.yaml
+      GRR_DEFINITION_FILE: /grr-definition-dir.yaml
       HOME: /tmp
       # Non-root: settings_default.py creates DATA_STORAGE_DIR at
       # import time, and its default lives inside site-packages,
@@ -258,12 +266,13 @@ services:
       - ./gpfwa-data:/data
       - ./gpfwa-logs:/logs
       - ${GRR_ROOT:?GRR_ROOT must point at the grr-sync root}/grr:/grr:ro
+      - ${GRR_ROOT:?GRR_ROOT must point at the grr-sync root}/grr_encode:/grr_encode:ro
       - ../web_api/admin_panel:/web_api_src/admin_panel:ro
     environment:
       DJANGO_SETTINGS_MODULE: web_annotation.settings_e2e
       PYTHONPATH: /web_api_src
       GPFWA_EMAIL_HOST: mail
-      GRR_DEFINITION_FILE: /grr-definition.yaml
+      GRR_DEFINITION_FILE: /grr-definition-dir.yaml
       HOME: /tmp
       GPFWA_DB_NAME: gpfwa
       GPFWA_DB_USER: postgres
@@ -294,6 +303,16 @@ services:
     # 45.9s for the whole hg38 pipeline). iossifovlab/grr#22 tracks
     # pre-converting it to the `default` format like every other
     # gene-models resource; once that lands this budget can drop.
+    #
+    # hg38_demo_pipeline gets its own budget too. Only the
+    # demo-pipeline spec loads it, and its last annotator expands the
+    # wildcard `TF*[target="CREB*"]` over the 7922 grr_encode
+    # resources (gain#2415). A cold build inside the request of the
+    # spec risks the 502 above. In gain-web-e2e #4410, the first green
+    # run, backend-e2e went from `starting` (11:15:54) to `healthy`
+    # (11:16:46) in about 52s for all three probes together; the log
+    # does not time the demo build alone. So 52s bounds it, and 300s
+    # keeps a margin of more than 5x over that bound.
     #
     # start_period stays generous as a safety budget for the first
     # pipeline build. The GRR is now node-local directory reads
@@ -334,9 +353,10 @@ services:
         rc=$$?; cat /tmp/probe.body; echo; return $$rc;
         };
         probe 120 pipeline/hg38_clinical_annotation &&
-        probe 300 pipeline/hs1_clinical_annotation
+        probe 300 pipeline/hs1_clinical_annotation &&
+        probe 300 pipeline/hg38_demo_pipeline
       interval: 10s
-      timeout: 425s
+      timeout: 750s
       retries: 3
       start_period: 3600s
 
