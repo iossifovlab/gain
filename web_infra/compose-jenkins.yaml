@@ -308,7 +308,11 @@ services:
     # demo-pipeline spec loads it, and its last annotator expands the
     # wildcard `TF*[target="CREB*"]` over the 7922 grr_encode
     # resources (gain#2415). A cold build inside the request of the
-    # spec risks the 502 above.
+    # spec risks the 502 above. In gain-web-e2e #4410, the first green
+    # run, backend-e2e went from `starting` (11:15:54) to `healthy`
+    # (11:16:46) in about 52s for all three probes together; the log
+    # does not time the demo build alone. So 52s bounds it, and 300s
+    # keeps a margin of more than 5x over that bound.
     #
     # start_period stays generous as a safety budget for the first
     # pipeline build. The GRR is now node-local directory reads
