@@ -87,8 +87,10 @@ def zulipAlert(String status, String emoji) {
 // the images of that build, so its gate must judge that commit, not the
 // master tip of each job's own start time. Both values or neither: when
 // `Rebuild master` failed to report one of them, every downstream gets
-// empty strings and keeps its unpinned behaviour. The nightly is already
-// FAILURE in that case. A null parameter value would throw instead of
+// empty strings and keeps its unpinned behaviour. A failed rebuild makes
+// the nightly FAILURE already. A failed read of the build variables after
+// a successful rebuild does not: the nightly can then stay green while the
+// downstreams run unpinned. A null parameter value would throw instead of
 // running, hence the `?: ''` guards.
 Map rebuildPin() {
     String sha = env.MASTER_REBUILD_SHA ?: ''

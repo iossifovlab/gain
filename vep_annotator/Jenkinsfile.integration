@@ -13,7 +13,9 @@
 //
 // Expected Jenkins job setup:
 //   - Script path: vep_annotator/Jenkinsfile.integration
-//   - Point at any branch that carries the vep_annotator sub-project.
+//   - The script path loads from master. The `Checkout` stage tests
+//     COMMIT_SHA when it is set, otherwise the master tip, whatever
+//     branch the job's SCM names.
 //
 // DinD path alignment: every path that can end up as a Docker volume
 // source (pytest tmp_path, the VEP cache) is bind-mounted at the same

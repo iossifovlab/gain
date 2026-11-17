@@ -161,8 +161,9 @@ pipeline {
             steps {
                 script {
                     // Replace the default '#42' with '#42 <branch>' (plus
-                    // '@<short-sha>' on manual COMMIT_SHA pins) so the build
-                    // list makes it obvious which branch a build is for.
+                    // '@<short-sha>' whenever COMMIT_SHA is set: per-push,
+                    // nightly and manual pins) so the build list makes it
+                    // obvious which branch a build is for.
                     String label = params.BRANCH_NAME
                     if (params.COMMIT_SHA?.trim()) {
                         label += " @ ${params.COMMIT_SHA.take(7)}"
@@ -337,8 +338,9 @@ pipeline {
             // root pipeline triggers this job from its final stages and
             // only archives in `post`, so the integration tiers above are
             // the margin for the parent to finish (the gain-conda-
-            // integration precedent). Manual and nightly runs, with no
-            // UPSTREAM_BUILD, take the last successful build of
+            // integration precedent). gain-nightly passes the build and
+            // the commit of its master rebuild (gain#2412). Manual runs,
+            // with no UPSTREAM_BUILD, take the last successful build of
             // iossifovlab/gain/<BRANCH_NAME>.
             steps {
                 script {
