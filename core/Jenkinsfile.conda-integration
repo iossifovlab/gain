@@ -316,6 +316,11 @@ pipeline {
         // Only a MOVED BRANCH justifies that. If the tip is still our SHA then
         // the checkout failed for some other reason (network, disk,
         // credentials) and the build must stay red — so rethrow.
+        //
+        // master is never force-pushed, so a COMMIT_SHA on master is never
+        // superseded: a moved master tip is the usual case for the nightly's
+        // pinned runs (gain#2411), not evidence of an orphaned commit. On
+        // master every checkout failure is real — rethrow.
         stage('Checkout') {
             steps {
                 script {
@@ -358,7 +363,8 @@ pipeline {
                                     '| cut -f1',
                             returnStdout: true,
                         ).trim()
-                        if (!sha || tip == sha) {
+                        if (!sha || tip == sha ||
+                                params.BRANCH_NAME == 'master') {
                             throw err
                         }
                         env.SUPERSEDED = 'true'
@@ -482,6 +488,58 @@ pipeline {
                              "in dist/conda/, found $n" >&2
                         exit 1
                     fi
+                '''
+            }
+        }
+
+        // The tests and the package must come from one commit (gain#2411).
+        // Without COMMIT_SHA, `Checkout` takes the branch tip of this
+        // build's start, and a commit merged after the upstream build makes
+        // the tests newer than the .conda (gain-nightly #238). The package
+        // name carries its commit as `+g<short-sha>`, so a mismatch with
+        // HEAD fails the build here, before the tests.
+        //
+        // A tagged commit gives a name without `+g` (`2026.11.1`, or
+        // `2026.11.1+d<date>` for a dirty tree). `Checkout` clones with
+        // `noTags: true`, so the tag cannot be compared: warn and go on.
+        // The guard keys on `+g`, not `+`, because of that `+d`.
+        stage('Check package commit') {
+            when { expression { env.SUPERSEDED != 'true' } }
+            steps {
+                sh '''
+                    PKG_NAME="$(basename dist/conda/gain-core-*.conda)"
+                    HEAD_SHA="$(git rev-parse HEAD)"
+
+                    case "$PKG_NAME" in
+                        *+g*)
+                            pkg_sha="${PKG_NAME#*+g}"
+                            pkg_sha="${pkg_sha%%[!0-9a-f]*}"
+                            if [ -z "$pkg_sha" ]; then
+                                echo "ERROR: no commit after +g in" \
+                                     "$PKG_NAME" >&2
+                                exit 1
+                            fi
+                            case "$HEAD_SHA" in
+                                "$pkg_sha"*)
+                                    echo "OK: package commit $pkg_sha" \
+                                         "matches HEAD $HEAD_SHA"
+                                    ;;
+                                *)
+                                    echo "ERROR: package $PKG_NAME is" \
+                                         "commit $pkg_sha, but the" \
+                                         "checkout is HEAD $HEAD_SHA." \
+                                         "Pass COMMIT_SHA of the upstream" \
+                                         "build." >&2
+                                    exit 1
+                                    ;;
+                            esac
+                            ;;
+                        *)
+                            echo "WARNING: package $PKG_NAME names no" \
+                                 "+g<sha> commit (a tagged build)." \
+                                 "Cannot compare it with HEAD $HEAD_SHA."
+                            ;;
+                    esac
                 '''
             }
         }
