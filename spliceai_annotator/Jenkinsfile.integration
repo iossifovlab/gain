@@ -191,7 +191,11 @@ pipeline {
                         // pinned COMMIT_SHA that the branch has moved past
                         // does not resolve (gain#414). The timeout
                         // (minutes) covers the one cold full clone on an
-                        // agent that this job has never run on.
+                        // agent that this job has never run on. The git
+                        // plugin does not unshallow a workspace that an
+                        // older depth-1 run left shallow: a commit older
+                        // than that shallow boundary still fails to resolve
+                        // until the agent workspace is wiped.
                         extensions: [[$class: 'CloneOption',
                                       shallow: false,
                                       noTags: true,

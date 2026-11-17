@@ -64,6 +64,10 @@ cron run on `master` and a manual run against a branch — takes the parameter,
 defaulting to `master`: `gain-python-matrix` was moved across for exactly this
 in #1816, so a change to its matrix can be run before it merges, while the
 parameterless `gain-nightly` trigger still runs it against `master`.
+(Note, 2026-11: since #2412 the `gain-nightly` trigger is no longer
+parameterless. It sends `BRANCH_NAME=master` and pins `COMMIT_SHA` to the
+commit of the master rebuild. The definition still loads from `master`, so the
+trust conclusion is unchanged.)
 
 ### Why it was scoped this way
 
