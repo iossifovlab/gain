@@ -82,6 +82,25 @@ def zulipAlert(String status, String emoji) {
         "${status}${suffix}"
 }
 
+// The commit and the build number of the master rebuild, for the
+// validation downstreams to pin to (gain#2412). `Deploy on pooh` deploys
+// the images of that build, so its gate must judge that commit, not the
+// master tip of each job's own start time. Both values or neither: when
+// `Rebuild master` failed to report one of them, every downstream gets
+// empty strings and keeps its unpinned behaviour. A failed rebuild makes
+// the nightly FAILURE already. A failed read of the build variables after
+// a successful rebuild does not: the nightly can then stay green while the
+// downstreams run unpinned. A null parameter value would throw instead of
+// running, hence the `?: ''` guards.
+Map rebuildPin() {
+    String sha = env.MASTER_REBUILD_SHA ?: ''
+    String number = env.MASTER_REBUILD_NUMBER ?: ''
+    if (!sha || !number) {
+        return [sha: '', build: '']
+    }
+    return [sha: sha, build: number]
+}
+
 pipeline {
     // builder = general build agents; deploy targets don't carry it
     agent { label 'builder' }
@@ -162,12 +181,13 @@ pipeline {
                             env.MASTER_REBUILD_DOCS_ONLY = 'unknown'
                         }
                         // The commit the rebuild built and packaged
-                        // (gain#2411). The pinned gain-conda-integration
-                        // runs check it out instead of the master tip of
-                        // their own start time, which can be a later
-                        // commit than the .conda they copy. Empty on a
-                        // failed read: the job's package-commit guard
-                        // then decides.
+                        // (gain#2411). The validation downstreams check
+                        // it out instead of the master tip of their own
+                        // start time, which can be a later commit than
+                        // the artefacts and images they use (gain#2412).
+                        // Empty on a failed read: the downstreams then
+                        // run unpinned, and the package-commit guard of
+                        // gain-conda-integration decides there.
                         try {
                             env.MASTER_REBUILD_SHA =
                                 rebuild.buildVariables?.get(
@@ -184,14 +204,50 @@ pipeline {
         }
 
         stage('Run gain-web-e2e') {
+            // Pinned to the rebuild (gain#2412): the suite runs against
+            // the images that `Deploy on pooh` deploys. With
+            // UPSTREAM_BUILD set on master, the job pulls
+            // registry.seqpipe.org/gain-web-api:<N> and gain-web-ui:<N>.
+            // A docs-only rebuild pushed no images, so the job then gets
+            // no upstream build and builds its images from source at the
+            // pinned commit. 'unknown' pulls, the same fail-open reading
+            // as the deploy gate.
+            //
+            // SUPERSEDE_ON_FAST_FORWARD=false: a push during the nightly
+            // moves master past the pinned commit, and the job would
+            // otherwise skip its suite as superseded (gain#1362).
             steps {
                 catchError(buildResult: 'FAILURE',
                            stageResult: 'FAILURE') {
-                    build(
-                        job: '/gain-web-e2e',
-                        wait: true,
-                        propagate: true,
-                    )
+                    script {
+                        Map pin = rebuildPin()
+                        boolean pull = pin.build &&
+                            env.MASTER_REBUILD_DOCS_ONLY != 'true'
+                        List e2eParams = [
+                            string(name: 'BRANCH_NAME', value: 'master'),
+                            string(name: 'COMMIT_SHA', value: pin.sha),
+                            string(
+                                name: 'UPSTREAM_BUILD',
+                                value: pull ? pin.build : '',
+                            ),
+                            booleanParam(
+                                name: 'SUPERSEDE_ON_FAST_FORWARD',
+                                value: false,
+                            ),
+                        ]
+                        if (pull) {
+                            e2eParams << string(
+                                name: 'UPSTREAM_PROJECT',
+                                value: 'iossifovlab/gain/master',
+                            )
+                        }
+                        build(
+                            job: '/gain-web-e2e',
+                            wait: true,
+                            propagate: true,
+                            parameters: e2eParams,
+                        )
+                    }
                 }
             }
         }
@@ -200,11 +256,28 @@ pipeline {
             steps {
                 catchError(buildResult: 'FAILURE',
                            stageResult: 'FAILURE') {
-                    build(
-                        job: '/gain-vep-integration',
-                        wait: true,
-                        propagate: true,
-                    )
+                    script {
+                        // Pinned to the rebuild (gain#2412): the checkout,
+                        // the vep wheel and the gain-core .conda all come
+                        // from one commit.
+                        Map pin = rebuildPin()
+                        build(
+                            job: '/gain-vep-integration',
+                            wait: true,
+                            propagate: true,
+                            parameters: [
+                                string(name: 'COMMIT_SHA', value: pin.sha),
+                                string(
+                                    name: 'UPSTREAM_PROJECT',
+                                    value: 'iossifovlab/gain/master',
+                                ),
+                                string(
+                                    name: 'UPSTREAM_BUILD',
+                                    value: pin.build,
+                                ),
+                            ],
+                        )
+                    }
                 }
             }
         }
@@ -217,11 +290,28 @@ pipeline {
             steps {
                 catchError(buildResult: 'FAILURE',
                            stageResult: 'FAILURE') {
-                    build(
-                        job: '/gain-spliceai-integration',
-                        wait: true,
-                        propagate: true,
-                    )
+                    script {
+                        // Pinned to the rebuild (gain#2412), the same as
+                        // gain-vep-integration above.
+                        Map pin = rebuildPin()
+                        build(
+                            job: '/gain-spliceai-integration',
+                            wait: true,
+                            propagate: true,
+                            parameters: [
+                                string(name: 'BRANCH_NAME', value: 'master'),
+                                string(name: 'COMMIT_SHA', value: pin.sha),
+                                string(
+                                    name: 'UPSTREAM_PROJECT',
+                                    value: 'iossifovlab/gain/master',
+                                ),
+                                string(
+                                    name: 'UPSTREAM_BUILD',
+                                    value: pin.build,
+                                ),
+                            ],
+                        )
+                    }
                 }
             }
         }
@@ -232,11 +322,20 @@ pipeline {
             steps {
                 catchError(buildResult: 'FAILURE',
                            stageResult: 'FAILURE') {
-                    build(
-                        job: '/gain-python-matrix',
-                        wait: true,
-                        propagate: true,
-                    )
+                    script {
+                        // Pinned to the rebuild commit (gain#2412). The
+                        // job builds its images from that checkout.
+                        Map pin = rebuildPin()
+                        build(
+                            job: '/gain-python-matrix',
+                            wait: true,
+                            propagate: true,
+                            parameters: [
+                                string(name: 'BRANCH_NAME', value: 'master'),
+                                string(name: 'COMMIT_SHA', value: pin.sha),
+                            ],
+                        )
+                    }
                 }
             }
         }

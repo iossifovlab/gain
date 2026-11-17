@@ -13,7 +13,9 @@
 //
 // Expected Jenkins job setup:
 //   - Script path: vep_annotator/Jenkinsfile.integration
-//   - Point at any branch that carries the vep_annotator sub-project.
+//   - The script path loads from master. The `Checkout` stage tests
+//     COMMIT_SHA when it is set, otherwise the master tip, whatever
+//     branch the job's SCM names.
 //
 // DinD path alignment: every path that can end up as a Docker volume
 // source (pytest tmp_path, the VEP cache) is bind-mounted at the same
@@ -67,9 +69,21 @@ pipeline {
         // The shared cache dir + the single ensembl-vep image pull can
         // race across concurrent runs; serialise builds on the agent.
         disableConcurrentBuilds()
+        // The explicit `Checkout` stage checks out COMMIT_SHA or the
+        // master tip. The implicit checkout would check out the master
+        // tip first, a second commit in the log of a pinned run
+        // (gain#2412). Nothing before `Checkout` reads the workspace.
+        skipDefaultCheckout(true)
     }
 
     parameters {
+        string(
+            name: 'COMMIT_SHA',
+            defaultValue: '',
+            description: 'Commit of master to test. Empty = the master ' +
+                'tip. Pass the commit of UPSTREAM_BUILD, so that the ' +
+                'recipe and the wheel come from one commit.',
+        )
         string(
             name: 'UPSTREAM_PROJECT',
             defaultValue: '',
@@ -120,6 +134,31 @@ pipeline {
     }
 
     stages {
+        stage('Checkout') {
+            // The job has no BRANCH_NAME: its Job DSL loads this
+            // Jenkinsfile from master, and the source under test is
+            // master or a commit of it. Not shallow: a shallow fetch of
+            // refs/heads/* holds only branch tips, so a COMMIT_SHA that
+            // master has moved past would not resolve (gain#414). The
+            // timeout (minutes) covers a cold full clone.
+            steps {
+                script {
+                    String ref = params.COMMIT_SHA?.trim() ?: 'master'
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: ref]],
+                        userRemoteConfigs: [[
+                            url: 'https://github.com/iossifovlab/gain.git',
+                        ]],
+                        extensions: [[$class: 'CloneOption',
+                                      shallow: false,
+                                      noTags: true,
+                                      timeout: 60]],
+                    ])
+                }
+            }
+        }
+
         stage('Prepare workspace') {
             steps {
                 sh 'rm -rf reports && mkdir -p reports/integration'
@@ -193,9 +232,11 @@ pipeline {
             // pipeline triggers this job from its final stages and only
             // archives in `post`, so the stages above are the margin for
             // the parent to finish (the gain-conda-integration precedent).
-            // Nightly and manual runs, with no UPSTREAM_BUILD, take the last
-            // successful iossifovlab/gain/master build. The recipe comes
-            // from this job's master checkout, the wheel from that build.
+            // gain-nightly passes the build and the commit of its master
+            // rebuild (gain#2412). The cron run and manual runs, with no
+            // UPSTREAM_BUILD, take the last successful
+            // iossifovlab/gain/master build. The recipe then comes from
+            // the master tip, the wheel from that build.
             steps {
                 script {
                     String project = params.UPSTREAM_PROJECT?.trim() ?:

@@ -1789,6 +1789,10 @@ pipeline {
                                 job: '/gain-vep-integration',
                                 parameters: [
                                     string(
+                                        name: 'COMMIT_SHA',
+                                        value: env.GIT_COMMIT ?: '',
+                                    ),
+                                    string(
                                         name: 'UPSTREAM_PROJECT',
                                         value: env.JOB_NAME,
                                     ),

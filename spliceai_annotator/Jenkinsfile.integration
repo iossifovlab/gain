@@ -88,6 +88,11 @@ pipeline {
     options {
         timeout(time: 2, unit: 'HOURS')
         buildDiscarder(logRotator(numToKeepStr: '20'))
+        // The explicit `Checkout` stage is the only checkout the job
+        // depends on. The implicit one would check out the BRANCH_NAME
+        // tip first, a second commit in the log of a pinned run
+        // (gain#2412). Nothing before `Checkout` reads the workspace.
+        skipDefaultCheckout(true)
     }
 
     parameters {
@@ -156,8 +161,9 @@ pipeline {
             steps {
                 script {
                     // Replace the default '#42' with '#42 <branch>' (plus
-                    // '@<short-sha>' on manual COMMIT_SHA pins) so the build
-                    // list makes it obvious which branch a build is for.
+                    // '@<short-sha>' whenever COMMIT_SHA is set: per-push,
+                    // nightly and manual pins) so the build list makes it
+                    // obvious which branch a build is for.
                     String label = params.BRANCH_NAME
                     if (params.COMMIT_SHA?.trim()) {
                         label += " @ ${params.COMMIT_SHA.take(7)}"
@@ -180,10 +186,20 @@ pipeline {
                         userRemoteConfigs: [[
                             url: 'https://github.com/iossifovlab/gain.git',
                         ]],
+                        // No shallow clone (gain#2412): a shallow fetch
+                        // of refs/heads/* holds only branch tips, so a
+                        // pinned COMMIT_SHA that the branch has moved past
+                        // does not resolve (gain#414). The timeout
+                        // (minutes) covers the one cold full clone on an
+                        // agent that this job has never run on. The git
+                        // plugin does not unshallow a workspace that an
+                        // older depth-1 run left shallow: a commit older
+                        // than that shallow boundary still fails to resolve
+                        // until the agent workspace is wiped.
                         extensions: [[$class: 'CloneOption',
-                                      shallow: true,
+                                      shallow: false,
                                       noTags: true,
-                                      depth: 1]],
+                                      timeout: 60]],
                     ])
                 }
             }
@@ -326,9 +342,12 @@ pipeline {
             // root pipeline triggers this job from its final stages and
             // only archives in `post`, so the integration tiers above are
             // the margin for the parent to finish (the gain-conda-
-            // integration precedent). Manual and nightly runs, with no
-            // UPSTREAM_BUILD, take the last successful build of
-            // iossifovlab/gain/<BRANCH_NAME>.
+            // integration precedent). gain-nightly passes the build and
+            // the commit of its master rebuild (gain#2412). A run with an
+            // empty UPSTREAM_BUILD takes the last successful build of
+            // iossifovlab/gain/<BRANCH_NAME>: a manual run, or a nightly
+            // run whose rebuild pin is empty (rebuildPin() in
+            // Jenkinsfile.nightly).
             steps {
                 script {
                     String project = params.UPSTREAM_PROJECT?.trim() ?:

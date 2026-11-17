@@ -60,6 +60,14 @@ pipelineJob('gain-web-e2e') {
             'from. Empty = use the last successful build of ' +
             'UPSTREAM_PROJECT.',
         )
+        booleanParam(
+            'SUPERSEDE_ON_FAST_FORWARD',
+            true,
+            'Skip the suite (NOT_BUILT) when BRANCH_NAME has ' +
+            'fast-forwarded past COMMIT_SHA. gain-nightly sends ' +
+            'false: it tests the commit of its master rebuild ' +
+            'even after a later push.',
+        )
     }
 
     definition {
