@@ -23,6 +23,8 @@ test.describe('Demo pipeline', () => {
     await expect(editor.pipelineInput).toHaveValue('pipeline/hg38_demo_pipeline');
     await expect(page.locator('.loaded-editor')).toBeVisible();
     await expect(page.locator('.invalid-config')).toHaveCount(0);
-    await expect(editor.errorMessage).not.toContainText('Invalid configuration');
+    // A loaded pipeline renders no error element at all, so count the
+    // matches instead of reading the text of an element that is absent.
+    await expect(editor.errorMessage.filter({ hasText: 'Invalid configuration' })).toHaveCount(0);
   });
 });
