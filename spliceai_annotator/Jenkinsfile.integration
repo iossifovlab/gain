@@ -339,9 +339,11 @@ pipeline {
             // only archives in `post`, so the integration tiers above are
             // the margin for the parent to finish (the gain-conda-
             // integration precedent). gain-nightly passes the build and
-            // the commit of its master rebuild (gain#2412). Manual runs,
-            // with no UPSTREAM_BUILD, take the last successful build of
-            // iossifovlab/gain/<BRANCH_NAME>.
+            // the commit of its master rebuild (gain#2412). A run with an
+            // empty UPSTREAM_BUILD takes the last successful build of
+            // iossifovlab/gain/<BRANCH_NAME>: a manual run, or a nightly
+            // run whose rebuild pin is empty (rebuildPin() in
+            // Jenkinsfile.nightly).
             steps {
                 script {
                     String project = params.UPSTREAM_PROJECT?.trim() ?:
