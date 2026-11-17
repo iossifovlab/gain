@@ -187,6 +187,9 @@ the score reads should be re-measured on `a_position_score().with_tabix()`
 before they become follow-up issues. The in-memory table exists to make
 tests fast, not to stand in for a GRR.
 
+See also `point-read-run-encoding.md`, which refuses a fast path past
+the segment and run layers of the same read.
+
 ## Prior requests
 
 - iossifovlab/gain#1193 -- "Position annotator point read: resolve the
