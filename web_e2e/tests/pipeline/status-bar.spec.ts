@@ -214,7 +214,8 @@ test.describe('Pipeline status bar tests', () => {
     /* eslint-enable */
 
     await page.waitForSelector('.invalid-config', { state: 'visible', timeout: 120000 });
-    await expect(page.getByText('Invalid configuration')).toBeVisible();
+    await expect(editor.errorMessage).toBeVisible();
+    await expect(editor.errorMessage).toContainText('Invalid configuration');
 
     await expect(editor.statusItem(0)).toHaveText('menu1 annotators');
     await expect(editor.statusItem(1)).toHaveText('menu_open2 attributes');

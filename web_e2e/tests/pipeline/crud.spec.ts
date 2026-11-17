@@ -92,7 +92,8 @@ test.describe('Pipeline tests', () => {
       'resource_id: hg38/scores/CADD_v1.7'
     );
     await page.waitForSelector('.invalid-config', { state: 'visible', timeout: 120000 });
-    await expect(page.getByText('Invalid configuration')).toBeVisible();
+    await expect(editor.errorMessage).toBeVisible();
+    await expect(editor.errorMessage).toContainText('Invalid configuration');
     await expect(editor.saveAsButton).toBeDisabled();
   });
 
