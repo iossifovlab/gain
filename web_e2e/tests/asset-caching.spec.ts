@@ -18,6 +18,14 @@ const STABLE_MONACO_FILES = [
 ];
 
 test.describe('Cache headers of the frontend', () => {
+  // Only the production frontend image (CI=1, baseURL http://frontend)
+  // sends these headers. The ng dev server applies neither the Apache
+  // config nor the output hashing.
+  test.skip(
+    process.env.CI !== '1',
+    'needs the production frontend image (web_ui/httpd.conf)'
+  );
+
   for (const file of STABLE_MONACO_FILES) {
     test(`Monaco ${file} revalidates`, async({ request }) => {
       const response = await request.head(`${MONACO_VS}/${file}`);
