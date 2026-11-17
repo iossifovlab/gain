@@ -295,6 +295,12 @@ services:
     # pre-converting it to the `default` format like every other
     # gene-models resource; once that lands this budget can drop.
     #
+    # hg38_demo_pipeline gets its own budget too. Only the
+    # demo-pipeline spec loads it, and its last annotator expands the
+    # wildcard `TF*[target="CREB*"]` over the 7922 grr_encode
+    # resources (gain#2415). A cold build inside the request of the
+    # spec risks the 502 above.
+    #
     # start_period stays generous as a safety budget for the first
     # pipeline build. The GRR is now node-local directory reads
     # (byte-range, no download) rather than the interim http+cache
@@ -334,9 +340,10 @@ services:
         rc=$$?; cat /tmp/probe.body; echo; return $$rc;
         };
         probe 120 pipeline/hg38_clinical_annotation &&
-        probe 300 pipeline/hs1_clinical_annotation
+        probe 300 pipeline/hs1_clinical_annotation &&
+        probe 300 pipeline/hg38_demo_pipeline
       interval: 10s
-      timeout: 425s
+      timeout: 750s
       retries: 3
       start_period: 3600s
 
