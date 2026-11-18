@@ -12,7 +12,7 @@ The probe token is a made-up tag name.  The page legitimately ships
 against those matches the page's own markup and passes vacuously.
 
 These assert against the rendered template source; CI runs gain-core in
-python:3.12-slim, which has no JS runtime.
+a python slim image (core/Dockerfile), which has no JS runtime.
 """
 from __future__ import annotations
 

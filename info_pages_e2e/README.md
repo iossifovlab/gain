@@ -7,10 +7,10 @@ info pages.
 
 The pages `grr_manage repo-info` writes carry real behaviour — sortable
 statistics tables, and on the index page a search, a tree view and a
-column resizer. gain-core's CI image is `python:3.12-slim` and has no JS
-runtime, so the tests in `core/tests/small/` can only assert the *markup
-contract* the templates emit by reading the rendered source. Nothing was
-executing any of that JavaScript (iossifovlab/gain#987).
+column resizer. gain-core's CI image (`core/Dockerfile`, a python slim
+image) has no JS runtime, so the tests in `core/tests/small/` can only
+assert the *markup contract* the templates emit by reading the rendered
+source. Nothing was executing any of that JavaScript (iossifovlab/gain#987).
 
 This suite does. It covers the resource pages' sortable tables, and the
 index page's search and tree view.
