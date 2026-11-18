@@ -26,7 +26,7 @@
 # Default CMD runs the suite. Override for the type check:
 #     docker run --rm gain-info-pages-e2e-ci npx tsc --noEmit
 
-ARG PYTHON_IMAGE=python:3.12-slim
+ARG PYTHON_IMAGE=python:3.13-slim
 # Pinned to the same version as the `@playwright/test` dependency in
 # package.json: the image ships exactly the browser build that version
 # expects, and a mismatch makes Playwright download one at run time --
