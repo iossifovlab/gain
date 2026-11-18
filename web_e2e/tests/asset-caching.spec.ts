@@ -3,7 +3,8 @@ import { test, expect } from '@playwright/test';
 // Cache headers of the production Apache config (web_ui/httpd.conf),
 // iossifovlab/gain#2426. The files under /assets/ keep their names across
 // builds, so they must revalidate. Only the hashed bundles at the document
-// root may be `immutable`.
+// root may be `immutable`. The files under /static/ revalidate for the same
+// reason (iossifovlab/gain#2427).
 
 // The URL of the Monaco tree. It moved away from /assets/monaco/min, so that a
 // browser that still holds the old files as `immutable` never asks for them.
@@ -15,6 +16,12 @@ const STABLE_MONACO_FILES = [
   'editor/editor.main.js',
   'basic-languages/monaco.contribution.js',
   'nls.messages-loader.js',
+];
+
+// Django static files that `collectstatic` copies with unhashed names.
+const STABLE_STATIC_FILES = [
+  'rest_framework/css/bootstrap.min.css',
+  'admin/css/base.css',
 ];
 
 test.describe('Cache headers of the frontend', () => {
@@ -40,6 +47,32 @@ test.describe('Cache headers of the frontend', () => {
       expect(response.headers()['etag']).toBeTruthy();
     });
   }
+
+  // The Django static files under /static/ keep their names across Django
+  // and DRF upgrades, so they must revalidate (iossifovlab/gain#2427).
+  for (const file of STABLE_STATIC_FILES) {
+    test(`static ${file} revalidates`, async({ request }) => {
+      const response = await request.head(`/static/${file}`);
+
+      expect(response.status()).toBe(200);
+      const cacheControl = response.headers()['cache-control'];
+      expect(cacheControl).toContain('no-cache');
+      expect(cacheControl).not.toContain('immutable');
+      expect(response.headers()['etag']).toBeTruthy();
+    });
+  }
+
+  test('a static file has no future Expires', async({ request }) => {
+    const response = await request.head(
+      '/static/rest_framework/css/bootstrap.min.css'
+    );
+
+    expect(response.status()).toBe(200);
+    // A missing Expires counts as one that equals the Date header.
+    const date = response.headers()['date'];
+    const expires = response.headers()['expires'] ?? date;
+    expect(Date.parse(expires)).toBeLessThanOrEqual(Date.parse(date));
+  });
 
   test('the logo under /assets/ revalidates', async({ request }) => {
     const response = await request.head('/assets/gain-logo.png');
