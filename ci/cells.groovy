@@ -80,6 +80,19 @@ Map cell(String name) {
                                 'web_annotation.test_settings',
                 fixtures: false,
             ]
+        case 'spliceai_annotator':
+            // Fast tier only: the slow differential harness is marked
+            // `integration` and runs in gain-spliceai-integration. No
+            // backend is set here: each pipeline names the one it runs
+            // (the per-branch stage selects TensorFlow explicitly, the
+            // matrix runs the ONNX default).
+            return [
+                pkg: 'spliceai_annotator',
+                tests: 'tests',
+                pytestArgs: '-n 5 -m "not integration"',
+                dockerRunExtra: '',
+                fixtures: false,
+            ]
         default:
             error("ci/cells.groovy: unknown cell '${name}'")
     }

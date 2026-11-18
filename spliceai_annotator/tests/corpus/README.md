@@ -28,10 +28,11 @@ root `Jenkinsfile`.
 
 ## Why the baseline is generated *only* from TensorFlow
 
-The baseline is the ground truth the ONNX migration is validated against.
-iossifovlab/gain#299 **removes TensorFlow** from the runtime. After that, the
-baseline can be regenerated only through this documented TF path
-(`regenerate_baseline.py` under the TF venv). Regenerating it from ONNX would
+The baseline is the ground truth the ONNX backend is validated against.
+Since iossifovlab/gain#299, ONNX Runtime is the default backend and TensorFlow
+is the optional `tensorflow` extra. The baseline is still regenerated only
+through this documented TF path (`regenerate_baseline.py` in a venv with the
+extra, run with `SPLICEAI_BACKEND=tensorflow`). Regenerating it from ONNX would
 silently redefine "correct" as "whatever ONNX now does" and discard the ground
 truth this harness exists to protect. The `.h5` model files stay as source of
 truth for both.

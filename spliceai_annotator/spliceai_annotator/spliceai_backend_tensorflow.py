@@ -1,15 +1,31 @@
 """TensorFlow/Keras model runtime for the SpliceAI annotator.
 
-The default backend: runs the five committed ``models/spliceai{1..5}.h5``
-files, which are the source of truth for the ensemble. Selected unless
-``SPLICEAI_BACKEND=onnx`` is set -- see ``spliceai_annotator_impl``.
+Runs the five committed ``models/spliceai{1..5}.h5`` files, which are the
+source of truth for the ensemble. Not the default: ONNX Runtime is (ADR 0042).
+Selected with ``SPLICEAI_BACKEND=tensorflow`` -- see
+``spliceai_annotator_impl``.
+
+TensorFlow is an optional dependency. Importing this module without it raises
+`ImportError` naming the two installs that provide it.
 """
 import gc
 from importlib.resources import as_file, files
 from typing import cast
 
 import numpy as np
-import tensorflow as tf
+
+#: What an `ImportError` of this module says when TensorFlow is missing.
+TENSORFLOW_MISSING_MESSAGE = (
+    "SPLICEAI_BACKEND=tensorflow needs TensorFlow, an optional dependency "
+    "of gain-spliceai-annotator. Install it with "
+    "`pip install gain-spliceai-annotator[tensorflow]` or, in a conda "
+    "environment, `mamba install tensorflow`; or unset SPLICEAI_BACKEND to "
+    "run the default ONNX Runtime backend.")
+
+try:
+    import tensorflow as tf
+except ImportError as error:
+    raise ImportError(TENSORFLOW_MISSING_MESSAGE) from error
 
 #: Maximum number of sequence positions (rows x window width) in a single
 #: ``predict`` chunk.

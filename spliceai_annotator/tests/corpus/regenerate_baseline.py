@@ -4,14 +4,16 @@ Loads the *committed* fixture GRR, annotates every corpus variant at its
 intended distance through ``pipeline.annotate`` -- pinning all 16 attributes --
 and writes the gzipped ``tests/corpus/baseline.json.gz``.
 
-IMPORTANT (issue iossifovlab/gain#320, and #299 which removes TensorFlow):
-the baseline is the TensorFlow ground truth the ONNX migration is checked
-against.  It MUST be regenerated only through this TensorFlow path.  After #299
-removes TensorFlow, regenerating from ONNX would silently redefine "correct" as
-"whatever ONNX now does" and discard the ground truth this harness protects.
-Requires the worktree TF venv.
+IMPORTANT (issue iossifovlab/gain#320; #299 made ONNX the default backend):
+the baseline is the TensorFlow ground truth the ONNX backend is checked
+against.  It MUST be regenerated only through this TensorFlow path.
+Regenerating from ONNX would silently redefine "correct" as "whatever ONNX
+now does" and discard the ground truth this harness protects.  Requires a
+venv with the ``tensorflow`` extra, and ``SPLICEAI_BACKEND=tensorflow``.
 
-Run:  ``python -m tests.corpus.regenerate_baseline``  (from spliceai_annotator).
+Run from spliceai_annotator::
+
+    SPLICEAI_BACKEND=tensorflow python -m tests.corpus.regenerate_baseline
 """
 from __future__ import annotations
 
@@ -25,7 +27,10 @@ from gain.annotation.annotatable import VCFAllele
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources.testing import build_filesystem_test_repository
 
-from tests.corpus.pipeline_config import make_pipeline_yaml
+from tests.corpus.pipeline_config import (
+    make_pipeline_yaml,
+    require_tensorflow_backend,
+)
 
 HERE = pathlib.Path(__file__).parent
 FIXTURES = (HERE.parent / "fixtures").resolve()
@@ -72,6 +77,7 @@ def annotate_corpus(
 
 def main() -> None:
     """Regenerate and write the committed baseline."""
+    require_tensorflow_backend()
     manifest = json.loads(MANIFEST_PATH.read_text())
     results = annotate_corpus(manifest)
     payload = json.dumps(results, sort_keys=True).encode()

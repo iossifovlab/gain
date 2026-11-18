@@ -30,8 +30,8 @@ uv (the repo root is a virtual `gain-monorepo` project coordinating the workspac
 
 ```bash
 uv sync                              # core + web_api only
-uv sync --all-packages --all-groups  # everything
-uv sync --package gain-spliceai-annotator --group dev   # just one
+uv sync --all-packages --all-groups --all-extras  # everything
+uv sync --package gain-spliceai-annotator --extra tensorflow --group dev   # just one
 source .venv/bin/activate   # optional; `uv run` works without activation
 ```
 

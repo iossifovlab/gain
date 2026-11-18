@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12, <3.15"
 resolution-markers = [
     "python_full_version >= '3.14' and platform_python_implementation == 'PyPy' and sys_platform == 'win32'",
@@ -1657,6 +1657,10 @@ dependencies = [
     { name = "gain-core" },
     { name = "numpy" },
     { name = "onnxruntime" },
+]
+
+[package.optional-dependencies]
+tensorflow = [
     { name = "tensorflow" },
 ]
 
@@ -1679,8 +1683,9 @@ requires-dist = [
     { name = "gain-core", editable = "core" },
     { name = "numpy", specifier = ">=2.2" },
     { name = "onnxruntime", specifier = ">=1.26" },
-    { name = "tensorflow", specifier = ">=2.18" },
+    { name = "tensorflow", marker = "extra == 'tensorflow'", specifier = ">=2.18" },
 ]
+provides-extras = ["tensorflow"]
 
 [package.metadata.requires-dev]
 dev = [

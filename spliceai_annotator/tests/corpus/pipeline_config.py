@@ -69,3 +69,20 @@ def make_pipeline_yaml(
         distance: {distance}
         attributes:
 """) + attrs + "\n"
+
+
+def require_tensorflow_backend() -> None:
+    """Exit unless this process runs the TensorFlow backend.
+
+    The committed baselines are TensorFlow ground truth. ONNX Runtime is the
+    default backend since #299, so a regenerate script run without
+    ``SPLICEAI_BACKEND=tensorflow`` would rewrite them from the runtime they
+    check.
+    """
+    # pylint: disable=import-outside-toplevel
+    from spliceai_annotator import spliceai_annotator_impl as impl
+    if impl.SPLICEAI_BACKEND_NAME != "tensorflow":
+        raise SystemExit(
+            "the baselines are TensorFlow ground truth, but this process "
+            f"runs the {impl.SPLICEAI_BACKEND_NAME!r} backend; rerun with "
+            "SPLICEAI_BACKEND=tensorflow in a venv with the tensorflow extra")

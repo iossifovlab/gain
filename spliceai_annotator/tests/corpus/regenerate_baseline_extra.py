@@ -6,14 +6,16 @@ pinning all 16 attributes -- and writes the gzipped
 ``tests/corpus/baseline_extra.json.gz``.
 
 IMPORTANT (same footgun as ``regenerate_baseline.py``, issues gain#320/#299):
-this is the TensorFlow ground truth the ONNX migration is checked against.  It
+this is the TensorFlow ground truth the ONNX backend is checked against.  It
 MUST be regenerated only through this TensorFlow path -- regenerating from ONNX
-would silently redefine "correct" as "whatever ONNX now does".  Requires the
-worktree TF venv AND the real GRR (``GRR_ROOT`` env var, default
+would silently redefine "correct" as "whatever ONNX now does".  Requires a venv
+with the ``tensorflow`` extra, ``SPLICEAI_BACKEND=tensorflow``, AND the real
+GRR (``GRR_ROOT`` env var, default
 ``/data/cephfs/seqpipe/grr``).
 
-Run:  ``python -m tests.corpus.regenerate_baseline_extra``  (from
-spliceai_annotator).
+Run (from spliceai_annotator)::
+
+    SPLICEAI_BACKEND=tensorflow python -m tests.corpus.regenerate_baseline_extra
 """
 from __future__ import annotations
 
@@ -30,7 +32,10 @@ from gain.genomic_resources.repository_factory import (
     build_genomic_resource_repository,
 )
 
-from tests.corpus.pipeline_config import make_pipeline_yaml
+from tests.corpus.pipeline_config import (
+    make_pipeline_yaml,
+    require_tensorflow_backend,
+)
 
 # The grr-sync node-local tree on the integration agents (see
 # build_extra_corpus.py): grr_sync_target_root=/data/grr, `grr` repo at
@@ -76,6 +81,7 @@ def annotate_extra(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def main() -> None:
+    require_tensorflow_backend()
     manifest = json.loads(EXTRA_MANIFEST_PATH.read_text())
     results = annotate_extra(manifest)
     payload = json.dumps(results, sort_keys=True).encode()
