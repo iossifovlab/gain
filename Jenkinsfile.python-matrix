@@ -37,11 +37,18 @@ def runCellPytest(Map args) {
     String reportDir      = "${project}-py${py}"               // e.g. "core-py3.12"
     String imageTag       = "gain-${project.replace('_', '-')}-pymtx-py${pyTag}:${env.BUILD_NUMBER}"
 
-    sh label: "Build ${project} image (py${py})", script: """
-        docker build -f ${project}/Dockerfile \\
-            --build-arg PYTHON_IMAGE=python:${py}-slim \\
-            -t ${imageTag} .
-    """
+    // A slow network failed the image build of 5 of 12 cells in
+    // gain-python-matrix #240, with no failed test. Build once
+    // more on failure: the second attempt reuses the warm layer
+    // and uv caches. Pytest below runs once only: a failed test
+    // is a real result, and a second run must not hide it.
+    retry(2) {
+        sh label: "Build ${project} image (py${py})", script: """
+            docker build -f ${project}/Dockerfile \\
+                --build-arg PYTHON_IMAGE=python:${py}-slim \\
+                -t ${imageTag} .
+        """
+    }
 
     // Mirrors runProject() in the per-branch Jenkinsfile, minus
     // the linter / wheel-build steps. Reports land in a cell-
