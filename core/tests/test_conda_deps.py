@@ -141,9 +141,10 @@ def _workspace(
         (root / plugin).mkdir(exist_ok=True)
         (root / plugin / "pyproject.toml").write_text(
             pyproject(f"gain-{plugin}", ["gain-core"], "dev", []))
-    (root / "spliceai_annotator/pyproject.toml").open("a").write(
-        "[project.optional-dependencies]\n"
-        f"tensorflow = {list(spliceai_tensorflow)!r}\n")
+    with (root / "spliceai_annotator/pyproject.toml").open("a") as out:
+        out.write(
+            "[project.optional-dependencies]\n"
+            f"tensorflow = {list(spliceai_tensorflow)!r}\n")
     return root
 
 
