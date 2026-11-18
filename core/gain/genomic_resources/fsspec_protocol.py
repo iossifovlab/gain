@@ -2813,14 +2813,12 @@ class FsspecReadWriteProtocol(
                 )
                 raise ValueError from e
 
-            with self._publish_file(
-                os.path.join(self.url, "about.html"), "wt", encoding="utf8",
-            ) as outfile:
-                if about_template is not None:
-                    outfile.write(get_template(about_template).render(
-                        about_contents=about_html_content))
-                else:
-                    outfile.write(about_html_content)
+            if about_template is not None:
+                about_page = get_template(about_template).render(
+                    about_contents=about_html_content)
+            else:
+                about_page = about_html_content
+            self._publish_page_if_changed("about.html", about_page)
 
         sqlite3_hash = ""
         gz_path = os.path.join(self.url, GR_SQLITE_META_FILE_NAME)
@@ -2834,16 +2832,31 @@ class FsspecReadWriteProtocol(
         # in which it renders with no search (gain#1335).
         self._publish_static_assets()
 
-        content_filepath = os.path.join(self.url, GR_INDEX_FILE_NAME)
-        with self._publish_file(
-                content_filepath, "wt", encoding="utf8") as outfile:
-            outfile.write(get_template(repository_template).render(
+        self._publish_page_if_changed(
+            GR_INDEX_FILE_NAME,
+            get_template(repository_template).render(
                 data=result,
                 has_about=has_about,
                 sqlite3_hash=sqlite3_hash,
             ))
 
         return result
+
+    def _publish_page_if_changed(self, filename: str, page: str) -> None:
+        """Publish a root page of the repository, unless it is unchanged.
+
+        The root templates hold no timestamp, so an unchanged repository
+        renders the same bytes on each run.  A publish of those bytes
+        would still give the page a new inode and a new mtime, and the
+        mirrors and the bucket uploads would copy it again.  The resource
+        pages and the static assets skip such a write in the same way.
+        """
+        if self._published_bytes(filename) == page.encode("utf8"):
+            return
+        with self._publish_file(
+                os.path.join(self.url, filename), "wt",
+                encoding="utf8") as outfile:
+            outfile.write(page)
 
     def _publish_static_assets(self) -> None:
         """Publish the files the pages load from the repository.
@@ -2857,9 +2870,8 @@ class FsspecReadWriteProtocol(
         file lands in a single move or not at all; the names are
         constants of gain's own, which is that seam's condition.
 
-        Skipped when the published bytes already match.  The page beside
-        them is rewritten every run, but the page changes with the
-        repository while these change only with gain: rewriting 1.2 MB
+        Skipped when the published bytes already match, as the pages
+        beside them are.  These change only with gain: rewriting 1.2 MB
         of identical bytes would give the mirrors, and the git
         repositories the published GRRs live in, a change to notice on
         every run.

@@ -186,3 +186,72 @@ def test_repo_info_does_not_rewrite_unchanged_pages(
         if int(p.stat().st_mtime) != pinned
     ]
     assert rewritten == [], f"unchanged repo rewrote info pages: {rewritten}"
+
+
+#: The two pages ``repo-info`` renders at the root of the repository.
+_ROOT_PAGES = ("index.html", "about.html")
+
+#: A fixed past mtime a test pins a page to, so a rewrite shows up.
+_PINNED_MTIME = 1_000_000_000
+
+
+def _pin_root_pages(path: pathlib.Path) -> None:
+    for name in _ROOT_PAGES:
+        os.utime(path / name, (_PINNED_MTIME, _PINNED_MTIME))
+
+
+def _rewritten_root_pages(path: pathlib.Path) -> list[str]:
+    return [
+        name for name in _ROOT_PAGES
+        if int((path / name).stat().st_mtime) != _PINNED_MTIME
+    ]
+
+
+def test_repo_info_does_not_rewrite_unchanged_root_pages(
+    proto_fixture: tuple[pathlib.Path, FsspecReadWriteProtocol],
+) -> None:
+    path, _proto = proto_fixture
+    (path / "about.md").write_text("# About\n\nThe first text.\n")
+    cli_manage(["repo-info", "-R", str(path), "-j", "1"])
+    _pin_root_pages(path)
+
+    cli_manage(["repo-info", "-R", str(path), "-j", "1"])
+
+    assert _rewritten_root_pages(path) == []
+
+
+def test_repo_info_rewrites_the_about_page_when_about_md_changes(
+    proto_fixture: tuple[pathlib.Path, FsspecReadWriteProtocol],
+) -> None:
+    path, _proto = proto_fixture
+    (path / "about.md").write_text("# About\n\nThe first text.\n")
+    cli_manage(["repo-info", "-R", str(path), "-j", "1"])
+    _pin_root_pages(path)
+    (path / "about.md").write_text("# About\n\nThe second text.\n")
+
+    cli_manage(["repo-info", "-R", str(path), "-j", "1"])
+
+    assert "about.html" in _rewritten_root_pages(path)
+    about_page = (path / "about.html").read_text()
+    assert "The second text." in about_page
+    assert "The first text." not in about_page
+
+
+#: The link the index page renders in the row of the resource ``three``.
+_THREE_ROW_LINK = '<a href="three/index.html">three</a>'
+
+
+def test_repo_info_rewrites_the_index_page_when_a_resource_is_added(
+    proto_fixture: tuple[pathlib.Path, FsspecReadWriteProtocol],
+) -> None:
+    path, _proto = proto_fixture
+    (path / "about.md").write_text("# About\n\nThe first text.\n")
+    cli_manage(["repo-info", "-R", str(path), "-j", "1"])
+    _pin_root_pages(path)
+    assert _THREE_ROW_LINK not in (path / "index.html").read_text()
+    setup_directories(path / "three", {GR_CONF_FILE_NAME: "type: basic\n"})
+
+    cli_manage(["repo-info", "-R", str(path), "-j", "1"])
+
+    assert "index.html" in _rewritten_root_pages(path)
+    assert _THREE_ROW_LINK in (path / "index.html").read_text()

@@ -9,6 +9,7 @@ from gain.genomic_resources.fsspec_errors import GRR_INTERNAL_DIR
 from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.repository_ids import (
+    GR_CONF_FILE_NAME,
     GR_CONTENTS_FILE_NAME,
     GR_INDEX_FILE_NAME,
     GR_MANIFEST_FILE_NAME,
@@ -64,9 +65,40 @@ def _write_about_md(proto: FsspecReadWriteProtocol) -> None:
         outfile.write("# about\n")
 
 
+def _extend_about_md(proto: FsspecReadWriteProtocol) -> None:
+    """Add a line to the ``about.md`` of the repository, or write one.
+
+    Each call changes the text, so the ``about.html`` rendered from it
+    changes too, and ``build_index_info`` publishes the page again.
+    """
+    path = os.path.join(proto.url, "about.md")
+    text = "# about\n"
+    if proto.filesystem.exists(path):
+        with proto.filesystem.open(path, "rt", encoding="utf8") as infile:
+            text = infile.read()
+    with proto.filesystem.open(path, "wt", encoding="utf8") as outfile:
+        outfile.write(f"{text}\nline {len(text.splitlines())}\n")
+
+
+def _add_resource(proto: FsspecReadWriteProtocol) -> None:
+    """Add a new resource to the repository.
+
+    Each call adds one more row to the root ``index.html``, so
+    ``build_index_info`` publishes the page again.
+    """
+    resource_id = f"added{len(list(proto.get_all_resources()))}"
+    path = os.path.join(proto.url, resource_id, GR_CONF_FILE_NAME)
+    proto.filesystem.makedirs(os.path.dirname(path), exist_ok=True)
+    with proto.filesystem.open(path, "wt", encoding="utf8") as outfile:
+        outfile.write("type: basic\n")
+    proto.invalidate()
+
+
 # The six artifacts the repository publishes, each as the pair of "how to
-# publish it" and "where it lands". Each publish is idempotent, so the same
-# callable both establishes the baseline and makes the attempt that fails.
+# publish it" and "where it lands". The same callable both establishes the
+# baseline and makes the attempt that fails. A root page is published only
+# when its bytes change, so the callables of the two root pages change the
+# input of the page before each publish.
 
 
 def _publish_contents_index(
@@ -101,6 +133,7 @@ def _resource_index_path(
 
 def _publish_repository_index(
         proto: FsspecReadWriteProtocol, res: GenomicResource) -> None:
+    _add_resource(proto)
     proto.build_index_info()
 
 
@@ -111,9 +144,9 @@ def _repository_index_path(
 
 def _publish_about_page(
         proto: FsspecReadWriteProtocol, res: GenomicResource) -> None:
-    # The `about.md` this renders from is input, not the artifact; writing
-    # it again on the second call keeps the publish idempotent.
-    _write_about_md(proto)
+    # The `about.md` this renders from is input, not the artifact. A new
+    # text on each call makes the second call publish the page again.
+    _extend_about_md(proto)
     proto.build_index_info()
 
 
