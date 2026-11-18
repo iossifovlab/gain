@@ -1,4 +1,4 @@
-# pylint: disable=C0114,C0116
+# pylint: disable=C0114,C0116,W0212
 """The #300 benchmark of the fused ONNX graph against the five sessions."""
 import importlib.util
 import json
@@ -9,7 +9,6 @@ import sys
 from types import ModuleType
 
 from spliceai_annotator.spliceai_annotator import SpliceAIAnnotator
-from tests.test_spliceai_backends import MAX_WIDTH
 
 SCRIPT = (
     pathlib.Path(__file__).parent.parent / "scripts" / "measure_onnx_fused.py")
@@ -69,8 +68,23 @@ def test_benchmark_fails_fast_when_a_child_raises(
     assert not (tmp_path / "result.json").exists()
 
 
+def _batch_width(distance: int) -> int:
+    """The width the annotator pads every batch to before it predicts.
+
+    Read off the annotator's own `_batch_width`, at the default
+    `max_insertion_length`, so the test follows a change of the padding.
+    """
+    annotator = SpliceAIAnnotator.__new__(SpliceAIAnnotator)
+    annotator._distance = distance
+    annotator._max_insertion_length = (
+        SpliceAIAnnotator.DEFAULT_MAX_INSERTION_LENGTH)
+    return annotator._batch_width
+
+
 def test_default_widths_are_the_default_and_the_widest_window() -> None:
     script = _load_script()
-    default_window = 10000 + 2 * SpliceAIAnnotator.DEFAULT_DISTANCE + 1
+    # 5000 is the largest `distance` the annotator accepts.
+    expected = (
+        _batch_width(SpliceAIAnnotator.DEFAULT_DISTANCE), _batch_width(5000))
 
-    assert (default_window, MAX_WIDTH) == script.DEFAULT_WIDTHS
+    assert expected == script.DEFAULT_WIDTHS

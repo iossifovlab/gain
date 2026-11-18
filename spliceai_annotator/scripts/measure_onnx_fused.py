@@ -23,11 +23,13 @@ high-water mark that never falls, so two configurations in one process
 would share the peak of the larger one. A spawned child also starts without
 the parent's state.
 
-The default widths are the annotator's default window (``distance`` 50,
-10101 positions) and the widest window of a default deployment (``distance``
-5000, 20201 positions). The input is a synthetic one-hot batch, built
-through the shipped ``one_hot_encode`` with a seed derived from the width,
-so both backends get the same input.
+The default widths are the windows that the annotator hands
+``spliceai_predict``: ``_batch_width``, which pads ``_width`` by the default
+``max_insertion_length`` of 200. The default window (``distance`` 50) is
+10301 positions, and the widest window of a default deployment
+(``distance`` 5000) is 20201 positions. The input is a synthetic one-hot
+batch, built through the shipped ``one_hot_encode`` with a seed derived
+from the width, so both backends get the same input.
 
 The script prints the CPU model, the CPU count and the load average. A busy
 host measures its other work too, so run it on a quiet host.
@@ -36,7 +38,7 @@ Usage
 -----
     python spliceai_annotator/scripts/measure_onnx_fused.py
     python spliceai_annotator/scripts/measure_onnx_fused.py \\
-        --widths 10101 20201 --rows 32 --reps 5 --out result.json
+        --widths 10301 20201 --rows 32 --reps 5 --out result.json
 """
 from __future__ import annotations
 
@@ -61,7 +63,7 @@ BACKEND_MODULES = {
     "onnx": "spliceai_annotator.spliceai_backend_onnx",
     "onnx-fused": "spliceai_annotator.spliceai_backend_onnx_fused",
 }
-DEFAULT_WIDTHS = (10101, 20201)
+DEFAULT_WIDTHS = (10301, 20201)
 DEFAULT_ROWS = 32
 DEFAULT_REPS = 5
 

@@ -91,11 +91,6 @@ def test_the_fuse_script_never_imports_tensorflow() -> None:
     assert completed.stdout.strip() == "False"
 
 
-# The widest window a default deployment builds: see `MAX_WIDTH` in
-# `test_spliceai_backends.py`.
-MAX_WIDTH = 20201
-
-
 def _random_one_hot(width: int) -> np.ndarray:
     rng = np.random.default_rng(seed=width)
     x = np.zeros((1, width, 4), dtype=np.float32)
@@ -112,6 +107,10 @@ def windows() -> dict[str, np.ndarray]:
     The donor window drives the splice channels in every member, and at
     MAX_WIDTH the ensemble is not saturated either.
     """
+    # Imported here, not at module scope: `test_spliceai_backends` imports
+    # the annotator package, which only the fixtures that run a graph need.
+    # pylint: disable=import-outside-toplevel
+    from tests.test_spliceai_backends import MAX_WIDTH
     return {
         "donor-site-distance-50": _motif_one_hot(_width(50)),
         "random-max-width": _random_one_hot(MAX_WIDTH),
