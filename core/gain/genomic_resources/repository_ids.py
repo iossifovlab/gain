@@ -77,9 +77,10 @@ GR_INDEX_NON_LABEL_COLUMNS = frozenset(
 GR_STATISTICS_INDEX_FILE_NAME = \
     f"{GR_STATISTICS_FOLDER_NAME}/{GR_INDEX_FILE_NAME}"
 
-#: The pages `grr_manage resource-info` writes into a resource. They are
-#: regenerated on every run, so they are build artefacts rather than resource
+#: The info pages `grr_manage resource-info` writes into a resource. They are
+#: derived from the resource, so they are build artefacts rather than resource
 #: data and are never manifested -- whether or not DVC manages them (#373).
+#: A repair renders them again only when their page fingerprint changes.
 GR_GENERATED_INFO_PAGES = frozenset({
     GR_INDEX_FILE_NAME,
     GR_STATISTICS_INDEX_FILE_NAME,

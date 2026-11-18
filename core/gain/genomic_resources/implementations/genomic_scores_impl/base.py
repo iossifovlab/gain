@@ -94,6 +94,12 @@ class GenomicScoreImplementation(ScoreImplementationBase):
     class for a real resource.
     """
 
+    # The position score page reads the labelled reference genome through
+    # ``_render_repo`` in its Coverage section, and the page fingerprint
+    # does not cover it yet (gain#2452). Until then the info pages of
+    # every score kind render on every repair.
+    page_fingerprint_enabled: ClassVar[bool] = False
+
     def __init__(self, resource: GenomicResource):
         super().__init__(resource)
         self.score: GenomicScore = build_score_from_resource(resource)

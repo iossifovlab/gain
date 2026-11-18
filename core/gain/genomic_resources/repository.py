@@ -1667,7 +1667,7 @@ class ReadWriteRepositoryProtocol(ReadOnlyRepositoryProtocol):
 
         The one exception is a page ``resource-info`` generates: it is a
         build artefact regardless of who ``dvc add``ed it, and manifesting it
-        would put a regenerated page under checksum control (#373).
+        would put a derived page under checksum control (#373).
         """
         for name, entry in prebuild_entries.items():
             if name in manifest:

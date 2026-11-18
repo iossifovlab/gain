@@ -1855,7 +1855,7 @@ class FsspecReadWriteProtocol(
                 resource_path, [], ancestor_specs):
             # The two pages `resource-info` writes are build artefacts, not
             # resource data, and stay out of the manifest -- whether or not
-            # DVC manages them, since both are regenerated on every run.
+            # DVC manages them, since both are derived from the resource.
             # Every OTHER file is manifested, whatever its extension: the
             # old "drop every name ending in html" rule was a proxy for "this
             # is a page GAIn generated" and silently dropped any html file a

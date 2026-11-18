@@ -20,7 +20,9 @@ The subclass must implement five abstract methods, covering two aspects of resou
 
    * :meth:`~gain.genomic_resources.resource_implementation.GenomicResourceImplementation.get_info` generates the HTML describing the resource.
    * :meth:`~gain.genomic_resources.resource_implementation.GenomicResourceImplementation.get_statistics_info` generates the HTML presenting its statistics.
-   * :meth:`~gain.genomic_resources.resource_implementation.GenomicResourceImplementation.calc_info_hash` calculates a hash of the inputs used to generate the resource information. GAIn uses this hash to determine whether the information needs to be regenerated.
+   * :meth:`~gain.genomic_resources.resource_implementation.GenomicResourceImplementation.calc_info_hash` calculates a hash of the inputs of the info pages that the manifest and the statistics hash do not cover. The hash is one input of the page fingerprint.
+
+   The base class computes the page fingerprint in :meth:`~gain.genomic_resources.resource_implementation.GenomicResourceImplementation.page_fingerprint`, and a subclass does not override it. The page fingerprint covers the versions of GAIn and of the package that provides the implementation, the manifest of the resource, the statistics hash and the info hash. ``grr_manage repo-repair`` and ``grr_manage resource-repair`` render the info pages of a resource again only when its page fingerprint changes. The ``repo-info`` and ``resource-info`` commands, and a repair with ``--force``, render every info page. An implementation whose info pages read inputs that the page fingerprint does not cover, such as other resources, sets the class attribute ``page_fingerprint_enabled`` to ``False``. Its info pages then render on every repair.
 
 2. **Computing statistics.** These methods define how resource statistics are calculated and determine when they need to be updated:
 
@@ -154,6 +156,7 @@ in the package ``gain.genomic_resources``. ``gain.grr`` exports none of them.
    GenomicResourceImplementation.get_info
    GenomicResourceImplementation.get_statistics
    GenomicResourceImplementation.get_statistics_info
+   GenomicResourceImplementation.page_fingerprint
    GenomicResourceImplementation.reload_statistics
    GenomicResourceImplementation.resource_id
 

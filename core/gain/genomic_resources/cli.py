@@ -432,14 +432,18 @@ def _dispatch_management_command(
     if command == "resource-stats":
         return _run_resource_stats_command(
             repo, proto, resources, **_stats_options(kwargs))
-    # Repair is info plus nothing: the info commands already rebuild
-    # manifests and statistics on the way to the pages.
+    # Repair shares the info commands, which already rebuild manifests
+    # and statistics on the way to the pages. The info commands render
+    # every info page; a repair skips the resources whose page
+    # fingerprint is current.
     if command in ("repo-info", "repo-repair"):
         return _run_repo_info_command(
-            repo, proto, resources, **_stats_options(kwargs))
+            repo, proto, resources, **_stats_options(kwargs),
+            render_all_pages=command == "repo-info")
     if command in ("resource-info", "resource-repair"):
         return _run_resource_info_command(
-            repo, proto, resources, **_stats_options(kwargs))
+            repo, proto, resources, **_stats_options(kwargs),
+            render_all_pages=command == "resource-info")
     # Never fall through: repair is destructive, and a command name
     # added to _REPO_COMMANDS/_RESOURCE_COMMANDS but not handled here
     # would otherwise silently run a full repair.
