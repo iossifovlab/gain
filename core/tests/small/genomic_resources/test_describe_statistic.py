@@ -123,12 +123,12 @@ def test_a_column_with_both_infinities_has_a_nan_mean() -> None:
 def test_a_nullable_column_matches_its_float_values(dtype: str) -> None:
     nullable = pd.DataFrame({"value": pd.Series(
         [4, None, 7, 12, None], dtype=dtype)})
+    assert _cell(stable_describe(nullable), "count") == 3
     floats = pd.DataFrame({"value": [4.0, 7.0, 12.0]})
 
     description = stable_describe(nullable)
     expected = stable_describe(floats)
 
-    assert _cell(description, "count") == 3
     assert _cell(description, "mean") == _cell(expected, "mean")
     assert _cell(description, "std") == _cell(expected, "std")
 
