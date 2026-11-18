@@ -783,9 +783,11 @@ recorded histogram. Counts of dropped fragments are logged per resource
 and region at INFO level with ``-v``.
 
 A ``--dry-run`` reports the planned resources, groups, tracks, bins, and
-tasks before processing. It can also warn when a resource appears to have
-cell-related scores but lacks the ``cell_meta_resource_id`` label, when
-local metadata files are used, or when per-cell grouping creates many tracks.
+tasks before processing, with the group and track counts, so the matrix
+width is known before the run. It can also warn when a resource appears to
+have cell-related scores but lacks the ``cell_meta_resource_id`` label, when
+local metadata files are used, or when a resource has no ``sample_id``
+label, so that its groups are bare values or every metadata row is read.
 A local metadata file makes a run dependent on that file's availability.
 
 HDF5 format reference
