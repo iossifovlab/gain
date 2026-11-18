@@ -22,8 +22,8 @@
   itself in one streaming walk and answers an `AlleleAggregate` — one value
   per `ScoreAggregationQuery`, plus the allele keys when asked — or `None`
   for a region no record overlaps. The annotator's region mode reads through
-  it and materialises nothing (design: `2026-09-03-gain-allele-folding-read-
-  design.html` in the meta-repo's `docs/`).
+  it and materialises nothing (design: [`2026-09-03-gain-allele-folding-read-design.html`
+  in `seqpipe/genomics-toolbox`](https://github.com/seqpipe/genomics-toolbox/blob/master/docs/2026-09-03-gain-allele-folding-read-design.html)).
 
 ---
 

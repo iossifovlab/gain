@@ -504,7 +504,8 @@ def test_to_dict_private_alias_still_delegates(
     # #334 sequencing guard: gpf still calls the private _to_dict across the
     # repo boundary until gpf#983 lands. Pin that _to_dict stays callable and
     # delegates to to_dict, so a later in-gain "dead code" removal turns this
-    # RED here instead of silently breaking gpf at the meta-repo SHA bump
+    # RED here instead of silently breaking gpf at its next CI run, which
+    # fetches the gain-core wheel of the last good gain master build
     # (gain's suite cannot import gpf, so this is the one catchable facet).
     res = (
         a_gene_score()
