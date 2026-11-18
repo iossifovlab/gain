@@ -139,20 +139,23 @@ def read_or_skip(path: pathlib.Path) -> str:
     return path.read_text()
 
 
-def ci_dockerfiles() -> list[pathlib.Path]:
-    """Return each Dockerfile of the repo that the guard checks."""
-    found: list[pathlib.Path] = []
+def ci_dockerfiles() -> dict[str, str]:
+    """Map each Dockerfile that the guard checks to its text.
+
+    The keys are paths relative to the repo root.
+    """
+    found: dict[str, str] = {}
     for top, dirs, files in os.walk(REPO_ROOT):
         dirs[:] = [
             name for name in dirs
             if not name.startswith(".") and name not in SKIPPED_DIRS]
         for name in files:
             path = pathlib.Path(top) / name
+            rel = path.relative_to(REPO_ROOT).as_posix()
             if name.startswith("Dockerfile") and \
-                    path.relative_to(REPO_ROOT).as_posix() \
-                    not in EXEMPT_DOCKERFILES:
-                found.append(path)
-    return sorted(found)
+                    rel not in EXEMPT_DOCKERFILES:
+                found[rel] = path.read_text()
+    return found
 
 
 @pytest.fixture(name="ci_python_image")
@@ -197,10 +200,9 @@ def test_ci_dockerfiles_include_the_named_ci_dockerfiles() -> None:
     """The walk finds each CI Dockerfile that gain#2387 names."""
     read_or_skip(JENKINSFILE)
 
-    found = {
-        path.relative_to(REPO_ROOT).as_posix() for path in ci_dockerfiles()}
+    found = ci_dockerfiles()
 
-    assert sorted(set(NAMED_CI_DOCKERFILES) - found) == []
+    assert sorted(set(NAMED_CI_DOCKERFILES) - found.keys()) == []
 
 
 def test_no_ci_dockerfile_names_a_literal_python_image() -> None:
@@ -208,9 +210,9 @@ def test_no_ci_dockerfile_names_a_literal_python_image() -> None:
     read_or_skip(JENKINSFILE)
 
     found = {
-        path.relative_to(REPO_ROOT).as_posix(): lines
-        for path in ci_dockerfiles()
-        if (lines := literal_python_from_lines(path.read_text()))}
+        name: lines
+        for name, text in ci_dockerfiles().items()
+        if (lines := literal_python_from_lines(text))}
 
     assert found == {}
 
@@ -220,10 +222,9 @@ def test_ci_dockerfile_defaults_match_the_jenkinsfile(
 ) -> None:
     """Each ARG PYTHON_IMAGE default equals the Jenkinsfile value."""
     found = {
-        path.relative_to(REPO_ROOT).as_posix(): lines
-        for path in ci_dockerfiles()
-        if (lines := arg_default_mismatches(
-            path.read_text(), ci_python_image))}
+        name: lines
+        for name, text in ci_dockerfiles().items()
+        if (lines := arg_default_mismatches(text, ci_python_image))}
 
     assert found == {}
 
