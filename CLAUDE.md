@@ -67,7 +67,7 @@ cd core && pytest -v -n 10 tests/                       # everything, parallel
 - All tests run with `PYTHONHASHSEED=0`. Markers in `core/pytest.ini`: `grr_rw`, `grr_local`, `grr_full`, `grr_http`, `grr_tabix`; tests carrying `grr_rw` / `grr_full` / `grr_http` / `grr_tabix` are parametrized across GRR protocols (inmemory, file, s3, http); enable the last two with `--enable-s3-testing` / `--enable-http-testing`.
 - Architecture tests in `core/tests/` use `pytestarch` to enforce the package's internal structure.
 
-  Layering across repos is `gain ← gpf ← gpf_web`. `gain` must not import from `gpf` or `gpf_web`. `test_gain_core_does_not_import_from_gpf_core` in `core/tests/test_architecture.py` checks the `gpf` part. `gpf_web` sits above `gpf`, so the same rule covers `gpf_web`. A change that needs both repos lands in `gain` first, and `gpf` consumes it after that.
+  Layering across repos is `gain ← gpf ← gpf_web`. `gain` must not import from `gpf` or `gpf_web`. `test_gain_core_does_not_import_from_gpf_core` in `core/tests/test_architecture.py` checks the `gpf` part. The import-linter contract `gain-imports-no-gpf` in `core/.importlinter` forbids both `gpf` and `gpf_web`, and `test_the_import_linter_contracts_are_kept` runs it. A change that needs both repos lands in `gain` first, and `gpf` consumes it after that.
 - Backend text that the `web_e2e` specs pin is checked without the stack by `web_api/web_annotation/tests/test_e2e_backend_pins.py`. Rewording a registered message, or adding a sentence-shaped pin it cannot render, fails the `web_api` suite naming the spec: fix spec and backend in the same PR. The module docstring and `web_e2e/README.md` say how to register or allow-list a pin.
 </important>
 
@@ -150,7 +150,7 @@ habit-hooks coaches on code smells with its python and generic plugins (`.habit-
 uv sync --package gain-core --group dev --group habit  # installs deptry and habit-hooks
 npm install -g jscpd@4                    # once per host
 uv run habit-hooks --all                  # from the repo root
-uv run --directory gain habit-hooks --all # from the workspace
+uv run --directory gain habit-hooks --all # from the directory that contains the gain checkout
 ```
 
 - A plain `uv sync` removes habit-hooks, because habit-hooks is in the `habit` group of `gain-core`. `uv sync --package gain-core --group dev` without `--group habit` also removes habit-hooks. uv reads `default-groups` only from the workspace root, and the root has no `habit` group.
