@@ -959,7 +959,7 @@ pipeline {
                             $files \
                             "${WHEELS_USER}@${WHEELS_HOST}:${WHEELS_PATH}/"
                         # Regenerate the simple/ index in a
-                        # throwaway python:3.12-slim container on
+                        # throwaway python:3.13-slim container on
                         # the wheels host: pip install pip2pi at
                         # run time, then dir2pi against the mounted
                         # wheels dir. (pip2pi ships dir2pi/pip2pi/
@@ -991,7 +991,7 @@ docker run --rm \\
     -e HOME=/tmp \\
     -v "${WHEELS_PATH}":/work \\
     -w /work \\
-    python:3.12-slim \\
+    python:3.13-slim \\
     sh -c 'pip install --quiet --user "setuptools<80" pip2pi && /tmp/.local/bin/dir2pi .'
 EOF
                     '''

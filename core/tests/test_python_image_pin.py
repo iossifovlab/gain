@@ -6,7 +6,9 @@ with ``--build-arg``. The guard below reads the source tree and fails
 when a Dockerfile names a literal ``python:`` image in a ``FROM`` line,
 or when the default of its ``ARG PYTHON_IMAGE`` differs from the
 ``Jenkinsfile`` value. The guard also fails when the ``PYTHON_IMAGE`` of
-``web_e2e/Jenkinsfile.e2e`` differs from the ``Jenkinsfile`` value.
+``web_e2e/Jenkinsfile.e2e`` differs from the ``Jenkinsfile`` value, and
+when ``Jenkinsfile.release`` names another ``python:`` image for its
+pip2pi container (gain#2389).
 
 The CI images hold no ``Jenkinsfile``: only a checkout runs the guard
 on the tree.
@@ -21,14 +23,13 @@ CORE = pathlib.Path(__file__).resolve().parents[1]
 REPO_ROOT = CORE.parent
 JENKINSFILE = REPO_ROOT / "Jenkinsfile"
 E2E_JENKINSFILE = REPO_ROOT / "web_e2e" / "Jenkinsfile.e2e"
+RELEASE_JENKINSFILE = REPO_ROOT / "Jenkinsfile.release"
 
 # The Dockerfiles that the guard does not check, relative to the repo
 # root. ``Dockerfile.freethreaded`` builds a free-threaded interpreter of
-# its own. ``web_api/Dockerfile.production`` builds the production
-# image, which gain#2389 moves to the CI interpreter.
+# its own.
 EXEMPT_DOCKERFILES = [
     "Dockerfile.freethreaded",
-    "web_api/Dockerfile.production",
 ]
 
 # The directories that hold no Dockerfile of the repo.
@@ -119,6 +120,38 @@ def test_arg_default_that_differs_from_the_jenkinsfile_is_reported() -> None:
 
 JENKINS_PYTHON_IMAGE = re.compile(
     r"""^\s*PYTHON_IMAGE\s*=\s*['"]([^'"]+)['"]""", re.MULTILINE)
+
+
+LITERAL_PYTHON_IMAGE = re.compile(r"(?<![\w./-])python:[\w.-]+")
+
+
+def literal_python_image_mismatches(text: str, expected: str) -> list[str]:
+    """Return the literal ``python:`` images in ``text`` that are not
+    ``expected``.
+    """
+    return [
+        image for image in LITERAL_PYTHON_IMAGE.findall(text)
+        if image != expected]
+
+
+def test_release_pip2pi_image_that_differs_is_reported() -> None:
+    """A pip2pi image of Jenkinsfile.release that differs is reported."""
+    release = (
+        "# throwaway python:3.13-slim container on\n"
+        "docker run --rm \\\\\n"
+        "    -w /work \\\\\n"
+        "    python:3.12-slim \\\\\n"
+        "    sh -c 'pip install pip2pi'\n")
+
+    assert literal_python_image_mismatches(
+        release, "python:3.13-slim") == ["python:3.12-slim"]
+
+
+def test_release_pip2pi_image_that_matches_is_not_reported() -> None:
+    """A pip2pi image equal to the Jenkinsfile value is not reported."""
+    release = "    python:3.13-slim \\\\\n"
+
+    assert not literal_python_image_mismatches(release, "python:3.13-slim")
 
 
 def jenkins_python_image(jenkinsfile: str) -> str:
@@ -236,3 +269,14 @@ def test_e2e_jenkinsfile_names_the_same_python_image(
     e2e = jenkins_python_image(read_or_skip(E2E_JENKINSFILE))
 
     assert e2e == ci_python_image
+
+
+def test_release_jenkinsfile_names_the_same_python_image(
+    ci_python_image: str,
+) -> None:
+    """Jenkinsfile.release names only the interpreter of the Jenkinsfile."""
+    release = read_or_skip(RELEASE_JENKINSFILE)
+
+    assert LITERAL_PYTHON_IMAGE.findall(release), (
+        "Jenkinsfile.release names no python: image for pip2pi")
+    assert literal_python_image_mismatches(release, ci_python_image) == []
