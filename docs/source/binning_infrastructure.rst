@@ -1,707 +1,962 @@
 Binning infrastructure
 ======================
 
-Many analyses that compare genome-wide tracks against each other — correlating
-conservation with chromatin accessibility, clustering a set of ATAC tracks,
-feeding tracks to a model — begin the same way: cut the genome into fixed-size
-bins and reduce every track to one number per bin. ``binning_tool`` does that
-first step in one command. It takes a **run definition** in YAML naming the
-bins and the resources to bin, and writes **one HDF5 file** holding a
-bins × tracks matrix with the bin coordinates and the provenance of every
-track stored beside it.
+The GAIn binning infrastructure converts genomic data into numerical matrices by dividing the genome into fixed-size regions, called **bins**, and summarizing genomic scores within each bin. This allows users to compare genomic features across regions, identify patterns, and prepare data for statistical analysis or machine learning.
 
-.. code-block:: bash
+Binning supports two types of genomic resources:
 
-    binning_tool run.yaml
+- **Position scores:** Numerical scores associated with genomic positions, such as conservation scores. These can be summarized within each bin using operations such as mean, maximum, or sum.
+- **Fragment scores:** Data associated with genomic intervals, such as ATAC-seq fragments or structural variants. These can be counted or summarized within bins, optionally grouped by attributes such as cell type.
 
-Two kinds of resource can be binned. A ``position_score`` resource gives one
-track per resource: one score, reduced over each bin by an aggregator such
-as ``mean`` or ``max``. A ``fragment_score`` resource — the fragments of a
-single-cell ATAC sample, or any other collection of intervals — gives one
-track per *group* of fragments: every fragment, or the fragments of each
-cell type, or the fragments of each cell, counted or summed over the bin,
-or reduced as a depth of coverage.
+The output is a matrix in which each row represents a genomic bin and each column represents a **track**, corresponding to a resource or a group of fragments.
 
+A binning analysis is configured using a YAML **run definition**, which specifies the reference genome, bin size, genomic regions, and resources to process. The ``binning_tool`` command executes the analysis and produces an HDF5 file containing the matrix, genomic coordinates, and information about the tracks. The results can be inspected using ``binning_tool_view`` or accessed programmatically in Python.
 
-.. _binning-run-definition:
+Getting started
+---------------
 
-The run definition
-------------------
+This example demonstrates how to use ``binning_tool`` to summarize genomic scores across a small region of the genome. We will divide a 100 kb region of chromosome 21 into ten bins and calculate the mean and maximum phyloP100way conservation scores within each bin.
 
-A run definition has three parts: the reference genome, the ``bins`` block,
-and a list of ``binners`` entries.
+**1. Create a run definition**
+
+Create a file named ``demo.yaml`` with the following contents:
 
 .. code-block:: yaml
 
     reference_genome: hg38/genomes/GRCh38-hg38
 
     bins:
-      bin_size: 10240
-      regions: [chr1, chr2, "chrX:1-50000000"]
+      bin_size: 10000
+      regions: ["chr21:20000001-20100000"]
 
     binners:
     - position_score_binner:
-        resource_query: "hg38/scores/*"
-        search_term: conservation
+        resource_query: hg38/scores/phyloP100way
+        aggregator: mean
+
     - position_score_binner:
         resource_query: hg38/scores/phyloP100way
         aggregator: max
-        none_value_replacement: 0.0
-    - fragment_score_binner:
-        resource_query: "sc/atac_fragments/*"
 
-Every key is checked. A mistyped key anywhere in the file — ``aggregtor``
-for ``aggregator`` — is an error that names the entry, never a silently
-applied default.
+The ``reference_genome`` specifies the genome assembly, while ``bins`` defines the genomic region and bin size. The two ``position_score_binner`` entries select the same resource but use different aggregators, producing two tracks.
 
-Reference genome
-^^^^^^^^^^^^^^^^
+**2. Run the binning tool**
 
-``reference_genome`` (required) names the reference genome resource
-whose chromosomes define the grid. It is the run definition's business alone:
-there is no command-line flag for it, and a genome offered by the genomic
-context is not consulted. The chromosome lengths decide how many bins there
-are and what each one spans, so one run definition always describes one
-matrix — whoever runs it, and wherever.
+First, verify the run definition without processing the data:
 
-The GRR itself is never named in the run definition; it comes from ``-g``,
-``--grr-directory``, or the default GRR definition, as for every GAIn tool
-(see :doc:`/grr`). One run definition therefore runs unchanged on a laptop
-against a cached GRR and on a cluster node against a node-local one.
+.. code-block:: bash
 
-Bins
-^^^^
+    binning_tool demo.yaml --dry-run
 
-``bin_size`` (required) is the width of every bin in base pairs.
+Then execute the analysis:
 
-``regions`` (optional) lists what to bin, in GAIn's region notation: ``chr21``
-is the whole chromosome and ``chr21:20000000-22000000`` is a window with
-inclusive bounds. Omit ``regions`` to bin every chromosome of the reference
-genome in genome order. The rows of the output follow the listed order, so
-listing the chromosomes you want is also how to leave out alternate and
-unplaced contigs. A window that ends before it starts, a region beyond its
-chromosome's length, a chromosome the genome does not have, and two regions
-that overlap are all errors reported before any work runs, naming the
-offending entries.
+.. code-block:: bash
 
-Binner entries
-^^^^^^^^^^^^^^
+    binning_tool demo.yaml -j 1
 
-``binners`` (required) is a list of entries. Each entry is a one-key mapping
-whose key is the binner kind, one of two: ``position_score_binner`` bins
-``position_score`` resources, and ``fragment_score_binner`` bins
-``fragment_score`` resources. Both kinds select their resources the same
-way:
+The ``-j 1`` option specifies one worker. The command produces ``demo.h5`` in the same directory as the run definition.
 
-``resource_query`` (required)
-    A repository search that selects the resources to bin, resolved through
-    the same search that ``grr_browse`` uses: an exact resource id, or a glob
-    over ids such as ``hg38/scores/*``, optionally followed by a bracketed
-    label filter. Only resources of the entry's kind are taken from the
-    matches — ``position_score`` resources for a ``position_score_binner``,
-    ``fragment_score`` resources for a ``fragment_score_binner`` — so a glob
-    that also matches other resource types is safe. Matches are ordered by
-    resource id. A query that matches no resource of the kind is an error
-    naming the entry, so a typo cannot silently produce a file with fewer
-    tracks.
+**3. Inspect the results**
 
-``search_term`` (optional)
-    A full-text filter conjoined with ``resource_query``, in the syntax of
-    ``grr_browse -s`` (see :doc:`/grr`). It needs a repository that carries a
-    full-text index; the public IossifovLab GRR does, and a directory GRR
-    has one once ``grr_manage repo-index`` has been run on it. A
-    ``search_term`` on a repository without an index is an error naming the
-    entry.
+Display the genomic bins and their corresponding scores:
 
-The other keys depend on the kind.
+.. code-block:: bash
 
-Position-score entries
+    binning_tool_view demo.h5 --bins --matrix
+
+The output contains ten rows and two score columns, shown below with values rounded for readability:
+
+
+.. code-block:: text
+
+    chrom  start     end       hg38/scores/phyloP100way:mean  hg38/scores/phyloP100way:max
+    chr21  20000001  20010000  -0.024167                      3.356
+    chr21  20010001  20020000  -0.006847                      3.539
+    chr21  20020001  20030000   0.004481                      3.694
+    chr21  20030001  20040000  -0.013076                      2.123
+    chr21  20040001  20050000   0.010425                      2.455
+    chr21  20050001  20060000   0.008159                      4.166
+    chr21  20060001  20070000  -0.017430                      2.081
+    chr21  20070001  20080000   0.019938                      3.707
+    chr21  20080001  20090000   0.105878                      6.757
+    chr21  20090001  20100000  -0.017527                      2.652
+
+
+Each row represents a 10 kb genomic bin. The **mean** track reports the average phyloP100way score across the bin, while the **max** track reports its highest score. The complete results are stored in ``demo.h5``, together with the genomic coordinates and track metadata.
+
+**Note:** This example uses a resource from the public IossifovLab GRR. Remote bigWig files can be accessed efficiently when ``pyBigWig`` supports HTTP range requests. If the GRR definition includes ``cache_dir``, GAIn may instead download the entire bigWig file before processing, which can substantially increase execution time.
+
+
+Configuring a binning run
+-------------------------
+
+A binning analysis is configured using a YAML run definition. Each binner selects one or more genomic resources and produces one or more tracks in the output matrix.
+
+.. _binning-run-definition:
+
+The run definition
+^^^^^^^^^^^^^^^^^^
+
+A run definition consists of three components:
+
+- ``reference_genome``: The reference genome whose chromosomes define the genomic coordinates.
+- ``bins``: The bin size and genomic regions to analyze.
+- ``binners``: A list of binners specifying which resources to process and how to summarize them.
+
+**Reference genome**
+
+The required ``reference_genome`` field identifies a reference genome resource in a GRR. Its chromosome names and lengths determine the genomic bins. The reference genome is specified in the run definition, not through a command-line argument.
+
+**Bins**
+
+The ``bins`` block contains two fields:
+
+- ``bin_size`` (required): The width of each bin in base pairs.
+- ``regions`` (optional): The chromosomes or genomic intervals to analyze, using GAIn's standard notation, such as ``chr21`` or ``chr21:20000000-22000000``.
+
+If ``regions`` is omitted, all chromosomes in the reference genome are processed. When multiple regions are specified, their order is preserved in the output.
+
+Bin coordinates are 1-based and inclusive. Bins follow a fixed grid starting at position 1 of each chromosome. If a specified region does not align with this grid, its first and last bins are clipped to the region boundaries.
+
+Invalid coordinates, unknown chromosomes, regions extending beyond chromosome boundaries, and overlapping regions produce errors.
+
+**Binners and resource selection**
+
+The required ``binners`` field contains a list of entries of two types:
+
+- ``position_score_binner``: Processes position-score resources.
+- ``fragment_score_binner``: Processes fragment-score resources.
+
+Each entry requires a ``resource_query`` to select resources from the GRR. Queries can specify an exact resource ID or use wildcards to match multiple resources. Optional label filters can further restrict the matches.
+
+An optional ``search_term`` can filter resources using the same full-text search functionality as ``grr_browse``. This requires a repository with a full-text index.
+
+Each binner processes only resources of its supported type. Matching resources are ordered by resource ID, and a query that matches no resources of the appropriate type produces an error.
+
+The GRR itself is selected through GAIn's GRR configuration or command-line options, rather than being specified in the run definition. This allows the same run definition to be used with different GRR locations.
+
+All configuration keys are validated, and unrecognized keys produce errors rather than being silently ignored.
+
+
+
+Position-score binning
 ^^^^^^^^^^^^^^^^^^^^^^
 
-A ``position_score_binner`` entry makes one track per matched resource and
-takes, besides ``resource_query`` and ``search_term``, these keys:
+A ``position_score_binner`` summarizes numerical scores associated with genomic positions. Each matched resource produces one track in the output matrix, with one value per bin.
 
-``aggregator`` (optional)
-    How the positions inside a bin are reduced to one number. The default is
-    the ``aggregator`` the score itself declares in its resource
-    configuration, so a conservation score and a coverage
-    track are each reduced the way their authors intended. Setting
-    ``aggregator`` on an entry overrides that for every resource the entry
-    matches. Only aggregators that produce a number are accepted, and only
-    numeric (``int`` or ``float``) scores can be binned; a string-typed
-    score, or an aggregator such as ``join`` or ``list`` that builds a
-    string or a list, is refused at parse time. The numeric aggregators are
-    ``max``, ``min``, ``mean``, ``median``, ``sum``, ``product`` and
-    ``count``. To bin one
-    resource under two aggregators, list it in two entries.
+**Aggregators**
 
-``none_value_replacement`` (optional)
-    A value fed to the aggregator for every position no record covers. By
-    default there is no replacement: a bin that no record covers is ``NaN``
-    in the output, so missing data cannot masquerade as a measurement in a
-    correlation. The exception is ``aggregator: count``: an uncovered bin
-    is ``0.0``, because a count of nothing is zero. Set a replacement,
-    typically ``0.0``, when "no signal" is genuinely zero for the track, as
-    it is for a coverage track.
+The ``aggregator`` field determines how scores within each bin are combined into a single value. GAIn supports seven numerical aggregators:
 
-``name`` (optional)
-    The base of the entry's track names, in place of the resource id: a
-    track is named ``<name>/<resource id>``. Use it to bin one resource
-    in two entries that would otherwise produce the same track name; see
-    `Track names`_.
+- ``mean``: Average of the scores.
+- ``median``: Median of the scores.
+- ``max`` and ``min``: Highest and lowest scores.
+- ``sum``: Sum of the scores.
+- ``count``: Number of observations.
+- ``product``: Product of the scores.
 
-A resource that defines more than one score is refused, with its scores
-listed: a track is exactly one score, and this version offers no key to pick
-among several.
+If ``aggregator`` is omitted, GAIn uses the default aggregator specified in the resource configuration. An explicitly specified aggregator overrides this default.
+
+For example, to calculate the median phyloP100way score within each bin:
+
+.. code-block:: yaml
+
+    - position_score_binner:
+        resource_query: hg38/scores/phyloP100way
+        aggregator: median
+
+The same resource can be processed using different aggregators by including multiple binner entries, as demonstrated in the Getting started example.
+
+Only numerical scores (``int`` or ``float``) and aggregators producing numerical results are supported. Resources defining multiple scores cannot currently be processed by a position-score binner.
+
+**Handling missing values**
+
+By default, positions without recorded scores are excluded from aggregation. A bin containing no recorded scores produces ``NaN``, except with ``count``, which produces ``0``.
+
+The optional ``none_value_replacement`` field assigns a value to positions without recorded scores before aggregation:
+
+.. code-block:: yaml
+
+    none_value_replacement: 0.0
+
+This is useful when missing observations represent an absence of signal, such as in certain coverage tracks. It should not be used when missing values represent unknown measurements.
+
 
 .. _binning-fragment-score-entries:
 
-Fragment-score entries
+Fragment-score binning
 ^^^^^^^^^^^^^^^^^^^^^^
 
-A ``fragment_score_binner`` entry reduces, per bin, the values of the
-fragments of the matched resources. The entry's **mode** decides which
-fragments reach a bin and with what weight (see `Modes`_). The default
-mode, ``fragment_start``, counts the fragments that start in each bin.
+A ``fragment_score_binner`` summarizes genomic intervals, such as ATAC-seq fragments or structural variants. Unlike position-score binning, a single fragment-score resource can produce multiple tracks by grouping fragments according to their attributes.
 
-For a resource that follows the single-cell convention described below,
-the query is all an entry needs:
+**Basic configuration**
+
+Unlike position-score resources, which provide numerical scores at genomic positions, fragment-score resources contain genomic intervals that may have associated scores. The ``value`` setting determines what numerical value each fragment contributes to the binning calculation. This can be a constant, such as 1 for counting fragments, or a numerical score associated with each fragment.
+
+A simple fragment-score binner can be defined as follows:
+
+.. code-block:: yaml
+
+    - fragment_score_binner:
+        resource_query: hg38/cnv_collections/gnomAD.v4.1_Genome_SV
+        value: {value: 1}
+        aggregate:
+          mode: fragment_start
+          aggregator: sum
+
+Three settings determine how fragments are summarized:
+
+- ``value``: Specifies what each fragment contributes. Here, every fragment contributes 1.
+- ``aggregate.mode``: Determines how fragments contribute to genomic bins. Here, each fragment contributes to the bin containing its starting position.
+- ``aggregate.aggregator``: Determines how contributions within each bin are combined. Here, they are summed.
+
+Together, these settings count the number of fragments starting in each bin. Alternatively, if a resource contains a numerical fragment score named ``count``, specifying ``value: {score_id: count}`` uses that score instead of assigning 1 to every fragment. All three settings are optional. The defaults are ``value: {value: 1}``, ``mode: fragment_start``, and ``aggregator: sum``.
+
+Fragment-score binning uses the aggregators introduced in the previous section, although the supported aggregators depend on the aggregation mode.
+
+**Aggregation modes**
+
+The ``aggregate.mode`` field determines how fragments contribute to genomic bins. Three modes are supported:
+
+- ``fragment_start`` (default): Each fragment contributes only to the bin containing its starting position, regardless of its length.
+- ``fragment_length``: Each fragment contributes to every bin it overlaps, weighted by the number of overlapping base pairs.
+- ``coverage_profile``: GAIn calculates the coverage depth at each genomic position by summing the values of overlapping fragments, then aggregates these depths within each bin.
+
+For example, to calculate mean coverage depth:
+
+.. code-block:: yaml
+
+    aggregate:
+      mode: coverage_profile
+      aggregator: mean
+
+All three modes support ``sum``, ``mean``, ``max``, ``min``, and ``median``. The ``count`` and ``product`` aggregators are supported only in ``fragment_start`` mode.
+
+**Comparing the three modes**
+
+Consider a 30 bp chromosome divided into three 10 bp bins, containing two fragments at ``chr1:6-14`` and ``chr1:11-18``. With each fragment contributing a value of 1 and using the ``sum`` aggregator:
+
++---------+----------------+-----------------+------------------+
+| Bin     | Fragment start | Fragment length | Coverage profile |
++=========+================+=================+==================+
+| 1–10    | 1              | 5               | 5                |
++---------+----------------+-----------------+------------------+
+| 11–20   | 1              | 12              | 12               |
++---------+----------------+-----------------+------------------+
+| 21–30   | 0              | 0               | 0                |
++---------+----------------+-----------------+------------------+
+
+``fragment_start`` counts each fragment once. ``fragment_length`` sums the overlapping base pairs, while ``coverage_profile`` sums the coverage depths across each bin.
+
+The last two modes produce identical sums in this example, but can produce different results with other aggregators. For example, using ``mean`` in bin 11–20 gives 1.0 with ``fragment_length`` (12/12 overlapping base pairs) and 1.2 with ``coverage_profile`` (12/10 genomic positions). This difference reflects how overlapping fragments and uncovered positions are treated.
+
+Additional options allow fragments to be pooled across resources, grouped into separate tracks, or associated with cell metadata. These features, together with the handling of uncovered bases and empty bins, are described in the next section.
+
+
+Advanced fragment-score binning
+-------------------------------
+
+Pooling resources
+^^^^^^^^^^^^^^^^^
+
+A ``fragment_score_binner`` can select multiple resources using a single ``resource_query``. The optional ``pool`` setting determines how these resources are processed. Pooling allows fragments from multiple resources to be combined into shared tracks, rather than processed separately. This is useful when combining measurements across samples, while keeping them separate allows comparisons between samples.
+
+- ``pool: true`` (default): Combines fragments from all matched resources into shared tracks.
+- ``pool: false``: Processes each matched resource separately, producing separate tracks.
+
+For example, suppose two ATAC-seq samples are stored as resources named ``sc/atac_fragments/donor1`` and ``sc/atac_fragments/donor2``. Both can be selected using the following query:
 
 .. code-block:: yaml
 
     - fragment_score_binner:
         resource_query: "sc/atac_fragments/*"
+        pool: true
 
-Here ``sc/atac_fragments/donor1`` and ``sc/atac_fragments/donor2`` are two
-samples of a single-cell ATAC study, each labelled with its cell metadata
-table, ``sc/cell_meta_data``, and with its sample. The entry pools both
-samples and counts the fragments that start in each bin per cell type, one
-track per cell type. To sum the read pairs behind the fragments instead,
-add ``value: {score_id: count}``. The same entry with every default spelled
-out, and with the two samples kept apart, is:
+With ``pool: true``, fragments from both resources contribute to the same tracks. Changing this to ``pool: false`` produces separate tracks for each resource. In either case, the number of tracks also depends on how fragments are grouped, as described in the next section.
+
+When pooling resources that use cell metadata, they must have compatible grouping configurations and resolve to the same metadata table. Otherwise, GAIn reports an error.
+
+Grouping fragments into tracks
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Grouping allows fragments within a resource to be separated into different tracks based on their attributes. For example, ATAC-seq fragments can be grouped by cell type, producing a separate track for each cell type in the output matrix.
+
+The optional ``group`` setting supports three approaches:
+
+- **Constant group:** Assigns all fragments to a single track with a specified group name.
+- **Grouping by a fragment score:** Creates a separate track for each distinct value of a categorical fragment score.
+- **Grouping by cell metadata:** Uses a metadata table to assign fragments to groups, such as cell types.
+
+The three grouping methods are mutually exclusive. A ``group`` configuration cannot combine settings from different methods.
+
+**Constant group**
+
+To place all fragments into a single group named ``all``:
+
+.. code-block:: yaml
+
+    group: {group: all}
+
+This produces one track per resource when ``pool: false``, or one combined track when ``pool: true``.
+
+**Grouping by a fragment score**
+
+The ``group_score_id`` option creates a separate track for each distinct value of a string-valued fragment score. For example:
+
+.. code-block:: yaml
+
+    group: {group_score_id: cell}
+
+If the fragments contain a score named ``cell`` identifying their cell barcodes, this configuration creates one track per cell.
+
+The distinct values must be available in the score's complete categorical histogram, stored in the resource statistics. Resources without a complete histogram cannot be grouped this way. Statistics can be generated using ``grr_manage resource-stats`` and must be available locally if managed through DVC. For scores with more than 100 distinct values, the resource configuration must specify ``histogram: {type: categorical}`` to retain the full histogram. The grouping score cannot also be used as the ``value`` score.
+
+Without pooling, each group is the bare value. With ``pool: true``, the same barcode can recur in different samples while naming a different cell, so GAIn prefixes each value with the resource's ``sample_id`` label, as ``<sample_id>:<value>``. The rules for pooled resources are:
+
+- If any pooled resource has a ``sample_id`` label, every pooled resource must have one. Each label must hold a single value without a colon (``:``), and no two pooled resources can share a value. Otherwise GAIn reports an error that suggests ``pool: false``.
+- If no pooled resource has a ``sample_id`` label, each group is the bare value, and ``--dry-run`` warns once for each resource. This suits a merged multi-sample file whose barcodes are already unique across its samples. The same value in two resources reaches one track.
+- A ``sample_id`` label that holds a list counts as present, and is an error.
+
+**Grouping by cell metadata**
+
+Fragments can also be grouped using an associated metadata table. For example, cell barcodes can be matched to cell annotations to create one track per cell type.
+
+For resources following GAIn's single-cell convention, this grouping can be enabled with:
+
+.. code-block:: yaml
+
+    group: {}
+
+GAIn creates one track for each distinct, non-empty group in the selected metadata rows, ordered by group name. With ``pool: true``, groups are determined across all matched resources. With ``pool: false``, each resource has its own set of groups.
+
+The required metadata relationships and default column names are described in the next section, Working with cell metadata.
+
+**Default behavior**
+
+When ``group`` is omitted, GAIn automatically groups fragments by cell metadata if the resource has a ``cell_meta_resource_id`` label. Otherwise, all fragments belong to a single group named ``all``.
+
+The number of output tracks therefore depends on the selected resources, the grouping method, and whether pooling is enabled. A per-cell analysis can produce thousands of tracks, so ``binning_tool --dry-run`` is useful for checking the expected matrix dimensions before processing.
+
+.. _binning-local-metadata-files:
+
+Working with cell metadata
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Cell metadata allows ATAC-seq fragments to be grouped by attributes such as cell type. GAIn matches each fragment's cell barcode to a metadata table and produces a separate track for each group.
+
+**The single-cell convention**
+
+GAIn can automatically associate fragment resources with their cell metadata when they follow a standard convention:
+
+- ``cell_meta_resource_id``: A label on the fragment resource identifying the metadata ``data_frame`` resource.
+- ``sample_id``: A label identifying the sample within the metadata table.
+- ``cell``: The fragment score containing the cell barcode.
+
+The metadata table is expected to contain three columns:
+
+- ``sample_id``: Identifies the sample.
+- ``barcode``: Identifies the cell.
+- ``class``: Specifies the cell's group, such as its cell type.
+
+When these conventions are followed, GAIn automatically selects the metadata rows belonging to each sample and groups fragments by ``class``. No explicit ``group`` or ``meta`` configuration is needed.
+
+A merged multi-sample fragment file has no single sample, and so no ``sample_id`` label. When no resource of a job has a ``sample_id`` label, the default ``meta`` has no filter: the job reads every row of the metadata table, and ``--dry-run`` warns once for each resource. The table then needs no ``sample_id`` column, and its barcodes must be unique across the whole table. A pool in which some resources have the label and others do not is an error.
+
+**Specifying metadata explicitly**
+
+When resources do not follow the standard convention, the ``group`` and ``meta`` settings can specify how fragments are associated with metadata.
+
+For example, the conventional configuration can be written explicitly as:
 
 .. code-block:: yaml
 
     - fragment_score_binner:
         resource_query: "sc/atac_fragments/*"
-        pool: false
         group:
           cell_score_id: cell
           cell_meta_column: barcode
           group_meta_column: class
-        value:
-          value: 1
-        aggregate:
-          mode: fragment_start
-          aggregator: sum
         meta:
           resource_label: cell_meta_resource_id
           filter:
           - column: sample_id
             label: sample_id
 
-Besides ``resource_query`` and ``search_term``, an entry takes these keys:
+The ``group`` block identifies the fragment score containing cell barcodes and the metadata columns used to match cells and assign groups. All three fields are optional, with defaults of ``cell_score_id: cell``, ``cell_meta_column: barcode``, and ``group_meta_column: class``. Consequently, ``group: {}`` uses these defaults.
 
-``pool`` (optional, default ``true``)
-    With ``true``, every matched resource is merged by position into one
-    set of tracks: a pooled track counts the fragments of all the samples
-    together. With ``false``, each resource is binned on its own and gets
-    its own tracks.
+The ``meta`` block identifies the metadata table and optionally filters its rows. In this example, ``resource_label`` identifies the metadata resource through a label on each fragment resource. The filter selects rows where the metadata table's ``sample_id`` column matches the fragment resource's ``sample_id`` label.
 
-``group`` (optional)
-    How fragments are split into tracks, in exactly one of three forms;
-    giving keys of two forms at once is an error.
+Metadata can be supplied in three ways:
 
-    * ``{group: NAME}`` — one track, holding every fragment, whose group is
-      the constant ``NAME``.
-    * ``{cell_score_id, cell_meta_column, group_meta_column}`` — one track
-      per group of a metadata table, which ``meta`` names.
-      ``cell_score_id`` is the fragment score carrying a fragment's cell
-      barcode, ``cell_meta_column`` the table column holding the barcode
-      and ``group_meta_column`` the column holding the cell's group. Each
-      key is optional and defaults to the convention's — ``cell``,
-      ``barcode`` and ``class`` — so ``group: {}`` groups by the
-      convention throughout. The tracks are the distinct non-empty groups
-      of the rows each job selects, in sorted order: the rows of every
-      resource of a pooled entry together, or, with ``pool: false``, of
-      each resource on its own, so two samples may get different sets of
-      tracks.
-    * ``{group_score_id: S}`` — one track per distinct value of the
-      ``str`` score ``S``; see `Grouping by a raw value`_. ``meta`` does
-      not go with this form.
+- ``resource_id``: Identifies a specific ``data_frame`` resource.
+- ``resource_label``: Uses a label on the fragment resource to identify the metadata resource.
+- ``file_name``: Reads metadata from a local CSV, TSV, or Excel file.
 
-    Without ``group``, the resource's labels decide (see `Defaults`_).
+The ``meta`` setting can only be used with metadata-based grouping, either explicitly configured through ``group`` or automatically enabled through the single-cell convention. It cannot be combined with constant grouping or ``group_score_id``.
 
-``value`` (optional, default ``{value: 1}``)
-    What one fragment adds, in exactly one of two forms.
-    ``{score_id: S}`` is the value of the numeric (``int`` or ``float``)
-    fragment score ``S``, which every matched resource must have;
-    ``{value: V}`` is the constant number ``V`` for every fragment.
+Local file paths are interpreted relative to the directory containing the run definition. When using ``meta.file_name``, the optional ``file_format`` (``csv``, ``tsv``, or ``excel``) and ``file_separator`` settings control how the file is read. If ``file_format`` is omitted, ``.tsv`` files are read as TSV, ``.xls`` and ``.xlsx`` files as Excel, and other extensions as CSV. Modern ``.xlsx`` files are supported directly, while legacy ``.xls`` files require the additional ``xlrd`` package.
 
-``aggregate`` (optional, default ``{mode: fragment_start, aggregator: sum}``)
-    How a bin reduces the values of its fragments, in three keys:
-
-    * ``mode`` — which fragments reach a bin, and with what weight:
-      ``fragment_start`` (the default), ``fragment_length`` or
-      ``coverage_profile``. See `Modes`_.
-    * ``aggregator`` — the reduction, ``sum`` when omitted. The
-      aggregators that each mode accepts are in `Aggregators in each
-      mode`_. One aggregator applies to every resource of the entry.
-    * ``uncovered_value`` — what each base that no fragment covers adds
-      to its bin, a number or ``null``. Only ``fragment_length`` and
-      ``coverage_profile`` take it, and each has its own default. See
-      `Uncovered bases`_.
-
-    With the default ``value``, ``sum`` in ``fragment_start`` mode counts
-    fragments. ``value: {score_id: count}`` sums the read pairs of a
-    single-cell resource.
-
-``name`` (optional)
-    The base of the entry's track names, in place of the resource query
-    of a pooled entry or the resource id of an unpooled one. Use it to
-    bin one query in two entries, for example under two modes. See
-    `Track names`_.
-
-``meta`` (optional)
-    Where the table mapping barcodes to groups comes from: exactly one of
-
-    * ``resource_id: ID`` — the ``data_frame`` resource ``ID``;
-    * ``resource_label: LABEL`` — the ``data_frame`` resource that the
-      fragment resource's label ``LABEL`` names;
-    * ``file_name: PATH`` — a local file; see `Local metadata files`_.
-      ``file_format`` (``csv``, ``tsv`` or ``excel``) and
-      ``file_separator`` go with it and only with it. Without
-      ``file_format`` the format follows the file's suffix: ``.tsv`` is
-      read as ``tsv``, ``.xls`` and ``.xlsx`` as ``excel``, and anything
-      else as ``csv``. Only ``.xlsx`` is readable out of the box: a legacy
-      ``.xls`` file also needs the ``xlrd`` package, which GAIn does not
-      install, and without it the run is refused when it resolves.
-
-    and ``filter``, a list of conjuncts selecting the rows of one sample.
-    Each is ``{column: C, value: V}``, the column ``C`` equal to the
-    literal ``V``, or ``{column: C, label: L}``, the column ``C`` equal to
-    the fragment resource's label ``L`` — so one filter selects each
-    sample's own rows. A row must satisfy every conjunct; no ``filter``
-    selects every row. A label whose value is a list cannot be a filter
-    operand. ``meta`` goes only with the metadata form of ``group`` (or
-    with no ``group`` on a resource the convention groups). Without it,
-    the convention's table is read (see `The single-cell convention`_).
-
-There is no ``none_value_replacement`` key on this kind. In the
-``fragment_length`` and ``coverage_profile`` modes, ``uncovered_value``
-says what a base without fragments adds. In ``fragment_start`` mode, the
-aggregator decides what an empty bin holds (see `Empty bins`_).
-
-Modes
-"""""
-
-``aggregate.mode`` decides which fragments reach a bin, and with what
-weight. Mode, ``value`` and ``group`` are independent: each mode operates
-with each ``value`` form and each grouping, pooled or unpooled.
-
-``fragment_start`` (the default)
-    A fragment adds its value, with a weight of 1, to the bin that holds
-    its start position. It adds nothing to other bins, however far it
-    extends. Adjacent bins and adjacent regions see each fragment exactly
-    once. Thus the column of a fragment count sums to the number of
-    fragments, and pooling several resources is exact.
-
-``fragment_length``
-    A fragment adds its value to each bin that it overlaps. The weight is
-    the number of base pairs of the overlap. A fragment that crosses a
-    region boundary is clipped to each region, so each base pair adds to
-    one region only.
-
-``coverage_profile``
-    The tool first makes the coverage profile of each track: at each
-    position, the sum of the values of the track's fragments that overlap
-    that position. Each position of a bin then adds its profile value,
-    with a weight of 1 bp. A position where the profile is 0 is
-    uncovered. With pooled resources, the profile of a group adds the
-    fragments of every resource.
-
-Two fragments in three bins
-"""""""""""""""""""""""""""
-
-The run definition below bins two fragments, ``chr1:6-14`` and
-``chr1:11-18``, on a 30-base ``chr1`` with bins of 10. Each fragment
-adds the default value 1. The entries bin one resource under the three
-modes, so each entry gets a ``name`` to keep its tracks apart:
+Metadata filters are specified using ``meta.filter``, with each condition matching a metadata column against either a constant value or a fragment resource label. For example:
 
 .. code-block:: yaml
 
-    reference_genome: genome
+    filter:
+    - column: sample_id
+      label: sample_id
+    - column: class
+      value: ODC
 
-    bins:
-      bin_size: 10
+The first condition selects rows matching the fragment resource's ``sample_id`` label, while the second restricts the selection to cells of class ``ODC``. All conditions must be satisfied. Resource labels containing multiple values cannot be used as filter operands.
 
-    binners:
-    - fragment_score_binner:
-        resource_query: frags/worked
-        name: start
-    - fragment_score_binner:
-        resource_query: frags/worked
-        name: length
-        aggregate: {mode: fragment_length}
-    - fragment_score_binner:
-        resource_query: frags/worked
-        name: profile
-        aggregate: {mode: coverage_profile}
-    - fragment_score_binner:
-        resource_query: frags/worked
-        name: start
-        aggregate: {aggregator: mean}
-    - fragment_score_binner:
-        resource_query: frags/worked
-        name: length
-        aggregate: {mode: fragment_length, aggregator: mean}
-    - fragment_score_binner:
-        resource_query: frags/worked
-        name: length_bg
-        aggregate: {mode: fragment_length, aggregator: mean, uncovered_value: 0}
-    - fragment_score_binner:
-        resource_query: frags/worked
-        name: profile
-        aggregate: {mode: coverage_profile, aggregator: mean}
-    - fragment_score_binner:
-        resource_query: frags/worked
-        name: covered
-        aggregate: {mode: coverage_profile, aggregator: mean, uncovered_value: null}
+**Validation and unmatched fragments**
 
-The run writes these tracks:
+Before processing, GAIn verifies that the metadata resource and required columns exist, that filter labels are valid, and that cell barcodes are unique within the selected rows of each resource. The selected rows must also contain at least one non-empty group.
+
+Fragments whose barcodes are absent from the selected metadata rows, or whose assigned groups are empty, are excluded from the output. When grouping by a fragment score using ``group_score_id``, fragments are also excluded if their grouping value is missing or absent from the score's categorical histogram. Dropped fragments are counted separately for each resource and genomic region, and their counts are reported at INFO level using the ``-v`` option.
+
+When multiple resources are pooled, they must use compatible grouping configurations and resolve to the same metadata table. GAIn reports an error if these requirements are not met.
+
+
+Uncovered regions and empty bins
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Genomic bins may contain positions that are not covered by any fragments. The ``uncovered_value`` setting determines how these positions contribute to aggregation.
+
+**Uncovered bases**
+
+The optional ``aggregate.uncovered_value`` field is supported by ``fragment_length`` and ``coverage_profile`` modes. It can be set to a numerical value or ``null``:
+
+- ``fragment_length``: The default is ``null``, meaning uncovered bases are excluded from aggregation.
+- ``coverage_profile``: The default is ``0``, meaning uncovered bases contribute a coverage depth of zero.
+
+The ``uncovered_value`` setting accepts any finite numerical value, not just zero, or ``null`` to exclude uncovered bases from aggregation. An explicit ``NaN`` value is not permitted.
+
+For example, to exclude uncovered bases when calculating mean coverage depth:
+
+.. code-block:: yaml
+
+    aggregate:
+      mode: coverage_profile
+      aggregator: mean
+      uncovered_value: null
+
+Consider a 10 bp bin in which a single fragment covers 4 bp. With ``coverage_profile`` and ``mean``, the default ``uncovered_value: 0`` produces a mean coverage of 0.4, averaged across all 10 positions. Setting ``uncovered_value: null`` produces a mean of 1.0, calculated only across the 4 covered positions.
+
+In ``fragment_length`` mode, overlapping base pairs are counted separately for each fragment, while uncovered bases contribute only once. This can produce different means from ``coverage_profile``. For example, with 12 overlapping fragment base pairs covering 8 positions of a 10 bp bin, ``uncovered_value: 0`` produces a mean of 12/14 (0.857) with ``fragment_length``, compared with 12/10 (1.2) with ``coverage_profile``.
+
+The ``fragment_start`` mode does not support ``uncovered_value``, since it aggregates fragments based on their starting positions rather than coverage across individual bases.
+
+**Empty bins**
+
+A bin is considered empty when no fragments contribute to its aggregation. The resulting value depends on the aggregator:
+
+- ``sum`` and ``count``: Return ``0``.
+- ``mean``, ``median``, ``max``, ``min``, and ``product``: Return ``NaN``.
+
+These rules apply to ``fragment_start`` and to the other two modes when ``uncovered_value`` is ``null``. When a numerical ``uncovered_value`` is specified, uncovered positions contribute that value, so bins with no fragments are not empty.
+
+The same rules apply when a resource has no fragments on a particular chromosome. If ``uncovered_value`` is ``null``, the bins follow the empty-bin rules described above. If a numerical ``uncovered_value`` is specified, every base is assigned that value. For example, with ``uncovered_value: 2``, a 10 bp bin produces a ``mean`` of 2 or a ``sum`` of 20.
+
+Exploring the output
+--------------------
+
+HDF5 file structure
+^^^^^^^^^^^^^^^^^^^
+
+The ``binning_tool`` command produces a single HDF5 file containing the numerical matrix, genomic coordinates, and information about the tracks and their source resources.
+
+The file contains three datasets:
+
+- ``/values``: A numerical matrix with one row per genomic bin and one column per track. Values are stored as 64-bit floating-point numbers (``float64``), with ``NaN`` representing missing values where applicable. The matrix is gzip-compressed.
+- ``/bins``: A table describing the genomic coordinates of each bin, with fields ``chrom``, ``start``, and ``end``. Coordinates are 1-based and inclusive.
+- ``/tracks``: A table describing each track, including its binner type, source resources, score or group identifier, and configuration used to generate it.
+
+Row *i* of ``/values`` corresponds to row *i* of ``/bins``, while column *j* corresponds to row *j* of ``/tracks``. This allows every numerical value to be associated with a genomic region and the resource from which it was calculated.
+
+**File metadata**
+
+The HDF5 file also stores attributes describing the binning run:
+
+- ``reference_genome``: The reference genome resource used.
+- ``bin_size``: The bin width in base pairs.
+- ``regions``: The genomic regions included in the analysis.
+- ``coordinates``: The coordinate convention (``1-based-inclusive``).
+- ``gain_version``: The GAIn version used to generate the file.
+- ``created``: The creation time in UTC.
+- ``tracks_layout``: The version of the track metadata format, currently ``2``.
+
+Each track also retains its source resource IDs and binner configuration, allowing the calculations to be traced back to their inputs.
+
+When local metadata files are used, their paths, sizes, and modification times are recorded in additional file attributes.
+
+The HDF5 format can be accessed using standard tools such as ``h5py``, as well as the dedicated GAIn functions described in the next section.
+
+Reading the output with Python
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+GAIn provides functions for reading the three datasets in a binning output file:
+
+- ``read_values``: Returns the numerical matrix as a NumPy array.
+- ``read_bins``: Returns the genomic bin coordinates as a pandas DataFrame.
+- ``read_tracks``: Returns the track metadata as a pandas DataFrame.
+- ``track_labels``: Generates readable labels for the tracks based on their metadata.
+
+The ``read_bins`` and ``read_tracks`` functions accept either a file path or an open ``h5py.File`` object. For example, the ``demo.h5`` file created in Getting started can be read using:
+
+.. code-block:: python
+
+    import pandas as pd
+    from gain.binning.h5_reader import (
+        read_values, read_bins, read_tracks, track_labels
+    )
+
+    values = read_values("demo.h5")
+    bins = read_bins("demo.h5")
+    tracks = read_tracks("demo.h5")
+
+    labels = track_labels(tracks)
+    result = bins.join(pd.DataFrame(values, columns=labels))
+
+    print(result.round(3).to_string(index=False))
+
+This produces a table containing the genomic coordinates and both phyloP100way tracks, equivalent to the output of ``binning_tool_view demo.h5 --bins --matrix``.
+
+The ``values`` array has shape ``(n_bins, n_tracks)``. The rows correspond to ``bins``, while the columns correspond to the labels generated from ``tracks``.
+
+**Direct HDF5 access**
+
+The output can also be accessed using ``h5py`` without GAIn's reader functions:
+
+.. code-block:: python
+
+    import h5py
+
+    with h5py.File("demo.h5", "r") as h5:
+        print(h5["values"].shape)
+        print(h5["bins"][:3])
+        print(h5["tracks"][:])
+
+Unlike ``read_values``, which loads the entire numerical matrix into memory, ``h5py`` allows individual rows, columns, or subsets of the matrix to be read without loading the complete dataset. This is particularly useful for large binning results.
+
+Track names and genomic coordinates
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+**Track names and labels**
+
+Each track is identified by its source resource and, where applicable, its group and aggregator. Track names depend on the binner type and pooling configuration:
+
+- **Position-score tracks:** Named using the resource ID, such as ``hg38/scores/phyloP100way``.
+- **Unpooled fragment-score tracks:** Named using the resource ID and group, such as ``sc/atac_fragments/donor1:ODC``.
+- **Pooled fragment-score tracks:** Named using the resource query and group, such as ``sc/atac_fragments/*:ODC``.
+
+Tracks appear in the order of the ``binners`` entries in the run definition. Within each entry, tracks are ordered first by resource ID and then by group name.
+
+The optional ``name`` field allows users to customize track names. For position-score and unpooled fragment-score tracks, it prefixes the resource ID with ``<name>/``. For pooled fragment-score tracks, it replaces the resource query. For example, specifying ``name: depth`` produces ``depth/sc/atac_fragments/donor1:ODC`` for an unpooled track or ``depth:ODC`` for a pooled track.
+
+When the same resource and group are processed with different aggregators, the aggregator is appended to distinguish the tracks. For example, our Getting started example produces:
+
+- ``hg38/scores/phyloP100way:mean``
+- ``hg38/scores/phyloP100way:max``
+
+GAIn ensures that track names are unique during processing. If two binner entries would produce identical names even after adding the aggregator, the run is rejected and the entries must be distinguished using ``name``.
+
+The HDF5 file stores track metadata rather than the original track names. The ``track_labels`` function generates readable labels from this metadata, including the aggregator. If generated labels are identical, a column-position suffix is added to distinguish them.
+
+**Genomic coordinates**
+
+Bin coordinates follow GAIn's standard 1-based, inclusive convention. Each bin is identified by its chromosome, start, and end positions.
+
+Bins follow a fixed grid beginning at position 1 of each chromosome. When a specified genomic region does not align with the grid, its first and last bins are clipped to the region boundaries.
+
+Because the same coordinate convention is used throughout GAIn, bin coordinates can be used directly with other GAIn tools. Bins from different analyses can also be aligned by their genomic coordinates, provided their reference genomes and binning grids are compatible.
+
+Output compatibility
+^^^^^^^^^^^^^^^^^^^^
+
+The HDF5 output format changed after the GAIn 2026.9 releases. Files produced by newer versions use an updated ``/tracks`` dataset layout, identified by the root attribute ``tracks_layout`` with a value of ``2``.
+
+Older files do not contain this attribute and use a different set of track metadata fields. The reference genome attribute was also renamed from ``input_reference_genome`` to ``reference_genome``.
+
+The output format can be identified using ``h5py``:
+
+.. code-block:: python
+
+    import h5py
+
+    with h5py.File("demo.h5", "r") as h5:
+        print(h5.attrs.get("tracks_layout"))
+
+A value of ``2`` indicates the current format, while a missing attribute indicates an older format. The ``gain_version`` attribute should not be used to identify the layout, since development builds may use newer formats while reporting an older version.
+
+GAIn's ``read_tracks`` function supports the current layout and raises an error for older or unsupported layouts. Files written by earlier releases are not automatically converted.
+
+
+
+
+Reference and technical details
+-------------------------------
+
+This section provides a reference for binning configurations, validation rules,
+and output files.
+
+Configuration reference
+^^^^^^^^^^^^^^^^^^^^^^^
+
+A run definition contains a reference genome, a ``bins`` block, and a list of
+``binners`` entries. Every binner entry has exactly one type key:
+``position_score_binner`` or ``fragment_score_binner``.
+
+**Shared settings**
 
 .. list-table::
    :header-rows: 1
-   :widths: 22 22 10 16 10 10 10
+   :widths: 27 19 54
 
-   * - Track
-     - ``mode``
-     - ``aggregator``
-     - ``uncovered_value``
-     - ``1-10``
-     - ``11-20``
-     - ``21-30``
-   * - ``start:all:sum``
-     - ``fragment_start``
-     - ``sum``
-     - —
-     - 1.0
-     - 1.0
-     - 0.0
-   * - ``length:all:sum``
-     - ``fragment_length``
-     - ``sum``
-     - ``null``
-     - 5.0
-     - 12.0
-     - 0.0
-   * - ``profile:all:sum``
-     - ``coverage_profile``
-     - ``sum``
-     - ``0``
-     - 5.0
-     - 12.0
-     - 0.0
-   * - ``start:all:mean``
-     - ``fragment_start``
-     - ``mean``
-     - —
-     - 1.0
-     - 1.0
-     - NaN
-   * - ``length:all:mean``
-     - ``fragment_length``
-     - ``mean``
-     - ``null``
-     - 1.0
-     - 1.0
-     - NaN
-   * - ``length_bg:all``
-     - ``fragment_length``
-     - ``mean``
-     - ``0``
-     - 0.5
-     - 0.857 (12/14)
-     - 0.0
-   * - ``profile:all:mean``
-     - ``coverage_profile``
-     - ``mean``
-     - ``0``
-     - 0.5
-     - 1.2
-     - 0.0
-   * - ``covered:all``
-     - ``coverage_profile``
-     - ``mean``
-     - ``null``
-     - 1.0
-     - 1.5
-     - NaN
+   * - Setting
+     - Required or default
+     - Description
+   * - ``reference_genome``
+     - Required
+     - Reference genome resource defining chromosome names and lengths.
+   * - ``bins.bin_size``
+     - Required
+     - Width of each genomic bin in base pairs.
+   * - ``bins.regions``
+     - All chromosomes
+     - Chromosomes or intervals in GAIn's 1-based, inclusive notation. Their
+       order determines the output row order.
+   * - ``binners``
+     - Required
+     - List of binner entries, processed in the specified order.
+   * - ``resource_query``
+     - Required per entry
+     - Exact resource ID or glob over resource IDs, optionally followed by a
+       bracketed label filter.
+   * - ``search_term``
+     - Optional
+     - Full-text filter combined with ``resource_query``; uses the same
+       syntax as ``grr_browse -s``.
 
-How to read the table:
+Only resources matching the entry's binner type are selected, in resource-ID
+order. A query matching no resources of the appropriate type is an error.
+Full-text searches require a repository index. The public IossifovLab GRR
+has one; for a directory GRR, create it using ``grr_manage repo-index``.
+The GRR location comes from the default GRR definition or GAIn's ``-g`` /
+``--grr-directory`` options, not the YAML file (see :doc:`/grr`).
 
-* ``fragment_start`` puts each fragment in the bin of its start: one in
-  ``1-10`` and one in ``11-20``.
-* ``fragment_length`` adds 5 bp of the first fragment to ``1-10``, and
-  4 bp of the first and 8 bp of the second to ``11-20``. The mean of
-  the value 1 over these base pairs is 1.0. With ``uncovered_value: 0``,
-  the five uncovered bases of ``1-10`` and the two of ``11-20`` also
-  add 0, so the means are 5/10 and 12/14.
-* ``coverage_profile`` makes the profile 1 on ``6-10``, 2 on ``11-14``,
-  1 on ``15-18`` and 0 elsewhere. With the default ``uncovered_value:
-  0``, the mean of ``11-20`` is the mean depth over the full bin,
-  12/10. With ``uncovered_value: null``, it is the mean depth over the
-  eight covered bases, 12/8.
-* The sums of ``fragment_length`` and ``coverage_profile`` agree, because
-  both add each covered base pair once for each fragment over it. The
-  two modes differ in the weight of a base that two fragments cover:
-  ``fragment_length`` counts it two times, and ``coverage_profile``
-  counts it one time, with the value 2.
-
-Uncovered bases
-"""""""""""""""
-
-``aggregate.uncovered_value`` is the value of each base of a region that
-no fragment of the track covers. The tool adds it to the bin with a weight
-of 1 bp for each uncovered base. In ``coverage_profile`` mode, "uncovered"
-means a profile value of 0.
+**Position-score binner settings**
 
 .. list-table::
    :header-rows: 1
-   :widths: 25 40 35
+   :widths: 32 22 46
 
-   * - Mode
+   * - Setting
      - Default
-     - Other values
-   * - ``fragment_start``
-     - not applicable
-     - refused
-   * - ``fragment_length``
-     - ``null``: the uncovered bases add nothing
-     - any number
-   * - ``coverage_profile``
-     - ``0``: an uncovered base has depth 0
-     - ``null`` or any number
+     - Description
+   * - ``aggregator``
+     - Resource's aggregator
+     - Numerical reduction: ``max``, ``min``, ``mean``, ``median``, ``sum``,
+       ``product``, or ``count``. An override applies to every matched resource.
+   * - ``none_value_replacement``
+     - No replacement
+     - Value supplied for each genomic position without a score before
+       aggregation. Without it, a completely uncovered bin is ``NaN`` except
+       under ``count``, which returns ``0``.
+   * - ``name``
+     - Resource ID
+     - Optional prefix used to distinguish tracks, especially when a resource
+       is included more than once.
 
-When the value is a number:
+Position-score resources must contain one numerical (``int`` or ``float``)
+score. Resources with multiple scores and non-numerical aggregators such as
+``join`` or ``list`` are not supported.
 
-* The tool fills only the bases of the region. A bin is already clipped to
-  its region (see `Coordinates and the grid`_), so the bin holds only
-  bases of the region.
-* A chromosome that a resource does not have is uncovered throughout. Each
-  of its bins holds the aggregate of the uncovered value over its bases:
-  with ``uncovered_value: 2``, a ``mean`` is 2 and a ``sum`` over a 10 bp
-  bin is 20.
-* No bin is empty, so the empty-bin rule of `Empty bins`_ does not apply.
-
-With ``null``, the empty-bin rule applies. The value must be finite.
-``NaN`` is refused, because the output file records ``null`` as ``NaN``.
-
-``fragment_start`` refuses the key, because a bin in this mode reduces only
-the fragments that start in it:
-
-.. code-block:: text
-
-    binners[0].aggregate: uncovered_value does not apply in fragment_start mode, where a bin reduces only the fragments starting in it; give mode: fragment_length or coverage_profile, or drop uncovered_value
-
-Aggregators in each mode
-""""""""""""""""""""""""
-
-``fragment_start`` accepts ``sum``, ``count``, ``mean``, ``max``, ``min``,
-``median`` and ``product``. ``fragment_length`` and ``coverage_profile``
-accept ``sum``, ``mean``, ``max``, ``min`` and ``median``. These two modes
-refuse two aggregators when the run definition is read:
-
-* ``count``, because with a weight it counts base pairs, not fragments.
-  For the number of covered base pairs, use ``aggregator: sum`` with
-  ``value: {value: 1}``:
-
-  .. code-block:: text
-
-      binners[0].aggregate: aggregator 'count' would count base pairs, not fragments, in fragment_length mode; for the covered base pairs give aggregator: sum with value: {value: 1}
-
-* ``product``, because with a weight it raises a value to the power of a
-  length:
-
-  .. code-block:: text
-
-      binners[0].aggregate: aggregator 'product' would weigh a value by its overlap as a power in coverage_profile mode; use one of max, mean, median, min, sum
-
-The single-cell convention
-""""""""""""""""""""""""""
-
-A single-cell fragment resource that names its metadata the conventional
-way needs no ``group`` and no ``meta``. The convention is:
+**Fragment-score binner settings**
 
 .. list-table::
    :header-rows: 1
-   :widths: 30 40 30
+   :widths: 29 28 43
 
-   * - Where
-     - What
-     - Name
-   * - fragment resource label
-     - the id of the ``data_frame`` resource holding the cell metadata
-     - ``cell_meta_resource_id``
-   * - fragment resource label
-     - this sample's key in that table
-     - ``sample_id``
-   * - metadata table column
-     - the sample key
-     - ``sample_id``
-   * - metadata table column
-     - the cell barcode
-     - ``barcode``
-   * - metadata table column
-     - the cell's group
-     - ``class``
+   * - Setting
+     - Default
+     - Description
+   * - ``pool``
+     - ``true``
+     - Combines matched resources into shared tracks; ``false`` keeps their
+       tracks separate.
+   * - ``group``
+     - Automatic
+     - Determines groups using the single-cell convention when the resource
+       has a ``cell_meta_resource_id`` label; otherwise uses group ``all``.
+   * - ``value``
+     - ``{value: 1}``
+     - Each fragment contributes a constant (``{value: V}``) or the numerical
+       ``int``/``float`` score named by ``{score_id: S}``.
+   * - ``aggregate.mode``
+     - ``fragment_start``
+     - How fragments contribute: ``fragment_start``, ``fragment_length``, or
+       ``coverage_profile``.
+   * - ``aggregate.aggregator``
+     - ``sum``
+     - Numerical reduction. Its supported values depend on the mode.
+   * - ``aggregate.uncovered_value``
+     - Mode-dependent
+     - ``null`` in ``fragment_length``; ``0`` in ``coverage_profile``. Not
+       supported in ``fragment_start``.
+   * - ``name``
+     - Resource/query name
+     - Optional track-name base; also distinguishes otherwise identical
+       entries with different modes.
+   * - ``meta``
+     - Convention's table
+     - Metadata source and optional row filters, for metadata-based grouping.
 
-and the barcode is the fragment score ``cell``. The default ``meta`` is
-therefore the table that ``cell_meta_resource_id`` names, restricted to the
-rows whose ``sample_id`` column equals the resource's ``sample_id`` label —
-spelled out, ``{resource_label: cell_meta_resource_id, filter: [{column:
-sample_id, label: sample_id}]}``.
+The ``group`` setting accepts exactly one form:
 
-A merged multi-sample fragment file has no single sample, and so no
-``sample_id`` label. When no resource of a job carries ``sample_id``, the
-default ``meta`` has no filter, ``{resource_label: cell_meta_resource_id}``:
-the job reads every row of the table, and ``--dry-run`` warns once for each
-resource. The table then needs no ``sample_id`` column, and its barcodes
-must be unique across the whole table.
+- ``{group: NAME}``: One constant group.
+- ``{group_score_id: S}``: One group per distinct value of a string-valued
+  fragment score, read from its complete categorical histogram.
+- ``{cell_score_id, cell_meta_column, group_meta_column}``: Groups fragments
+  through a metadata table. These fields default to ``cell``, ``barcode``,
+  and ``class``, respectively, so ``group: {}`` uses the convention.
 
-All of it is checked before any work runs, with an error naming the entry
-and the resource: the label exists and names a ``data_frame`` resource the
-repository has; the table has the columns the entry uses; every filter
-label exists on the resource and has one value, except that the default
-``meta`` drops its filter when no resource of the job carries
-``sample_id``; no barcode occurs on two of one resource's
-selected rows; and the selected rows name at least one group. A table that
-predates the convention is used through the explicit ``group`` and
-``meta`` keys.
+The ``meta`` setting applies only to metadata-based grouping. It identifies
+the table through exactly one of ``resource_id``, ``resource_label``, or
+``file_name``. A local file may additionally specify ``file_format``
+(``csv``, ``tsv``, or ``excel``) and ``file_separator``. The optional
+``meta.filter`` is a list of conditions, each ``{column: C, value: V}``
+or ``{column: C, label: L}``, all of which must match. Without a filter,
+all rows are selected. See *Working with cell metadata* for examples.
 
-Defaults
-""""""""
+The ``value`` setting and the ``group`` setting each accept only one of
+their supported forms. A ``{score_id: S}`` value requires a numerical score
+named ``S`` in every matched resource. A ``group_score_id`` score cannot
+also supply ``value``.
 
-Without ``group``, grouping is on if and only if the resource carries the
-``cell_meta_resource_id`` label: the label is the declaration, and nothing
-is guessed from the names of a resource's scores. A labelled resource is
-grouped as with ``group: {}``; any other resource is the one group ``all``,
-so its track is named ``<resource id>:all``. A resource that has ``cell``
-and ``count`` scores but no label is binned as the single ``all`` track,
-and ``--dry-run`` warns about it.
+Validation and limitations
+^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Without ``value`` and ``aggregate``, an entry counts the fragments that
-start in each bin, as ``value: {value: 1}`` and ``aggregate: {mode:
-fragment_start, aggregator: sum}``, whatever scores the resource has. The
-read pairs behind each fragment are summed only on request, with ``value:
-{score_id: count}``.
+GAIn validates the run definition and its selected resources before
+processing. The checks prevent silently producing an incomplete or
+ambiguous matrix.
 
-A pooled entry is one job reading one table, so its resources must agree:
-on whether they carry ``cell_meta_resource_id`` (when ``group`` is
-omitted), on whether they carry ``sample_id`` (when ``meta`` is omitted,
-and for a pooled raw-value grouping), and on the one metadata table their
-``meta`` names. Resources
-that disagree are an error listing both sides; give the setting
-explicitly, or ``pool: false``.
+- **Regions:** Chromosomes must occur in the reference genome, regions must
+  have valid coordinates and remain within chromosome lengths, and selected
+  regions must not overlap. The reference genome is read from the YAML file,
+  not from the genomic context or a command-line flag.
+- **Resource selection:** Unknown keys, unmatched queries, missing full-text
+  indexes, and unsupported resource or score types are reported as errors
+  identifying the relevant entry.
+- **Aggregation:** ``fragment_start`` accepts all seven numerical
+  aggregators. ``fragment_length`` and ``coverage_profile`` reject
+  ``count`` and ``product``: with overlap weighting, ``count`` would count
+  base pairs rather than fragments, while ``product`` would raise each
+  value to a power determined by overlap length. To total overlapping base
+  pairs, use ``sum`` with ``value: {value: 1}``.
+- **Missing coverage:** Fragment-score binners do not accept
+  ``none_value_replacement``. Use ``aggregate.uncovered_value`` in the two
+  coverage-based modes instead. It must be ``null`` or a finite number;
+  explicit ``NaN`` is invalid. ``fragment_start`` does not support it.
+  Numeric uncovered values are applied only within the selected region,
+  including any clipped boundary bins.
+- **Metadata:** A referenced ``data_frame`` resource and its required
+  columns and labels must exist. Selected metadata rows cannot repeat a
+  barcode for one resource and must identify at least one non-empty group.
+  Labels holding lists cannot be used as filter values. ``file_format`` and
+  ``file_separator`` are valid only when ``meta.file_name`` is specified.
+- **Pooling and grouping:** Pooled metadata-based resources must resolve to
+  the same metadata table and compatible grouping conventions. Raw-value
+  grouping requires complete categorical histograms. When some pooled
+  resources have a ``sample_id`` label, all of them must have one, each a
+  single value without colons and distinct across the pool. Pooling
+  labelled and unlabelled resources is invalid. Inconsistent or incomplete configurations are rejected.
+- **Track names:** If the same track name is produced more than once, GAIn
+  appends the aggregator where that resolves the ambiguity. Identical
+  name/group/aggregator combinations are rejected. For example, two entries
+  using different modes but the same aggregator may need distinct ``name``
+  settings, because a mode is not appended to the track name.
 
-Empty bins
-""""""""""
+In metadata-based grouping, fragments whose barcodes are absent from the
+selected metadata rows, or whose group is empty, are dropped. Raw-value
+grouping also drops fragments with missing values or values absent from the
+recorded histogram. Counts of dropped fragments are logged per resource
+and region at INFO level with ``-v``.
 
-A bin that no fragment of a group reaches holds the aggregator's empty
-value: ``0`` for ``count`` and ``sum``, which have an answer for no
-fragments, and ``NaN`` for ``mean``, ``max``, ``min``, ``median`` and
-``product``, which have none. A chromosome a resource has no fragments on
-is treated exactly like empty bins, by the same rule, so one sample
-lacking a contig neither fails the run nor turns a pooled column into
-``NaN``.
+A ``--dry-run`` reports the planned resources, groups, tracks, bins, and
+tasks before processing, with the group and track counts, so the matrix
+width is known before the run. It can also warn when a resource appears to
+have cell-related scores but lacks the ``cell_meta_resource_id`` label, when
+local metadata files are used, or when a resource has no ``sample_id``
+label, so that its groups are bare values or every metadata row is read.
+A local metadata file makes a run dependent on that file's availability.
 
-This rule applies in ``fragment_start`` mode, and in the two other modes
-with ``uncovered_value: null``. With a numeric ``uncovered_value``, no bin
-is empty (see `Uncovered bases`_).
+HDF5 format reference
+^^^^^^^^^^^^^^^^^^^^^
 
-Dropped fragments
-"""""""""""""""""
+The output contains three datasets. All three can be inspected with
+``h5py``; GAIn's readers provide pandas or NumPy representations (see
+*Reading the output with Python*).
 
-With a grouping, a fragment reaches no track when its barcode is not among
-its resource's selected rows, when its row's group is empty, or — when
-grouping by a raw value — when its value is missing or is not one the
-score's histogram lists. Such fragments are dropped, counted per resource
-and region, and the count is logged at ``INFO`` level (``-v``):
+.. list-table::
+   :header-rows: 1
+   :widths: 19 25 56
 
-.. code-block:: text
+   * - Dataset
+     - Shape and type
+     - Contents
+   * - ``/values``
+     - ``(n_bins, n_tracks)``, ``float64``
+     - Numerical matrix. Missing values are ``NaN``. Stored in row blocks
+       with gzip compression.
+   * - ``/bins``
+     - ``(n_bins,)``, compound
+     - ``chrom`` (fixed-length bytes, sized to the longest chromosome
+       name), ``start`` and ``end`` (``int64``, 1-based inclusive).
+   * - ``/tracks``
+     - ``(n_tracks,)``, compound
+     - Metadata for each output column, with the same fields for both
+       binner types.
 
-    INFO:gain.binning.fragment_binner:sc/atac_fragments/donor1 chr1:1-1000: 2 fragments dropped, their barcode absent from the cell metadata rows or of no group
+Each row of ``/bins`` describes the corresponding row of ``/values``.
+Each row of ``/tracks`` describes the corresponding column of ``/values``.
+The ``/tracks`` dataset uses the following fields:
 
-``binning_tracks_annotator`` keeps no count and logs no line, because a
-run over millions of annotatables would log one line for each annotatable.
+.. list-table::
+   :header-rows: 1
+   :widths: 25 19 56
 
-Grouping by a raw value
-"""""""""""""""""""""""
+   * - Field
+     - Type
+     - Meaning
+   * - ``binner_type``
+     - UTF-8 string
+     - ``position_score`` or ``fragment_score``.
+   * - ``binner_index``
+     - ``int64``
+     - Zero-based index of the entry in the run definition's ``binners`` list.
+   * - ``track_index``
+     - ``int64``
+     - Zero-based index of the track within that entry. Together with
+       ``binner_index``, this uniquely identifies a track in the file.
+   * - ``resource_ids``
+     - UTF-8 string
+     - Comma-separated IDs of the source resources, in ID order. One ID for
+       a position or unpooled fragment track; multiple for a pooled track.
+   * - ``selector``
+     - UTF-8 string
+     - Position-score ID or fragment group identifier.
+   * - ``binner_def``
+     - UTF-8 string
+     - Canonical JSON definition for the track, using sorted keys and no
+       extra whitespace. Missing values appear as JSON ``null``.
 
-``group: {group_score_id: S}`` makes one track per distinct value of the
-``str`` score ``S``. Grouped by the ``cell`` score, that is one track per
-cell: a per-cell matrix.
+The four text fields are variable-length UTF-8 strings. The output does not
+store a track's display name: GAIn constructs labels from the metadata,
+using ``track_labels``. The ``binner_def`` JSON contains:
 
-.. code-block:: yaml
+- For position-score tracks: ``aggregator``, ``none_value_replacement``,
+  and ``name``.
+- For fragment-score tracks: ``aggregator``, ``mode``, ``uncovered_value``,
+  ``score_id`` (``null`` when counting fragments), ``resource_query``,
+  ``pool``, and ``name``.
 
-    - fragment_score_binner:
-        resource_query: "sc/atac_fragments/*"
-        group: {group_score_id: cell}
+The root attributes record the run configuration and provenance:
 
-The values are not discovered by reading the data: they are read, when the
-entry is resolved, from the score's **full** categorical histogram in the
-resource's statistics. The statistics must therefore be built
-(``grr_manage resource-stats``) and, in a repository that keeps them in
-DVC, pulled; a resource without the full histogram, or with a truncated
-one, is an error naming it. A score whose values pass the default
-categorical histogram's limit of 100 values keeps the full histogram only
-when its configuration declares ``histogram: {type: categorical}``. The
-grouping score may not be the ``value`` score.
+.. list-table::
+   :header-rows: 1
+   :widths: 29 71
 
-Unpooled, a track's group is the bare value. Pooled, the same barcode
-recurs in every 10x sample while naming a different cell, so the group is
-prefixed with the resource's ``sample_id`` label, ``<sample_id>:<value>``.
-When pooled resources carry ``sample_id``, each must carry a label of one
-value, without a ``:``, and no two pooled resources may share one; any of
-these is an error naming the resources, which suggests ``pool: false``.
+   * - Attribute
+     - Meaning
+   * - ``tracks_layout``
+     - ``2`` for the current ``/tracks`` layout; absent in older files.
+   * - ``reference_genome``
+     - Reference genome ID (older files use ``input_reference_genome``).
+   * - ``bin_size``
+     - Bin size in base pairs.
+   * - ``regions``
+     - Genomic regions in output order, as ``chrom:start-end``.
+   * - ``coordinates``
+     - ``1-based-inclusive``.
+   * - ``gain_version``
+     - GAIn version that wrote the file.
+   * - ``created``
+     - UTC creation time, in ISO 8601.
+   * - ``metadata_files``
+     - Absolute paths of any local metadata files used.
+   * - ``metadata_file_sizes``
+     - Their sizes in bytes, in the same order.
+   * - ``metadata_file_mtimes``
+     - Their modification times in UTC, in ISO 8601, in the same order.
 
-When no pooled resource carries ``sample_id``, each group is the bare
-value, and ``--dry-run`` warns once for each resource. This suits a merged
-multi-sample file whose barcodes are already unique across its samples. The
-same value in two resources reaches one track. A pool where some resources
-carry ``sample_id`` and some do not is an error naming both sides. A
-``sample_id`` label that is a list counts as carried, and is an error.
+The three ``metadata_file_*`` attributes appear only for runs that read
+local metadata files. All values in ``/values`` are ``float64``, including
+results of integer-valued aggregators such as ``count``. Missing values
+are represented by ``NaN``, not integer nulls. Older ``/tracks`` layouts
+are distinguished by the absence of ``tracks_layout``, not by
+``gain_version`` (see *Output compatibility*). The preceding older layout
+had fields including ``name``, ``group``, ``score_id``, and ``aggregator``;
+the earliest layouts used a singular ``resource_id`` field. Files are not
+automatically converted between layouts.
 
-Mind the size before running: a per-cell matrix has one column per cell,
-which is thousands of columns per sample, and the full histogram of a
-``cell`` score is itself tens of megabytes per resource. ``--dry-run``
-reports the group count read from the histograms, so the width of the
-matrix is known before it is built.
+**Reader errors**
 
-.. _binning-local-metadata-files:
+``read_bins`` and ``read_tracks`` raise ``ValueError`` if the corresponding
+table is missing, is not a dataset, or is not a compound dataset.
+``read_tracks`` also rejects absent or unsupported ``tracks_layout`` values.
+``read_values`` raises ``ValueError`` if ``/values`` is missing, is not a
+dataset, or is not two-dimensional. An invalid path or a non-HDF5 file
+raises the ``OSError`` from ``h5py``. ``read_values`` loads the entire matrix
+into memory; direct ``h5py`` access allows partial reads. The table readers
+return DataFrames indexed by the corresponding positions in ``/values``
+and decode text fields as Python strings.
 
-Local metadata files
-""""""""""""""""""""
+Performance and execution
+^^^^^^^^^^^^^^^^^^^^^^^^^
 
-``meta: {file_name: PATH}`` reads the metadata table from a local file
-instead of a ``data_frame`` resource, with the same column conventions. A
-relative ``PATH`` is read from the directory of the run definition, not
-from the current directory:
+**Planning and parallel execution**
 
-.. code-block:: yaml
+Run ``binning_tool RUN.yaml --dry-run`` to inspect the number of regions,
+bins, tracks, and tasks before generating the matrix. One *job* is the
+unit of work for one track or a group of related tracks; a *task*
+is one job applied to one bundle of genomic regions. Parallel execution
+is controlled using ``-j``. For the advanced example below, nine
+position-score tracks form nine jobs and the two fragment tracks share
+one job. With a single region bundle, this produces ten tasks (see
+:ref:`binning-tool-parallelism`).
 
-    - fragment_score_binner:
-        resource_query: "sc/atac_fragments/*"
-        meta:
-          file_name: cells.csv
-          filter:
-          - {column: sample_id, label: sample_id}
+Per-cell grouping can produce thousands of tracks. The full categorical
+histogram for a cell-barcode score may also require tens of megabytes per
+resource. Review the group and track counts in ``--dry-run`` before
+running such analyses.
 
-A run that reads a local file can be repeated only where that file is, so
-``--dry-run`` warns about it, and the output file records which file it
-was: its absolute path, size and modification time, in the
-``metadata_files``, ``metadata_file_sizes`` and ``metadata_file_mtimes``
-root attributes (see `The output file`_).
+**Remote resources and caching**
+
+The public GRR's conservation bigWig files are several gigabytes each,
+but a remote-capable ``pyBigWig`` can read only the requested genomic
+intervals using HTTP range requests. This requires ``pyBigWig`` built
+with remote (libcurl) support; the GAIn conda package supplies one, while
+the PyPI ``pyBigWig`` wheel does not. If you
+encounter ``this pyBigWig build has no remote-file support``, use the
+conda installation or a local repository via ``--grr-directory``.
+
+A GRR definition with ``cache_dir`` may instead download each complete
+bigWig before opening it, regardless of the requested region. For the
+eight conservation tracks in the example below, this can mean about
+60 GB of downloads. See :doc:`/gain_getting_started_cli` for GRR caching.
+
+**Storage formats and numerical precision**
+
+Binning a per-base conservation score on chromosome 21 was approximately
+three times slower from tabix than from bigWig. The scope of the tabix
+index (whole genome or one chromosome) had no effect on that difference. Prefer bigWig when
+both representations are available.
+
+A bigWig stores scores as ``float32``. Its binned results can therefore
+differ slightly from those computed from a text/tabix version of the
+same scores, even though the HDF5 output uses ``float64``. A comparison
+of the two formats found agreement of roughly ``1e-8`` for a ``mean`` over 10 kb
+bins. These files should not be expected to be bit-identical.
 
 Binner kinds
 ^^^^^^^^^^^^
@@ -717,300 +972,61 @@ calls ``bind(job, grr, quiet=True)``, so a kind that does not accept the
 keyword ``quiet`` fails in the annotator. With ``quiet=True``, a binding
 keeps no record and logs no line for each region that it bins.
 
-Track names
-^^^^^^^^^^^
+Advanced worked example
+^^^^^^^^^^^^^^^^^^^^^^^
 
-Every track has a name, and names in the output are always unique.
-
-* A position-score track is named by its resource id.
-* A fragment track of an unpooled entry is named
-  ``<resource id>:<group>``; in the plain case, with no grouping,
-  ``<resource id>:all``.
-* A fragment track of a pooled entry is named
-  ``<resource_query>:<group>``, the query string as written in the entry,
-  which is the one name every pooled entry has — for example
-  ``sc/atac_fragments/*:ODC``. Grouped by a raw value, the group carries
-  its sample, so a pooled track is
-  ``<resource_query>:<sample_id>:<value>``, or
-  ``<resource_query>:<value>`` when no pooled resource carries
-  ``sample_id``.
-
-An entry's ``name`` key replaces the base of these names. Without
-``name``, the names are as above.
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 35 35
-
-   * - Entry
-     - Without ``name``
-     - With ``name: N``
-   * - fragment, ``pool: true``
-     - ``<resource_query>:<group>``
-     - ``N:<group>``
-   * - fragment, ``pool: false``
-     - ``<resource id>:<group>``
-     - ``N/<resource id>:<group>``
-   * - position score
-     - ``<resource id>``
-     - ``N/<resource id>``
-
-An unpooled entry keeps the resource id in each name, so each resource
-still has its own tracks. For example, an entry with
-``resource_query: "sc/atac_fragments/*"`` and ``name: depth`` gives the
-pooled tracks ``depth:ODC`` and ``depth:PVALB``, and the same entry with
-``pool: false`` gives ``depth/sc/atac_fragments/donor1:ODC`` and its
-siblings.
-
-Tracks follow entry order, and within an entry the order of resource ids
-and then of groups. When the same name and group occur more than once in
-the expanded list — typically the same resource matched by a glob in one
-entry and named again with another aggregator in a second — every track of
-that set gets ``:<aggregator>`` appended, whichever entry came first, so
-``hg38/scores/phyloP100way:mean`` and ``hg38/scores/phyloP100way:max`` sit
-side by side, as do ``sc/atac_fragments/*:ODC:sum`` and
-``sc/atac_fragments/*:ODC:mean``. Two entries that would still produce one
-and the same track (same name, group and aggregator) are refused, naming
-both entries: nothing in the file could tell the two columns apart. This
-happens when two entries over one query differ only in their mode, because
-the ``:<aggregator>`` suffix cannot tell modes apart. The refusal tells
-you to add ``name`` to one of the entries:
-
-.. code-block:: text
-
-    binners[4] and binners[5] both produce the track 'sc/atac_fragments/*:ODC:mean'; a resource may be binned once per aggregator and name -- add name to one of them to tell the tracks apart
-
-Coordinates and the grid
-^^^^^^^^^^^^^^^^^^^^^^^^
-
-Bin coordinates are 1-based and inclusive, the convention of every GAIn
-reader and of the region notation, so a bin's ``chrom:start-end`` can be
-pasted into any other GAIn tool unchanged.
-
-Bins follow a global grid anchored at position 1 of every chromosome: with a
-bin size of 10240 the bins are ``1-10240``, ``10241-20480`` and so on,
-regardless of where a region starts. A window that does not start on a grid
-boundary therefore has its first and last bins clipped to the window — the
-bin bounds always name exactly what was aggregated — and bins from different
-runs, regions, or bin sizes that divide each other line up and can be joined
-by coordinate.
-
-
-The output file
----------------
-
-The output is one HDF5 file in a plain layout that any HDF5 reader
-understands without a library beyond ``h5py``. It holds three datasets:
-
-``/values``
-    Read it with :func:`gain.binning.read_values`. ``float64``,
-    shape ``(n_bins, n_tracks)``. ``NaN`` where a bin has no
-    data. Stored in row blocks and gzip-compressed, so reading every track
-    for one chromosome is one contiguous read and the ``NaN``- and
-    zero-heavy tracks compress well.
-
-``/bins``
-    Read it with :func:`gain.binning.read_bins`. A compound
-    (structured) dataset of shape ``(n_bins,)`` with fields
-    ``chrom`` (fixed-length bytes, sized to the longest chromosome name in
-    the run), ``start`` and ``end`` (``int64``, 1-based inclusive).
-
-``/tracks``
-    Read it with :func:`gain.binning.read_tracks`. A compound
-    dataset of shape ``(n_tracks,)``, one row per track, with
-    the same fields for every binner kind. ``binner_type``,
-    ``resource_ids``, ``selector`` and ``binner_def`` are
-    variable-length UTF-8 strings. ``binner_index`` and ``track_index``
-    are ``int64``.
-
-    ``binner_type``
-        The kind of the entry that produced the track, without the
-        ``_binner`` suffix: ``position_score`` or ``fragment_score``.
-    ``binner_index``
-        The position of the entry in the ``binners`` list of the run
-        definition, counted from 0.
-    ``track_index``
-        The position of the track among all the tracks of that entry,
-        in output order, counted from 0. The pair ``(binner_index,
-        track_index)`` is unique in a file.
-    ``resource_ids``
-        The resources the track was computed from, comma-separated in
-        resource-id order: one id for a position-score track and for an
-        unpooled fragment track, every matched id for a pooled one.
-    ``selector``
-        What picks the track within its resources: the score id of a
-        position-score track, the group of a fragment track.
-    ``binner_def``
-        The definition of the track that the other fields do not carry,
-        as canonical JSON (sorted keys, no extra whitespace). A missing
-        value is JSON ``null``. A position-score definition holds
-        ``aggregator``, ``none_value_replacement`` and ``name``. A
-        fragment definition holds ``aggregator``, ``mode``
-        (``fragment_start``, ``fragment_length`` or
-        ``coverage_profile``), ``uncovered_value``, ``score_id``
-        (``null`` for a track that counts fragments), ``resource_query``,
-        ``pool`` and ``name``. ``name`` is the optional ``name`` of the
-        entry.
-
-    The file has no track name. The name is in memory while the tool
-    runs, where it keeps the tracks apart and names the chunk files.
-
-Row *i* of ``/bins`` describes row *i* of ``/values``, and row *j* of
-``/tracks`` describes column *j*. The root attributes record what the run
-was, so that two files can be checked for comparability before they are
-joined:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
-
-   * - Attribute
-     - Content
-   * - ``tracks_layout``
-     - ``2``, the layout of ``/tracks`` described above. A file without
-       this attribute has an older layout.
-   * - ``reference_genome``
-     - The resource id of the reference genome the grid was built on.
-       A file without ``tracks_layout`` keeps the older name
-       ``input_reference_genome`` for this attribute.
-   * - ``bin_size``
-     - The bin width in base pairs.
-   * - ``regions``
-     - The binned regions, in row order, each as ``chrom:start-end``.
-   * - ``coordinates``
-     - ``"1-based-inclusive"``.
-   * - ``gain_version``
-     - The GAIn version that wrote the file.
-   * - ``created``
-     - The UTC time the file was written, in ISO 8601.
-   * - ``metadata_files``
-     - Only when the run read a local metadata file: the absolute path of
-       each local file the run read.
-   * - ``metadata_file_sizes``
-     - Only with ``metadata_files``: each file's size in bytes, in the
-       same order.
-   * - ``metadata_file_mtimes``
-     - Only with ``metadata_files``: each file's modification time, UTC,
-       in ISO 8601, in the same order.
-
-.. note::
-
-    **The** ``/tracks`` **layout changed after the 2026.9 releases.** A
-    file written by an earlier release has the fields ``name``,
-    ``resource_ids``, ``group``, ``score_id``, ``aggregator`` and more, or
-    in the oldest files a ``resource_id`` field. A file written now has
-    the root attribute ``tracks_layout`` with the value ``2`` and the
-    fields described above. Tell the layouts apart with
-    ``h5.attrs.get("tracks_layout")``: absent means an older layout. Do
-    not sniff a field, and do not use the ``gain_version`` root attribute:
-    a development build can report an old version and already write the
-    new layout. In the same change the root attribute
-    ``input_reference_genome`` became ``reference_genome``; read the name
-    that matches ``tracks_layout``. The tool does not convert files
-    written by earlier releases.
-
-Every value in ``/values`` is a ``float64``, including the result of an
-integer-valued aggregator such as ``count`` or the ``max`` of an integer
-score: the matrix has one dtype, and HDF5 has no null for integers. For a
-position-score track, a bin no record covers is ``NaN`` unless the entry
-set ``none_value_replacement``, in which case the replacement was fed to
-the aggregator for every uncovered position and the bin holds the
-aggregate of that. A ``count`` track is the exception: an uncovered bin
-is ``0.0``, because a count of nothing is zero. For a fragment track, an
-empty bin holds the
-aggregator's empty value (see `Empty bins`_).
-
-Two notes on scores stored as bigWig. First, a bigWig stores ``float32``, so
-binning the bigWig form and the text (tabix) form of the same score does not
-give bit-identical matrices; the two agree to roughly ``1e-8`` through a
-``mean`` over 10 kb bins. Second, for a binning run the storage format of a
-score dominates its cost: binning the same per-base conservation score over
-chromosome 21 took about three times longer from its tabix form than from
-its bigWig form, while the scope of the tabix index (whole genome or one
-chromosome) made no difference. When a score is published in both forms,
-prefer the bigWig for binning.
-
-
-Reading the file back
----------------------
-
-The functions of ``gain.binning`` read the ``/bins`` and ``/tracks`` tables
-back as pandas DataFrames and the ``/values`` matrix as a numpy array, and
-build a display label for each track. The page
-:doc:`/development/binning/reading_a_run` describes them.
-
-To print the tables without Python, use :doc:`cli/binning_tool_view`.
-
-With ``h5py`` alone:
-
-.. code-block:: python
-
-    import json
-
-    import h5py
-
-    with h5py.File("binning_run.h5", "r") as h5:
-        values = h5["values"][()]       # numpy float64 array, bins x tracks
-        bins = h5["bins"][()]           # structured array: chrom, start, end
-        tracks = h5["tracks"][()]       # structured array: binner_type, ...
-        attrs = dict(h5.attrs)
-
-    assert attrs["tracks_layout"] == 2  # absent: a file of an older layout
-    print(values.shape, attrs["bin_size"], attrs["coordinates"])
-    print(tracks["binner_type"][:3], tracks["selector"][:3])
-    print(json.loads(tracks["binner_def"][-1]))
-    print(bins[:3])
-
-
-A worked example
-----------------
-
-The run definition below bins the conservation scores of the public
-IossifovLab GRR over two megabases of chromosome 21, together with the
-structural variants of gnomAD v4.1 starting in each bin
-(:download:`binning_run.yaml <files/binning_run.yaml>`):
+This example combines position-score and fragment-score binners in one run.
+It summarizes conservation scores and gnomAD v4.1 structural variants over
+two megabases of chromosome 21. The run definition is available as
+:download:`binning_run.yaml <files/binning_run.yaml>`:
 
 .. literalinclude:: files/binning_run.yaml
     :language: yaml
 
-The first entry is a glob over every resource under ``hg38/scores/``
-narrowed by the full-text term ``conservation``; of the fourteen resources
-there, eight are position scores — the phastCons and phyloP scores computed
-over 7, 20, 30 and 100 species — and those are what the entry expands to.
-The second entry names ``hg38/scores/phyloP100way`` again under ``max``, so
-that resource is binned twice and both of its tracks carry their aggregator
-in their name.
+The first binner selects the conservation resources under ``hg38/scores/*``
+using ``search_term: conservation``. In the GRR of this example, fourteen
+resources were found under ``hg38/scores/``, of which
+eight matched as position scores: phastCons and phyloP,
+each for 7, 20, 30, and 100 species. The second binner processes
+``hg38/scores/phyloP100way`` again using ``max`` in addition to its default
+``mean``, yielding nine position-score tracks in total.
 
-The third entry bins a ``fragment_score`` resource: the gnomAD v4.1 genome
-structural-variant collection, whose records are intervals. It is grouped by
-the raw value of its ``deletion_duplication`` score, whose statistics list
-two values, ``deletion`` and ``duplication``, so it makes two tracks.
-Without ``value`` and ``aggregate``, each track counts the variants that
-start in each bin. The resource carries no ``sample_id`` label, so its
-groups are the bare values. The entry sets ``pool: false``, so its track
-names start with the resource id, and ``--dry-run`` gives no warning about
-the missing label.
+The third binner selects the gnomAD structural-variant resource and groups
+variants using its categorical ``deletion_duplication`` score. This adds
+one deletion track and one duplication track. The resource has no
+``sample_id`` label, so its groups are the bare values. Its ``pool: false``
+setting makes the track names start with the resource ID and keeps
+``--dry-run`` from warning about the missing label. Without explicit
+``value`` or ``aggregate`` options, each track counts variants starting in
+each bin.
 
-Check what the run would produce first:
+First check the planned run:
 
 .. code-block:: bash
 
     binning_tool binning_run.yaml --dry-run
 
+The example's dry run reports 11 tracks, 196 bins, one region, and ten
+tasks. Its track list is:
+
 .. code-block:: text
 
-    tracks:
-      hg38/scores/phastCons100way	hg38/scores/phastCons100way	phastCons100way	mean
-      hg38/scores/phastCons20way	hg38/scores/phastCons20way	phastCons20way	mean
-      hg38/scores/phastCons30way	hg38/scores/phastCons30way	phastCons30way	mean
-      hg38/scores/phastCons7way	hg38/scores/phastCons7way	phastCons7way	mean
-      hg38/scores/phyloP100way:mean	hg38/scores/phyloP100way	phyloP100way	mean
-      hg38/scores/phyloP20way	hg38/scores/phyloP20way	phyloP20way	mean
-      hg38/scores/phyloP30way	hg38/scores/phyloP30way	phyloP30way	mean
-      hg38/scores/phyloP7way	hg38/scores/phyloP7way	phyloP7way	mean
-      hg38/scores/phyloP100way:max	hg38/scores/phyloP100way	phyloP100way	max
-      hg38/cnv_collections/gnomAD.v4.1_Genome_SV:deletion	hg38/cnv_collections/gnomAD.v4.1_Genome_SV		sum
-      hg38/cnv_collections/gnomAD.v4.1_Genome_SV:duplication	hg38/cnv_collections/gnomAD.v4.1_Genome_SV		sum
+    hg38/scores/phastCons100way
+    hg38/scores/phastCons20way
+    hg38/scores/phastCons30way
+    hg38/scores/phastCons7way
+    hg38/scores/phyloP100way:mean
+    hg38/scores/phyloP20way
+    hg38/scores/phyloP30way
+    hg38/scores/phyloP7way
+    hg38/scores/phyloP100way:max
+    hg38/cnv_collections/gnomAD.v4.1_Genome_SV:deletion
+    hg38/cnv_collections/gnomAD.v4.1_Genome_SV:duplication
+
+The same dry run summarizes the planned work:
+
+.. code-block:: text
+
     regions: 1
     bins: 196
     tasks: 10
@@ -1022,74 +1038,66 @@ Check what the run would produce first:
         mode: fragment_start
         uncovered_value: null
 
-A *job* is what one task binds to, and a *task* is one job over one
-bundle of regions (see :ref:`binning-tool-parallelism`). Nine
-position-score tracks are nine jobs, and the fragment entry's two tracks
-are one job, so the single region makes ten tasks.
-
-Then run it:
+Then run:
 
 .. code-block:: bash
 
     binning_tool binning_run.yaml -j 4
 
-This writes ``binning_run.h5`` beside the run definition: a 196 × 11 matrix.
-The window ``chr21:20000000-22000000`` does not start on a grid boundary, so
-the first bin is clipped to ``chr21:20000000-20008960`` and the last to
-``chr21:21995521-22000000``, while every bin in between is a full 10240 bp.
+This writes ``binning_run.h5`` beside the YAML file. Its ``/values`` dataset
+has 196 rows and 11 columns. Because the selected region does not start
+on a bin boundary, the first bin spans ``chr21:20000000-20008960`` and
+the last ``chr21:21995521-22000000``, with full 10,240 bp bins between.
 
-The eight scores are per-base tracks stored as bigWig files of 6 to 10 GB
-each, read over HTTP by range, so this two-megabase run takes well under a
-minute. A whole-genome run over the same eight tracks would fold
-about three billion positions per track — on the order of forty minutes of
-CPU per track — which is why the example restricts ``regions``: try a
-window first, then widen it.
+Selected results of this run are shown below (rounded). The
+column headings are abbreviated for readability; the HDF5 file retains
+the source resource IDs in ``/tracks``.
 
-.. note::
+.. list-table::
+   :header-rows: 1
+   :widths: 33 17 17 16 17
 
-    Reading a bigWig directly from a remote GRR needs a ``pyBigWig`` built
-    with remote (libcurl) support. The conda package of GAIn ships one; the
-    ``pyBigWig`` wheel on PyPI does not. If a run fails with
-    ``this pyBigWig build has no remote-file support``, install GAIn from
-    conda, or point the tool at a local copy of the repository with
-    ``--grr-directory``. A GRR definition with a ``cache_dir`` (see
-    :doc:`/gain_getting_started_cli`) also works, but it downloads each
-    bigWig in full before opening it — about 60 GB for the eight scores of
-    this example — whatever the size of the window.
+   * - Bin (chr21)
+     - phyloP100way mean
+     - phyloP100way max
+     - Deletions
+     - Duplications
+   * - 20000000-20008960
+     - -0.014157
+     - 3.356
+     - 2
+     - 0
+   * - 20008961-20019200
+     - -0.006858
+     - 3.539
+     - 2
+     - 3
+   * - 20019201-20029440
+     - 0.001797
+     - 3.694
+     - 4
+     - 0
+   * - 20029441-20039680
+     - -0.017875
+     - 2.491
+     - 1
+     - 0
+   * - 20039681-20049920
+     - 0.006743
+     - 2.455
+     - 4
+     - 0
 
-Reading the result back with the ``pandas`` snippet above, where each
-column is labelled ``resource_ids:selector:aggregator``, gives:
+Across the full two-megabase window, the example counts 826 deletions and
+179 duplications. Its eight conservation tracks are stored as remote
+bigWig files of roughly 6-10 GB each. This window ran in well under a
+minute when accessed through HTTP ranges;
+whole-genome processing would require roughly 40 minutes of CPU per
+per-base conservation track. Starting with a restricted region is therefore
+recommended.
 
-.. code-block:: text
+Command-line references
+^^^^^^^^^^^^^^^^^^^^^^^
 
-                             hg38/scores/phyloP100way:phyloP100way:mean  hg38/scores/phyloP100way:phyloP100way:max
-    chrom start    end
-    chr21 20000000 20008960                                                  -0.014157                                      3.356
-          20008961 20019200                                                  -0.006858                                      3.539
-          20019201 20029440                                                   0.001797                                      3.694
-          20029441 20039680                                                  -0.017875                                      2.491
-          20039681 20049920                                                   0.006743                                      2.455
-
-and the two fragment tracks, selected the same way, count the deletions
-and duplications that start in each bin — 826 and 179 over the whole
-window:
-
-.. code-block:: text
-
-                             hg38/cnv_collections/gnomAD.v4.1_Genome_SV:deletion:sum  hg38/cnv_collections/gnomAD.v4.1_Genome_SV:duplication:sum
-    chrom start    end
-    chr21 20000000 20008960                                                                     2.0                                                         0.0
-          20008961 20019200                                                                     2.0                                                         3.0
-          20019201 20029440                                                                     4.0                                                         0.0
-          20029441 20039680                                                                     1.0                                                         0.0
-          20039681 20049920                                                                     4.0                                                         0.0
-
-
-Command line tools
-------------------
-
-GAIn provides two command-line tools for binning:
-
-* :doc:`binning_tool <cli/binning_tool>`: bin the scores that a run definition names into one HDF5 file
-
-* :doc:`binning_tool_view <cli/binning_tool_view>`: print the tables of a ``binning_tool`` file as tab-separated text
+- :doc:`binning_tool <cli/binning_tool>`: Create an HDF5 matrix from a run definition.
+- :doc:`binning_tool_view <cli/binning_tool_view>`: Print the file's tables as tab-separated text.
