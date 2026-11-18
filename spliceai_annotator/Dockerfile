@@ -11,7 +11,7 @@
 # and runs the ONNX-only suite.
 
 # syntax=docker/dockerfile:1.7
-ARG PYTHON_IMAGE=python:3.12-slim
+ARG PYTHON_IMAGE=python:3.13-slim
 FROM ${PYTHON_IMAGE}
 
 ARG TENSORFLOW=1

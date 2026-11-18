@@ -175,6 +175,11 @@ pipeline {
         // throws, `git fetch` when it succeeds.
         GAIN_REPO_URL = 'https://github.com/iossifovlab/gain.git'
 
+        // The interpreter of the throwaway container that builds the
+        // wheels. It equals PYTHON_IMAGE of the root Jenkinsfile
+        // (core/tests/test_python_image_pin.py).
+        PYTHON_IMAGE = 'python:3.13-slim'
+
         BACKEND_IMAGE  = "gain-web-api-prod:${env.BUILD_NUMBER}"
         FRONTEND_IMAGE = "gain-web-ui-prod:${env.BUILD_NUMBER}"
         COMPOSE_PROJECT =
@@ -828,7 +833,7 @@ EOF
                                     -e HOME=/tmp \
                                     -e HOST_UID="$(id -u)" \
                                     -e HOST_GID="$(id -g)" \
-                                    python:3.12-slim \
+                                    "$PYTHON_IMAGE" \
                                     sh -c '
                                         set -eu
                                         apt-get update -qq

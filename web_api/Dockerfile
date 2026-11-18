@@ -9,7 +9,7 @@
 #     docker run --rm gain-web-api-ci mypy web_annotation
 
 # syntax=docker/dockerfile:1.7
-ARG PYTHON_IMAGE=python:3.12-slim
+ARG PYTHON_IMAGE=python:3.13-slim
 FROM ${PYTHON_IMAGE}
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.3 /uv /uvx /usr/local/bin/

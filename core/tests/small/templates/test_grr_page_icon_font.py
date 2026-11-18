@@ -38,7 +38,7 @@ vendored file (the recipe is in the README beside it), not words on
 the page.
 
 These assert against the rendered template source; CI runs gain-core in
-python:3.12-slim, which has no JS runtime.
+a python slim image (core/Dockerfile), which has no JS runtime.
 """
 from __future__ import annotations
 

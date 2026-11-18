@@ -17,7 +17,7 @@ reading the *rendered template source*:
   Python side fails here and flags the JS that copies it.
 
 None of these execute the JavaScript: CI runs gain-core in
-python:3.12-slim (core/Dockerfile), which has no JS runtime.  Behavioural
+a python slim image (core/Dockerfile), which has no JS runtime.  Behavioural
 coverage lives in ``info_pages_e2e`` -- its own Playwright project, which
 generates a GRR and drives the pages a browser actually loads: the
 resource pages' sortable tables, and this page's search, tree view,

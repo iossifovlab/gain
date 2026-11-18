@@ -76,7 +76,9 @@ def runProject(Map args) {
 """
 
     sh label: "Build ${name} image", script: """
-        docker build -f ${name}/Dockerfile -t ${imageTag} .
+        docker build -f ${name}/Dockerfile \\
+            --build-arg PYTHON_IMAGE=${env.PYTHON_IMAGE} \\
+            -t ${imageTag} .
     """
 
     // Mount .git read-only so hatch-vcs can derive the version during
@@ -387,6 +389,12 @@ pipeline {
         // post.cleanup, which is why this is pipeline-level env rather
         // than a Groovy local (post blocks need it too).
         CI_TAG = "${ciScope(env.BRANCH_NAME)}-${env.BUILD_NUMBER}"
+        // The one place that names the interpreter of the CI images.
+        // Each CI `docker build` passes it as --build-arg, and the
+        // default of each CI Dockerfile ARG PYTHON_IMAGE equals it
+        // (core/tests/test_python_image_pin.py). The production image
+        // build below names its own interpreter (gain#2389).
+        PYTHON_IMAGE = 'python:3.13-slim'
     }
 
     options {
@@ -721,6 +729,7 @@ pipeline {
                                     // reports.
                                     sh label: 'Build spliceai_annotator image', script: """
                                         docker build -f spliceai_annotator/Dockerfile \\
+                                            --build-arg PYTHON_IMAGE=${env.PYTHON_IMAGE} \\
                                             -t gain-spliceai-annotator-ci:${env.CI_TAG} .
                                     """
                                     sh label: 'Run spliceai_annotator CI (onnx backend)', script: """
@@ -869,6 +878,7 @@ pipeline {
                                     sh label: 'Build info_pages_e2e image', script: """
                                         docker build \
                                             -f info_pages_e2e/Dockerfile \
+                                            --build-arg PYTHON_IMAGE=${env.PYTHON_IMAGE} \
                                             -t ${imageTag} .
                                     """
                                     // `--network none` is an assertion, not
@@ -949,6 +959,7 @@ pipeline {
                     steps {
                         sh '''
                             docker build -f core/Dockerfile \
+                                --build-arg PYTHON_IMAGE=${PYTHON_IMAGE} \
                                 -t gain-core-ci:${CI_TAG} .
                             mkdir -p dist/core
                             docker run --rm \
@@ -1104,6 +1115,7 @@ pipeline {
                     steps {
                         sh '''
                             docker build -f core/Dockerfile \
+                                --build-arg PYTHON_IMAGE=${PYTHON_IMAGE} \
                                 -t gain-core-ci:${CI_TAG} .
                             mkdir -p dist/docs
                             DOCKER_USER="$(id -u):$(id -g)"
