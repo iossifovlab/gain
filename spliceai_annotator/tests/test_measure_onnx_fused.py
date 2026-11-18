@@ -8,6 +8,9 @@ import subprocess
 import sys
 from types import ModuleType
 
+from spliceai_annotator.spliceai_annotator import SpliceAIAnnotator
+from tests.test_spliceai_backends import MAX_WIDTH
+
 SCRIPT = (
     pathlib.Path(__file__).parent.parent / "scripts" / "measure_onnx_fused.py")
 
@@ -68,5 +71,6 @@ def test_benchmark_fails_fast_when_a_child_raises(
 
 def test_default_widths_are_the_default_and_the_widest_window() -> None:
     script = _load_script()
+    default_window = 10000 + 2 * SpliceAIAnnotator.DEFAULT_DISTANCE + 1
 
-    assert script.DEFAULT_WIDTHS == (10101, 20201)
+    assert (default_window, MAX_WIDTH) == script.DEFAULT_WIDTHS
