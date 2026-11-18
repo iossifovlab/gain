@@ -32,9 +32,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
     && rm -rf /var/lib/apt/lists/*
 
+# Wait out a slow package index, as the other CI images do (#2429): this
+# image is a gain-python-matrix cell too.
 ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
     UV_PYTHON_DOWNLOADS=never \
+    UV_HTTP_TIMEOUT=120 \
+    UV_LOCK_TIMEOUT=900 \
     PYTHONHASHSEED=0
 
 WORKDIR /workspace
