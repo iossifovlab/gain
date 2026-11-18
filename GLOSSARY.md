@@ -78,7 +78,9 @@ A digest of everything the **info pages** of one resource were rendered from:
 the resource's manifest and statistics, the gain version, and the other
 resources the pages read, such as the reference genome that a score's label
 resolves to. Each info page carries its own fingerprint. A repair renders the
-pages again only when the fingerprint differs or `--force` is given.
+pages again only when the fingerprint differs or `--force` is given. The
+`repo-info` and `resource-info` commands ignore the fingerprint and always
+render the pages.
 _Avoid_: info hash, page hash
 
 **Column vocabulary**:
