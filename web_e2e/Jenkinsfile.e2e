@@ -711,6 +711,17 @@ EOF
             // while #19 succeeded on a still-authenticated one
             // (piglet). Logging in here makes the pull
             // agent-independent.
+            //
+            // The login goes to a per-build `DOCKER_CONFIG`
+            // (`$WORKSPACE/.docker-cfg-$BUILD_NUMBER-e2e-pull`),
+            // not to the shared ~/.docker/config.json. gain-nightly
+            // starts several gain-web-e2e builds that can share one
+            // agent: with the shared config, the EXIT logout of one
+            // build dropped the auth of the others, and their pulls
+            // failed with `no basic auth credentials` (#4426 after
+            // #4425 on dory, gain#2434). The private config keeps
+            // each login and logout to its own build, as the root
+            // Jenkinsfile and Jenkinsfile.release do since #10.
             when { expression { env.SUPERSEDED != 'true' } }
             environment {
                 REGISTRY_USER = credentials('user.registry.seqpipe.org')
@@ -728,15 +739,21 @@ EOF
                             # Jenkinsfile's push stage:
                             # `printf` (not `echo`) to avoid the
                             # POSIX-sh trailing newline /
-                            # backslash-escape pitfalls; trap
-                            # logout so the agent is left clean
-                            # even on failure.
+                            # backslash-escape pitfalls. The login,
+                            # the pulls and the logout use a
+                            # per-build DOCKER_CONFIG, so they touch
+                            # only this build's config, never the
+                            # auth of a concurrent build. The trap
+                            # logs out and removes that config even
+                            # on failure.
+                            export DOCKER_CONFIG="\$WORKSPACE/.docker-cfg-\$BUILD_NUMBER-e2e-pull"
+                            mkdir -p "\$DOCKER_CONFIG"
+                            trap 'docker logout registry.seqpipe.org || true; rm -rf "\$DOCKER_CONFIG"' EXIT
                             printf '%s' "\$REGISTRY_PASS" | \
                                 docker login \
                                     -u "\$REGISTRY_USER" \
                                     --password-stdin \
                                     registry.seqpipe.org
-                            trap 'docker logout registry.seqpipe.org || true' EXIT
 
                             # A `docker pull` fails transiently often
                             # enough that a bare one is not safe here:
