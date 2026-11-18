@@ -46,8 +46,8 @@ _Avoid_: constructor
 The callable registered for one resource type under the
 `gain.genomic_resources.implementations` entry-point group. It takes a
 `GenomicResource` and returns that type's resource implementation: the class
-that describes the resource, computes its statistics and renders its summary
-page.
+that describes the resource, computes its statistics and renders its **info
+pages**.
 _Avoid_: builder (unqualified), factory, plugin
 
 ### Describing a resource
@@ -65,6 +65,24 @@ The `.CONTENTS.sqlite3.gz` FTS5 artefact a GRR publishes alongside its
 resources, built by `grr_manage`. It is a **separate artefact from the
 resources** and nothing forces it to be current.
 _Avoid_: contents db, FTS, catalogue
+
+**Info page**:
+One of the two HTML pages that `grr_manage` generates inside each resource:
+the resource page `index.html` and the statistics page
+`statistics/index.html`. An info page is derived from the resource, so a
+repair regenerates it and the manifest does not list it.
+_Avoid_: summary page, index page, resource info
+
+**Page fingerprint**:
+A digest of everything the **info pages** of one resource were rendered from:
+the resource's manifest and statistics, the versions of gain and of the
+package that provides the resource kind, and the other resources the pages
+read, such as the reference genome that a score's label
+resolves to. Each info page carries its own fingerprint. A repair renders the
+pages again only when the fingerprint differs or `--force` is given. The
+`repo-info` and `resource-info` commands ignore the fingerprint and always
+render the pages.
+_Avoid_: info hash, page hash
 
 **Column vocabulary**:
 The set of column names one GRR's **search index** publishes. It is
