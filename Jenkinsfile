@@ -393,7 +393,8 @@ pipeline {
         // Each CI `docker build` passes it as --build-arg, and the
         // default of each CI Dockerfile ARG PYTHON_IMAGE equals it
         // (core/tests/test_python_image_pin.py). The production image
-        // build below names its own interpreter (gain#2389).
+        // build uses it too, so dist/base-images.lock records it for
+        // Jenkinsfile.release and the staging deploy (gain#2389).
         PYTHON_IMAGE = 'python:3.13-slim'
     }
 
@@ -1407,7 +1408,7 @@ pipeline {
                             # dist/base-images.lock and broke the Phase
                             # 10 release pipeline's digest-pinned
                             # rebuild.
-                            docker pull python:3.12-slim
+                            docker pull "${PYTHON_IMAGE}"
                             docker pull node:22.22.3-alpine
                             docker pull httpd:2.4-alpine
 
@@ -1424,7 +1425,7 @@ pipeline {
                             # release stage, digest-pinned).
                             docker build \
                                 -f web_api/Dockerfile.production \
-                                --build-arg PYTHON_IMAGE=python:3.12-slim \
+                                --build-arg PYTHON_IMAGE="${PYTHON_IMAGE}" \
                                 -t "$BACKEND_REPO:$CI_TAG" .
 
                             # Build frontend; multi-stages collectstatic
@@ -1446,7 +1447,7 @@ pipeline {
                             # even if the build record rotates out.
                             mkdir -p dist
                             {
-                                echo "PYTHON_IMAGE=$(docker image inspect python:3.12-slim \
+                                echo "PYTHON_IMAGE=$(docker image inspect "${PYTHON_IMAGE}" \
                                     --format '{{index .RepoDigests 0}}')"
                                 echo "NODE_IMAGE=$(docker image inspect node:22.22.3-alpine \
                                     --format '{{index .RepoDigests 0}}')"
