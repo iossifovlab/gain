@@ -16,6 +16,10 @@ from gain.genomic_resources.ann_data_resource import (
     resolve_10x_layout,
     resolve_ann_data_format,
 )
+from gain.genomic_resources.implementations.describe_statistic import (
+    format_describe_float,
+    stable_describe,
+)
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
@@ -100,7 +104,8 @@ class AnnDataResourceImplementation(
                     df_description.columns.name = "Columns"
                 # statistics/describe_obs.csv"
                 info_key = get_info_key(pd_description_stat)
-                info[info_key] = df_description.to_html(index=True)
+                info[info_key] = df_description.to_html(
+                    index=True, float_format=format_describe_float)
 
         if _DESCRIBE_ANN_DATA_STATISTIC in self.files:
             info_key = get_info_key(_DESCRIBE_ANN_DATA_STATISTIC)
@@ -149,7 +154,7 @@ class AnnDataResourceImplementation(
         if len(frame.columns) == 0:
             return None
 
-        return frame.describe(include="all")
+        return stable_describe(frame)
 
     @staticmethod
     def _describe_ann_data(ann_data: ad.AnnData) -> str:

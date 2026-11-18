@@ -4,12 +4,16 @@ import json
 import pathlib
 
 import h5py
+import pandas as pd
 import pytest
 from gain.genomic_resources.ann_data_resource import (
     load_ann_data_from_resource,
 )
 from gain.genomic_resources.implementations.ann_data_resource_impl import (
     AnnDataResourceImplementation,
+)
+from gain.genomic_resources.implementations.describe_statistic import (
+    stable_describe,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing.ann_data_builder import an_ann_data
@@ -48,6 +52,44 @@ def test_statistics_task_writes_the_describe_tables(
     assert resource.file_exists(DESCRIBE_ANN_DATA)
     assert "cell_type" in resource.get_file_content(DESCRIBE_OBS)
     assert "gene_name" in resource.get_file_content(DESCRIBE_VAR)
+
+
+def test_statistics_task_writes_the_stable_describe_statistics(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A float64 sum in row order loses the 1 between the two large values,
+    # so plain pandas gives a different mean than the exact sum.
+    resource = (
+        an_ann_data()
+        .with_obs("""
+            cell     value
+            CELL_1   1e16
+            CELL_2   1
+            CELL_3   -1e16
+        """)
+        .with_var("""
+            gene     value
+            ENSG001  1e16
+            ENSG002  1
+            ENSG003  -1e16
+        """)
+        .build_resource(tmp_path)
+    )
+    ann_data = load_ann_data_from_resource(resource, matrix_free=True)
+    obs, var = ann_data.obs.copy(), ann_data.var.copy()
+    if ann_data.isbacked:
+        ann_data.file.close()
+    assert isinstance(obs, pd.DataFrame)
+    assert isinstance(var, pd.DataFrame)
+    assert stable_describe(obs).to_csv() != \
+        obs.describe(include="all").to_csv()
+
+    build_statistics(resource)
+
+    assert resource.get_file_content(DESCRIBE_OBS) == \
+        stable_describe(obs).to_csv()
+    assert resource.get_file_content(DESCRIBE_VAR) == \
+        stable_describe(var).to_csv()
 
 
 class TestTheStatisticsOfATenXResource:
@@ -325,6 +367,28 @@ def test_get_info_renders_the_describe_tables(
     assert "cell_type" in info
     assert "gene_name" in info
     assert "Statistics have not been built" not in info
+
+
+def test_get_info_prints_a_whole_number_as_an_integer(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = (
+        an_ann_data()
+        .with_obs("""
+            cell     chrom  pos
+            CELL_1   chr1   10000
+            CELL_2   chr1   248906440
+            CELL_3   chr2   10000
+        """)
+        .build_resource(tmp_path)
+    )
+    build_statistics(resource)
+    refresh_manifest(resource)
+
+    info = AnnDataResourceImplementation(resource).get_info()
+
+    assert "248906440" in info
+    assert "248906440.0" not in info
 
 
 def test_get_info_consults_the_manifest_not_the_filesystem(

@@ -3,8 +3,8 @@
 ``DataFrame.describe`` sums with float64 additions whose order depends on
 the SIMD path of the CPU, so the last digits of ``mean`` and ``std`` differ
 between machines.  :func:`stable_describe` replaces those two rows with
-exact sums, rounded once.  The data_frame implementation uses these
-helpers.
+exact sums, rounded once.  The data_frame and the ann_data
+implementations use these helpers.
 """
 from __future__ import annotations
 
