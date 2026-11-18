@@ -35,13 +35,29 @@ EXEMPT_DOCKERFILES = [
 SKIPPED_DIRS = {"node_modules", "__pycache__", "target", "dist"}
 
 
+def is_literal_python_image(image: str) -> bool:
+    """Tell if ``image`` names the ``python`` image of a registry.
+
+    The image can carry a registry prefix, for example
+    ``docker.io/library/python:3.12-slim``.
+    """
+    name = image.split("@", 1)[0].rsplit("/", 1)[-1]
+    return name.split(":", 1)[0] == "python"
+
+
 def literal_python_from_lines(dockerfile: str) -> list[str]:
-    """Return the ``FROM`` lines that name a literal ``python:`` image."""
+    """Return the ``FROM`` lines that name a literal ``python`` image.
+
+    The guard skips the ``--platform`` flag and the other flags of a
+    ``FROM`` line before it reads the image.
+    """
     found: list[str] = []
     for line in dockerfile.splitlines():
         words = line.split()
-        if len(words) >= 2 and words[0].upper() == "FROM" \
-                and words[1].startswith("python:"):
+        if not words or words[0].upper() != "FROM":
+            continue
+        images = [word for word in words[1:] if not word.startswith("--")]
+        if images and is_literal_python_image(images[0]):
             found.append(line.strip())
     return found
 
@@ -64,6 +80,33 @@ def test_literal_python_from_line_is_reported() -> None:
 
     assert literal_python_from_lines(dockerfile) == [
         "FROM python:3.12-slim"]
+
+
+@pytest.mark.parametrize("line", [
+    "FROM --platform=linux/amd64 python:3.12-slim",
+    "FROM docker.io/library/python:3.12-slim AS base",
+    "FROM python@sha256:0123",
+])
+def test_literal_python_from_line_with_a_flag_or_a_registry_is_reported(
+    line: str,
+) -> None:
+    """A flag or a registry prefix does not hide a literal python image."""
+    dockerfile = f"ARG X=1\n{line}\nRUN true\n"
+
+    assert literal_python_from_lines(dockerfile) == [line]
+
+
+@pytest.mark.parametrize("line", [
+    "FROM ${PYTHON_IMAGE}",
+    "FROM --platform=linux/amd64 ${PYTHON_IMAGE} AS pages",
+    "FROM mambaorg/micromamba:2.3.2",
+    "FROM mcr.microsoft.com/playwright:v1.62.1-noble",
+])
+def test_from_line_without_a_literal_python_image_is_not_reported(
+    line: str,
+) -> None:
+    """A FROM line with an ARG or another image is not reported."""
+    assert not literal_python_from_lines(f"{line}\n")
 
 
 def test_arg_default_that_differs_from_the_jenkinsfile_is_reported() -> None:
@@ -137,6 +180,27 @@ def test_exempt_dockerfiles_exist() -> None:
         if not (REPO_ROOT / name).exists()]
 
     assert missing == []
+
+
+# The CI Dockerfiles that gain#2387 names. The walk must find each one.
+NAMED_CI_DOCKERFILES = [
+    "core/Dockerfile",
+    "demo_annotator/Dockerfile",
+    "info_pages_e2e/Dockerfile",
+    "spliceai_annotator/Dockerfile",
+    "vep_annotator/Dockerfile",
+    "web_api/Dockerfile",
+]
+
+
+def test_ci_dockerfiles_include_the_named_ci_dockerfiles() -> None:
+    """The walk finds each CI Dockerfile that gain#2387 names."""
+    read_or_skip(JENKINSFILE)
+
+    found = {
+        path.relative_to(REPO_ROOT).as_posix() for path in ci_dockerfiles()}
+
+    assert sorted(set(NAMED_CI_DOCKERFILES) - found) == []
 
 
 def test_no_ci_dockerfile_names_a_literal_python_image() -> None:
