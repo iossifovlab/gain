@@ -99,6 +99,23 @@ class GenomicScoreImplementation(ScoreImplementationBase):
         self.score: GenomicScore = build_score_from_resource(resource)
         self._render_repo: GenomicResourceRepo | None = None
 
+    # The Coverage section of the position score page reads the genome
+    # that the ``reference_genome`` label names. The override sits on the
+    # base of every score kind, so an allele or a fragment score renders
+    # again also when its labelled genome changes. The rule follows
+    # ``_labelled_genome``, and the hook builds no genome, so the skip of
+    # a repair stays cheap on a slow file system.
+    def page_dependencies(
+        self, repo: GenomicResourceRepo,
+    ) -> list[GenomicResource]:
+        genome_id = read_resource_id_label(self.resource, "reference_genome")
+        if genome_id is None:
+            return []
+        genome = repo.find_resource(genome_id)
+        if genome is None or genome.get_type() != "genome":
+            return []
+        return [genome]
+
     def get_config_histograms(self) -> dict[str, Any]:
         """Collect all configurations of histograms for the genomic score."""
         result: dict[str, Any] = {}

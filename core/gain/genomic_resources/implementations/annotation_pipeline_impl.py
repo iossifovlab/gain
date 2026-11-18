@@ -29,6 +29,11 @@ class AnnotationPipelineImplementation(
 ):
     """Resource implementation for annotation pipeline."""
 
+    # The info page reads the resources that only a full load of the
+    # pipeline finds, and the page fingerprint does not cover them. The
+    # info pages of a pipeline render on every repair.
+    page_fingerprint_enabled: ClassVar[bool] = False
+
     def __init__(self, resource: GenomicResource):
         if resource.get_type() != "annotation_pipeline":
             logger.error(

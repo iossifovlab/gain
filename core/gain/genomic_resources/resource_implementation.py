@@ -2,16 +2,21 @@ from __future__ import annotations
 
 import copy
 import enum
+import functools
+import hashlib
+import json
 import threading
 import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from importlib import metadata
 from typing import Any, ClassVar, NamedTuple, cast
 
 import apsw
 from cerberus import Validator
 
+import gain
 from gain import logging
 from gain.task_graph.graph import TaskDesc
 from gain.templates import get_template
@@ -285,6 +290,46 @@ class DerivedFilesState(enum.Enum):
     is nothing wrong with the resource."""
 
 
+@functools.cache
+def _distributions_of_packages() -> Mapping[str, list[str]]:
+    """Map each top-level import package to the distributions that ship it.
+
+    The files that a distribution records come first. An editable install
+    records no package files, so the modules that its entry points name
+    count too: each kind is registered through an entry point. Built once
+    per process, because the scan reads the metadata of every installed
+    distribution.
+    """
+    mapping = {
+        package: list(names)
+        for package, names in metadata.packages_distributions().items()
+    }
+    for distribution in metadata.distributions():
+        name = distribution.metadata["Name"]
+        for entry_point in distribution.entry_points:
+            package = entry_point.module.partition(".")[0]
+            names = mapping.setdefault(package, [])
+            if name not in names:
+                names.append(name)
+    return mapping
+
+
+def _distribution_version(module_name: str) -> str | None:
+    """Return the version of the distribution that ships ``module_name``.
+
+    ``None`` means that no installed distribution ships the module, for
+    example a class that a script or a test defines.
+    """
+    package = module_name.partition(".")[0]
+    distributions = _distributions_of_packages().get(package)
+    if not distributions:
+        return None
+    try:
+        return metadata.version(distributions[0])
+    except metadata.PackageNotFoundError:
+        return None
+
+
 class ResourceStatistics:
     """
     Base class for statistics.
@@ -322,7 +367,14 @@ class GenomicResourceImplementation(ABC):
         The configuration read from the resource when the implementation
         is constructed. A subclass that validates its configuration may
         replace it with the validated form.
+    page_fingerprint_enabled : bool
+        Whether :meth:`page_fingerprint` computes a page fingerprint for
+        the kind. ``True`` by default. A kind sets ``False`` when its info
+        pages read inputs that the page fingerprint does not cover. A
+        repair then renders the info pages of the kind on every run.
     """
+
+    page_fingerprint_enabled: ClassVar[bool] = True
 
     def __init__(self, genomic_resource: GenomicResource):
         self.resource = genomic_resource
@@ -416,16 +468,96 @@ class GenomicResourceImplementation(ABC):
 
     @abstractmethod
     def calc_info_hash(self) -> bytes:
-        """Compute the digest of the inputs of the info page.
+        """Compute the digest of the inputs of the info pages.
 
-        The page is rendered again only when the digest changes.
+        The digest is one input of the page fingerprint, which
+        :meth:`page_fingerprint` computes. A repair renders the info pages
+        again only when the page fingerprint changes.
 
         Returns
         -------
         bytes
-            The digest of everything that ``get_info`` depends on.
+            The digest of the inputs of ``get_info`` and
+            ``get_statistics_info`` that the manifest and the statistics
+            hash do not cover.
         """
         raise NotImplementedError
+
+    def page_dependencies(
+        self, repo: GenomicResourceRepo,  # ruff: ignore[unused-method-argument]
+    ) -> list[GenomicResource]:
+        """List the resources of ``repo`` that the info pages read.
+
+        :meth:`page_fingerprint` covers the full id and the manifest of
+        each resource in the list. A kind whose info pages read another
+        resource overrides the method. The method stays cheap: it finds
+        the resources and builds none of them.
+
+        Parameters
+        ----------
+        repo : GenomicResourceRepo
+            The repository that the info pages are rendered against.
+
+        Returns
+        -------
+        list[GenomicResource]
+            The resources that the info pages read. An empty list means
+            that the info pages read no other resource.
+        """
+        return []
+
+    def page_fingerprint(
+        self, repo: GenomicResourceRepo,
+    ) -> str | None:
+        """Compute the page fingerprint of the info pages of the resource.
+
+        A kind does not override the method. The digest covers the version
+        of gain, the version of the distribution that ships the class of
+        the kind, the full id and the manifest of the resource,
+        :meth:`calc_statistics_hash`, :meth:`calc_info_hash`, and the full
+        id and the manifest of each resource that
+        :meth:`page_dependencies` lists.
+
+        Parameters
+        ----------
+        repo : GenomicResourceRepo
+            The repository that the info pages are rendered against.
+
+        Returns
+        -------
+        str | None
+            The hex digest. ``None`` means that the kind opts out with
+            ``page_fingerprint_enabled = False``, so its info pages
+            render on every repair.
+        """
+        if not self.page_fingerprint_enabled:
+            return None
+        inputs: dict[str, Any] = {
+            # Read through the module at call time, not imported by name.
+            "gain_version": gain.__version__,
+            "full_id": self.resource.get_full_id(),
+            "manifest": self.resource.get_manifest().to_manifest_entries(),
+            "statistics_hash": self.calc_statistics_hash().hex(),
+            "info_hash": self.calc_info_hash().hex(),
+        }
+        # A kind with no dependency adds no key to the inputs. The stored
+        # manifest only: a build would hash every file of the dependency,
+        # for example a whole genome FASTA, on each repair.
+        dependencies = []
+        for dependency in self.page_dependencies(repo):
+            manifest = dependency.get_loaded_manifest()
+            dependencies.append({
+                "full_id": dependency.get_full_id(),
+                "manifest": None if manifest is None
+                else manifest.to_manifest_entries(),
+            })
+        if dependencies:
+            inputs["dependencies"] = dependencies
+        kind_version = _distribution_version(type(self).__module__)
+        if kind_version is not None:
+            inputs["kind_version"] = kind_version
+        return hashlib.sha256(
+            json.dumps(inputs, sort_keys=True).encode()).hexdigest()
 
     def derived_files_state(
         self, grr: GenomicResourceRepo | None,  # ruff: ignore[unused-method-argument]

@@ -28,7 +28,8 @@ There is no `version.txt`, unlike `../sqlite-wasm/`: the published name
 of each file carries a digest of its bytes
 (`roboto-v51-latin.<sha256[:8]>.woff2`), computed by
 `gain.templates.static_assets` at import. Nothing but the page beside a
-font binds to its name, and the page is republished on every run, so a
+font binds to its name, and the page is rendered on every run and
+republished when its bytes change, which a new name does. So a
 refreshed file changes its own url with no version to bump by hand --
 which is what keeps a browser holding yesterday's icon subset from
 rendering a glyph added today in words.
