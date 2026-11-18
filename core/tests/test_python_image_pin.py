@@ -122,7 +122,10 @@ JENKINS_PYTHON_IMAGE = re.compile(
     r"""^\s*PYTHON_IMAGE\s*=\s*['"]([^'"]+)['"]""", re.MULTILINE)
 
 
-LITERAL_PYTHON_IMAGE = re.compile(r"(?<![\w./-])python:[\w.-]+")
+# A registry prefix does not hide the image, for example
+# ``docker.io/library/python:3.12-slim``.
+LITERAL_PYTHON_IMAGE = re.compile(
+    r"(?<![\w./:-])(?:[\w.:-]+/)*python[:@][\w.:-]+")
 
 
 def literal_python_image_mismatches(text: str, expected: str) -> list[str]:
@@ -132,6 +135,17 @@ def literal_python_image_mismatches(text: str, expected: str) -> list[str]:
     return [
         image for image in LITERAL_PYTHON_IMAGE.findall(text)
         if image != expected]
+
+
+def literal_python_images_outside_comments(text: str) -> list[str]:
+    """Return the literal ``python:`` images in the lines of ``text`` that
+    are not comment lines.
+    """
+    return [
+        image
+        for line in text.splitlines()
+        if not line.lstrip().startswith(("#", "//"))
+        for image in LITERAL_PYTHON_IMAGE.findall(line)]
 
 
 def test_release_pip2pi_image_that_differs_is_reported() -> None:
@@ -145,6 +159,26 @@ def test_release_pip2pi_image_that_differs_is_reported() -> None:
 
     assert literal_python_image_mismatches(
         release, "python:3.13-slim") == ["python:3.12-slim"]
+
+
+def test_release_pip2pi_image_with_a_registry_prefix_is_reported() -> None:
+    """A registry prefix does not hide a pip2pi image that differs."""
+    release = "    docker.io/library/python:3.12-slim \\\\\n"
+
+    assert literal_python_image_mismatches(
+        release, "python:3.13-slim") == [
+            "docker.io/library/python:3.12-slim"]
+
+
+def test_python_image_in_a_comment_is_not_a_pip2pi_image() -> None:
+    """A comment line does not count as the pip2pi image."""
+    release = (
+        "# throwaway python:3.13-slim container on\n"
+        "    // python:3.13-slim\n"
+        "    python:3.13-slim \\\\\n")
+
+    assert literal_python_images_outside_comments(release) == [
+        "python:3.13-slim"]
 
 
 def test_release_pip2pi_image_that_matches_is_not_reported() -> None:
@@ -277,6 +311,21 @@ def test_release_jenkinsfile_names_the_same_python_image(
     """Jenkinsfile.release names only the interpreter of the Jenkinsfile."""
     release = read_or_skip(RELEASE_JENKINSFILE)
 
-    assert LITERAL_PYTHON_IMAGE.findall(release), (
+    assert literal_python_images_outside_comments(release), (
         "Jenkinsfile.release names no python: image for pip2pi")
     assert literal_python_image_mismatches(release, ci_python_image) == []
+
+
+def test_jenkinsfile_names_only_its_python_image(
+    ci_python_image: str,
+) -> None:
+    """The Jenkinsfile names a python: image only in PYTHON_IMAGE.
+
+    The production image stage pulls ``${PYTHON_IMAGE}`` and records it
+    in ``dist/base-images.lock`` (gain#2389). A literal image there
+    falls behind when PYTHON_IMAGE changes.
+    """
+    jenkinsfile = read_or_skip(JENKINSFILE)
+
+    assert literal_python_images_outside_comments(jenkinsfile) == [
+        ci_python_image]

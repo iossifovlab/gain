@@ -969,7 +969,7 @@ pipeline {
                         #
                         # setuptools is pinned <80 because libpip2pi
                         # imports pkg_resources, which setuptools 80
-                        # removed; an unpinned install on Python 3.12
+                        # removed; an unpinned install on any Python
                         # picks up setuptools 82+ and breaks dir2pi
                         # with ModuleNotFoundError: pkg_resources.
                         #
