@@ -33,9 +33,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
     && rm -rf /var/lib/apt/lists/*
 
+# Wait out a slow package index: the uv defaults (30 s HTTP read, 300 s
+# cache lock) failed 5 of 12 cells of gain-python-matrix #240.
 ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
     UV_PYTHON_DOWNLOADS=never \
+    UV_HTTP_TIMEOUT=120 \
+    UV_LOCK_TIMEOUT=900 \
     PYTHONHASHSEED=0
 
 # crapper computes the CRAP table that the core stage of the root
