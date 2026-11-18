@@ -336,6 +336,14 @@ observation (cell), and `var`, one row per variable (feature). These are what
 the `describe_obs` / `describe_var` statistics summarise.
 _Avoid_: annotation (reserved for variant annotation), metadata, cell table
 
+**Describe statistic**:
+The table of per-column summaries (count, mean, spread, extremes, quartiles,
+most frequent value) of one table: a data_frame resource's table, or one
+**axis table** of an ann_data resource. It is stored with the resource and
+shown on its summary page. The same table gives the same describe statistic on
+every machine that builds it.
+_Avoid_: describe (unqualified), stats, summary
+
 **Feature type**:
 The value of an ann_data resource's `var["feature_types"]` — `Gene Expression`,
 `Peaks`, `Antibody Capture`, … A resource may carry several. Decides what a

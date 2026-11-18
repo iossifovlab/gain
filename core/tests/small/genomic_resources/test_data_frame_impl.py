@@ -202,6 +202,27 @@ def test_get_info_renders_the_describe_table(
     assert "Statistics have not been built" not in info
 
 
+def test_get_info_prints_a_whole_number_as_an_integer(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = (
+        a_data_frame()
+        .with_data("""
+            chrom  pos
+            chr1   10000
+            chr1   248906440
+        """)
+        .build_resource(tmp_path)
+    )
+    build_statistics(resource)
+    refresh_manifest(resource)
+
+    info = DataFrameResourceImplementation(resource).get_info()
+
+    assert "248906440" in info
+    assert "248906440.0" not in info
+
+
 def test_get_info_consults_the_manifest_not_the_filesystem(
     resource: GenomicResource,
 ) -> None:
