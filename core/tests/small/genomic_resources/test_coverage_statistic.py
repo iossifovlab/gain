@@ -62,10 +62,47 @@ def test_serialization_round_trips_segments_and_their_lengths() -> None:
 
     assert restored.segments_by_chromosome() == {"chr1": 2, "chr2": 1}
     assert restored.segments_global() == 3
-    assert restored.segment_lengths_by_chromosome() == {
-        "chr1": CHR1_LENGTHS,
-        "chr2": CHR2_LENGTHS,
-    }
+    assert restored.segment_lengths_global() == GLOBAL_LENGTHS
+
+
+def _version_2_file() -> str:
+    """A coverage.json as gain wrote it before gain#2433 for
+    :func:`_two_chromosomes`: a length record in each chromosome entry
+    and their fold under ``global``."""
+    return json.dumps({
+        "format_version": 2,
+        "chromosomes": {
+            "chr1": {"covered_positions": 11, "segment_count": 2,
+                     "segment_lengths": CHR1_LENGTHS.stored()},
+            "chr2": {"covered_positions": 1, "segment_count": 1,
+                     "segment_lengths": CHR2_LENGTHS.stored()},
+        },
+        "global": {"covered_positions": 12, "segment_count": 3,
+                   "segment_lengths": GLOBAL_LENGTHS.stored()},
+    })
+
+
+def test_the_old_and_the_new_file_shape_read_the_same() -> None:
+    new_shape = CoverageStatistics.deserialize(_two_chromosomes().serialize())
+    old_shape = CoverageStatistics.deserialize(_version_2_file())
+
+    for stats in (new_shape, old_shape):
+        assert stats.segment_lengths_global() == GLOBAL_LENGTHS
+        assert stats.covered_by_chromosome() == {"chr1": 11, "chr2": 1}
+        assert stats.segments_by_chromosome() == {"chr1": 2, "chr2": 1}
+
+
+def test_a_file_without_a_global_entry_reads_lengths_unknown() -> None:
+    # The records per chromosome are not folded: every file that
+    # ``serialize`` writes carries ``global``, so a file without it
+    # leaves the lengths unknown -- not empty.
+    data = json.loads(_version_2_file())
+    del data["global"]
+
+    stats = CoverageStatistics.deserialize(json.dumps(data))
+
+    assert stats.segments_by_chromosome() == {"chr1": 2, "chr2": 1}
+    assert stats.segment_lengths_global() is None
 
 
 def test_a_read_file_serializes_back_byte_for_byte() -> None:
@@ -249,7 +286,6 @@ def test_a_version_1_file_reads_its_counts_and_not_its_ladder() -> None:
     assert restored.covered_by_chromosome() == {"chr1": 7}
     assert restored.segments_by_chromosome() == {"chr1": 2}
     assert restored.segments_global() == 2
-    assert not restored.segment_lengths_by_chromosome()
     assert restored.segment_lengths_global() is None
 
 
@@ -266,7 +302,6 @@ def test_deserializing_a_file_without_segments_leaves_them_unknown(
     assert restored.covered_by_chromosome() == {"chr1": 7}
     assert restored.segments_by_chromosome() == {}
     assert restored.segments_global() is None
-    assert restored.segment_lengths_by_chromosome() == {}
     assert restored.segment_lengths_global() is None
 
 

@@ -17,6 +17,7 @@ from gain.genomic_resources.repository import (
     ReadWriteRepositoryProtocol,
 )
 from gain.genomic_resources.statistics.coverage import (
+    COVERAGE_FORMAT_VERSION,
     COVERAGE_SEGMENT_LENGTHS_IMAGE_FILE,
     COVERAGE_STATISTICS_FILE,
     CoverageStatistics,
@@ -210,24 +211,27 @@ STORED_SEGMENT_LENGTHS = {
 }
 
 
-def test_the_file_stores_each_chromosomes_segment_lengths_exactly(
+def test_the_file_stores_the_segment_lengths_once_in_global(
     tmp_path: pathlib.Path,
 ) -> None:
-    """Format version 2: the ladder leaves the file, the exact record
-    enters it, and the record's count is the segment count -- the same
-    segments, counted twice by two different routes."""
+    """A chromosome entry keeps its counts and no length record.  The
+    exact record is written once, under ``global``, and its count is the
+    global segment count."""
     resource = _multivalued_tabix(tmp_path)
 
     scan_noregion.do_noregion_histograms(resource)
 
     data = json.loads(resource.get_file_content("statistics/coverage.json"))
-    assert data["format_version"] == 2
-    entry = data["chromosomes"]["chr1"]
-    assert entry["segment_lengths"] == STORED_SEGMENT_LENGTHS
-    assert entry["segment_lengths"]["count"] == entry["segment_count"]
-    # One chromosome, so the global fold is that chromosome's record.
-    assert data["global"]["segment_lengths"] == STORED_SEGMENT_LENGTHS
-    assert data["global"]["segment_count"] == SEGMENTS
+    assert data["format_version"] == COVERAGE_FORMAT_VERSION == 3
+    assert data["chromosomes"] == {"chr1": {
+        "covered_positions": COVERED,
+        "segment_count": SEGMENTS,
+    }}
+    assert data["global"] == {
+        "covered_positions": COVERED,
+        "segment_count": SEGMENTS,
+        "segment_lengths": STORED_SEGMENT_LENGTHS,
+    }
     assert "segment_length_histogram" not in json.dumps(data)
 
 
@@ -682,12 +686,16 @@ def test_an_empty_segment_record_writes_no_image(
 def _all_zero_segment_statistics() -> CoverageStatistics:
     """A scanned chromosome that turned up no segments at all."""
     return CoverageStatistics.deserialize(json.dumps({
-        "format_version": 2,
+        "format_version": COVERAGE_FORMAT_VERSION,
         "chromosomes": {"chr1": {
             "covered_positions": 0,
             "segment_count": 0,
-            "segment_lengths": NO_LENGTHS.stored(),
         }},
+        "global": {
+            "covered_positions": 0,
+            "segment_count": 0,
+            "segment_lengths": NO_LENGTHS.stored(),
+        },
     }))
 
 

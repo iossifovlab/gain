@@ -277,13 +277,14 @@ and its deletions: an exact `length → count` map clamped at 8192 (the key *at*
 the clamp means "that long or longer") beside `count`, `sum`, `min` and `max`
 taken on the unclamped lengths, so min, max and the mean stay exact however
 far the tail runs and only a median landing past the clamp degrades — to a
-floor, which the page prints as one. Stored per chromosome; the global record
-is the fold of the per-chromosome ones, unknown if any is; tabled on the info
+floor, which the page prints as one. Stored once, for the whole resource: a
+chromosome keeps its counts but not its length record; tabled on the info
 page as count / min / max / mean / median; charted on the fixed log2
 **ladder** derived from the map at render time, so picture and numbers cannot
-drift (ADR 0020, amended by gain#1118, gain#1543 and gain#1544). A statistics
-file built before its kind stored the record carries only the count, and the
-page reads "not computed" for the lengths until the resource is rebuilt.
+drift (ADR 0020, amended by gain#1118, gain#1543, gain#1544 and gain#2433). A
+statistics file built before its kind stored the record carries only the
+count, and the page reads "not computed" for the lengths until the resource
+is rebuilt.
 _Avoid_: length histogram (the stored log2 ladder every kind has now left;
 the ladder is what the *chart* is drawn on, not what is stored), length
 distribution, indel lengths (one group, not the record)

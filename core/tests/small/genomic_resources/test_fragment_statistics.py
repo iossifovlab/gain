@@ -21,6 +21,7 @@ from gain.genomic_resources.statistics.exact_lengths import (
     LengthArrayTally,
 )
 from gain.genomic_resources.statistics.fragments import (
+    FRAGMENT_FORMAT_VERSION,
     FRAGMENT_LENGTHS_IMAGE_FILE,
     FRAGMENT_STATISTICS_FILE,
     FragmentStatistics,
@@ -109,7 +110,6 @@ def test_an_unknown_record_round_trips_as_unknown_not_as_empty(
     assert "fragment_lengths" not in unknown.serialize()
     assert restored.fragments_by_chromosome() == {"chr1": 4, "chr2": 1}
     assert restored.fragments_global() == 5
-    assert restored.fragment_lengths_by_chromosome() == {}
     assert restored.fragment_lengths_global() is None
 
 
@@ -145,31 +145,75 @@ STORED_GLOBAL_LENGTHS = {
     "count": 5, "sum": 148, "min": 4, "max": 91,
 }
 CHR1_LENGTHS = ExactLengths({11: 2, 31: 1, 91: 1}, 4, 144, 11, 91)
-CHR2_LENGTHS = ExactLengths({4: 1}, 1, 4, 4, 4)
 GLOBAL_LENGTHS = ExactLengths({4: 1, 11: 2, 31: 1, 91: 1}, 5, 148, 4, 91)
 
 
-def test_the_file_stores_each_chromosomes_fragment_lengths_exactly(
+def test_the_file_stores_the_fragment_lengths_once_in_global(
     tmp_path: pathlib.Path,
 ) -> None:
-    """Format version 2: the ladder leaves the file, the exact record
-    enters it, and the record's count is the fragment count -- the same
-    rows, counted twice by two different routes."""
+    """A chromosome entry keeps its fragment count and no length record.
+    The exact record is written once, under ``global``, and its count is
+    the global fragment count."""
     resource = _fragments(tmp_path)
 
     scan_noregion.do_noregion_histograms(resource)
 
     content = resource.get_file_content(FRAGMENT_STATISTICS_FILE)
     data = json.loads(content)
-    assert data["format_version"] == 2
-    chromosomes = data["chromosomes"]
-    assert chromosomes["chr1"]["fragment_lengths"] == STORED_CHR1_LENGTHS
-    assert chromosomes["chr2"]["fragment_lengths"] == STORED_CHR2_LENGTHS
-    for entry in chromosomes.values():
-        assert entry["fragment_lengths"]["count"] == entry["fragment_count"]
-    assert data["global"]["fragment_lengths"] == STORED_GLOBAL_LENGTHS
-    assert data["global"]["fragment_count"] == 5
+    assert data["format_version"] == FRAGMENT_FORMAT_VERSION == 3
+    assert data["chromosomes"] == {
+        "chr1": {"fragment_count": 4},
+        "chr2": {"fragment_count": 1},
+    }
+    assert data["global"] == {
+        "fragment_count": 5,
+        "fragment_lengths": STORED_GLOBAL_LENGTHS,
+    }
     assert "fragment_length_histogram" not in content
+
+
+def _version_2_file() -> str:
+    """A fragments.json as gain wrote it before gain#2433 for the
+    ``_fragments`` fixture: a length record in each chromosome entry and
+    their fold under ``global``."""
+    return json.dumps({
+        "format_version": 2,
+        "chromosomes": {
+            "chr1": {"fragment_count": 4,
+                     "fragment_lengths": STORED_CHR1_LENGTHS},
+            "chr2": {"fragment_count": 1,
+                     "fragment_lengths": STORED_CHR2_LENGTHS},
+        },
+        "global": {"fragment_count": 5,
+                   "fragment_lengths": STORED_GLOBAL_LENGTHS},
+    })
+
+
+def test_the_old_and_the_new_file_shape_read_the_same(
+    tmp_path: pathlib.Path,
+) -> None:
+    resource = _fragments(tmp_path)
+    scan_noregion.do_noregion_histograms(resource)
+
+    new_shape = _stored(resource)
+    old_shape = FragmentStatistics.deserialize(_version_2_file())
+
+    for stats in (new_shape, old_shape):
+        assert stats.fragment_lengths_global() == GLOBAL_LENGTHS
+        assert stats.fragments_by_chromosome() == {"chr1": 4, "chr2": 1}
+
+
+def test_a_file_without_a_global_entry_reads_lengths_unknown() -> None:
+    # The records per chromosome are not folded: every file that
+    # ``serialize`` writes carries ``global``, so a file without it
+    # leaves the lengths unknown -- not empty.
+    data = json.loads(_version_2_file())
+    del data["global"]
+
+    stats = FragmentStatistics.deserialize(json.dumps(data))
+
+    assert stats.fragments_by_chromosome() == {"chr1": 4, "chr2": 1}
+    assert stats.fragment_lengths_global() is None
 
 
 def test_fragment_lengths_bin_the_rows_own_span_and_merge_exactly(
@@ -177,16 +221,12 @@ def test_fragment_lengths_bin_the_rows_own_span_and_merge_exactly(
 ) -> None:
     # Each row is counted at its OWN span -- 91, 11, 11 and 31 on chr1,
     # 4 on chr2 -- and the global record is the fold of the two
-    # chromosomes' records: nothing is re-scanned.
+    # chromosomes: nothing is re-scanned.
     resource = _fragments(tmp_path)
 
     scan_noregion.do_noregion_histograms(resource)
 
     stats = _stored(resource)
-    assert stats.fragment_lengths_by_chromosome() == {
-        "chr1": CHR1_LENGTHS,
-        "chr2": CHR2_LENGTHS,
-    }
     assert stats.fragment_lengths_global() == GLOBAL_LENGTHS
     assert GLOBAL_LENGTHS.total == stats.fragments_global() == 5
 
@@ -481,7 +521,6 @@ def test_a_version_1_file_keeps_its_counts_and_reads_lengths_unknown(
     page = _info_page(resource)
 
     assert stats.fragments_by_chromosome() == {"chr1": 4, "chr2": 1}
-    assert stats.fragment_lengths_by_chromosome() == {}
     assert stats.fragment_lengths_global() is None
     table = table_after(page, "<h2>Fragments</h2>")
     assert [cell.text for cell in table.head[0]] == ["Chromosome", "Fragments"]
@@ -596,11 +635,12 @@ def test_the_info_page_says_a_resource_genuinely_has_no_fragments(
     )
     save_and_plot_fragments(
         resource, FragmentStatistics.deserialize(json.dumps({
-            "format_version": 2,
-            "chromosomes": {"chr1": {
+            "format_version": FRAGMENT_FORMAT_VERSION,
+            "chromosomes": {"chr1": {"fragment_count": 0}},
+            "global": {
                 "fragment_count": 0,
                 "fragment_lengths": NO_LENGTHS.stored(),
-            }},
+            },
         })))
 
     page = build_score_implementation_from_resource(resource).get_info()

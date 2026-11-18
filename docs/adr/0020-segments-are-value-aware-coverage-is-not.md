@@ -20,7 +20,9 @@
   (the score-rung amendment),
   [gain#1543](https://github.com/iossifovlab/gain/issues/1543) and
   [gain#1544](https://github.com/iossifovlab/gain/issues/1544)
-  (the segment-lengths and fragment-lengths amendments)
+  (the segment-lengths and fragment-lengths amendments),
+  [gain#2433](https://github.com/iossifovlab/gain/issues/2433)
+  (the global-only length-records amendment)
 
 ## Context
 
@@ -493,11 +495,12 @@ publish no exact sum, min or max at all, so every figure in the table would be
 a guess at bin resolution presented as a number.
 
 *Amended by gain#1543: segments leave the ladder as a stored format the way
-the indel groups did.* `coverage.json` is at **format version 2**: each
-chromosome entry stores its segments as the same kind-neutral record —
-`segment_lengths`, the exact map clamped at `LENGTH_MAP_CLAMP` beside `count`,
-`sum`, `min` and `max` on the unclamped length — and no longer stores
-`segment_length_histogram`; `segment_count` stays. The record's `count` is the
+the indel groups did.* `coverage.json` is at **format version 2**: the file
+stores its segments as the same kind-neutral record — `segment_lengths`, the
+exact map clamped at `LENGTH_MAP_CLAMP` beside `count`, `sum`, `min` and `max`
+on the unclamped length — and no longer stores `segment_length_histogram`;
+`segment_count` stays. (Version 2 stored the record in each chromosome entry
+too; gain#2433 removed that copy, see the amendment below.) The record's `count` is the
 segment count, the first-run / open-run bookkeeping that lets a segment span
 scan windows is unchanged and folds into the record at finalisation, so a
 chunked scan writes the same file as an unchunked one. The per-region
@@ -520,9 +523,11 @@ score is rebuilt with `--force`.
 
 *Amended by gain#1544: fragments leave the ladder as a stored format, the
 third and last kind to do so.* `fragments.json` is at **format version 2**:
-each chromosome entry stores `fragment_lengths` — the same kind-neutral record,
-a fragment's length being its stored span unclipped to the scan region — beside
-`fragment_count`, and no longer stores `fragment_length_histogram`. The
+the file stores `fragment_lengths` — the same kind-neutral record, a
+fragment's length being its stored span unclipped to the scan region — beside
+`fragment_count`, and no longer stores `fragment_length_histogram`. (Version
+2 stored the record in each chromosome entry too; gain#2433 removed that copy,
+see the amendment below.) The
 reader has the same two gates as coverage's, so a fragment score built before
 this keeps its Fragments table and reads "fragment lengths not computed" until
 rebuilt with `--force`; the fragment page shows the same six-column table above
@@ -532,6 +537,32 @@ histograms is gone; what remains of the ladder is the bin count, the display
 cap, the bin index and the plotter — the rendering contract every length chart
 is drawn on. The three pages render their table, thumbnail and modal from one
 shared template, byte for byte what the written-out markup rendered.
+
+*Amended by gain#2433: length records leave the chromosomes.* Each length
+record is stored once, in the `global` entry of its file. A chromosome entry
+keeps its counts: `segment_count`, `fragment_count` or the allele class counts.
+An allele chromosome entry also keeps its substitution matrix and complex grid.
+No chromosome entry stores `segment_lengths`, `fragment_lengths`,
+`insertion_lengths` or `deletion_lengths`. `coverage.json` and `fragments.json` are at **format
+version 3**, `alleles.json` at **format version 2**. The reasons:
+
+- **No reader.** The info pages show each length record globally only.
+  The per-chromosome copies had no consumer, and the two accessors that
+  returned them (`segment_lengths_by_chromosome`,
+  `fragment_lengths_by_chromosome`) had callers only in the tests.
+- **Size.** In a fragment file the per-chromosome records were approximately
+  95% of the bytes.
+- **Cost of a reversal.** If a later issue needs the per-chromosome records,
+  it can restore them. That costs a rebuild of each resource with `--force`,
+  the same rollout the earlier amendments use.
+
+The reader reads both shapes: it takes the counts from `chromosomes` and the
+length record from `global`, and does not read a per-chromosome record. A file
+without a `global` entry, or without the record in it, reads the lengths as
+unknown, so the page says "not computed". A statistic restored from a file
+holds the global record. A scanned statistic still folds the records of its
+regions into the global one. Thus a chunked scan writes the same file as an
+unchunked one.
 
 The **complex `(len_ref, len_alt)` grid deliberately does not share the
 ladder either.** Its cells are

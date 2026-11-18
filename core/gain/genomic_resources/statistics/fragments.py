@@ -24,8 +24,9 @@ Lengths are kept EXACTLY, as the kind-neutral record in
 :mod:`gain.genomic_resources.statistics.exact_lengths` (ADR 0020 as
 amended by gain#1544, the way segments left the stored ladder in
 gain#1543 and the indel groups in gain#1118): the file stores the
-record, the table on the page is read off it, and the chart is drawn
-on the ladder derived from it at render time.
+record once, under ``global`` (the gain#2433 amendment), the table on
+the page is read off it, and the chart is drawn on the ladder derived
+from it at render time.
 """
 from __future__ import annotations
 
@@ -52,7 +53,7 @@ from gain.genomic_resources.statistics.exact_lengths import (
     LengthArrayTally,
     LengthStatisticsRow,
     folded_lengths,
-    stored_lengths,
+    stored_global_lengths,
     write_length_chart,
 )
 from gain.genomic_resources.statistics.region_fold import merge_regions
@@ -60,7 +61,7 @@ from gain.utils.chromosome_order import natural_chromosome_key
 
 FRAGMENT_STATISTICS_FILE = "statistics/fragments.json"
 #: The ``format_version`` ``serialize`` stamps.
-FRAGMENT_FORMAT_VERSION = 2
+FRAGMENT_FORMAT_VERSION = 3
 #: The statistic's one declaration -- file, version, and the kind it
 #: is written for -- read by the scan's gate and by the repair check.
 FRAGMENT_STATISTIC = StoredStatistic(
@@ -96,13 +97,14 @@ class RegionFragments:
         self._fragments = 0
         # The region's lengths, in whichever form it holds them: the
         # array tally a scanned region accumulates into, built here; the
-        # stored record a region restored through :meth:`frozen` -- the
-        # one caller that clears ``accumulates`` -- holds as read; or
-        # ``None`` for a restored region whose file stored the count
-        # without the record (format version 1), where the count stays
-        # exact while the lengths read as unknown.  Held as one value
-        # rather than a tally beside a flag, so the forms cannot
-        # disagree and accumulating into a frozen region is an
+        # record a region built through :meth:`frozen` -- the one
+        # caller that clears ``accumulates`` -- was handed; or ``None``
+        # for a frozen region with no record, where the count stays
+        # exact while the lengths read as unknown.  A statistic read
+        # from a file freezes its regions with no record: the file
+        # stores the length record for the whole resource only.  Held
+        # as one value rather than a tally beside a flag, so the forms
+        # cannot disagree and accumulating into a frozen region is an
         # assertion rather than silent work.
         self._lengths: LengthArrayTally | ExactLengths | None = \
             LengthArrayTally() if accumulates else None
@@ -116,9 +118,10 @@ class RegionFragments:
     ) -> RegionFragments:
         """A region restored from serialized counts, with no scan state.
 
-        ``lengths`` of ``None`` marks the length record unknown -- the
-        file stored the count alone.  The COUNT is unaffected and still
-        reads, so a file like that renders its table and no image.
+        ``lengths`` of ``None`` marks the length record unknown.  The
+        COUNT is unaffected and still reads.
+        :meth:`FragmentStatistics.deserialize` passes ``None``: a file
+        stores the length record under ``global`` only.
         """
         region = cls(chrom, None, None, accumulates=False)
         region._fragments = fragments
@@ -194,13 +197,17 @@ class FragmentStatistics(RegionFoldedStatistic[RegionFragments]):
     """A resource's fragment counts and lengths, per chromosome and global.
 
     Folds :class:`RegionFragments` the way the base class does, and
-    serializes to :data:`FRAGMENT_STATISTICS_FILE` as raw counts beside
-    each chromosome's exact length record.
+    serializes to :data:`FRAGMENT_STATISTICS_FILE` as a raw count per
+    chromosome and one exact length record for the whole resource.
     """
 
     def __init__(self) -> None:
         super().__init__(
             "fragments", "Fragment counts and lengths per chromosome")
+        # Set by :meth:`deserialize` alone: a restored statistic holds
+        # the global length record as the file stores it.
+        self._restored = False
+        self._restored_lengths: ExactLengths | None = None
 
     def fragments_by_chromosome(self) -> dict[str, int]:
         return {
@@ -212,44 +219,31 @@ class FragmentStatistics(RegionFoldedStatistic[RegionFragments]):
         return sum(
             region.fragments for region in self._regions.values())
 
-    def fragment_lengths_by_chromosome(self) -> dict[str, ExactLengths]:
-        """Per-chromosome fragment-length records, as stored.
-
-        A chromosome whose lengths are unknown is left OUT rather than
-        given an empty record, which would read as "measured, and empty".
-        """
-        return {
-            chrom: lengths
-            for chrom, region in self._regions.items()
-            if (lengths := region.fragment_lengths()) is not None
-        }
-
     def fragment_lengths_global(self) -> ExactLengths | None:
-        """The fold of every chromosome's lengths -- :func:`folded_lengths`,
-        so the all-or-nothing rule is the coverage twin's."""
+        """The resource's fragment-length record, ``None`` if unknown.
+
+        A statistic restored from a file holds the record the file
+        stores under ``global``.  A scanned statistic folds its
+        chromosomes' records with :func:`folded_lengths`, so the
+        all-or-nothing rule is the coverage twin's.
+        """
+        if self._restored:
+            return self._restored_lengths
         return folded_lengths(
             region.fragment_lengths() for region in self._regions.values())
 
     def serialize(self) -> str:
-        # Each region's lengths are read ONCE, and both the
-        # per-chromosome entries and the global roll-up come off that.
-        # The global record is written only when EVERY chromosome has
-        # one, for the reason ``fragment_lengths_global`` gives.
-        records = {
-            chrom: region.fragment_lengths()
+        # A chromosome entry carries its count and no length record: the
+        # record is written once, under ``global`` (ADR 0020, the
+        # gain#2433 amendment), and only when it is known.
+        chromosomes: dict[str, dict[str, Any]] = {
+            chrom: {"fragment_count": region.fragments}
             for chrom, region in self._regions.items()
         }
-        chromosomes: dict[str, dict[str, Any]] = {}
-        for chrom, region in self._regions.items():
-            entry: dict[str, Any] = {"fragment_count": region.fragments}
-            lengths = records[chrom]
-            if lengths is not None:
-                entry["fragment_lengths"] = lengths.stored()
-            chromosomes[chrom] = entry
         global_entry: dict[str, Any] = {
             "fragment_count": self.fragments_global(),
         }
-        global_lengths = folded_lengths(records.values())
+        global_lengths = self.fragment_lengths_global()
         if global_lengths is not None:
             global_entry["fragment_lengths"] = global_lengths.stored()
         return json.dumps({
@@ -260,18 +254,20 @@ class FragmentStatistics(RegionFoldedStatistic[RegionFragments]):
 
     @staticmethod
     def deserialize(content: str) -> FragmentStatistics:
-        # Only the per-chromosome entries round-trip; the global entry is
-        # a roll-up recomputed from them.  Named keys are read one by
-        # one and the entry dict is never iterated, so unknown keys --
-        # a version 1 file's ``fragment_length_histogram`` among them --
-        # are ignored rather than rejected.
+        # The counts come from the chromosome entries, the length record
+        # from ``global`` -- both file shapes carry it there.  Named
+        # keys are read one by one and the entry dict is never iterated,
+        # so unknown keys -- a version 1 file's
+        # ``fragment_length_histogram``, a version 2 file's records per
+        # chromosome -- are ignored rather than rejected.
         data = json.loads(content)
         result = FragmentStatistics()
         for chrom, counts in data["chromosomes"].items():
             result.fold_region(RegionFragments.frozen(
-                chrom,
-                int(counts["fragment_count"]),
-                stored_lengths(counts, "fragment_lengths")))
+                chrom, int(counts["fragment_count"]), None))
+        result._restored = True
+        result._restored_lengths = stored_global_lengths(
+            data, "fragment_lengths")
         return result
 
 
