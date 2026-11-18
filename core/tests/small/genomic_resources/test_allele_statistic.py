@@ -202,11 +202,25 @@ def test_the_old_and_the_new_file_shape_read_the_same() -> None:
     old = AlleleStatistics.deserialize(_version_1_file(statistics))
     new = AlleleStatistics.deserialize(statistics.serialize())
 
+    assert old.by_chromosome() == new.by_chromosome() \
+        == _without_lengths(statistics.by_chromosome())
     assert old.global_counts() == new.global_counts() \
         == statistics.global_counts()
     insertions = new.global_counts().insertion_lengths
     assert insertions is not None
     assert insertions.lengths == {1: 2}
+
+
+def test_a_read_file_serializes_back_byte_for_byte() -> None:
+    # A restored chromosome carries no length record, so a resave must
+    # write the global records the file held, not a roll-up of none.
+    written = _two_chromosome_statistics().serialize()
+
+    resaved = AlleleStatistics.deserialize(written).serialize()
+
+    assert resaved == written
+    assert '"insertion_lengths"' in written
+    assert '"deletion_lengths"' in written
 
 
 def test_a_file_without_a_global_entry_reads_lengths_unknown() -> None:
