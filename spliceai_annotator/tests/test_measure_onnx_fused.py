@@ -4,9 +4,12 @@ import importlib.util
 import json
 import os
 import pathlib
+import queue
 import subprocess
 import sys
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
+
+import pytest
 
 SCRIPT = (
     pathlib.Path(__file__).parent.parent / "scripts" / "measure_onnx_fused.py")
@@ -76,3 +79,54 @@ def test_default_widths_are_the_default_and_the_widest_window() -> None:
     expected = (10301, 20201)
 
     assert expected == script.DEFAULT_WIDTHS
+
+
+class _LateResultQueue:
+    """A queue whose result arrives just after the first poll timed out."""
+
+    def __init__(self, result: dict) -> None:
+        self._result = result
+        self._polls = 0
+
+    def get(self, timeout: float | None = None) -> dict:
+        del timeout
+        self._polls += 1
+        if self._polls == 1:
+            raise queue.Empty
+        return self._result
+
+    def get_nowait(self) -> dict:
+        return self.get()
+
+
+class _ExitedChild:
+    """A child that reported and exited with code 0 during the first poll."""
+
+    exitcode = 0
+
+    def __init__(self, target: object, args: tuple) -> None:
+        del target, args
+
+    def start(self) -> None:
+        pass
+
+    def is_alive(self) -> bool:
+        return False
+
+    def join(self, timeout: float | None = None) -> None:
+        del timeout
+
+
+def test_benchmark_keeps_a_result_that_lands_after_a_poll_timed_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = _load_script()
+    result = {"backend": "onnx", "width": 10001}
+    context = SimpleNamespace(
+        Queue=lambda: _LateResultQueue(result), Process=_ExitedChild)
+    monkeypatch.setattr(
+        script.multiprocessing, "get_context", lambda _method: context)
+
+    reported = script.run_in_child("onnx", 10001, 2, 1)
+
+    assert reported == result

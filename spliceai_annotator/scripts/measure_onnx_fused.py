@@ -43,6 +43,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib
 import json
 import multiprocessing
@@ -131,6 +132,12 @@ def run_in_child(
             if not child.is_alive():
                 break
     child.join()
+    if result is None and child.exitcode == 0:
+        # The child can report and exit after a poll timed out and before
+        # `is_alive` ran. A child flushes its queue before it exits, so
+        # one more read finds a result that is there.
+        with contextlib.suppress(queue_module.Empty):
+            result = queue.get(timeout=1.0)
     if child.exitcode != 0 or result is None:
         raise RuntimeError(
             f"{backend} @ {width} exited with code {child.exitcode}")
