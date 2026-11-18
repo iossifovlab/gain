@@ -3,8 +3,14 @@ import json
 import pathlib
 
 import pytest
+from gain.genomic_resources.data_frame_resource import (
+    load_data_frame_from_resource,
+)
 from gain.genomic_resources.implementations.data_frame_resource_impl import (
     DataFrameResourceImplementation,
+)
+from gain.genomic_resources.implementations.describe_statistic import (
+    stable_describe,
 )
 from gain.genomic_resources.repository import GenomicResource
 from gain.genomic_resources.testing import build_filesystem_test_repository
@@ -56,6 +62,29 @@ def test_statistics_task_writes_a_describe_table(
     describe = resource.get_file_content(DESCRIBE)
     assert "gene" in describe
     assert "score" in describe
+
+
+def test_statistics_task_writes_the_stable_describe_statistic(
+    tmp_path: pathlib.Path,
+) -> None:
+    # A float64 sum in row order loses the 1 between the two large values,
+    # so plain pandas gives a different mean than the exact sum.
+    resource = (
+        a_data_frame()
+        .with_data("""
+            name  value
+            a     1e16
+            b     1
+            c     -1e16
+        """)
+        .build_resource(tmp_path)
+    )
+    df = load_data_frame_from_resource(resource)
+    assert stable_describe(df).to_csv() != df.describe(include="all").to_csv()
+
+    build_statistics(resource)
+
+    assert resource.get_file_content(DESCRIBE) == stable_describe(df).to_csv()
 
 
 def test_statistics_task_id_names_the_resource(
