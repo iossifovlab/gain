@@ -141,11 +141,12 @@ def fused_backend(impl: ModuleType) -> ModuleType:
     return impl.load_spliceai_backend("onnx-fused")
 
 
-def _fused_session(fused_backend: ModuleType, model: Any) -> Any:
+def _fused_session(impl: ModuleType, model: Any) -> Any:
     ort = pytest.importorskip("onnxruntime")
+    onnx_backend = impl.load_spliceai_backend("onnx")
     return ort.InferenceSession(
         model.SerializeToString(),
-        sess_options=fused_backend.five_sessions.spliceai_session_options())
+        sess_options=onnx_backend.spliceai_session_options())
 
 
 @pytest.mark.parametrize(
@@ -153,6 +154,7 @@ def _fused_session(fused_backend: ModuleType, model: Any) -> Any:
 def test_fused_agrees_with_the_five_session_path(
     window: str,
     windows: dict[str, np.ndarray],
+    impl: ModuleType,
     fused_backend: ModuleType,
     five_session_predict: Callable[[np.ndarray], np.ndarray],
 ) -> None:
@@ -179,7 +181,7 @@ def test_fused_agrees_with_the_five_session_path(
     for dropped in range(len(fuse.MEMBER_PATHS)):
         subset = [
             path for i, path in enumerate(fuse.MEMBER_PATHS) if i != dropped]
-        session = _fused_session(fused_backend, fuse.fuse_models(subset))
+        session = _fused_session(impl, fuse.fuse_models(subset))
         degraded = float(np.max(np.abs(
             fused_backend.spliceai_predict([session], x) - reference)))
         assert degraded > 1e-5, (

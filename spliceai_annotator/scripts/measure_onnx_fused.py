@@ -47,6 +47,7 @@ import multiprocessing
 import os
 import pathlib
 import platform
+import queue as queue_module
 import resource
 import statistics
 import time
@@ -118,9 +119,17 @@ def run_in_child(
     child = context.Process(
         target=_measure_child, args=(backend, width, rows, reps, queue))
     child.start()
-    result = queue.get()
+    # Poll: a child that raises or is killed before `queue.put` never
+    # reports, and a blocking `get` would wait for it forever.
+    result = None
+    while result is None:
+        try:
+            result = queue.get(timeout=1.0)
+        except queue_module.Empty:
+            if not child.is_alive():
+                break
     child.join()
-    if child.exitcode != 0:
+    if child.exitcode != 0 or result is None:
         raise RuntimeError(
             f"{backend} @ {width} exited with code {child.exitcode}")
     return cast(dict[str, Any], result)
