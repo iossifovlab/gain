@@ -26,9 +26,10 @@ Requirements
   bites in CI. This script sets it defensively at import time, before
   TensorFlow is imported, but export it in your shell too.
 * Build-time tooling: ``tensorflow``, ``keras`` and ``tf2onnx`` (and ``onnx``
-  for the post-conversion check). In this repo they live in the
-  ``gain-spliceai-annotator`` ``dev`` dependency group; provision with
-  ``uv sync --package gain-spliceai-annotator --group dev``.
+  for the post-conversion check). In this repo ``tensorflow`` (which brings
+  ``keras``) is the ``tensorflow`` extra of ``gain-spliceai-annotator`` and
+  the rest live in its ``dev`` dependency group; provision with
+  ``uv sync --package gain-spliceai-annotator --extra tensorflow --group dev``.
 
 Usage
 -----

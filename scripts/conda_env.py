@@ -90,17 +90,23 @@ _DEV = ("dependency-groups", "dev")
 CORE_FILES = ("environment.yml", "dev-environment.yml")
 
 
-def plugin_output(directory: str, short: str) -> Output:
+def plugin_output(
+    directory: str, short: str, extras: tuple[str, ...] = (),
+) -> Output:
     """Return an annotator plugin's output: its runtime deps and dev tools.
 
     Each plugin carries its own dev tools so that a heavy one, such as
-    spliceai's ``tf2onnx`` pulling tensorflow, stays out of the shared
-    dev-environment.yml.
+    spliceai's optional ``tensorflow`` backend, stays out of the shared
+    dev-environment.yml. ``extras`` names the plugin's
+    ``[project.optional-dependencies]`` that its dev env installs too.
     """
     pyproject = f"{directory}/pyproject.toml"
     return Output(
         f"{directory}/{short}-environment.yml", "gain",
-        (Feed(pyproject), Feed(pyproject, _DEV)),
+        (Feed(pyproject),
+         *(Feed(pyproject, ("project", "optional-dependencies", extra))
+           for extra in extras),
+         Feed(pyproject, _DEV)),
         on_top_of=CORE_FILES,
     )
 
@@ -122,7 +128,9 @@ OUTPUTS = (
     ),
     plugin_output("demo_annotator", "demo"),
     plugin_output("vep_annotator", "vep"),
-    plugin_output("spliceai_annotator", "spliceai"),
+    # The dev env carries the optional TensorFlow backend: its tests and
+    # the .h5 -> .onnx equivalence check need it (ADR 0042).
+    plugin_output("spliceai_annotator", "spliceai", extras=("tensorflow",)),
 )
 
 

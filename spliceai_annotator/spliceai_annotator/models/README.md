@@ -17,9 +17,9 @@ two ever disagree, the `.h5` files win: regenerate the `.onnx` from them, never
 the reverse.
 
 Which serialization actually runs is a per-process choice: `SPLICEAI_BACKEND`
-selects `tensorflow` (the `.h5` files — the default) or `onnx` (these `.onnx`
-files, under ONNX Runtime; issue #297). Whether TensorFlow stays installed at
-all is #298.
+selects `onnx` (these `.onnx` files, under ONNX Runtime — the default since
+#299) or `tensorflow` (the `.h5` files; needs the optional `tensorflow` extra).
+ADR 0042 records the choice.
 
 ## Regenerating the `.onnx` files
 
@@ -35,7 +35,7 @@ CUDA_VISIBLE_DEVICES=-1 \
 `CUDA_VISIBLE_DEVICES=-1` is **required**: without it TensorFlow's grappler
 enumerates CUDA devices during export and hard-fails. See the script's module
 docstring for details and for provisioning the build-time tooling
-(`uv sync --package gain-spliceai-annotator --group dev`).
+(`uv sync --package gain-spliceai-annotator --extra tensorflow --group dev`).
 
 Each converted `.onnx` keeps a **dynamic length axis**
 (`TensorSpec((None, None, 4))`) — the annotator window is

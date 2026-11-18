@@ -2,8 +2,10 @@
 
 Runs the five committed ``models/spliceai{1..5}.onnx`` artifacts -- derived
 offline from the ``.h5`` source of truth by ``scripts/convert_models_to_onnx``
-and pinned to it by ``tests/test_onnx_equivalence.py``. Selected with
-``SPLICEAI_BACKEND=onnx`` -- see ``spliceai_annotator_impl``.
+and pinned to it by ``tests/test_onnx_equivalence.py``. The default backend
+(ADR 0042): selected unless ``SPLICEAI_BACKEND=tensorflow`` is set -- see
+``spliceai_annotator_impl``. It never imports TensorFlow, so it runs where
+TensorFlow is not installed.
 """
 import gc
 import os

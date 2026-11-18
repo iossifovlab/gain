@@ -23,8 +23,9 @@ COPY --from=ghcr.io/astral-sh/uv:0.11.3 /uv /uvx /usr/local/bin/
 # requires `h5py>=3.11.0,<3.15.0` -- one lock resolves the whole workspace,
 # so the cap binds `gain-core` too. On python:3.14-slim uv therefore builds
 # h5py from its sdist, and that needs the HDF5 headers. The 3.12 and 3.13
-# images resolve to a wheel and never compile it. Droppable once #295/#299
-# take tensorflow out and the lock can go to h5py>=3.15.
+# images resolve to a wheel and never compile it. #299 made tensorflow an
+# optional extra, but the lock still resolves it, so the cap still binds.
+# Droppable once tensorflow leaves the lock and it can go to h5py>=3.15.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         libcurl4-openssl-dev \

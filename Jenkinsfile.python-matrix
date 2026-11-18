@@ -9,10 +9,13 @@
 // Matrix axes:
 //   PY      — 3.12, 3.13, 3.14 (override default by building each
 //             project's Dockerfile with --build-arg PYTHON_IMAGE)
-//   PROJECT — core, demo_annotator, vep_annotator, web_api
-//             (spliceai_annotator is intentionally excluded —
-//             tensorflow>=2.18 has no 3.14 wheels yet; revisit
-//             after the next TF bump)
+//   PROJECT — core, demo_annotator, vep_annotator, spliceai_annotator,
+//             web_api. TensorFlow has no 3.14 wheels, so the
+//             spliceai_annotator 3.14 cell builds without the tensorflow
+//             extra (TENSORFLOW=0) and sets SPLICEAI_EXPECT_NO_TENSORFLOW=1,
+//             under which only the tests of the TensorFlow backend skip.
+//             The 3.12 and 3.13 cells keep the extra. Every cell runs
+//             the ONNX default backend (ADR 0042).
 //
 // Per cell we only run pytest. Linters (ruff/mypy/pylint) are
 // not interpreter-sensitive in any useful way — the per-branch
@@ -33,6 +36,7 @@ def runCellPytest(Map args) {
     String py             = args.py                            // "3.12" / "3.13" / "3.14"
     String pytestArgs     = args.pytestArgs ?: ''
     String dockerRunExtra = args.dockerRunExtra ?: ''
+    String buildExtra     = args.buildExtra ?: ''              // extra `docker build` flags, e.g. "--build-arg TENSORFLOW=0"
     String pyTag          = py.replace('.', '')                // e.g. "312" — usable in image tags
     String reportDir      = "${project}-py${py}"               // e.g. "core-py3.12"
     String imageTag       = "gain-${project.replace('_', '-')}-pymtx-py${pyTag}:${env.BUILD_NUMBER}"
@@ -46,6 +50,7 @@ def runCellPytest(Map args) {
         sh label: "Build ${project} image (py${py})", script: """
             docker build -f ${project}/Dockerfile \\
                 --build-arg PYTHON_IMAGE=python:${py}-slim \\
+                ${buildExtra} \\
                 -t ${imageTag} .
         """
     }
@@ -182,7 +187,7 @@ pipeline {
     agent { label 'builder' }
 
     options {
-        // 12 cells x ~10-15 min each, mostly parallelizable but
+        // 15 cells x ~10-15 min each, mostly parallelizable but
         // bounded by agent count. 3h is comfortable headroom.
         timeout(time: 3, unit: 'HOURS')
         // 40 to match Jenkinsfile.nightly's retention — same
@@ -249,7 +254,8 @@ pipeline {
                     axis {
                         name 'PROJECT'
                         values 'core', 'demo_annotator',
-                               'vep_annotator', 'web_api'
+                               'vep_annotator', 'spliceai_annotator',
+                               'web_api'
                     }
                 }
 
@@ -275,6 +281,20 @@ pipeline {
                                 // is explained there.
                                 def cells = load 'ci/cells.groovy'
                                 Map cell = cells.cell(env.PROJECT)
+
+                                // TensorFlow has no 3.14 wheels: that
+                                // spliceai_annotator cell builds without
+                                // the tensorflow extra, and the flag lets
+                                // only the TensorFlow-backend tests skip.
+                                // Without it a missing TensorFlow fails.
+                                boolean noTensorflow =
+                                    env.PROJECT == 'spliceai_annotator' &&
+                                    env.PY == '3.14'
+                                String buildExtra = noTensorflow ?
+                                    '--build-arg TENSORFLOW=0' : ''
+                                String noTensorflowEnv = noTensorflow ?
+                                    ' -e SPLICEAI_EXPECT_NO_TENSORFLOW=1' : ''
+
                                 Closure runCell = { String dockerRunExtra ->
                                     runCellPytest(
                                         project: env.PROJECT,
@@ -282,7 +302,9 @@ pipeline {
                                         tests: cell.tests,
                                         py: env.PY,
                                         pytestArgs: cell.pytestArgs,
-                                        dockerRunExtra: dockerRunExtra,
+                                        dockerRunExtra:
+                                            dockerRunExtra + noTensorflowEnv,
+                                        buildExtra: buildExtra,
                                     )
                                 }
 
@@ -330,7 +352,7 @@ pipeline {
         // re-enables the GIL on import. A naive wiring is therefore
         // permanently yellow from day one, which would train us to
         // ignore the colour and would mask a genuine UNSTABLE in the
-        // 12 matrix cells above. The offenders are still recorded as
+        // 15 matrix cells above. The offenders are still recorded as
         // junit failures, so the trend graph shows the day they
         // disappear.
         stage('Free-threading probe (3.14t)') {

@@ -1078,13 +1078,20 @@ rather than in the pipeline configuration:
 
    * - ``SPLICEAI_BACKEND``
      - Description
-   * - ``tensorflow``
-     - TensorFlow/Keras, running the ``spliceai{1..5}.h5`` models. The default.
    * - ``onnx``
      - ONNX Runtime, running the ``spliceai{1..5}.onnx`` models converted from
-       those same ``.h5`` files. Does not need TensorFlow at inference time.
-       Which of the two runtimes is faster is hardware-dependent — measure on
-       your own hardware rather than assuming.
+       the ``spliceai{1..5}.h5`` files. The default, used when
+       ``SPLICEAI_BACKEND`` is unset. Does not need TensorFlow.
+   * - ``tensorflow``
+     - TensorFlow/Keras, running the ``.h5`` models. TensorFlow is an optional
+       dependency: install it with ``pip install gain-spliceai-annotator[tensorflow]``
+       or, in a conda environment, ``mamba install tensorflow``. Without it,
+       selecting this backend fails with an ``ImportError`` that names those
+       commands.
+
+Which of the two runtimes is faster depends on the hardware; measure on your own
+hardware rather than assuming. ONNX Runtime installs far smaller than TensorFlow
+and runs on Python 3.14, which TensorFlow does not support.
 
 Both runtimes produce the same annotations: they agree to about ``2.4e-7`` at
 every window the annotator builds, against delta scores reported at two decimal

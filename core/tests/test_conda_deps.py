@@ -116,6 +116,7 @@ def _workspace(
     core_dev: Iterable[str] = (),
     web_api_dev: Iterable[str] = (),
     docs: Iterable[str] = (),
+    spliceai_tensorflow: Iterable[str] = (),
 ) -> pathlib.Path:
     def pyproject(
         name: str, deps: list[str], group: str, group_deps: Iterable[str],
@@ -134,11 +135,15 @@ def _workspace(
         pyproject("gain-core", core, "dev", core_dev))
     (root / "web_api/pyproject.toml").write_text(
         pyproject("gain-web-api", web_api, "dev", web_api_dev))
-    # The annotator plugins OUTPUTS feeds from, adding nothing to core.
+    # The annotator plugins OUTPUTS feeds from, adding nothing to core
+    # unless a test passes spliceai's optional tensorflow extra.
     for plugin in PLUGINS:
         (root / plugin).mkdir(exist_ok=True)
         (root / plugin / "pyproject.toml").write_text(
             pyproject(f"gain-{plugin}", ["gain-core"], "dev", []))
+    (root / "spliceai_annotator/pyproject.toml").open("a").write(
+        "[project.optional-dependencies]\n"
+        f"tensorflow = {list(spliceai_tensorflow)!r}\n")
     return root
 
 
@@ -449,6 +454,27 @@ def test_main_writes_no_file_for_a_plugin_that_adds_nothing(
         "nothing beyond environment.yml, dev-environment.yml"
     ) in capsys.readouterr().out.splitlines()
     assert conda_env.main(["--check"], root=root) == 0
+
+
+def test_spliceai_environment_carries_its_tensorflow_extra(
+    conda_env: ModuleType, tmp_path: pathlib.Path,
+) -> None:
+    root = _workspace(
+        tmp_path, core=["numpy"], web_api=[],
+        core_dev=list(conda_env.PIP_ONLY),
+        spliceai_tensorflow=["tensorflow>=2.18"])
+
+    rendered = conda_env.render_all(root)
+
+    section = "  # gain-spliceai_annotator (spliceai_annotator/pyproject.toml"
+    assert _dependencies(
+        rendered["spliceai_annotator/spliceai-environment.yml"]) == [
+        "  - python>=3.12",
+        f"{section} [project.dependencies])",
+        f"{section} [project.optional-dependencies.tensorflow])",
+        "  - tensorflow>=2.18",
+        f"{section} [dependency-groups.dev])",
+    ]
 
 
 def test_leftover_file_of_a_plugin_that_adds_nothing_is_stale(

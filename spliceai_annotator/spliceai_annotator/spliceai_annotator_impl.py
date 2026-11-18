@@ -8,13 +8,20 @@ process-wide ``SPLICEAI_MODELS``. This module is the only place that knows
 
 Two backends ship:
 
-* ``tensorflow`` (default) -- the five ``.h5`` files, unchanged; and
-* ``onnx`` -- the five converted ``.onnx`` artifacts under ONNX Runtime.
+* ``onnx`` (default) -- the five converted ``.onnx`` artifacts under ONNX
+  Runtime, a required dependency; and
+* ``tensorflow`` -- the five ``.h5`` files, unchanged. TensorFlow is an
+  optional install (``pip install gain-spliceai-annotator[tensorflow]`` or
+  ``mamba install tensorflow``); selecting this backend without it raises
+  ``ImportError`` naming those installs, never a silent fallback to ONNX.
+
+ADR 0042 records why ONNX is the default (#299).
 
 Select with the ``SPLICEAI_BACKEND`` environment variable
-(``SPLICEAI_BACKEND=onnx``). It is read once, at import time: the backend is a
-process-wide choice, like the models it loads, and switching it mid-process
-would leave already-opened annotators holding models from the other runtime.
+(``SPLICEAI_BACKEND=tensorflow``). It is read once, at import time: the backend
+is a process-wide choice, like the models it loads, and switching it
+mid-process would leave already-opened annotators holding models from the
+other runtime.
 """
 import importlib
 import logging
@@ -27,7 +34,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 SPLICEAI_BACKEND_ENV = "SPLICEAI_BACKEND"
-DEFAULT_SPLICEAI_BACKEND = "tensorflow"
+DEFAULT_SPLICEAI_BACKEND = "onnx"
 
 #: Backend name -> module implementing the model runtime interface.
 SPLICEAI_BACKENDS = {
@@ -40,8 +47,8 @@ def spliceai_backend_name() -> str:
     """Return the backend selected by ``SPLICEAI_BACKEND``.
 
     Unknown values raise instead of silently falling back: a typo'd backend
-    that quietly ran TensorFlow would make an ONNX CI tier pass without ever
-    exercising ONNX.
+    that quietly ran the default would make a TensorFlow CI tier pass without
+    ever exercising TensorFlow.
     """
     name = os.environ.get(
         SPLICEAI_BACKEND_ENV, DEFAULT_SPLICEAI_BACKEND).strip().lower()

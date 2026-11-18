@@ -1,5 +1,8 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 """Backend selection and ONNX Runtime backend behaviour (issue #297)."""
+import os
+import subprocess
+import sys
 from collections.abc import Iterator
 from types import ModuleType, SimpleNamespace
 
@@ -17,6 +20,27 @@ MIN_WIDTH = 10001
 # ceiling -- `max_insertion_length` is configurable up to 2000, which would
 # make it 22001 -- but it is the widest window a default deployment builds.
 MAX_WIDTH = 20201
+
+# Set only in the CI cell that builds without the `tensorflow` extra (the
+# Python 3.14 matrix cell, #299) and in its local twin, `.venv-notf`.
+EXPECT_NO_TENSORFLOW_ENV = "SPLICEAI_EXPECT_NO_TENSORFLOW"
+
+
+def load_tensorflow_backend() -> ModuleType:
+    """Load the TensorFlow backend; skip only where its absence is expected.
+
+    Not `importorskip`: the cross-backend assertions in this file are the
+    guard on the ONNX backend, and an environment that lost TensorFlow by
+    accident must fail loudly rather than turn them into silent skips. Only
+    an environment that declares it was built without the extra skips, and
+    even then only if the import really fails.
+    """
+    if os.environ.get(EXPECT_NO_TENSORFLOW_ENV) != "1":
+        return impl.load_spliceai_backend("tensorflow")
+    try:
+        return impl.load_spliceai_backend("tensorflow")
+    except ImportError as error:
+        pytest.skip(f"{EXPECT_NO_TENSORFLOW_ENV}=1: {error}")
 
 
 @pytest.fixture(scope="module")
@@ -53,13 +77,8 @@ def _load_single_thread_models(onnx_backend: ModuleType) -> list:
 def tensorflow_backend() -> ModuleType:
     # Loaded explicitly rather than through `impl.SPLICEAI_MODELS`, which
     # holds whichever backend the *process* selected -- these tests compare
-    # the two and must not collapse to one when SPLICEAI_BACKEND=onnx.
-    #
-    # Deliberately not `importorskip`: the cross-backend assertions in this
-    # file are the guard on the ONNX migration, and the run in which
-    # TensorFlow disappears (#298) is exactly the run in which they must
-    # fail loudly rather than turn into silent skips.
-    return impl.load_spliceai_backend("tensorflow")
+    # the two and must not collapse to one when the process runs ONNX.
+    return load_tensorflow_backend()
 
 
 @pytest.fixture(scope="module")
@@ -78,11 +97,64 @@ def a_one_hot_window(width: int, *, batch: int = 1) -> np.ndarray:
     return np.concatenate(windows, axis=0)
 
 
-def test_default_backend_is_tensorflow(
+def test_default_backend_is_onnx(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv(impl.SPLICEAI_BACKEND_ENV, raising=False)
-    assert impl.spliceai_backend_name() == "tensorflow"
+    assert impl.spliceai_backend_name() == "onnx"
+
+
+def _fresh_process(code: str, **env: str) -> str:
+    """Run ``code`` in a new interpreter with SPLICEAI_BACKEND unset.
+
+    The backend is chosen once, when `spliceai_annotator_impl` is imported,
+    so what an unset variable selects can only be seen in a new process.
+    """
+    environment = {
+        key: value for key, value in os.environ.items()
+        if key != impl.SPLICEAI_BACKEND_ENV
+    }
+    environment.update(env)
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        env=environment, capture_output=True, text=True, check=True)
+    return completed.stdout.strip()
+
+
+def test_unset_backend_runs_the_annotator_models_on_onnx() -> None:
+    loaded = _fresh_process(
+        "from spliceai_annotator import spliceai_annotator_impl as impl;"
+        "print(impl.SPLICEAI_BACKEND_NAME,"
+        " {type(m).__module__ for m in impl.SPLICEAI_MODELS})")
+
+    assert loaded == (
+        "onnx {'onnxruntime.capi.onnxruntime_inference_collection'}")
+
+
+def test_the_onnx_backend_never_imports_tensorflow() -> None:
+    imported = _fresh_process(
+        "import sys;"
+        "from spliceai_annotator import spliceai_annotator_impl;"
+        "print('tensorflow' in sys.modules)",
+        SPLICEAI_BACKEND="onnx")
+
+    assert imported == "False"
+
+
+def test_selecting_a_missing_tensorflow_names_the_installs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(sys.modules, "tensorflow", None)
+    monkeypatch.delitem(
+        sys.modules, "spliceai_annotator.spliceai_backend_tensorflow",
+        raising=False)
+
+    with pytest.raises(ImportError) as raised:
+        impl.load_spliceai_backend("tensorflow")
+
+    assert "pip install gain-spliceai-annotator[tensorflow]" in str(
+        raised.value)
+    assert "mamba install tensorflow" in str(raised.value)
 
 
 @pytest.mark.parametrize("value", ["onnx", "ONNX", " onnx "])
@@ -103,7 +175,9 @@ def test_unknown_backend_is_rejected_by_name(
 
 @pytest.mark.parametrize("name", ["tensorflow", "onnx"])
 def test_backend_provides_the_model_runtime_interface(name: str) -> None:
-    backend = impl.load_spliceai_backend(name)
+    backend = (
+        load_tensorflow_backend() if name == "tensorflow"
+        else impl.load_spliceai_backend(name))
     assert callable(backend.spliceai_load_models)
     assert callable(backend.spliceai_predict)
     assert callable(backend.spliceai_close)

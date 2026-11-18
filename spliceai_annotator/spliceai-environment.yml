@@ -12,6 +12,7 @@ dependencies:
   # gain-spliceai-annotator (spliceai_annotator/pyproject.toml [project.dependencies])
   - numpy>=2.2
   - onnxruntime>=1.26
+  # gain-spliceai-annotator (spliceai_annotator/pyproject.toml [project.optional-dependencies.tensorflow])
   - tensorflow>=2.18
   # gain-spliceai-annotator (spliceai_annotator/pyproject.toml [dependency-groups.dev])
   - mypy==1.15.0
