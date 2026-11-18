@@ -1,4 +1,4 @@
-"""The describe statistic of a table, the same on every machine (gain#2439).
+"""The describe statistic of a table, the same on every machine.
 
 ``DataFrame.describe`` sums with float64 additions whose order depends on
 the SIMD path of the CPU, so the last digits of ``mean`` and ``std`` differ
