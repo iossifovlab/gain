@@ -13,6 +13,7 @@ from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
 from gain.genomic_resources.implementations.data_frame_resource_impl import (
     DataFrameResourceImplementation,
 )
+from gain.genomic_resources.page_fingerprint import read_page_fingerprint
 from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import (
     build_filesystem_test_protocol,
@@ -24,6 +25,9 @@ from gain.genomic_resources.testing.annotation_pipeline_builder import (
 )
 from gain.genomic_resources.testing.builders import a_grr
 from gain.genomic_resources.testing.data_frame_builder import a_data_frame
+from gain.genomic_resources.testing.reference_genome_builder import (
+    a_reference_genome,
+)
 from gain.genomic_resources.testing.table_score_builder import a_position_score
 
 
@@ -408,7 +412,7 @@ def opted_out_grr(tmp_path: pathlib.Path) -> pathlib.Path:
     return tmp_path
 
 
-def test_a_pipeline_and_a_position_score_render_on_every_repair(
+def test_a_second_repair_renders_the_pipeline_and_skips_the_score(
     opted_out_grr: pathlib.Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -416,22 +420,86 @@ def test_a_pipeline_and_a_position_score_render_on_every_repair(
 
     summary = _run(caplog, _repair(opted_out_grr))
 
-    assert summary == ["info pages: rendered 2, skipped 0"]
+    assert summary == ["info pages: rendered 1, skipped 1"]
+    assert 'name="gain-page-fingerprint"' in \
+        (opted_out_grr / "pos" / "index.html").read_text()
 
 
-@pytest.mark.parametrize("resource_id", ["pos", "pipe"])
 @pytest.mark.parametrize("page", ["index.html", "statistics/index.html"])
 def test_the_pages_of_an_opted_out_kind_carry_no_fingerprint_tag(
     opted_out_grr: pathlib.Path,
-    resource_id: str,
     page: str,
 ) -> None:
     cli_manage(_repair(opted_out_grr))
 
-    text = (opted_out_grr / resource_id / page).read_text()
+    text = (opted_out_grr / "pipe" / page).read_text()
 
     assert '<meta charset="utf-8">' in text
     assert "gain-page-fingerprint" not in text
+
+
+# ---------------------------------------------------------------------------
+# gain#2452: the page fingerprint of a score covers its labelled genome
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def labelled_score_grr(tmp_path: pathlib.Path) -> pathlib.Path:
+    """A GRR of a genome, a score labelled with it and a data frame."""
+    a_grr() \
+        .with_resource(
+            "genome", a_reference_genome().with_chromosome("1", "A" * 40)) \
+        .with_resource(
+            "pos",
+            a_position_score()
+            .with_score("phastCons", "float")
+            .with_tabix()
+            .with_labels(reference_genome="genome")
+            .with_data("""
+                chrom  pos_begin  pos_end  phastCons
+                1      10         15       0.02
+                1      17         19       0.03
+            """)) \
+        .with_resource("df", a_data_frame()) \
+        .build_repo(tmp_path)
+    return tmp_path
+
+
+def _page_fingerprints(path: pathlib.Path) -> dict[str, str | None]:
+    """Return the page fingerprint stored in each ``index.html``."""
+    return {
+        resource_id: read_page_fingerprint(
+            (path / resource_id / "index.html").read_text())
+        for resource_id in ("genome", "pos", "df")
+    }
+
+
+def test_a_second_repair_of_a_grr_with_a_labelled_score_renders_no_page(
+    labelled_score_grr: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _run(caplog, _repair(labelled_score_grr))
+
+    summary = _run(caplog, _repair(labelled_score_grr))
+
+    assert summary == ["info pages: rendered 0, skipped 3"]
+
+
+def test_a_new_genome_manifest_renders_the_genome_and_the_score(
+    labelled_score_grr: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _run(caplog, _repair(labelled_score_grr))
+    before = _page_fingerprints(labelled_score_grr)
+    (labelled_score_grr / "genome" / "notes.txt").write_text(
+        "a file no page reads\n")
+
+    summary = _run(caplog, _repair(labelled_score_grr))
+
+    after = _page_fingerprints(labelled_score_grr)
+    assert summary == ["info pages: rendered 2, skipped 1"]
+    assert after["genome"] != before["genome"]
+    assert after["pos"] != before["pos"]
+    assert after["df"] == before["df"]
 
 
 def test_a_failed_index_page_write_makes_the_next_repair_render_again(

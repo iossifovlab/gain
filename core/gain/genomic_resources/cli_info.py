@@ -24,6 +24,9 @@ from gain.genomic_resources.cli_stats import (
 from gain.genomic_resources.fsspec_protocol import (
     FsspecReadWriteProtocol,
 )
+from gain.genomic_resources.group_repository import (
+    GenomicResourceGroupRepo,
+)
 from gain.genomic_resources.page_fingerprint import (
     PAGE_FINGERPRINT_READ_SIZE,
     insert_page_fingerprint,
@@ -31,6 +34,7 @@ from gain.genomic_resources.page_fingerprint import (
 )
 from gain.genomic_resources.repository import (
     GenomicResource,
+    GenomicResourceProtocolRepo,
     GenomicResourceRepo,
     ReadWriteRepositoryProtocol,
 )
@@ -43,6 +47,16 @@ from gain.genomic_resources.repository_ids import (
 )
 
 logger = logging.getLogger("grr_manage")
+
+
+def _invalidate_children_at(repo: GenomicResourceRepo, url: str) -> None:
+    """Drop the memo of each repository in ``repo`` that reads ``url``."""
+    if isinstance(repo, GenomicResourceGroupRepo):
+        for child in repo.children:
+            _invalidate_children_at(child, url)
+    elif isinstance(repo, GenomicResourceProtocolRepo) \
+            and repo.proto.get_url() == url:
+        repo.invalidate()
 
 
 def _regenerate_resource_pages(
@@ -59,6 +73,12 @@ def _regenerate_resource_pages(
     failed = set(result.failed)
     wrote = result.wrote
     rendered = skipped = 0
+    # The statistics step rewrote manifests through ``proto``. ``repo``
+    # still holds the manifests that it loaded before, and the page
+    # fingerprint reads the manifest of each page dependency from ``repo``.
+    # Only the children at the url of ``proto`` hold rewritten manifests,
+    # so a remote child keeps its memo.
+    _invalidate_children_at(repo, proto.get_url())
     for res in resources:
         if res.resource_id in failed:
             # Something GAIn was asked to do to it already failed -- most

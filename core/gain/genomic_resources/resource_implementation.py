@@ -483,15 +483,40 @@ class GenomicResourceImplementation(ABC):
         """
         raise NotImplementedError
 
-    def page_fingerprint(
+    def page_dependencies(
         self, repo: GenomicResourceRepo,  # ruff: ignore[unused-method-argument]
+    ) -> list[GenomicResource]:
+        """List the resources of ``repo`` that the info pages read.
+
+        :meth:`page_fingerprint` covers the full id and the manifest of
+        each resource in the list. A kind whose info pages read another
+        resource overrides the method. The method stays cheap: it finds
+        the resources and builds none of them.
+
+        Parameters
+        ----------
+        repo : GenomicResourceRepo
+            The repository that the info pages are rendered against.
+
+        Returns
+        -------
+        list[GenomicResource]
+            The resources that the info pages read. An empty list means
+            that the info pages read no other resource.
+        """
+        return []
+
+    def page_fingerprint(
+        self, repo: GenomicResourceRepo,
     ) -> str | None:
         """Compute the page fingerprint of the info pages of the resource.
 
         A kind does not override the method. The digest covers the version
         of gain, the version of the distribution that ships the class of
         the kind, the full id and the manifest of the resource,
-        :meth:`calc_statistics_hash` and :meth:`calc_info_hash`.
+        :meth:`calc_statistics_hash`, :meth:`calc_info_hash`, and the full
+        id and the manifest of each resource that
+        :meth:`page_dependencies` lists.
 
         Parameters
         ----------
@@ -515,6 +540,19 @@ class GenomicResourceImplementation(ABC):
             "statistics_hash": self.calc_statistics_hash().hex(),
             "info_hash": self.calc_info_hash().hex(),
         }
+        # A kind with no dependency adds no key to the inputs. The stored
+        # manifest only: a build would hash every file of the dependency,
+        # for example a whole genome FASTA, on each repair.
+        dependencies = []
+        for dependency in self.page_dependencies(repo):
+            manifest = dependency.get_loaded_manifest()
+            dependencies.append({
+                "full_id": dependency.get_full_id(),
+                "manifest": None if manifest is None
+                else manifest.to_manifest_entries(),
+            })
+        if dependencies:
+            inputs["dependencies"] = dependencies
         kind_version = _distribution_version(type(self).__module__)
         if kind_version is not None:
             inputs["kind_version"] = kind_version
