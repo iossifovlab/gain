@@ -3,8 +3,10 @@ import json
 
 import pytest
 from gain.genomic_resources.statistics.alleles import (
+    ALLELE_FORMAT_VERSION,
     COMPLEX_GRID_TABLE_MAX_CELLS,
     COMPLEX_LENGTH_CLAMP,
+    AlleleCounts,
     AlleleDisplay,
     AlleleSectionDisplay,
     AlleleStatistics,
@@ -13,6 +15,7 @@ from gain.genomic_resources.statistics.alleles import (
 )
 from gain.genomic_resources.statistics.exact_lengths import (
     LENGTH_MAP_CLAMP,
+    NO_LENGTHS,
     LengthStatisticsRow,
     length_ladder,
 )
@@ -153,8 +156,82 @@ def test_serialized_counts_round_trip() -> None:
 
     restored = AlleleStatistics.deserialize(statistics.serialize())
 
-    assert restored.by_chromosome() == statistics.by_chromosome()
+    assert restored.by_chromosome() == _without_lengths(
+        statistics.by_chromosome())
     assert restored.global_counts() == statistics.global_counts()
+
+
+def _without_lengths(
+    chromosomes: dict[str, AlleleCounts],
+) -> dict[str, AlleleCounts]:
+    """The chromosome counts as a restored statistic holds them."""
+    return {
+        chrom: counts._replace(insertion_lengths=None, deletion_lengths=None)
+        for chrom, counts in chromosomes.items()
+    }
+
+
+def _two_chromosome_statistics() -> AlleleStatistics:
+    statistics = AlleleStatistics()
+    for chrom in ("chr1", "chr2"):
+        region = _region(chrom)
+        region.add_allele(10, "A", "AT")
+        region.add_allele(11, "ACG", "A")
+        region.add_allele(12, "A", "G")
+        statistics.fold_region(region)
+    return statistics
+
+
+def _version_1_file(statistics: AlleleStatistics) -> str:
+    """The file a version 1 build wrote: the length records per chromosome."""
+    data = json.loads(statistics.serialize())
+    data["format_version"] = 1
+    for chrom, counts in statistics.by_chromosome().items():
+        assert counts.insertion_lengths is not None
+        assert counts.deletion_lengths is not None
+        data["chromosomes"][chrom]["insertion_lengths"] = \
+            counts.insertion_lengths.stored()
+        data["chromosomes"][chrom]["deletion_lengths"] = \
+            counts.deletion_lengths.stored()
+    return json.dumps(data)
+
+
+def test_the_old_and_the_new_file_shape_read_the_same() -> None:
+    statistics = _two_chromosome_statistics()
+
+    old = AlleleStatistics.deserialize(_version_1_file(statistics))
+    new = AlleleStatistics.deserialize(statistics.serialize())
+
+    assert old.by_chromosome() == new.by_chromosome() \
+        == _without_lengths(statistics.by_chromosome())
+    assert old.global_counts() == new.global_counts() \
+        == statistics.global_counts()
+    insertions = new.global_counts().insertion_lengths
+    assert insertions is not None
+    assert insertions.lengths == {1: 2}
+
+
+def test_a_read_file_serializes_back_byte_for_byte() -> None:
+    # A restored chromosome carries no length record, so a resave must
+    # write the global records the file held, not a roll-up of none.
+    written = _two_chromosome_statistics().serialize()
+
+    resaved = AlleleStatistics.deserialize(written).serialize()
+
+    assert resaved == written
+    assert '"insertion_lengths"' in written
+    assert '"deletion_lengths"' in written
+
+
+def test_a_file_without_a_global_entry_reads_lengths_unknown() -> None:
+    data = json.loads(_version_1_file(_two_chromosome_statistics()))
+    del data["global"]
+
+    counts = AlleleStatistics.deserialize(json.dumps(data)).global_counts()
+
+    assert counts.insertion_lengths is None
+    assert counts.deletion_lengths is None
+    assert counts.class_counts["insertion"] == 2
 
 
 def test_an_allele_score_writes_no_covered_position_count() -> None:
@@ -221,6 +298,10 @@ def test_a_file_without_the_matrix_reads_as_matrix_unknown() -> None:
                 "covered_positions": 1,
                 "class_counts": {"substitution": 2},
             },
+        },
+        "global": {
+            "allele_count": 2,
+            "class_counts": {"substitution": 2},
         },
     })
 
@@ -765,22 +846,33 @@ def test_a_whole_number_average_carries_no_trailing_zeros() -> None:
     assert row.total == "3"
 
 
-def test_the_serialized_group_carries_the_map_and_not_the_ladder() -> None:
+def test_the_serialized_group_carries_the_map_once_in_global() -> None:
     statistics = AlleleStatistics()
     region = _region()
     region.add_allele(10, "A", "AT")
     region.add_allele(11, "A", "ATTT")
     statistics.fold_region(region)
 
-    stored = json.loads(statistics.serialize())["chromosomes"]["chr1"]
+    data = json.loads(statistics.serialize())
 
+    assert data["format_version"] == ALLELE_FORMAT_VERSION == 2
+    stored = data["global"]
     assert stored["insertion_lengths"] == {
         "lengths": {"1": 1, "3": 1},
         "count": 2, "sum": 4, "min": 1, "max": 3,
     }
-    # The log2 histograms this replaced are gone, not written beside it:
-    # two spellings of the same counts is exactly the drift the derived
-    # chart exists to prevent.
+    assert stored["deletion_lengths"] == NO_LENGTHS.stored()
+    # A chromosome keeps its counts, matrix and grid, and no length
+    # record.
+    chromosome = data["chromosomes"]["chr1"]
+    assert chromosome["class_counts"]["insertion"] == 2
+    assert "substitution_matrix" in chromosome
+    assert "complex_grid" in chromosome
+    assert "insertion_lengths" not in chromosome
+    assert "deletion_lengths" not in chromosome
+    # The log2 histograms the map replaced are gone, not written beside
+    # it: two spellings of the same counts is exactly the drift the
+    # derived chart exists to prevent.
     assert "insertion_length_histogram" not in stored
     assert "deletion_length_histogram" not in stored
 
@@ -839,6 +931,12 @@ def test_a_pre_map_file_reads_its_indel_groups_as_unknown() -> None:
                 "deletion_length_histogram": [0] * 32,
             },
         },
+        "global": {
+            "allele_count": 1,
+            "class_counts": {"insertion": 1},
+            "insertion_length_histogram": [0, 1] + [0] * 30,
+            "deletion_length_histogram": [0] * 32,
+        },
     })
 
     counts = AlleleStatistics.deserialize(content).global_counts()
@@ -886,7 +984,8 @@ def test_the_complex_grid_round_trips_through_the_file() -> None:
 
     restored = AlleleStatistics.deserialize(statistics.serialize())
 
-    assert restored.by_chromosome() == statistics.by_chromosome()
+    assert restored.by_chromosome() == _without_lengths(
+        statistics.by_chromosome())
     assert restored.global_counts().complex_grid == {(2, 3): 1, (3, 3): 1}
 
 
@@ -903,6 +1002,7 @@ def test_a_file_without_the_indel_groups_reads_as_unknown() -> None:
                 "class_counts": {"insertion": 2},
             },
         },
+        "global": {"allele_count": 2, "class_counts": {"insertion": 2}},
     })
 
     statistics = AlleleStatistics.deserialize(content)

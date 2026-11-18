@@ -555,6 +555,21 @@ def stored_lengths(
     return ExactLengths.from_stored(stored)
 
 
+def stored_global_lengths(
+    data: Mapping[str, Any], key: str,
+) -> ExactLengths | None:
+    """The record under ``key`` in a file's ``global`` entry.
+
+    ``None`` when the file has no ``global`` entry, or the entry carries
+    no record under ``key``: the lengths are then unknown, not empty.
+    A length record is stored once, for the whole resource, so this is
+    the one place a restored statistic reads it from.  The records an
+    older file also wrote into each chromosome entry are not read: the
+    same file carries their fold under ``global``.
+    """
+    return stored_lengths(data.get("global", {}), key)
+
+
 def write_length_chart(
     resource: GenomicResource,
     filename: str,

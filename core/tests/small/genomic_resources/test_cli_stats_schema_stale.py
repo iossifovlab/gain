@@ -26,6 +26,7 @@ from gain.genomic_resources.repository_factory import (
     build_resource_implementation,
 )
 from gain.genomic_resources.statistics.coverage import (
+    COVERAGE_FORMAT_VERSION,
     COVERAGE_STATISTICS_FILE,
 )
 from gain.genomic_resources.statistics.fragments import (
@@ -268,7 +269,7 @@ def test_dry_run_reports_a_coverage_file_behind_the_schema_and_exits_zero(
     line = stale_lines[0]
     assert COVERAGE_STATISTICS_FILE in line
     assert "format version 1" in line
-    assert "current is 2" in line
+    assert f"current is {COVERAGE_FORMAT_VERSION}" in line
     assert "resource-stats -r pos -f" in line
 
 
@@ -301,7 +302,8 @@ def test_a_forced_repair_rebuilds_the_file_and_reports_nothing(
 
     assert "is consistent" in caplog.text
     assert "predate the current schema" not in caplog.text
-    assert json.loads(coverage_file.read_text())["format_version"] == 2
+    assert json.loads(coverage_file.read_text())["format_version"] \
+        == COVERAGE_FORMAT_VERSION
 
 
 @pytest.fixture

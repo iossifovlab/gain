@@ -70,7 +70,7 @@ from gain.genomic_resources.statistics.exact_lengths import (
     LengthTally,
     merged_lengths,
     merged_tallies,
-    stored_lengths,
+    stored_global_lengths,
     write_length_chart,
 )
 from gain.genomic_resources.statistics.percentages import (
@@ -87,7 +87,7 @@ logger = logging.getLogger(__name__)
 
 ALLELE_STATISTICS_FILE = "statistics/alleles.json"
 #: The ``format_version`` ``serialize`` stamps.
-ALLELE_FORMAT_VERSION = 1
+ALLELE_FORMAT_VERSION = 2
 #: The statistic's one declaration -- file, version, and the kind it
 #: is written for -- read by the scan's gate and by the repair check.
 ALLELE_STATISTIC = StoredStatistic(
@@ -95,8 +95,8 @@ ALLELE_STATISTIC = StoredStatistic(
     lambda score: isinstance(score, AlleleScore))
 
 #: The global images the statistics build renders beside the file.  One
-#: each, never per chromosome (ADR 0020): the per-chromosome numbers are
-#: stored as data and rolled up for the picture.
+#: each, never per chromosome (ADR 0020): each image draws a length record
+#: of the global entry, the one place the file stores it.
 ALLELE_INSERTION_LENGTHS_IMAGE_FILE = \
     "statistics/allele_insertion_lengths.png"
 ALLELE_DELETION_LENGTHS_IMAGE_FILE = \
@@ -299,9 +299,11 @@ def _merged_matrix(
 def _total(counts: Iterable[AlleleCounts]) -> AlleleCounts:
     """The roll-up of several chromosomes' counts into one.
 
-    The one statement of what the ``global`` entry IS -- read when the
-    statistic is serialized and when one is asked for its global counts,
-    which is why that entry is never read back from the file.
+    The one statement of what the ``global`` entry IS for a scanned
+    statistic -- read when the statistic is serialized and when one is
+    asked for its global counts.  A restored statistic takes its two
+    length records from the file's ``global`` entry instead, because a
+    chromosome entry stores none (see :meth:`AlleleStatistics.deserialize`).
     """
     class_counts = dict.fromkeys(CLASS_NAMES, 0)
     allele_count = 0
@@ -814,6 +816,12 @@ class AlleleStatistics(RegionFoldedStatistic[RegionAlleles]):
             "alleles",
             "Allele counts, class totals, the substitution matrix, the "
             "indel length maps and the complex grid")
+        # Set by `deserialize` only.  A restored statistic reads its two
+        # length records from the file's global entry, because the
+        # chromosome entries store none.
+        self._restored = False
+        self._restored_lengths: tuple[
+            ExactLengths | None, ExactLengths | None] = (None, None)
 
     def by_chromosome(self) -> dict[str, AlleleCounts]:
         """The per-chromosome counts, in natural chromosome order.
@@ -845,7 +853,22 @@ class AlleleStatistics(RegionFoldedStatistic[RegionAlleles]):
         :meth:`by_chromosome`: ``_total`` is order-blind, so the
         ordering that accessor does would be paid and thrown away.
         """
-        return _total(region.counts() for region in self._regions.values())
+        return self._global_of(
+            region.counts() for region in self._regions.values())
+
+    def _global_of(self, chromosomes: Iterable[AlleleCounts]) -> AlleleCounts:
+        """The roll-up of these chromosome counts, with the global lengths.
+
+        A scanned statistic folds the lengths of its regions.  A restored
+        one holds the length records of the file's ``global`` entry,
+        because its chromosome entries carry none.
+        """
+        total = _total(chromosomes)
+        if not self._restored:
+            return total
+        insertions, deletions = self._restored_lengths
+        return total._replace(
+            insertion_lengths=insertions, deletion_lengths=deletions)
 
     def repeated_allele(self) -> RepeatedAllele | None:
         """The resource's first repeated allele key, in genomic order."""
@@ -857,21 +880,29 @@ class AlleleStatistics(RegionFoldedStatistic[RegionAlleles]):
 
     def serialize(self) -> str:
         # One walk of the regions serves the per-chromosome entries and
-        # the global roll-up.
+        # the global roll-up.  The two length records are written once,
+        # in the global entry: a chromosome entry keeps its counts, its
+        # matrix and its grid, and no length record.
         chromosomes = self.by_chromosome()
         return json.dumps({
             "format_version": ALLELE_FORMAT_VERSION,
             "chromosomes": {
-                chrom: _serialized(counts)
+                chrom: _serialized(counts._replace(
+                    insertion_lengths=None, deletion_lengths=None))
                 for chrom, counts in chromosomes.items()
             },
-            "global": _serialized(_total(chromosomes.values())),
+            "global": _serialized(self._global_of(chromosomes.values())),
         }, indent=2)
 
     @staticmethod
     def deserialize(content: str) -> AlleleStatistics:
-        # Only the per-chromosome counts round-trip; the global entry is
-        # a roll-up recomputed from them by ``_total``.
+        # The per-chromosome counts round-trip, and the global counts
+        # are a roll-up recomputed from them by ``_total``.  The two
+        # length records are the exception: they are read from the
+        # global entry, the one place a file stores them.  A file
+        # without that entry, or without a record in it, reads the
+        # record as unknown.  A version 1 file also stores the records
+        # per chromosome; those are not read.
         #
         # Named keys are read one by one and the entry dict is never
         # iterated, so unknown keys are ignored rather than rejected: a
@@ -890,12 +921,12 @@ class AlleleStatistics(RegionFoldedStatistic[RegionAlleles]):
                     for name, count in counts["class_counts"].items()
                 },
                 substitution_matrix=_deserialized_matrix(counts),
-                insertion_lengths=stored_lengths(
-                    counts, "insertion_lengths"),
-                deletion_lengths=stored_lengths(
-                    counts, "deletion_lengths"),
                 complex_grid=_deserialized_grid(counts),
             ))
+        result._restored = True
+        result._restored_lengths = (
+            stored_global_lengths(data, "insertion_lengths"),
+            stored_global_lengths(data, "deletion_lengths"))
         return result
 
 
@@ -1193,16 +1224,12 @@ def build_allele_section_display(
     The rows are built over :meth:`AlleleStatistics.by_chromosome`
     rather than replacing it: that accessor already orders the
     chromosomes naturally (gain#983) and ``serialize`` reads it too, so
-    the ordering has one owner.
-
-    One walk of the regions serves both the rows and the roll-up, as
-    :meth:`AlleleStatistics.serialize` does it: ``_total`` is
-    order-blind, so folding the ordered entries it already has costs
-    nothing over :meth:`AlleleStatistics.global_counts`, which would
-    rebuild every entry a second time.
+    the ordering has one owner.  The totals come from
+    :meth:`AlleleStatistics.global_counts`, the one owner of the global
+    length records of a restored statistic.
     """
     chromosomes = statistics.by_chromosome()
-    global_counts = _total(chromosomes.values())
+    global_counts = statistics.global_counts()
     return AlleleSectionDisplay(
         [
             AlleleChromosomeRow(

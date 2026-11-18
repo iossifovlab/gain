@@ -41,7 +41,7 @@ from gain.genomic_resources.statistics.exact_lengths import (
     LengthArrayTally,
     LengthStatisticsRow,
     folded_lengths,
-    stored_lengths,
+    stored_global_lengths,
     write_length_chart,
 )
 from gain.genomic_resources.statistics.percentages import percentage_of
@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 
 COVERAGE_STATISTICS_FILE = "statistics/coverage.json"
 #: The ``format_version`` ``serialize`` stamps.
-COVERAGE_FORMAT_VERSION = 2
+COVERAGE_FORMAT_VERSION = 3
 #: The statistic's one declaration -- file, version, and the kind it
 #: is written for -- read by the scan's gate and by the repair check.
 COVERAGE_STATISTIC = StoredStatistic(
@@ -81,11 +81,12 @@ def normalize_values(values: Iterable[Any]) -> tuple:
 
 
 class SegmentSummary(NamedTuple):
-    """A region's segments as its statistics file stores them.
+    """A region's segment count and exact segment lengths.
 
-    ``lengths`` is ``None`` for a region read from a file that stored
-    the count without the exact record (format version 1): the count
-    is still true, the length distribution is unknown.  The count is
+    ``lengths`` is ``None`` for a region read from a statistics file:
+    the file stores a segment count per chromosome and the length record
+    once, under ``global``.  The count is still true, the length
+    distribution of the chromosome is unknown.  The count is
     spelled ``total`` for the reason :class:`ExactLengths` gives -- a
     :class:`tuple` already means something else by ``count``.
     """
@@ -524,6 +525,10 @@ class CoverageStatistics(RegionFoldedStatistic[RegionCoverage]):
     def __init__(self) -> None:
         super().__init__(
             "coverage", "Covered positions per chromosome and global")
+        # Set by :meth:`deserialize` alone: a restored statistic holds
+        # the global length record as the file stores it.
+        self._restored = False
+        self._restored_lengths: ExactLengths | None = None
 
     def covered_by_chromosome(self) -> dict[str, int]:
         return {
@@ -561,34 +566,33 @@ class CoverageStatistics(RegionFoldedStatistic[RegionCoverage]):
             return None
         return _global_count(summaries)
 
-    def segment_lengths_by_chromosome(self) -> dict[str, ExactLengths]:
-        """Per-chromosome exact length records -- the read API for the
-        per-chromosome data the statistics file stores (rendered
-        consumers use the global roll-up; gain#776 reads these).  Empty
-        when any chromosome's lengths are unknown."""
-        summaries = self._segment_summaries()
-        if summaries is None or _global_lengths(summaries) is None:
-            return {}
-        return {
-            chrom: s.lengths for chrom, s in summaries.items()
-            if s.lengths is not None
-        }
-
     def segment_lengths_global(self) -> ExactLengths | None:
-        """The fold of the per-chromosome records, unknown if any is."""
+        """The resource's segment-length record, ``None`` if unknown.
+
+        A statistic restored from a file holds the record the file
+        stores under ``global``.  A scanned statistic folds its
+        chromosomes' records, unknown if any is.
+        """
         summaries = self._segment_summaries()
         if summaries is None:
             return None
+        return self._global_lengths_of(summaries)
+
+    def _global_lengths_of(
+        self, summaries: dict[str, SegmentSummary],
+    ) -> ExactLengths | None:
+        if self._restored:
+            return self._restored_lengths
         return _global_lengths(summaries)
 
     def serialize(self) -> str:
         # Each region's segments are finalised ONCE, and both the
         # per-chromosome entries and the global roll-up are read off
-        # that.  The segment keys are written per chromosome wherever
-        # that chromosome has them, and globally only when EVERY
+        # that.  The segment count is written per chromosome wherever
+        # that chromosome has it, and globally only when EVERY
         # chromosome does -- a partial global would silently
-        # understate.  Format version 2 (gain#1543) stores the exact
-        # length record where version 1 stored the log2 ladder.
+        # understate.  The length record is written once, under
+        # ``global`` (ADR 0020, the gain#2433 amendment).
         summaries = {
             chrom: region.segment_summary()
             for chrom, region in self._regions.items()
@@ -601,8 +605,6 @@ class CoverageStatistics(RegionFoldedStatistic[RegionCoverage]):
             summary = summaries[chrom]
             if summary is not None:
                 entry["segment_count"] = summary.total
-                if summary.lengths is not None:
-                    entry["segment_lengths"] = summary.lengths.stored()
             chromosomes[chrom] = entry
         global_entry: dict[str, Any] = {
             "covered_positions": self.covered_global(),
@@ -613,7 +615,7 @@ class CoverageStatistics(RegionFoldedStatistic[RegionCoverage]):
                 if summary is not None
             }
             global_entry["segment_count"] = _global_count(known)
-            global_lengths = _global_lengths(known)
+            global_lengths = self._global_lengths_of(known)
             if global_lengths is not None:
                 global_entry["segment_lengths"] = global_lengths.stored()
         return json.dumps({
@@ -625,7 +627,9 @@ class CoverageStatistics(RegionFoldedStatistic[RegionCoverage]):
     @staticmethod
     def deserialize(content: str) -> CoverageStatistics:
         # Only the counts round-trip; the open-run bookkeeping is scan
-        # state and is never written.  Unknown keys are ignored rather
+        # state and is never written.  The counts come from the
+        # chromosome entries, the length record from ``global`` -- both
+        # file shapes carry it there.  Unknown keys are ignored rather
         # than rejected, so a file carrying extra fields still reads,
         # and a file written before a group existed reads with that
         # group unknown -- which is how the statistics roll out lazily
@@ -636,6 +640,9 @@ class CoverageStatistics(RegionFoldedStatistic[RegionCoverage]):
             result.fold_region(RegionCoverage.frozen(
                 chrom, int(counts["covered_positions"]),
                 _read_stored_summary(counts)))
+        result._restored = True
+        result._restored_lengths = stored_global_lengths(
+            data, "segment_lengths")
         return result
 
 
@@ -1086,17 +1093,15 @@ def save_and_plot_coverage(
 
 
 def _read_stored_summary(entry: dict[str, Any]) -> SegmentSummary | None:
-    """The segment count and exact lengths out of a chromosome entry.
+    """The segment count out of a chromosome entry, with no lengths.
 
-    The count reads at any format version; the lengths only where the
-    exact record is stored.  A version 1 file's ladder is not read --
-    one reader, no compatibility branch (ADR 0020, the gain#1543
-    amendment).
+    The count reads at any format version.  The length record is not
+    read here: a file stores it once, under ``global`` (ADR 0020, the
+    gain#2433 amendment).
     """
     if "segment_count" not in entry:
         return None
-    return SegmentSummary(
-        int(entry["segment_count"]), stored_lengths(entry, "segment_lengths"))
+    return SegmentSummary(int(entry["segment_count"]), None)
 
 
 def _global_count(summaries: dict[str, SegmentSummary]) -> int:

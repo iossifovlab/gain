@@ -1099,22 +1099,22 @@ def _indel_per_record_score(tmp_path: pathlib.Path) -> GenomicResource:
     )
 
 
-def test_build_stores_the_length_histograms_per_chromosome(
+def test_build_stores_the_length_records_once_for_the_resource(
     tmp_path: pathlib.Path,
 ) -> None:
     resource = _indel_allele_score(tmp_path)
 
     stats = _built_statistics(tmp_path, resource)
 
-    chromosomes = stats.by_chromosome()
-    chr1 = chromosomes["chr1"].insertion_lengths
-    chr2 = chromosomes["chr2"].insertion_lengths
-    assert chr1 is not None
-    assert chr2 is not None
-    assert chr1.lengths == {1: 1, 4: 1}
-    assert (chr1.total, chr1.sum, chr1.min, chr1.max) == (2, 5, 1, 4)
-    assert chr2.lengths == {2: 1}
-    assert (chr2.total, chr2.sum, chr2.min, chr2.max) == (1, 2, 2, 2)
+    # A chromosome keeps its counts but not its length record.
+    for counts in stats.by_chromosome().values():
+        assert counts.insertion_lengths is None
+        assert counts.deletion_lengths is None
+    insertions = stats.global_counts().insertion_lengths
+    assert insertions is not None
+    assert insertions.lengths == {1: 1, 2: 1, 4: 1}
+    assert (insertions.total, insertions.sum, insertions.min,
+            insertions.max) == (3, 7, 1, 4)
 
 
 def test_build_stores_the_complex_grid_per_chromosome(
@@ -1156,22 +1156,26 @@ def test_the_group_totals_reconcile_with_the_class_counts(
 
     stats = _built_statistics(tmp_path, resource)
 
-    for counts in (*stats.by_chromosome().values(), stats.global_counts()):
-        assert counts.insertion_lengths is not None
-        assert counts.deletion_lengths is not None
-        assert counts.complex_grid is not None
-        assert counts.insertion_lengths.total == \
-            counts.class_counts["insertion"]
-        assert counts.deletion_lengths.total == \
-            counts.class_counts["deletion"]
-        # The clamp is TOTAL: every indel lands in exactly one bucket,
-        # so the map's values sum to the group's count too.
-        assert sum(counts.insertion_lengths.lengths.values()) == \
-            counts.class_counts["insertion"]
-        assert sum(counts.deletion_lengths.lengths.values()) == \
-            counts.class_counts["deletion"]
-        assert sum(counts.complex_grid.values()) == \
-            counts.class_counts["complex"]
+    for chromosome in stats.by_chromosome().values():
+        assert chromosome.complex_grid is not None
+        assert sum(chromosome.complex_grid.values()) == \
+            chromosome.class_counts["complex"]
+    counts = stats.global_counts()
+    assert counts.insertion_lengths is not None
+    assert counts.deletion_lengths is not None
+    assert counts.complex_grid is not None
+    assert counts.insertion_lengths.total == \
+        counts.class_counts["insertion"]
+    assert counts.deletion_lengths.total == \
+        counts.class_counts["deletion"]
+    # The clamp is TOTAL: every indel lands in exactly one bucket,
+    # so the map's values sum to the group's count too.
+    assert sum(counts.insertion_lengths.lengths.values()) == \
+        counts.class_counts["insertion"]
+    assert sum(counts.deletion_lengths.lengths.values()) == \
+        counts.class_counts["deletion"]
+    assert sum(counts.complex_grid.values()) == \
+        counts.class_counts["complex"]
 
 
 def test_the_indel_groups_match_across_the_two_scan_paths(
