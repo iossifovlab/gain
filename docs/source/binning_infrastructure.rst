@@ -311,7 +311,11 @@ If the fragments contain a score named ``cell`` identifying their cell barcodes,
 
 The distinct values must be available in the score's complete categorical histogram, stored in the resource statistics. Resources without a complete histogram cannot be grouped this way. Statistics can be generated using ``grr_manage resource-stats`` and must be available locally if managed through DVC. For scores with more than 100 distinct values, the resource configuration must specify ``histogram: {type: categorical}`` to retain the full histogram. The grouping score cannot also be used as the ``value`` score.
 
-When pooling resources by individual cell, GAIn prefixes each cell identifier with its sample ID to distinguish cells from different samples. Each pooled resource must have a sample_id label containing exactly one value. The sample IDs must be unique across resources and cannot contain a colon (:). If these requirements are not met, GAIn reports an error and suggests using pool: false.
+Without pooling, each group is the bare value. With ``pool: true``, the same barcode can recur in different samples while naming a different cell, so GAIn prefixes each value with the resource's ``sample_id`` label, as ``<sample_id>:<value>``. The rules for pooled resources are:
+
+- If any pooled resource has a ``sample_id`` label, every pooled resource must have one. Each label must hold a single value without a colon (``:``), and no two pooled resources can share a value. Otherwise GAIn reports an error that suggests ``pool: false``.
+- If no pooled resource has a ``sample_id`` label, each group is the bare value, and ``--dry-run`` warns once for each resource. This suits a merged multi-sample file whose barcodes are already unique across its samples. The same value in two resources reaches one track.
+- A ``sample_id`` label that holds a list counts as present, and is an error.
 
 **Grouping by cell metadata**
 
@@ -355,6 +359,8 @@ The metadata table is expected to contain three columns:
 - ``class``: Specifies the cell's group, such as its cell type.
 
 When these conventions are followed, GAIn automatically selects the metadata rows belonging to each sample and groups fragments by ``class``. No explicit ``group`` or ``meta`` configuration is needed.
+
+A merged multi-sample fragment file has no single sample, and so no ``sample_id`` label. When no resource of a job has a ``sample_id`` label, the default ``meta`` has no filter: the job reads every row of the metadata table, and ``--dry-run`` warns once for each resource. The table then needs no ``sample_id`` column, and its barcodes must be unique across the whole table. A pool in which some resources have the label and others do not is an error.
 
 **Specifying metadata explicitly**
 
@@ -760,10 +766,10 @@ ambiguous matrix.
   ``file_separator`` are valid only when ``meta.file_name`` is specified.
 - **Pooling and grouping:** Pooled metadata-based resources must resolve to
   the same metadata table and compatible grouping conventions. Raw-value
-  grouping requires complete categorical histograms; pooled per-cell tracks
-  also require distinct, single-valued ``sample_id`` labels without colons.
-  When ``group`` is omitted, pooling labelled and unlabelled resources is
-  also invalid. Inconsistent or incomplete configurations are rejected.
+  grouping requires complete categorical histograms. When some pooled
+  resources have a ``sample_id`` label, all of them must have one, each a
+  single value without colons and distinct across the pool. Pooling
+  labelled and unlabelled resources is invalid. Inconsistent or incomplete configurations are rejected.
 - **Track names:** If the same track name is produced more than once, GAIn
   appends the aggregator where that resolves the ambiguity. Identical
   name/group/aggregator combinations are rejected. For example, two entries
@@ -928,7 +934,7 @@ The public GRR's conservation bigWig files are several gigabytes each,
 but a remote-capable ``pyBigWig`` can read only the requested genomic
 intervals using HTTP range requests. This requires ``pyBigWig`` built
 with remote (libcurl) support; the GAIn conda package supplies one, while
-the PyPI wheel described in the original documentation does not. If you
+the PyPI ``pyBigWig`` wheel does not. If you
 encounter ``this pyBigWig build has no remote-file support``, use the
 conda installation or a local repository via ``--grr-directory``.
 
@@ -940,16 +946,29 @@ eight conservation tracks in the example below, this can mean about
 **Storage formats and numerical precision**
 
 Binning a per-base conservation score on chromosome 21 was approximately
-three times slower from tabix than from bigWig in the benchmark reported
-by the original documentation. The scope of the tabix index (whole genome
-or one chromosome) had no effect in that comparison. Prefer bigWig when
+three times slower from tabix than from bigWig. The scope of the tabix
+index (whole genome or one chromosome) had no effect on that difference. Prefer bigWig when
 both representations are available.
 
 A bigWig stores scores as ``float32``. Its binned results can therefore
 differ slightly from those computed from a text/tabix version of the
-same scores, even though the HDF5 output uses ``float64``. The original
-comparison found agreement of roughly ``1e-8`` for a ``mean`` over 10 kb
+same scores, even though the HDF5 output uses ``float64``. A comparison
+of the two formats found agreement of roughly ``1e-8`` for a ``mean`` over 10 kb
 bins. These files should not be expected to be bit-identical.
+
+Binner kinds
+^^^^^^^^^^^^
+
+A plugin adds a binner kind with an entry point in the
+``gain.binning.binners`` group. The class of a kind provides ``kind``,
+``parse_entry`` and ``bind``. The signature of ``bind`` is
+``bind(job, grr, *, quiet=False)``, and ``bind`` returns a context manager
+whose value bins one region at a time.
+
+``binning_tool`` calls ``bind(job, grr)``. ``binning_tracks_annotator``
+calls ``bind(job, grr, quiet=True)``, so a kind that does not accept the
+keyword ``quiet`` fails in the annotator. With ``quiet=True``, a binding
+keeps no record and logs no line for each region that it bins.
 
 Advanced worked example
 ^^^^^^^^^^^^^^^^^^^^^^^
@@ -963,8 +982,8 @@ two megabases of chromosome 21. The run definition is available as
     :language: yaml
 
 The first binner selects the conservation resources under ``hg38/scores/*``
-using ``search_term: conservation``. In the GRR described by the original
-example, fourteen resources were found under ``hg38/scores/``, of which
+using ``search_term: conservation``. In the GRR of this example, fourteen
+resources were found under ``hg38/scores/``, of which
 eight matched as position scores: phastCons and phyloP,
 each for 7, 20, 30, and 100 species. The second binner processes
 ``hg38/scores/phyloP100way`` again using ``max`` in addition to its default
@@ -972,10 +991,12 @@ each for 7, 20, 30, and 100 species. The second binner processes
 
 The third binner selects the gnomAD structural-variant resource and groups
 variants using its categorical ``deletion_duplication`` score. This adds
-one deletion track and one duplication track. Its ``pool: false`` setting
-avoids the pooled raw-group requirement for a ``sample_id`` label; without
-explicit ``value`` or ``aggregate`` options, each track counts variants
-starting in each bin.
+one deletion track and one duplication track. The resource has no
+``sample_id`` label, so its groups are the bare values. Its ``pool: false``
+setting makes the track names start with the resource ID and keeps
+``--dry-run`` from warning about the missing label. Without explicit
+``value`` or ``aggregate`` options, each track counts variants starting in
+each bin.
 
 First check the planned run:
 
@@ -1026,7 +1047,7 @@ has 196 rows and 11 columns. Because the selected region does not start
 on a bin boundary, the first bin spans ``chr21:20000000-20008960`` and
 the last ``chr21:21995521-22000000``, with full 10,240 bp bins between.
 
-Selected results from the original run are shown below (rounded). The
+Selected results of this run are shown below (rounded). The
 column headings are abbreviated for readability; the HDF5 file retains
 the source resource IDs in ``/tracks``.
 
@@ -1067,8 +1088,8 @@ the source resource IDs in ``/tracks``.
 
 Across the full two-megabase window, the example counts 826 deletions and
 179 duplications. Its eight conservation tracks are stored as remote
-bigWig files of roughly 6-10 GB each. The original benchmark reports that
-this window ran well under a minute when accessed through HTTP ranges;
+bigWig files of roughly 6-10 GB each. This window ran in well under a
+minute when accessed through HTTP ranges;
 whole-genome processing would require roughly 40 minutes of CPU per
 per-base conservation track. Starting with a restricted region is therefore
 recommended.
