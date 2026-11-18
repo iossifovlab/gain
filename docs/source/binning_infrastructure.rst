@@ -1,5 +1,5 @@
-Binning infrastructure new
-==========================
+Binning infrastructure
+======================
 
 The GAIn binning infrastructure converts genomic data into numerical matrices by dividing the genome into fixed-size regions, called **bins**, and summarizing genomic scores within each bin. This allows users to compare genomic features across regions, identify patterns, and prepare data for statistical analysis or machine learning.
 
@@ -92,6 +92,8 @@ Configuring a binning run
 
 A binning analysis is configured using a YAML run definition. Each binner selects one or more genomic resources and produces one or more tracks in the output matrix.
 
+.. _binning-run-definition:
+
 The run definition
 ^^^^^^^^^^^^^^^^^^
 
@@ -179,6 +181,8 @@ The optional ``none_value_replacement`` field assigns a value to positions witho
 
 This is useful when missing observations represent an absence of signal, such as in certain coverage tracks. It should not be used when missing values represent unknown measurements.
 
+
+.. _binning-fragment-score-entries:
 
 Fragment-score binning
 ^^^^^^^^^^^^^^^^^^^^^^
@@ -328,6 +332,8 @@ The required metadata relationships and default column names are described in th
 When ``group`` is omitted, GAIn automatically groups fragments by cell metadata if the resource has a ``cell_meta_resource_id`` label. Otherwise, all fragments belong to a single group named ``all``.
 
 The number of output tracks therefore depends on the selected resources, the grouping method, and whether pooling is enabled. A per-cell analysis can produce thousands of tracks, so ``binning_tool --dry-run`` is useful for checking the expected matrix dimensions before processing.
+
+.. _binning-local-metadata-files:
 
 Working with cell metadata
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
