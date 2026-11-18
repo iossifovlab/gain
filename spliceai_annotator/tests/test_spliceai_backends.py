@@ -25,6 +25,14 @@ MAX_WIDTH = 20201
 # Python 3.14 matrix cell, #299) and in its local twin, `.venv-notf`.
 EXPECT_NO_TENSORFLOW_ENV = "SPLICEAI_EXPECT_NO_TENSORFLOW"
 
+# Spelled out rather than read off the backend module: the tests pin the name
+# an operator types.
+ONNX_INTRA_OP_THREADS_ENV = "SPLICEAI_ONNX_INTRA_OP_THREADS"
+
+# The two ONNX Runtime paths: five sessions and a mean in numpy, or one
+# session of the fused graph with the mean inside it (#300).
+ONNX_BACKENDS = ["onnx", "onnx-fused"]
+
 
 def load_tensorflow_backend() -> ModuleType:
     """Load the TensorFlow backend; skip only where its absence is expected.
@@ -54,23 +62,42 @@ def onnx_models(onnx_backend: ModuleType) -> Iterator[list]:
     onnx_backend.spliceai_close()
 
 
+def _load_single_thread_models(backend: ModuleType) -> list:
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv(ONNX_INTRA_OP_THREADS_ENV, "1")
+        return backend.spliceai_load_models()
+
+
+@pytest.fixture(scope="module", params=ONNX_BACKENDS)
+def any_onnx_backend(request: pytest.FixtureRequest) -> ModuleType:
+    """Each ONNX Runtime path in turn: five sessions, then the fused graph.
+
+    Both paths take `ONNX_POSITION_BUDGET` and the session options from
+    `spliceai_backend_onnx`, so a test patches that module (`onnx_backend`)
+    to drive either path.
+    """
+    return impl.load_spliceai_backend(request.param)
+
+
 @pytest.fixture(scope="module")
-def single_thread_onnx_models(onnx_backend: ModuleType) -> Iterator[list]:
-    """An ONNX ensemble whose sessions have 1 intra-op thread.
+def any_onnx_models(any_onnx_backend: ModuleType) -> Iterator[list]:
+    yield any_onnx_backend.spliceai_load_models()
+    any_onnx_backend.spliceai_close()
+
+
+@pytest.fixture(scope="module")
+def any_single_thread_onnx_models(
+    any_onnx_backend: ModuleType,
+) -> Iterator[list]:
+    """The sessions of one ONNX path, each with 1 intra-op thread.
 
     The fixture sets `SPLICEAI_ONNX_INTRA_OP_THREADS`, the knob of the
     integration job, only for the load. `spliceai_load_models` keeps no
-    cache, so these sessions are separate from those of `onnx_models`.
+    cache, so these sessions are separate from those of `any_onnx_models`.
     """
     # The load returns before the yield, so the tests see the env restored.
-    yield _load_single_thread_models(onnx_backend)
-    onnx_backend.spliceai_close()
-
-
-def _load_single_thread_models(onnx_backend: ModuleType) -> list:
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setenv(onnx_backend.ONNX_INTRA_OP_THREADS_ENV, "1")
-        return onnx_backend.spliceai_load_models()
+    yield _load_single_thread_models(any_onnx_backend)
+    any_onnx_backend.spliceai_close()
 
 
 @pytest.fixture(scope="module")
@@ -131,12 +158,13 @@ def test_unset_backend_runs_the_annotator_models_on_onnx() -> None:
         "onnx {'onnxruntime.capi.onnxruntime_inference_collection'}")
 
 
-def test_the_onnx_backend_never_imports_tensorflow() -> None:
+@pytest.mark.parametrize("name", ONNX_BACKENDS)
+def test_the_onnx_backend_never_imports_tensorflow(name: str) -> None:
     imported = _fresh_process(
         "import sys;"
         "from spliceai_annotator import spliceai_annotator_impl;"
         "print('tensorflow' in sys.modules)",
-        SPLICEAI_BACKEND="onnx")
+        SPLICEAI_BACKEND=name)
 
     assert imported == "False"
 
@@ -173,7 +201,7 @@ def test_unknown_backend_is_rejected_by_name(
         impl.spliceai_backend_name()
 
 
-@pytest.mark.parametrize("name", ["tensorflow", "onnx"])
+@pytest.mark.parametrize("name", ["tensorflow", *ONNX_BACKENDS])
 def test_backend_provides_the_model_runtime_interface(name: str) -> None:
     backend = (
         load_tensorflow_backend() if name == "tensorflow"
@@ -184,7 +212,7 @@ def test_backend_provides_the_model_runtime_interface(name: str) -> None:
 
 
 def test_onnx_predicts_from_the_annotators_int8_one_hot(
-    onnx_backend: ModuleType, onnx_models: list,
+    any_onnx_backend: ModuleType, any_onnx_models: list,
 ) -> None:
     """ONNX Runtime rejects int8 outright where TensorFlow casts silently.
 
@@ -194,7 +222,7 @@ def test_onnx_predicts_from_the_annotators_int8_one_hot(
     x = a_one_hot_window(MIN_WIDTH)
     assert x.dtype == np.int8, "premise: the annotator feeds an int8 one-hot"
 
-    y = onnx_backend.spliceai_predict(onnx_models, x)
+    y = any_onnx_backend.spliceai_predict(any_onnx_models, x)
 
     # (batch, width - 10000, 3): P(neither) / P(acceptor) / P(donor).
     # Deliberately no "probabilities sum to 1" assertion: the graph ends in a
@@ -207,7 +235,7 @@ def test_onnx_predicts_from_the_annotators_int8_one_hot(
 
 
 def test_onnx_sessions_carry_the_measured_performance_settings(
-    onnx_models: list,
+    any_onnx_models: list,
 ) -> None:
     """These three are load-bearing, not tuning -- see #297.
 
@@ -219,7 +247,7 @@ def test_onnx_sessions_carry_the_measured_performance_settings(
     """
     ort = pytest.importorskip("onnxruntime")
 
-    for session in onnx_models:
+    for session in any_onnx_models:
         options = session.get_session_options()
         assert options.get_session_config_entry(
             "session.intra_op.allow_spinning") == "0"
@@ -229,29 +257,38 @@ def test_onnx_sessions_carry_the_measured_performance_settings(
 
 
 def test_onnx_intra_op_threads_honour_the_env_override(
-    onnx_backend: ModuleType, monkeypatch: pytest.MonkeyPatch,
+    any_onnx_backend: ModuleType, any_single_thread_onnx_models: list,
 ) -> None:
     """`SPLICEAI_ONNX_INTRA_OP_THREADS` sizes every session's intra-op pool.
 
     A single-threaded session is what makes ONNX Runtime's answers
-    reproducible under load, so the override has to reach the session
-    options a session is opened with, not merely a module constant.
+    reproducible under load, so the override has to reach the sessions that
+    `spliceai_load_models` opens, not merely a module constant. The
+    fixture loads them with the variable set to 1.
     """
-    monkeypatch.setenv(onnx_backend.ONNX_INTRA_OP_THREADS_ENV, "1")
-    assert onnx_backend.spliceai_session_options().intra_op_num_threads == 1
+    assert any_single_thread_onnx_models, (
+        f"{any_onnx_backend.__name__} opened no session")
+    for session in any_single_thread_onnx_models:
+        assert session.get_session_options().intra_op_num_threads == 1
 
-    monkeypatch.delenv(onnx_backend.ONNX_INTRA_OP_THREADS_ENV)
+
+def test_onnx_intra_op_threads_default_without_the_override(
+    onnx_backend: ModuleType, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(ONNX_INTRA_OP_THREADS_ENV, raising=False)
     assert onnx_backend.spliceai_session_options().intra_op_num_threads == (
         onnx_backend.DEFAULT_ONNX_INTRA_OP_THREADS)
 
 
 @pytest.mark.parametrize("value", ["0", "-2", "four", "1.5", ""])
 def test_onnx_intra_op_threads_refuse_a_non_positive_override(
-    onnx_backend: ModuleType, monkeypatch: pytest.MonkeyPatch, value: str,
+    any_onnx_backend: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
 ) -> None:
-    monkeypatch.setenv(onnx_backend.ONNX_INTRA_OP_THREADS_ENV, value)
-    with pytest.raises(ValueError, match="SPLICEAI_ONNX_INTRA_OP_THREADS"):
-        onnx_backend.spliceai_session_options()
+    monkeypatch.setenv(ONNX_INTRA_OP_THREADS_ENV, value)
+    with pytest.raises(ValueError, match=ONNX_INTRA_OP_THREADS_ENV):
+        any_onnx_backend.spliceai_load_models()
 
 
 @pytest.mark.parametrize(
@@ -352,9 +389,36 @@ def test_onnx_never_hands_ort_an_unbounded_batch(
         y[:, 0, 0], np.arange(10) * np.mean(range(1, 6)))
 
 
+def test_onnx_fused_never_hands_ort_an_unbounded_batch(
+    onnx_backend: ModuleType, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fused path chunks its one session as the five-session path does.
+
+    The budget is patched on `spliceai_backend_onnx`, the one module that
+    owns it: the fused path reads it from there on every call.
+    """
+    fused_backend = impl.load_spliceai_backend("onnx-fused")
+    monkeypatch.setattr(
+        onnx_backend, "ONNX_POSITION_BUDGET", 4 * (MIN_WIDTH + 1))
+    batch_sizes: list[int] = []
+    x = np.zeros((10, MIN_WIDTH, 4), np.int8)
+    x[:, 0, 0] = np.arange(10, dtype=np.int8)
+
+    y = fused_backend.spliceai_predict(
+        [_RecordingSession(batch_sizes, 1.0)], x)
+
+    assert max(batch_sizes) <= 4, (
+        f"ORT was handed a batch of {max(batch_sizes)} rows at width "
+        f"{MIN_WIDTH}; the budget allows 4")
+    # Rows must survive chunking in order, unduplicated: the one session
+    # returns each row's own index.
+    np.testing.assert_allclose(y[:, 0, 0], np.arange(10))
+
+
 def test_onnx_chunking_does_not_change_results(
     onnx_backend: ModuleType,
-    single_thread_onnx_models: list,
+    any_onnx_backend: ModuleType,
+    any_single_thread_onnx_models: list,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Chunking is a memory device, not a numerical one.
@@ -368,16 +432,17 @@ def test_onnx_chunking_does_not_change_results(
     `spliceai_session_options`), and exact equality needs a reproducible
     session. A tolerance instead would hide a real chunking defect.
     """
-    for session in single_thread_onnx_models:
+    models = any_single_thread_onnx_models
+    for session in models:
         assert session.get_session_options().intra_op_num_threads == 1
     x = a_one_hot_window(MIN_WIDTH, batch=5)
 
     monkeypatch.setattr(
         onnx_backend, "ONNX_POSITION_BUDGET", 1024 * MIN_WIDTH)
-    unchunked = onnx_backend.spliceai_predict(single_thread_onnx_models, x)
+    unchunked = any_onnx_backend.spliceai_predict(models, x)
     monkeypatch.setattr(
         onnx_backend, "ONNX_POSITION_BUDGET", 2 * MIN_WIDTH)
-    chunked = onnx_backend.spliceai_predict(single_thread_onnx_models, x)
+    chunked = any_onnx_backend.spliceai_predict(models, x)
 
     assert chunked.shape == unchunked.shape == (5, 1, 3)
     np.testing.assert_array_equal(chunked, unchunked)
@@ -432,8 +497,9 @@ MAX_POSITIONS_PER_RUN = 100_000
 
 
 @pytest.mark.parametrize("width", [MIN_WIDTH, MAX_WIDTH])
+@pytest.mark.parametrize("name", ONNX_BACKENDS)
 def test_shipped_budget_bounds_what_ort_is_asked_to_do(
-    onnx_backend: ModuleType, width: int,
+    onnx_backend: ModuleType, name: str, width: int,
 ) -> None:
     """Exercise `ONNX_POSITION_BUDGET` itself, not a patched stand-in.
 
@@ -447,7 +513,10 @@ def test_shipped_budget_bounds_what_ort_is_asked_to_do(
         f"budget {onnx_backend.ONNX_POSITION_BUDGET} cannot fit even one "
         f"window of width {width}")
     batch_sizes: list[int] = []
-    models = [_RecordingSession(batch_sizes, scale) for scale in range(1, 6)]
+    sessions = 5 if name == "onnx" else 1
+    models = [
+        _RecordingSession(batch_sizes, scale)
+        for scale in range(1, sessions + 1)]
     # Sized off the ceiling, not off the budget: a batch that would breach
     # MAX_POSITIONS_PER_RUN in one run if the backend did not chunk -- while
     # staying small enough that an unbounded budget fails the assertion
@@ -455,7 +524,7 @@ def test_shipped_budget_bounds_what_ort_is_asked_to_do(
     rows = MAX_POSITIONS_PER_RUN // width + 2
     x = np.zeros((rows, width, 4), np.int8)
 
-    onnx_backend.spliceai_predict(models, x)
+    impl.load_spliceai_backend(name).spliceai_predict(models, x)
 
     assert max(batch_sizes) * width <= MAX_POSITIONS_PER_RUN, (
         f"one ORT run covered {max(batch_sizes) * width} positions at width "

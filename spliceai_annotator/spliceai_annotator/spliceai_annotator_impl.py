@@ -6,10 +6,13 @@ runtime only through the three functions re-exported here
 process-wide ``SPLICEAI_MODELS``. This module is the only place that knows
 *which* runtime executes the ensemble.
 
-Two backends ship:
+Three backends ship:
 
 * ``onnx`` (default) -- the five converted ``.onnx`` artifacts under ONNX
-  Runtime, a required dependency; and
+  Runtime, a required dependency;
+* ``onnx-fused`` (opt-in) -- one ONNX Runtime session of
+  ``models/spliceai_fused.onnx``, which holds the same five members and
+  their mean in one graph; and
 * ``tensorflow`` -- the five ``.h5`` files, unchanged. TensorFlow is an
   optional install (``pip install gain-spliceai-annotator[tensorflow]`` or
   ``mamba install tensorflow``); selecting this backend without it raises
@@ -40,6 +43,7 @@ DEFAULT_SPLICEAI_BACKEND = "onnx"
 SPLICEAI_BACKENDS = {
     "tensorflow": ".spliceai_backend_tensorflow",
     "onnx": ".spliceai_backend_onnx",
+    "onnx-fused": ".spliceai_backend_onnx_fused",
 }
 
 
