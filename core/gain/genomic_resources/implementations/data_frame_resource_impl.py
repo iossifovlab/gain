@@ -12,6 +12,10 @@ from gain import logging
 from gain.genomic_resources.data_frame_resource import (
     load_data_frame_from_resource,
 )
+from gain.genomic_resources.implementations.describe_statistic import (
+    format_describe_float,
+    stable_describe,
+)
 from gain.genomic_resources.repository import (
     GenomicResource,
     GenomicResourceRepo,
@@ -86,7 +90,8 @@ class DataFrameResourceImplementation(
             ) as stats_file:
                 df_description = pd.read_csv(stats_file, index_col=0).T
                 df_description.columns.name = "Columns"
-            info["df_description"] = df_description.to_html(index=True)
+            info["df_description"] = df_description.to_html(
+                index=True, float_format=format_describe_float)
         return info
 
     def get_info(self, **kwargs: Any) -> str:  # ruff: ignore[unused-method-argument]
@@ -124,7 +129,7 @@ class DataFrameResourceImplementation(
     @staticmethod
     def _stats_for_data_frame(resource: GenomicResource) -> None:
         df = load_data_frame_from_resource(resource)
-        dsk = df.describe(include="all")
+        dsk = stable_describe(df)
 
         with resource.proto.open_raw_file(
             resource, _DESCRIBE_STATISTIC, mode="wt",

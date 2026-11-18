@@ -141,11 +141,12 @@ annotator plugins are workspace members but optional.
 # (no annotators, no dev tools)
 uv sync
 
-# Everything: all workspace members + every dev group
-uv sync --all-packages --all-groups
+# Everything: all workspace members, every dev group, and the optional
+# extras (spliceai's TensorFlow backend)
+uv sync --all-packages --all-groups --all-extras
 
 # A single sub-project (matches the per-project CI Dockerfiles)
-uv sync --package gain-spliceai-annotator --group dev
+uv sync --package gain-spliceai-annotator --extra tensorflow --group dev
 
 # Activate the venv (optional; `uv run` works without it)
 source .venv/bin/activate

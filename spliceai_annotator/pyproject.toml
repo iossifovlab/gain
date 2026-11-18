@@ -19,20 +19,28 @@ classifiers = [
 dependencies = [
     "gain-core",
     "numpy>=2.2",
-    # Both model runtimes are runtime deps: the backend is chosen per process
-    # with SPLICEAI_BACKEND (see spliceai_annotator_impl), TensorFlow by
-    # default, so an installed annotator must be able to run either. Which of
-    # the two survives is issue #298.
-    # >=1.26, matching the conda recipe: conda-forge's newest onnxruntime is
-    # 1.26.0, and the recipe installs this wheel with `pip install --no-deps`,
-    # so a >=1.27 bound here would bake an unsatisfiable Requires-Dist into a
-    # conda env that resolves 1.26 (`pip check` fails, and anything reading
-    # importlib.metadata raises). Nothing in this backend needs 1.27; the
-    # committed uv.lock still pins the exact version CI resolves.
+    # ONNX Runtime is the default model runtime (#299, ADR 0042), so it is
+    # the one runtime every install carries. TensorFlow is the `tensorflow`
+    # extra below: SPLICEAI_BACKEND=tensorflow without it fails at import,
+    # naming the install (see spliceai_annotator_impl).
+    # >=1.26 is a floor, not a ceiling: the conda recipe installs this wheel
+    # with `pip install --no-deps`, so whatever bound is written here is baked
+    # into that conda env as a Requires-Dist that `pip check` and
+    # importlib.metadata enforce. Keep it in step with the recipe's own
+    # bound. Nothing in this backend needs a newer release; the committed
+    # uv.lock pins the exact version CI resolves.
     "onnxruntime>=1.26",
+]
+
+dynamic = ["version"]
+
+[project.optional-dependencies]
+# The TensorFlow/Keras backend: `pip install gain-spliceai-annotator[tensorflow]`.
+# Kept for the .h5 source of truth and its equivalence tests; ~2 GB
+# installed, and no Python 3.14 wheels (ADR 0042).
+tensorflow = [
     "tensorflow>=2.18",
 ]
-dynamic = ["version"]
 
 [project.urls]
 Homepage = "https://github.com/IossifovLab/gain"

@@ -674,11 +674,22 @@ pipeline {
                                     // downstream gain-spliceai-integration job
                                     // (see 'Trigger spliceai integration'),
                                     // keeping this per-PR step to a few minutes.
+                                    //
+                                    // The TensorFlow pass: ONNX Runtime is
+                                    // the default backend (ADR 0042), so
+                                    // this stage selects TensorFlow with
+                                    // SPLICEAI_BACKEND=tensorflow. Its image
+                                    // keeps the tensorflow extra (the
+                                    // Dockerfile's TENSORFLOW=1 default).
+                                    def cells = load 'ci/cells.groovy'
+                                    Map cell = cells.cell('spliceai_annotator')
                                     runProject(
                                         name: 'spliceai_annotator',
-                                        pkg: 'spliceai_annotator',
-                                        tests: 'tests',
-                                        pytestArgs: '-n 5 -m "not integration"',
+                                        pkg: cell.pkg,
+                                        tests: cell.tests,
+                                        pytestArgs: cell.pytestArgs,
+                                        dockerRunExtra: cell.dockerRunExtra +
+                                            ' -e SPLICEAI_BACKEND=tensorflow',
                                     )
                                 }
                             }
@@ -689,7 +700,9 @@ pipeline {
                             steps {
                                 script {
                                     // Second pass of the same fast tier with
-                                    // the ONNX Runtime backend selected (#297).
+                                    // the ONNX Runtime backend selected (#297),
+                                    // the default since ADR 0042; named
+                                    // explicitly all the same.
                                     // The backend is a process-wide choice read
                                     // from SPLICEAI_BACKEND at import time, so
                                     // "green on both backends" can only be a
