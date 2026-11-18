@@ -22,6 +22,8 @@ export const appConfig: ApplicationConfig = {
     AnnotationPipelineService,
     AboutPageService,
     provideMarkdown(),
-    provideMonacoEditor()
+    // The Monaco tree moved from assets/monaco/min, so that browsers that
+    // cached the old files as immutable stop using them (gain#2426).
+    provideMonacoEditor({ baseUrl: './assets/monaco-editor/min/vs' })
   ]
 };
