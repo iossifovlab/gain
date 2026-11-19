@@ -18,11 +18,8 @@ from typing import Any
 import numpy as np
 import pytest
 from spliceai_annotator.spliceai_backend_onnx import ONNX_POSITION_BUDGET
-from spliceai_annotator.spliceai_backend_tensorflow import (
-    TENSORFLOW_POSITION_BUDGET,
-)
 
-from .test_spliceai_backends import a_one_hot_window
+from .test_spliceai_backends import a_one_hot_window, load_tensorflow_backend
 
 SCRIPT = (
     pathlib.Path(__file__).parent.parent / "scripts"
@@ -31,15 +28,15 @@ UV_LOCK = pathlib.Path(__file__).parents[2] / "uv.lock"
 PYTORCH_CPU_INDEX = "https://download.pytorch.org/whl/cpu"
 
 
-def _load_script() -> ModuleType:
+def _load_script(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     spec = importlib.util.spec_from_file_location(
         "measure_torch_backend", SCRIPT)
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     # The dataclasses of the script resolve their string annotations
-    # through `sys.modules`.
-    sys.modules[spec.name] = module
+    # through `sys.modules`. The monkeypatch removes the entry afterwards.
+    monkeypatch.setitem(sys.modules, spec.name, module)
     spec.loader.exec_module(module)
     return module
 
@@ -91,8 +88,11 @@ def test_timing_run_writes_every_runtime_and_the_host_fields(
 def test_parity_check_fails_when_the_port_returns_nan(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pytest.importorskip("torch")
-    mtb = _load_script()
+    torch = pytest.importorskip("torch")
+    # `check_parity` sets the variable for its one-thread ONNX session. The
+    # monkeypatch restores it, so later ONNX sessions get the default.
+    monkeypatch.setenv("SPLICEAI_ONNX_INTRA_OP_THREADS", "1")
+    mtb = _load_script(monkeypatch)
 
     def nan_predict(_port: Any, x: np.ndarray) -> np.ndarray:
         return np.full((x.shape[0], x.shape[1] - 10000, 3), np.nan,
@@ -101,18 +101,26 @@ def test_parity_check_fails_when_the_port_returns_nan(
     monkeypatch.setattr(mtb, "build_torch_port", lambda _path: None)
     monkeypatch.setattr(mtb, "torch_predict", nan_predict)
 
-    assert mtb.check_parity([10001], torch_threads=1) == 1
+    # The current thread count leaves the torch state of the session as is.
+    assert mtb.check_parity(
+        [10001], torch_threads=torch.get_num_threads()) == 1
 
 
-def test_the_port_splits_a_batch_as_the_shipped_backends_do() -> None:
-    mtb = _load_script()
+def test_the_port_splits_a_batch_as_the_shipped_backends_do(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mtb = _load_script(monkeypatch)
+    tensorflow_backend = load_tensorflow_backend()
 
     assert mtb.TORCH_POSITION_BUDGET == ONNX_POSITION_BUDGET
-    assert mtb.TORCH_POSITION_BUDGET == TENSORFLOW_POSITION_BUDGET
+    assert mtb.TORCH_POSITION_BUDGET == (
+        tensorflow_backend.TENSORFLOW_POSITION_BUDGET)
 
 
-def test_chunks_split_a_batch_into_rows_within_the_budget() -> None:
-    mtb = _load_script()
+def test_chunks_split_a_batch_into_rows_within_the_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mtb = _load_script(monkeypatch)
     x = np.zeros((8, 10301, 4), dtype=np.int8)
 
     rows = [chunk.shape[0] for chunk in mtb.chunks(x, 65536)]
@@ -120,12 +128,28 @@ def test_chunks_split_a_batch_into_rows_within_the_budget() -> None:
     assert rows == [6, 2]
 
 
-def test_synthetic_input_is_the_window_of_the_backend_tests() -> None:
-    mtb = _load_script()
+def test_synthetic_input_is_the_window_of_the_backend_tests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mtb = _load_script(monkeypatch)
 
     actual = mtb.synthetic_input(3, 10301)
 
     np.testing.assert_array_equal(actual, a_one_hot_window(10301, batch=3))
+
+
+def test_installed_size_counts_only_the_packages_the_group_adds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("torch")
+    mtb = _load_script(monkeypatch)
+
+    sizes = mtb.installed_size("torch-spike")
+
+    # `torch` requires `typing-extensions`, and the runtime dependencies
+    # already reach it, so the group does not add it.
+    assert sizes["torch"] > 0
+    assert "typing-extensions" not in sizes
 
 
 def _locked_packages() -> list[dict[str, Any]]:
