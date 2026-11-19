@@ -414,7 +414,11 @@ ignored-classes=optparse.Values,thread._local,_thread._local
 # itself (ADR 0014). The only importers left are the two drift tests under
 # core/tests/integration, which pylint does not lint, so there is nothing
 # left to ignore here.
-ignored-modules=
+#
+# torch is the optional `torch-spike` group (#2425), which CI does not
+# sync. Only spliceai_annotator/scripts/measure_torch_backend.py imports
+# it.
+ignored-modules=torch
 
 # Show a hint with possible names when a member name was not found. The aspect
 # of finding the hint is based on edit distance.
