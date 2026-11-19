@@ -2,8 +2,10 @@
 """Port one SpliceAI model to PyTorch and time it against ONNX and TF.
 
 A spike (#2425): the shipped package has no PyTorch backend. The script
-needs the ``torch-spike`` dependency group, which installs a CPU-only
-``torch`` from the PyTorch CPU index::
+times on the CPU by default, and on the GPU with ``--device cuda`` (see
+"The GPU mode" below). On the CPU, the script needs the ``torch-spike``
+dependency group, which installs a CPU-only ``torch`` from the PyTorch CPU
+index::
 
     uv sync --package gain-spliceai-annotator --extra tensorflow \\
         --group dev --group torch-spike --frozen
@@ -27,8 +29,8 @@ time is about five times the time of one model.
 * TensorFlow: the Keras model of ``models/spliceai1.h5``, called with
   ``predict()``. TensorFlow keeps its own default thread pools.
 
-Every runtime splits a batch into calls of at most 65536 positions (rows x
-width), the value of ``ONNX_POSITION_BUDGET`` and
+On the CPU, every runtime splits a batch into calls of at most 65536
+positions (rows x width), the value of ``ONNX_POSITION_BUDGET`` and
 ``TENSORFLOW_POSITION_BUDGET``: 6 rows at width 10301 and 3 rows at width
 20201. An unchunked batch of 500 rows needs tens of GB.
 
@@ -76,10 +78,99 @@ each package), the thread counts, the host name, the CPU model and the load
 average before and after the run. A busy host measures its other work too,
 so run the script on a quiet host.
 
+The GPU mode (``--device cuda``)
+-------------------------------
+The same three runtimes, on the GPU, in float32 only: a lower precision
+changes the scores.
+
+* PyTorch: the port moved to the CUDA device, in
+  ``torch.inference_mode()``.
+* ONNX Runtime: a session over ``models/spliceai1.onnx`` with the provider
+  list ``["CUDAExecutionProvider"]`` and the shipped
+  ``spliceai_session_options()``. Every ONNX session of the script passes an
+  explicit provider list: ``["CPUExecutionProvider"]`` on the CPU and for
+  the parity reference.
+* TensorFlow: the Keras model of ``models/spliceai1.h5``, called with
+  ``predict()`` with the whole batch as ``batch_size``. Otherwise Keras
+  splits the batch at 32 rows.
+
+The device check. Each child proves that its runtime runs on the GPU before
+it times anything:
+
+* PyTorch: ``torch.cuda.is_available()`` is true, and the output tensor of a
+  one-window probe call is on a CUDA device.
+* ONNX Runtime: ``get_providers()`` of the session starts with
+  ``CUDAExecutionProvider``. ONNX Runtime falls back to the CPU without an
+  error when it cannot load CUDA.
+* TensorFlow: ``tf.config.list_physical_devices("GPU")`` is not empty.
+
+A runtime that fails the check gives an ``error`` and no timing, and the
+script exits 1. A CPU number labelled GPU looks valid, so the script never
+gives one.
+
+The batch ladder. The widths stay 10301 and 20201. ``--batches`` gives the
+batch sizes, 1, 2, 4, 8, 16, 32 and 64 by default. On the GPU, the faster
+runtime changes with the batch size. ``--rows`` applies only to the CPU, and
+``--batches`` applies only to the GPU.
+
+The GPU path does no chunking: each call gets the whole batch. The CPU
+budget of 65536 positions caps a call at 6 windows, and that flattens the
+ladder.
+
+Each runtime at each width runs in its own ``spawn`` process. For each batch
+size, the child makes one untimed warm-up call, then times ``--reps`` calls,
+5 by default on the GPU. The result is the median in ms per window. A timed
+call ends when the output is a NumPy array in host memory, so the time
+includes the copy back from the GPU on every runtime.
+
+The ``oom`` rule. When a call runs out of GPU memory, the child records
+``oom`` for that batch size and ends the ladder at that width. The script
+goes on with the next width or runtime. The out-of-memory errors are
+``torch.cuda.OutOfMemoryError``, ``tf.errors.ResourceExhaustedError`` and an
+ONNX Runtime error with ``Failed to allocate memory`` in its message. An
+``oom`` is a result, not a failure: the script exits 0 when the only
+failures are ``oom`` results.
+
+Parity on the GPU. ``--check-parity --device cuda`` compares the port on the
+GPU with ``spliceai1.onnx`` on the CPU, with
+``SPLICEAI_ONNX_INTRA_OP_THREADS=1``, over the cases of the CPU parity
+check. The limit is 1e-4, not 1e-5: cuDNN picks convolution algorithms that
+sum in a different order than the CPU. The script prints the largest
+absolute difference and exits 1 when it is above the limit.
+
+The ``--out`` JSON of a GPU run holds the ms per window of each runtime,
+width and batch size, or ``oom``. It also holds the GPU name, the GPU memory
+and the driver version from ``nvidia-smi``, the version, the CUDA version,
+the cuDNN version and the device name that each runtime reports, the host
+name, and the load average before and after the run. Run it on a quiet host:
+nothing else on the GPU, and a load average below 2.
+
+The throwaway CUDA venv. The CUDA builds stay out of ``uv.lock`` and out of
+the pinned venv: they add several GB of ``nvidia-*`` packages, and one lock
+cannot hold the CPU and the CUDA builds of ``torch``. ``onnxruntime-gpu``
+needs the CUDA 12 wheels of its ``cuda`` and ``cudnn`` extras. A system
+CUDA 13 does not satisfy it. TensorFlow finds no GPU until the
+``nvidia/*/lib`` directories of the venv are on ``LD_LIBRARY_PATH``. From
+the root of the gain checkout::
+
+    python3.12 -m venv ~/spliceai-cuda
+    . ~/spliceai-cuda/bin/activate
+    pip install -e ./core -e "./spliceai_annotator[tensorflow]"
+    pip uninstall -y onnxruntime
+    pip install torch --index-url https://download.pytorch.org/whl/cu126
+    pip install "onnxruntime-gpu[cuda,cudnn]" "tensorflow[and-cuda]"
+    export LD_LIBRARY_PATH="$(python -c 'import glob, sysconfig; print(":".join(
+        glob.glob(sysconfig.get_paths()["purelib"] + "/nvidia/*/lib")))')"
+    cd spliceai_annotator
+    python scripts/measure_torch_backend.py --device cuda --check-parity
+    python scripts/measure_torch_backend.py --device cuda --out gpu.json
+
 Usage
 -----
     python spliceai_annotator/scripts/measure_torch_backend.py --check-parity
     python spliceai_annotator/scripts/measure_torch_backend.py --out t.json
+    python spliceai_annotator/scripts/measure_torch_backend.py \\
+        --device cuda --out gpu.json
 """
 from __future__ import annotations
 
@@ -91,7 +182,9 @@ import os
 import pathlib
 import platform
 import resource
+import shutil
 import statistics
+import subprocess
 import time
 import tomllib
 from collections.abc import Callable, Iterator, Sequence
@@ -112,9 +205,21 @@ DEFAULT_WIDTHS = (10301, 20201)
 DEFAULT_ROWS = 500
 DEFAULT_REPS = 1
 DEFAULT_TORCH_THREADS = 4
+DEVICES = ("cpu", "cuda")
+#: The batch sizes of a GPU run, and its timed calls per batch size.
+DEFAULT_GPU_BATCHES = (1, 2, 4, 8, 16, 32, 64)
+DEFAULT_GPU_REPS = 5
+#: The result of a batch size that ran out of GPU memory.
+OOM = "oom"
+#: The ``providers`` list of each ONNX session of the script.
+CPU_PROVIDERS = ("CPUExecutionProvider",)
+CUDA_PROVIDERS = ("CUDAExecutionProvider",)
 #: The rows of the batched parity case.
 PARITY_BATCH = 8
 PARITY_TOLERANCE = 1e-5
+#: The parity limit of the port on the GPU. cuDNN picks convolution
+#: algorithms that sum in a different order than the CPU does.
+GPU_PARITY_TOLERANCE = 1e-4
 #: The positions (rows x width) in one call of the PyTorch port. The same
 #: value as `ONNX_POSITION_BUDGET` and `TENSORFLOW_POSITION_BUDGET`. The
 #: PyTorch child does not import those modules, because they import their
@@ -309,8 +414,12 @@ def torch_predict(port: Any, x: np.ndarray) -> np.ndarray:
         ], axis=0)
 
 
-def onnx_session() -> Any:
-    """The ONNX Runtime session of ``MODEL``, with the shipped options."""
+def onnx_session(providers: Sequence[str] = CPU_PROVIDERS) -> Any:
+    """The ONNX Runtime session of ``MODEL``, with the shipped options.
+
+    The ``providers`` list is explicit: ``onnxruntime-gpu`` refuses a
+    session without one, because its build has more than one provider.
+    """
     # pylint: disable=import-outside-toplevel
     import onnxruntime as ort
     from spliceai_annotator.spliceai_backend_onnx import (
@@ -319,7 +428,8 @@ def onnx_session() -> Any:
 
     with model_path(".onnx") as path:
         return ort.InferenceSession(
-            str(path), sess_options=spliceai_session_options())
+            str(path), sess_options=spliceai_session_options(),
+            providers=list(providers))
 
 
 def onnx_predict(session: Any, x: np.ndarray) -> np.ndarray:
@@ -341,21 +451,40 @@ def parity_cases(widths: Sequence[int]) -> list[tuple[int, int]]:
     return [(width, 1) for width in widths] + [(widths[0], PARITY_BATCH)]
 
 
-def check_parity(widths: Sequence[int], torch_threads: int) -> int:
-    """Compare the port with ``spliceai1.onnx``. Return the exit code."""
+def check_parity(
+    widths: Sequence[int], torch_threads: int, device: str = "cpu",
+) -> int:
+    """Compare the port with ``spliceai1.onnx``. Return the exit code.
+
+    The port runs on ``device``. The ONNX reference runs on the CPU.
+    """
     # pylint: disable=import-outside-toplevel
     import torch
 
+    if device == "cuda" and not torch.cuda.is_available():
+        print("torch.cuda.is_available() is false: no parity on the GPU")
+        return 1
     os.environ["SPLICEAI_ONNX_INTRA_OP_THREADS"] = "1"
     torch.set_num_threads(torch_threads)
     session = onnx_session()
     with model_path(".h5") as path:
         port = build_torch_port(str(path))
+    if device == "cuda":
+        port = port.to("cuda")
+        tolerance = GPU_PARITY_TOLERANCE
+
+        def predict(x: np.ndarray) -> np.ndarray:
+            return torch_cuda_predict(port, x)
+    else:
+        tolerance = PARITY_TOLERANCE
+
+        def predict(x: np.ndarray) -> np.ndarray:
+            return torch_predict(port, x)
     largest = 0.0
     for width, rows in parity_cases(widths):
         x = synthetic_input(rows, width)
         expected = onnx_predict(session, x)
-        actual = torch_predict(port, x)
+        actual = predict(x)
         if actual.shape != expected.shape:
             print(f"width {width}, rows {rows}: shape {actual.shape} "
                   f"against {expected.shape}")
@@ -366,8 +495,8 @@ def check_parity(widths: Sequence[int], torch_threads: int) -> int:
         # port would then pass the tolerance check.
         largest = float(np.maximum(largest, difference))
     print(f"largest absolute difference: {largest:.3e} "
-          f"(tolerance {PARITY_TOLERANCE:.0e})")
-    return 0 if largest <= PARITY_TOLERANCE else 1
+          f"(tolerance {tolerance:.0e})")
+    return 0 if largest <= tolerance else 1
 
 
 def peak_rss_mb() -> float:
@@ -445,14 +574,197 @@ def measure_runtime(
 
 
 def run_in_child(
-    runtime: str, width: int, rows: int, reps: int, torch_threads: int,
+    function: Callable[..., dict[str, Any]], *args: Any,
 ) -> dict[str, Any]:
-    """Run `measure_runtime` in a fresh ``spawn`` process."""
+    """Run ``function(*args)`` in a fresh ``spawn`` process."""
     context = multiprocessing.get_context("spawn")
     with ProcessPoolExecutor(max_workers=1, mp_context=context) as pool:
-        return pool.submit(
-            measure_runtime, runtime, width, rows, reps, torch_threads,
-        ).result()
+        return pool.submit(function, *args).result()
+
+
+class DeviceCheckError(RuntimeError):
+    """A runtime does not run on the GPU."""
+
+
+@dataclass
+class GpuRuntime:
+    """One runtime, loaded on the GPU and checked.
+
+    ``predict`` takes a float32 batch and returns a NumPy array in host
+    memory. ``is_oom`` tells an out-of-GPU-memory error of the runtime.
+    """
+
+    predict: Callable[[np.ndarray], np.ndarray]
+    is_oom: Callable[[BaseException], bool]
+    facts: dict[str, Any]
+
+
+def gpu_facts() -> dict[str, str]:
+    """The name, the memory and the driver version of GPU 0.
+
+    ``nvidia-smi`` reports them. Without it, each value is ``unknown``.
+    """
+    query = "name,memory.total,driver_version"
+    nvidia_smi = shutil.which("nvidia-smi")
+    if nvidia_smi is None:
+        return dict.fromkeys(("name", "memory", "driver_version"), "unknown")
+    try:
+        completed = subprocess.run(
+            [nvidia_smi, f"--query-gpu={query}", "--format=csv,noheader"],
+            capture_output=True, text=True, check=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return dict.fromkeys(("name", "memory", "driver_version"), "unknown")
+    values = [v.strip() for v in completed.stdout.splitlines()[0].split(",")]
+    return dict(zip(("name", "memory", "driver_version"), values, strict=True))
+
+
+def torch_cuda_predict(port: Any, x: np.ndarray) -> np.ndarray:
+    """Run the port on the GPU over the whole batch ``x``, in one call."""
+    return np.asarray(torch_cuda_forward(port, x).cpu().numpy())
+
+
+def torch_cuda_forward(port: Any, x: np.ndarray) -> Any:
+    """The output tensor of the port for ``x``, on the device of the port."""
+    # pylint: disable=import-outside-toplevel
+    import torch
+
+    with torch.inference_mode():
+        return port(torch.from_numpy(
+            x.astype(np.float32, copy=False)).to("cuda"))
+
+
+def load_torch_gpu() -> GpuRuntime:
+    """The port on the CUDA device, after the device check."""
+    # pylint: disable=import-outside-toplevel
+    import torch
+
+    if not torch.cuda.is_available():
+        raise DeviceCheckError("torch.cuda.is_available() is false")
+    with model_path(".h5") as path:
+        port = build_torch_port(str(path)).to("cuda")
+    probe = torch_cuda_forward(port, synthetic_input(1, 10001))
+    if probe.device.type != "cuda":
+        raise DeviceCheckError(
+            f"the output tensor is on the device {probe.device.type!r}")
+    return GpuRuntime(
+        predict=lambda x: torch_cuda_predict(port, x),
+        is_oom=lambda error: isinstance(
+            error, torch.cuda.OutOfMemoryError),
+        facts={
+            "runtime_version": torch.__version__,
+            "cuda_version": torch.version.cuda,
+            "cudnn_version": torch.backends.cudnn.version(),
+            "device_name": torch.cuda.get_device_name(0),
+        })
+
+
+def load_onnx_gpu() -> GpuRuntime:
+    """The ``CUDAExecutionProvider`` session, after the device check."""
+    # pylint: disable=import-outside-toplevel
+    import onnxruntime as ort
+    from onnxruntime.capi import build_and_package_info
+
+    session = onnx_session(CUDA_PROVIDERS)
+    active = session.get_providers()
+    if not active or active[0] != CUDA_PROVIDERS[0]:
+        raise DeviceCheckError(f"the session providers are {active}")
+    name = session.get_inputs()[0].name
+    return GpuRuntime(
+        predict=lambda x: session.run(
+            None, {name: x.astype(np.float32, copy=False)})[0],
+        is_oom=lambda error: "Failed to allocate memory" in str(error),
+        facts={
+            "runtime_version": ort.__version__,
+            "cuda_version": getattr(
+                build_and_package_info, "cuda_version", "unknown"),
+            "cudnn_version": getattr(
+                build_and_package_info, "cudnn_version", "unknown"),
+            # ONNX Runtime does not name its device. The session runs on
+            # device 0, the GPU that `nvidia-smi` lists first.
+            "device_name": gpu_facts()["name"],
+        })
+
+
+def load_tensorflow_gpu() -> GpuRuntime:
+    """The Keras model with a visible GPU, after the device check."""
+    # pylint: disable=import-outside-toplevel
+    import tensorflow as tf
+
+    gpus = tf.config.list_physical_devices("GPU")
+    if not gpus:
+        raise DeviceCheckError(
+            'tf.config.list_physical_devices("GPU") is empty')
+    with model_path(".h5") as path:
+        model = tf.keras.models.load_model(str(path))
+    build = tf.sysconfig.get_build_info()
+    return GpuRuntime(
+        # The whole batch as `batch_size`: Keras splits it at 32 otherwise.
+        predict=lambda x: model.predict(
+            x.astype(np.float32, copy=False), batch_size=len(x), verbose=0),
+        is_oom=lambda error: isinstance(
+            error, tf.errors.ResourceExhaustedError),
+        facts={
+            "runtime_version": tf.__version__,
+            "cuda_version": build.get("cuda_version", "unknown"),
+            "cudnn_version": build.get("cudnn_version", "unknown"),
+            "device_name": tf.config.experimental.get_device_details(
+                gpus[0]).get("device_name", "unknown"),
+        })
+
+
+#: The facts that each runtime reports about itself on the GPU.
+RUNTIME_FACTS = (
+    "runtime_version", "cuda_version", "cudnn_version", "device_name")
+
+GPU_LOADERS: dict[str, Callable[[], GpuRuntime]] = {
+    "torch": load_torch_gpu,
+    "onnx": load_onnx_gpu,
+    "tensorflow": load_tensorflow_gpu,
+}
+
+
+def measure_gpu_runtime(
+    runtime: str, width: int, batches: Sequence[int], reps: int,
+) -> dict[str, Any]:
+    """Load ``runtime`` on the GPU in this process, then time the ladder.
+
+    A failed device check gives an ``error`` and no timing. An out-of-memory
+    error gives `OOM` for its batch size and ends the ladder.
+    """
+    result: dict[str, Any] = {"runtime": runtime, "width": width}
+    try:
+        gpu = GPU_LOADERS[runtime]()
+    except DeviceCheckError as error:
+        result["error"] = f"device check failed: {error}"
+        return result
+    x = synthetic_input(max(batches), width).astype(np.float32)
+    ms_per_window: dict[str, float | str] = {}
+    for batch in batches:
+        try:
+            times = time_calls(gpu.predict, x[:batch], reps)
+        except Exception as error:  # pylint: disable=broad-exception-caught
+            if not gpu.is_oom(error):
+                raise
+            ms_per_window[str(batch)] = OOM
+            break
+        ms_per_window[str(batch)] = round(statistics.median(times) / batch, 3)
+    result.update(reps=reps, ms_per_window=ms_per_window, **gpu.facts)
+    return result
+
+
+def time_calls(
+    predict: Callable[[np.ndarray], np.ndarray], x: np.ndarray, reps: int,
+) -> list[float]:
+    """One untimed warm-up call, then the ms of each of ``reps`` calls."""
+    predict(x)
+    times = []
+    for _ in range(reps):
+        start = time.perf_counter()
+        output = predict(x)
+        times.append((time.perf_counter() - start) * 1000.0)
+        if not isinstance(output, np.ndarray):
+            raise TypeError(f"the output is {type(output)}, not an array")
+    return times
 
 
 def pyproject_requirements(group: str) -> list[Requirement]:
@@ -560,6 +872,7 @@ def time_runtimes(args: argparse.Namespace) -> int:
     loadavg_before = os.getloadavg()
     results = [
         run_in_child(
+            measure_runtime,
             runtime, width, args.rows, args.reps, args.torch_threads)
         for width in args.widths
         for runtime in RUNTIMES
@@ -601,6 +914,67 @@ def time_runtimes(args: argparse.Namespace) -> int:
     return 0
 
 
+def format_gpu_table(
+    results: list[dict[str, Any]], batches: Sequence[int],
+) -> str:
+    """Render the GPU results as a markdown table, one column per batch."""
+    lines = [
+        "| runtime | width | " + " | ".join(map(str, batches)) + " |",
+        "|---|---|" + "---|" * len(batches),
+    ]
+    for r in results:
+        if "error" in r:
+            cells = [r["error"]]
+        else:
+            cells = [
+                str(r["ms_per_window"].get(str(batch), ""))
+                for batch in batches]
+        lines.append(
+            f"| {r['runtime']} | {r['width']} | " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+def time_gpu_runtimes(args: argparse.Namespace) -> int:
+    """Time every runtime on the GPU at every width over the ladder.
+
+    Exit 1 when a runtime fails its device check. An `OOM` is a result.
+    """
+    loadavg_before = os.getloadavg()
+    results = [
+        run_in_child(
+            measure_gpu_runtime, runtime, width, args.batches, args.reps)
+        for width in args.widths
+        for runtime in RUNTIMES
+    ]
+    loadavg = os.getloadavg()
+    report = {
+        "device": "cuda",
+        "host": platform.node(),
+        "loadavg_before": list(loadavg_before),
+        "loadavg": list(loadavg),
+        "model": MODEL,
+        "batches": list(args.batches),
+        "reps": args.reps,
+        "gpu": gpu_facts(),
+        "runtimes": {
+            r["runtime"]: {key: r[key] for key in RUNTIME_FACTS}
+            for r in results if "error" not in r},
+        "results": results,
+    }
+    gpu = report["gpu"]
+    print(f"host: {report['host']}, gpu: {gpu['name']}, "
+          f"memory {gpu['memory']}, driver {gpu['driver_version']}")
+    print(
+        f"load average before: {' '.join(f'{v:.2f}' for v in loadavg_before)}"
+        f", after: {' '.join(f'{v:.2f}' for v in loadavg)}")
+    print(f"model {MODEL}, reps {args.reps}, ms per window\n")
+    print(format_gpu_table(results, args.batches))
+    if args.out is not None:
+        args.out.write_text(json.dumps(report, indent=2))
+        print(f"\nwrote {args.out}")
+    return 1 if any("error" in r for r in results) else 0
+
+
 def positive_int(text: str) -> int:
     """An ``argparse`` type: an integer of at least 1."""
     value = int(text)
@@ -616,8 +990,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
         "--widths", type=int, nargs="+", default=list(DEFAULT_WIDTHS))
-    parser.add_argument("--rows", type=positive_int, default=DEFAULT_ROWS)
-    parser.add_argument("--reps", type=positive_int, default=DEFAULT_REPS)
+    parser.add_argument(
+        "--device", choices=DEVICES, default="cpu",
+        help="time on the CPU (the default) or on the GPU")
+    parser.add_argument(
+        "--rows", type=positive_int, default=None,
+        help=f"the batch of a CPU run, {DEFAULT_ROWS} by default")
+    parser.add_argument(
+        "--batches", type=positive_int, nargs="+", default=None,
+        help="the batch ladder of a GPU run, "
+        f"{' '.join(map(str, DEFAULT_GPU_BATCHES))} by default")
+    parser.add_argument(
+        "--reps", type=positive_int, default=None,
+        help=f"the timed passes, {DEFAULT_REPS} on CPU and "
+        f"{DEFAULT_GPU_REPS} on GPU by default")
     parser.add_argument(
         "--torch-threads", type=int, default=DEFAULT_TORCH_THREADS)
     parser.add_argument(
@@ -627,8 +1013,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--out", type=pathlib.Path, default=None,
         help="also write the timing results as JSON to this path")
     args = parser.parse_args(argv)
+    if args.device == "cuda" and args.rows is not None:
+        parser.error("--rows applies only to --device cpu: use --batches")
+    if args.device == "cpu" and args.batches is not None:
+        parser.error("--batches applies only to --device cuda: use --rows")
+    if args.device == "cuda":
+        args.batches = args.batches or list(DEFAULT_GPU_BATCHES)
+        args.reps = args.reps or DEFAULT_GPU_REPS
+    else:
+        args.rows = args.rows or DEFAULT_ROWS
+        args.reps = args.reps or DEFAULT_REPS
     if args.check_parity:
-        return check_parity(args.widths, args.torch_threads)
+        return check_parity(args.widths, args.torch_threads, args.device)
+    if args.device == "cuda":
+        return time_gpu_runtimes(args)
     return time_runtimes(args)
 
 
