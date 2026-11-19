@@ -20,6 +20,7 @@ from typing import Any
 import numpy as np
 import onnxruntime
 import pytest
+from onnxruntime.capi import build_and_package_info
 from spliceai_annotator.spliceai_backend_onnx import ONNX_POSITION_BUDGET
 
 from .test_spliceai_backends import a_one_hot_window, load_tensorflow_backend
@@ -264,6 +265,8 @@ def test_lock_takes_only_torch_from_the_pytorch_cpu_index() -> None:
 
 DEFAULT_LADDER = [1, 2, 4, 8, 16, 32, 64]
 FAKE_GPU = "Fake RTX 9999"
+FAKE_ORT_CUDA = "12.4"
+FAKE_ORT_CUDNN = "9.1.0"
 
 
 class FakeOutOfMemory(RuntimeError):
@@ -300,16 +303,22 @@ def _output_of(x: Any) -> np.ndarray:
 class FakeGpu:
     """The fake runtimes of one test, and what each one saw.
 
-    ``calls`` holds the rows of each call of each runtime, ``batch_sizes``
-    the ``batch_size`` of each TensorFlow ``predict()``, and ``providers``
-    the ``providers`` list of each ONNX session.
+    ``calls`` holds the rows of each call of each runtime, ``shapes`` the
+    rows and the width of each call, ``batch_sizes`` the ``batch_size`` of
+    each TensorFlow ``predict()``, ``providers`` the ``providers`` list of
+    each ONNX session and ``intra_op_threads`` its intra-op threads.
+    ``offset`` adds a value to each output of a runtime.
     """
 
     oom_from_rows: dict[str, int] = field(default_factory=dict)
+    offset: dict[str, float] = field(default_factory=dict)
     failing_check: str | None = None
     calls: dict[str, list[int]] = field(
         default_factory=lambda: {"torch": [], "onnx": [], "tensorflow": []})
+    shapes: dict[str, list[tuple[int, int]]] = field(
+        default_factory=lambda: {"torch": [], "onnx": [], "tensorflow": []})
     batch_sizes: list[int] = field(default_factory=list)
+    intra_op_threads: list[int] = field(default_factory=list)
     providers: list[list[str]] = field(default_factory=list)
     provider_options: list[list[dict[str, str]]] = field(
         default_factory=list)
@@ -318,6 +327,7 @@ class FakeGpu:
 
     def run(self, runtime: str, x: Any) -> np.ndarray:
         self.calls[runtime].append(x.shape[0])
+        self.shapes[runtime].append((x.shape[0], x.shape[1]))
         if x.shape[0] >= self.oom_from_rows.get(runtime, 10**9):
             raise {
                 "torch": FakeOutOfMemory("CUDA out of memory"),
@@ -326,7 +336,8 @@ class FakeGpu:
                     "Failed to allocate memory for requested buffer"),
                 "tensorflow": FakeResourceExhausted("OOM when allocating"),
             }[runtime]
-        return _output_of(x)
+        # A NumPy float64 scalar keeps the offset exact in the output.
+        return _output_of(x) + np.float64(self.offset.get(runtime, 0.0))
 
     def torch(self) -> SimpleNamespace:
         self.torch_module = SimpleNamespace(
@@ -367,6 +378,7 @@ class FakeGpu:
                 providers: list[str] | None = None,
                 provider_options: list[dict[str, str]] | None = None) -> Any:
         assert sess_options is not None
+        self.intra_op_threads.append(sess_options.intra_op_num_threads)
         self.providers.append(list(providers or []))
         self.provider_options.append(list(provider_options or []))
         fake = self
@@ -424,6 +436,13 @@ class FakeGpu:
         monkeypatch.setitem(sys.modules, "torch", self.torch())
         monkeypatch.setitem(sys.modules, "tensorflow", self.tensorflow())
         monkeypatch.setattr(onnxruntime, "InferenceSession", self.session)
+        # The CPU `onnxruntime` of the test venv has no CUDA versions.
+        monkeypatch.setattr(
+            build_and_package_info, "cuda_version", FAKE_ORT_CUDA,
+            raising=False)
+        monkeypatch.setattr(
+            build_and_package_info, "cudnn_version", FAKE_ORT_CUDNN,
+            raising=False)
         monkeypatch.setattr(mtb, "build_torch_port", lambda _path: self.port())
         monkeypatch.setattr(
             mtb, "run_in_child", lambda function, *args: function(*args))
@@ -639,13 +658,30 @@ def test_the_parity_reference_session_takes_only_the_cpu_provider(
     mtb = _load_script(monkeypatch)
     fake = FakeGpu()
     fake.install(monkeypatch, mtb)
-    monkeypatch.setattr(mtb, "torch_predict", lambda _port, x: _output_of(x))
 
     exit_code = mtb.main(
         ["--check-parity", "--device", device, "--widths", "10001"])
 
     assert exit_code == 0
     assert fake.providers == [["CPUExecutionProvider"]]
+
+
+def test_gpu_parity_runs_the_reference_on_one_thread_over_the_cpu_cases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SPLICEAI_ONNX_INTRA_OP_THREADS", "4")
+    fakes = {"cpu": FakeGpu(), "cuda": FakeGpu()}
+    for device, fake in fakes.items():
+        mtb = _load_script(monkeypatch)
+        fake.install(monkeypatch, mtb)
+        monkeypatch.setenv("SPLICEAI_ONNX_INTRA_OP_THREADS", "4")
+
+        assert mtb.main(["--check-parity", "--device", device]) == 0
+
+    assert fakes["cuda"].intra_op_threads == [1]
+    assert fakes["cuda"].shapes["onnx"] == fakes["cpu"].shapes["onnx"]
+    assert {width for _, width in fakes["cuda"].shapes["onnx"]} == {
+        10301, 20201}
 
 
 @pytest.mark.parametrize(
@@ -726,12 +762,7 @@ def test_gpu_parity_fails_only_above_the_gpu_tolerance(
 ) -> None:
     monkeypatch.setenv("SPLICEAI_ONNX_INTRA_OP_THREADS", "4")
     mtb = _load_script(monkeypatch)
-    FakeGpu().install(monkeypatch, mtb)
-    monkeypatch.setattr(
-        mtb, "onnx_predict", lambda _session, x: _output_of(x))
-    monkeypatch.setattr(
-        mtb, "torch_cuda_predict",
-        lambda _port, x: _output_of(x) + np.float64(offset))
+    FakeGpu(offset={"torch": offset}).install(monkeypatch, mtb)
 
     exit_code = mtb.main(["--check-parity", "--device", "cuda"])
 
@@ -766,7 +797,8 @@ def test_the_gpu_json_holds_the_gpu_the_versions_and_the_host(
         "torch": {"runtime_version": "2.9.0+cu126", "cuda_version": "12.6",
                   "cudnn_version": 91000, "device_name": FAKE_GPU},
         "onnx": {"runtime_version": onnxruntime.__version__,
-                 "cuda_version": "unknown", "cudnn_version": "unknown",
+                 "cuda_version": FAKE_ORT_CUDA,
+                 "cudnn_version": FAKE_ORT_CUDNN,
                  "device_name": FAKE_GPU},
         "tensorflow": {"runtime_version": "2.21.0", "cuda_version": "12.5.1",
                        "cudnn_version": "9", "device_name": FAKE_GPU},
