@@ -58,6 +58,7 @@ Timing (the default)
 Each runtime runs at each width in its own ``spawn`` process, because
 ``ru_maxrss`` is a high-water mark that never falls. A child imports its
 runtime, loads the model, and records the peak RSS after the model load.
+Then it builds the input batch, so the reading does not count the input.
 Then it runs one untimed warm-up over 7 rows at width 10301 or 4 rows at
 width 20201: one full chunk and one partial chunk. Then it times ``--reps``
 passes over a batch of ``--rows`` windows, 1 pass of 500 rows by default,
@@ -415,9 +416,11 @@ def measure_runtime(
     runtime: str, width: int, rows: int, reps: int, torch_threads: int,
 ) -> dict[str, Any]:
     """Load ``runtime`` in this process, then time ``reps`` passes."""
-    x = synthetic_input(rows, width)
     predict, facts = load_runtime(runtime, width, torch_threads)
+    # The input is built after the reading, so that the peak RSS after the
+    # model load does not count it.
     peak_after_load = peak_rss_mb()
+    x = synthetic_input(rows, width)
     # The warm-up covers one full chunk and one partial chunk, so that
     # every runtime has seen both batch shapes of the timed pass.
     rows_per_run = max(1, TORCH_POSITION_BUDGET // width)
@@ -598,6 +601,14 @@ def time_runtimes(args: argparse.Namespace) -> int:
     return 0
 
 
+def positive_int(text: str) -> int:
+    """An ``argparse`` type: an integer of at least 1."""
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"{text} is not a positive integer")
+    return value
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Check the parity of the port, or time the three runtimes."""
     parser = argparse.ArgumentParser(
@@ -605,8 +616,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
         "--widths", type=int, nargs="+", default=list(DEFAULT_WIDTHS))
-    parser.add_argument("--rows", type=int, default=DEFAULT_ROWS)
-    parser.add_argument("--reps", type=int, default=DEFAULT_REPS)
+    parser.add_argument("--rows", type=positive_int, default=DEFAULT_ROWS)
+    parser.add_argument("--reps", type=positive_int, default=DEFAULT_REPS)
     parser.add_argument(
         "--torch-threads", type=int, default=DEFAULT_TORCH_THREADS)
     parser.add_argument(

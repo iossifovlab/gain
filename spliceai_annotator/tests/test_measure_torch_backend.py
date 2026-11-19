@@ -117,6 +117,87 @@ def test_the_port_splits_a_batch_as_the_shipped_backends_do(
         tensorflow_backend.TENSORFLOW_POSITION_BUDGET)
 
 
+def test_the_port_runs_a_batch_in_chunks_of_the_position_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    torch = pytest.importorskip("torch")
+    mtb = _load_script(monkeypatch)
+    calls: list[int] = []
+
+    def port(chunk: Any) -> Any:
+        calls.append(chunk.shape[0])
+        return torch.zeros((chunk.shape[0], chunk.shape[1] - 10000, 3))
+
+    actual = mtb.torch_predict(port, np.zeros((8, 10301, 4), dtype=np.int8))
+
+    assert calls == [6, 2]
+    assert actual.shape == (8, 301, 3)
+
+
+def test_the_port_does_not_import_tensorflow() -> None:
+    pytest.importorskip("torch")
+    probe = (
+        "import importlib.util, sys\n"
+        "spec = importlib.util.spec_from_file_location('mtb', sys.argv[1])\n"
+        "mtb = importlib.util.module_from_spec(spec)\n"
+        "sys.modules['mtb'] = mtb\n"
+        "spec.loader.exec_module(mtb)\n"
+        "with mtb.model_path('.h5') as path:\n"
+        "    mtb.build_torch_port(str(path))\n"
+        "print(sorted(m for m in sys.modules if m.startswith('tensorflow')))\n"
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", probe, str(SCRIPT)],
+        capture_output=True, text=True, check=False, timeout=300)
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "[]"
+
+
+def test_parity_runs_onnx_on_one_thread_at_the_default_widths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    torch = pytest.importorskip("torch")
+    monkeypatch.delenv("SPLICEAI_ONNX_INTRA_OP_THREADS", raising=False)
+    mtb = _load_script(monkeypatch)
+    threads_at_session: list[str | None] = []
+    widths: list[int] = []
+
+    def onnx_session() -> None:
+        threads_at_session.append(
+            mtb.os.environ.get("SPLICEAI_ONNX_INTRA_OP_THREADS"))
+
+    def onnx_predict(_session: Any, x: np.ndarray) -> np.ndarray:
+        widths.append(x.shape[1])
+        return np.zeros((x.shape[0], x.shape[1] - 10000, 3), np.float32)
+
+    monkeypatch.setattr(mtb, "onnx_session", onnx_session)
+    monkeypatch.setattr(mtb, "onnx_predict", onnx_predict)
+    monkeypatch.setattr(mtb, "build_torch_port", lambda _path: None)
+    monkeypatch.setattr(
+        mtb, "torch_predict", lambda _port, x: onnx_predict(None, x))
+
+    exit_code = mtb.main([
+        "--check-parity", "--torch-threads", str(torch.get_num_threads())])
+
+    assert exit_code == 0
+    assert threads_at_session == ["1"]
+    assert set(widths) == {10301, 20201}
+
+
+@pytest.mark.parametrize("flag", ["--rows", "--reps"])
+def test_rows_and_reps_must_be_positive(
+    monkeypatch: pytest.MonkeyPatch, flag: str,
+) -> None:
+    mtb = _load_script(monkeypatch)
+
+    with pytest.raises(SystemExit) as error:
+        mtb.main([flag, "0"])
+
+    assert error.value.code == 2
+
+
 def test_chunks_split_a_batch_into_rows_within_the_budget(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
