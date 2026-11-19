@@ -483,20 +483,14 @@ def check_parity(
     if device == "cuda":
         disable_torch_tf32()
         port = port.to("cuda")
-        tolerance = GPU_PARITY_TOLERANCE
-
-        def predict(x: np.ndarray) -> np.ndarray:
-            return torch_cuda_predict(port, x)
+        tolerance, predict = GPU_PARITY_TOLERANCE, torch_cuda_predict
     else:
-        tolerance = PARITY_TOLERANCE
-
-        def predict(x: np.ndarray) -> np.ndarray:
-            return torch_predict(port, x)
+        tolerance, predict = PARITY_TOLERANCE, torch_predict
     largest = 0.0
     for width, rows in parity_cases(widths):
         x = synthetic_input(rows, width)
         expected = onnx_predict(session, x)
-        actual = predict(x)
+        actual = predict(port, x)
         if actual.shape != expected.shape:
             print(f"width {width}, rows {rows}: shape {actual.shape} "
                   f"against {expected.shape}")
@@ -594,6 +588,10 @@ def run_in_child(
         return pool.submit(function, *args).result()
 
 
+#: The facts of GPU 0 that `gpu_facts` reads from ``nvidia-smi``.
+GPU_FACTS = ("name", "memory", "driver_version")
+
+
 class DeviceCheckError(RuntimeError):
     """A runtime does not run on the GPU."""
 
@@ -616,21 +614,22 @@ def gpu_facts() -> dict[str, str]:
 
     ``nvidia-smi`` reports them. Without it, each value is ``unknown``.
     """
-    query = "name,memory.total,driver_version"
+    unknown = dict.fromkeys(GPU_FACTS, "unknown")
     nvidia_smi = shutil.which("nvidia-smi")
     if nvidia_smi is None:
-        return dict.fromkeys(("name", "memory", "driver_version"), "unknown")
+        return unknown
     try:
         completed = subprocess.run(
-            [nvidia_smi, f"--query-gpu={query}", "--format=csv,noheader"],
+            [nvidia_smi, "--query-gpu=name,memory.total,driver_version",
+             "--format=csv,noheader"],
             capture_output=True, text=True, check=True, timeout=60)
     except (OSError, subprocess.SubprocessError):
-        return dict.fromkeys(("name", "memory", "driver_version"), "unknown")
+        return unknown
     lines = completed.stdout.splitlines()
     values = [v.strip() for v in lines[0].split(",")] if lines else []
-    if len(values) != 3:
-        return dict.fromkeys(("name", "memory", "driver_version"), "unknown")
-    return dict(zip(("name", "memory", "driver_version"), values, strict=True))
+    if len(values) != len(GPU_FACTS):
+        return unknown
+    return dict(zip(GPU_FACTS, values, strict=True))
 
 
 def torch_cuda_predict(port: Any, x: np.ndarray) -> np.ndarray:
