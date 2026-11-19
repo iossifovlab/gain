@@ -159,7 +159,9 @@ def test_parity_runs_onnx_on_one_thread_at_the_default_widths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     torch = pytest.importorskip("torch")
-    monkeypatch.delenv("SPLICEAI_ONNX_INTRA_OP_THREADS", raising=False)
+    # Not `delenv`: on an unset variable it records nothing, and the "1"
+    # that `check_parity` sets then leaks into later ONNX sessions.
+    monkeypatch.setenv("SPLICEAI_ONNX_INTRA_OP_THREADS", "4")
     mtb = _load_script(monkeypatch)
     threads_at_session: list[str | None] = []
     widths: list[int] = []
