@@ -9,7 +9,7 @@ TensorFlow is not installed.
 """
 import gc
 import os
-from collections.abc import Iterator
+from collections.abc import Callable
 from importlib.resources import as_file, files
 from typing import cast
 
@@ -149,9 +149,27 @@ def spliceai_close() -> None:
     gc.collect()
 
 
-def _chunks(x: np.ndarray, rows: int) -> Iterator[np.ndarray]:
-    for start in range(0, len(x), rows):
-        yield x[start:start + rows]
+def predict_in_chunks(
+    x: np.ndarray,
+    run: Callable[[np.ndarray], np.ndarray],
+    budget: int,
+) -> np.ndarray:
+    """Apply ``run`` to the float32 chunks of ``x`` and join the results.
+
+    Each chunk holds at most ``budget // width`` rows, and at least one row,
+    so that no single ONNX Runtime run covers more than ``budget`` sequence
+    positions. Rows are independent, so the chunk size changes no result.
+
+    The float32 cast happens per chunk rather than once over the whole batch
+    so that the widened copy is bounded too: casting up front would hold a
+    4x-larger array (int8 -> float32) for the whole call.
+    """
+    rows_per_run = max(1, budget // x.shape[1])
+    predictions = []
+    for start in range(0, len(x), rows_per_run):
+        chunk = x[start:start + rows_per_run].astype(np.float32, copy=False)
+        predictions.append(run(chunk))
+    return cast(np.ndarray, np.concatenate(predictions, axis=0))
 
 
 def spliceai_predict(
@@ -168,21 +186,14 @@ def spliceai_predict(
     array.
 
     The batch axis is split into `ONNX_POSITION_BUDGET`-sized runs -- see
-    that constant for why and for the measurements. Rows are independent, so
-    chunking changes no result: a chunked pass is bitwise identical to an
-    unchunked one.
-
-    The float32 cast happens per chunk rather than once over the whole batch
-    so that the widened copy is bounded too; casting up front would hold a
-    4x-larger array (int8 -> float32) for the whole call, which is the
-    largest remaining term in the residual per-row cost.
+    that constant for why and for the measurements, and `predict_in_chunks`
+    for the per-chunk cast. Rows are independent, so chunking changes no
+    result: a chunked pass is bitwise identical to an unchunked one.
     """
-    rows_per_run = max(1, ONNX_POSITION_BUDGET // x.shape[1])
-    predictions = []
-    for chunk in _chunks(x, rows_per_run):
-        chunk = chunk.astype(np.float32, copy=False)
-        predictions.append(np.mean([
+    def run(chunk: np.ndarray) -> np.ndarray:
+        return cast(np.ndarray, np.mean([
             model.run(None, {model.get_inputs()[0].name: chunk})[0]
             for model in models
         ], axis=0))
-    return cast(np.ndarray, np.concatenate(predictions, axis=0))
+
+    return predict_in_chunks(x, run, ONNX_POSITION_BUDGET)

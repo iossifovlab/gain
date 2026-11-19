@@ -1068,7 +1068,7 @@ each and leaving them unannotated rather than failing the run:
 * an insertion whose alternative allele is longer than ``max_insertion_length``.
 
 
-The SpliceAI models can be executed by either of two runtimes. The runtime is a
+The SpliceAI models can be executed by one of three backends. The runtime is a
 process-wide choice, made with the ``SPLICEAI_BACKEND`` environment variable
 rather than in the pipeline configuration:
 
@@ -1088,14 +1088,21 @@ rather than in the pipeline configuration:
        or, in a conda environment, ``mamba install tensorflow``. Without it,
        selecting this backend fails with an ``ImportError`` that names those
        commands.
+   * - ``onnx-fused``
+     - ONNX Runtime, running ``spliceai_fused.onnx``: the five ``.onnx``
+       models and their mean in one graph and one session. Opt-in, with the
+       same session options and ``SPLICEAI_ONNX_INTRA_OP_THREADS`` knob as
+       ``onnx``. Does not need TensorFlow.
 
-Which of the two runtimes is faster depends on the hardware; measure on your own
+Which backend is faster depends on the hardware; measure on your own
 hardware rather than assuming. ONNX Runtime installs far smaller than TensorFlow
 and runs on Python 3.14, which TensorFlow does not support.
 
-Both runtimes produce the same annotations: they agree to about ``2.4e-7`` at
-every window the annotator builds, against delta scores reported at two decimal
-places. An unrecognized value is an error rather than a silent fallback.
+The ``onnx`` and ``tensorflow`` backends produce the same annotations: they agree
+to about ``2.4e-7`` at every window the annotator builds, against delta scores
+reported at two decimal places. The ``onnx-fused`` backend agrees with ``onnx``
+to within ``1e-5``, the tolerance its tests pin. An unrecognized value is an
+error rather than a silent fallback.
 
 ``SPLICEAI_BACKEND`` is read once, when the plugin is imported. Set it in the environment before
 starting the annotation; changing it afterwards from inside the same process has no effect and is

@@ -1,12 +1,14 @@
 # SpliceAI model artifacts
 
 Illumina SpliceAI, five-model ensemble (last retrained 2017; upstream
-archived). Two committed serializations of the **same** models live here:
+archived). Two committed serializations of the **same** models live here,
+plus one fused graph derived from the `.onnx` files:
 
 | Files | Format | Role |
 |-------|--------|------|
 | `spliceai1.h5` … `spliceai5.h5` | Keras HDF5 | **Source of truth.** The original weights. |
 | `spliceai1.onnx` … `spliceai5.onnx` | ONNX | Derived artifacts, converted from the `.h5` files. |
+| `spliceai_fused.onnx` | ONNX | Derived from the five `.onnx` files: the five members and their mean in one graph. |
 
 ## Source of truth
 
@@ -43,6 +45,30 @@ Each converted `.onnx` keeps a **dynamic length axis**
 with `onnx.checker` on the way out. Its numerical equivalence to the
 corresponding `.h5` (to at least two decimal places, at more than one input
 width) is pinned by `tests/test_onnx_equivalence.py`.
+
+## The fused graph
+
+`spliceai_fused.onnx` holds the five `.onnx` members side by side and an ONNX
+`Mean` node that averages their outputs, so ONNX Runtime runs the ensemble as
+one session. `SPLICEAI_BACKEND=onnx-fused` selects it. The backend is opt-in:
+the default stays the five-session `onnx` backend.
+
+It derives from the five `.onnx` files, not from the `.h5` files. Regenerate
+it whenever a member `.onnx` changes:
+
+```bash
+python spliceai_annotator/scripts/fuse_onnx_models.py
+```
+
+The script needs only `onnx` from the `dev` dependency group and never
+imports TensorFlow. Its output is reproducible byte for byte, and
+`tests/test_onnx_fused.py` regenerates the graph and compares it with the
+committed file. The graph keeps a dynamic length axis.
+
+The file is about 16 MB (16447964 bytes), close to the sum of the five
+members, and ships in the wheel with them.
+`scripts/measure_onnx_fused.py` compares its wall time and peak RSS with the
+five-session backend.
 
 ## License
 
