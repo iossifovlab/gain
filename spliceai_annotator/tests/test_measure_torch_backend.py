@@ -547,10 +547,11 @@ class FakeClock:
 def test_the_result_is_the_median_of_the_timed_calls_per_window(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path, runtime: str,
 ) -> None:
-    # The warm-up takes 1000 ms. The median of the timed calls is 30 ms,
-    # and their mean is 40 ms. Batch 2 makes 30 ms a 15 ms window.
+    # The warm-up takes 1000 ms. The median of the timed calls is 20 ms,
+    # and their mean is 21 ms. Batch 2 makes 20 ms a 10 ms window. A run
+    # that times the warm-up and drops the last call gets 30 ms instead.
     fake = FakeGpu()
-    clock = FakeClock(fake, [1000.0, 10.0, 20.0, 30.0, 40.0, 100.0])
+    clock = FakeClock(fake, [1000.0, 10.0, 20.0, 30.0, 40.0, 5.0])
     monkeypatch.setattr(fake, "run", clock.run)
     mtb = _load_script(monkeypatch)
     fake.install(monkeypatch, mtb)
@@ -562,7 +563,7 @@ def test_the_result_is_the_median_of_the_timed_calls_per_window(
               "--out", str(out)])
 
     results = {r["runtime"]: r for r in json.loads(out.read_text())["results"]}
-    assert results[runtime]["ms_per_window"] == {"2": 15.0}
+    assert results[runtime]["ms_per_window"] == {"2": 10.0}
 
 
 def test_the_gpu_timing_session_takes_only_the_cuda_provider(

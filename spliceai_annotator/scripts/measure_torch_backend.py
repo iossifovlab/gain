@@ -746,6 +746,8 @@ def measure_gpu_runtime(
     for batch in batches:
         try:
             times = time_calls(gpu.predict, x[:batch], reps)
+        # The catch is broad on purpose: ONNX Runtime has no OOM type, so
+        # is_oom() matches its error by message. Each other error re-raises.
         except Exception as error:  # pylint: disable=broad-exception-caught
             if not gpu.is_oom(error):
                 raise
