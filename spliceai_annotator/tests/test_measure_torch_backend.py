@@ -311,6 +311,10 @@ class FakeGpu:
         default_factory=lambda: {"torch": [], "onnx": [], "tensorflow": []})
     batch_sizes: list[int] = field(default_factory=list)
     providers: list[list[str]] = field(default_factory=list)
+    provider_options: list[list[dict[str, str]]] = field(
+        default_factory=list)
+    tensorflow_tf32: list[bool] = field(default_factory=list)
+    torch_module: Any = None
 
     def run(self, runtime: str, x: Any) -> np.ndarray:
         self.calls[runtime].append(x.shape[0])
@@ -325,7 +329,7 @@ class FakeGpu:
         return _output_of(x)
 
     def torch(self) -> SimpleNamespace:
-        return SimpleNamespace(
+        self.torch_module = SimpleNamespace(
             __version__="2.9.0+cu126",
             cuda=SimpleNamespace(
                 is_available=lambda: self.failing_check != "cuda_available",
@@ -333,12 +337,15 @@ class FakeGpu:
                 OutOfMemoryError=FakeOutOfMemory),
             version=SimpleNamespace(cuda="12.6"),
             backends=SimpleNamespace(
-                cudnn=SimpleNamespace(version=lambda: 91000)),
+                cudnn=SimpleNamespace(version=lambda: 91000, allow_tf32=True),
+                cuda=SimpleNamespace(
+                    matmul=SimpleNamespace(allow_tf32=True))),
             inference_mode=contextlib.nullcontext,
             from_numpy=FakeTensor,
             set_num_threads=lambda _threads: None,
             get_num_threads=lambda: 4,
         )
+        return self.torch_module
 
     def port(self) -> Any:
         fake = self
@@ -357,9 +364,11 @@ class FakeGpu:
         return FakePort()
 
     def session(self, _path: str, sess_options: Any = None,
-                providers: list[str] | None = None) -> Any:
+                providers: list[str] | None = None,
+                provider_options: list[dict[str, str]] | None = None) -> Any:
         assert sess_options is not None
         self.providers.append(list(providers or []))
+        self.provider_options.append(list(provider_options or []))
         fake = self
 
         class FakeSession:
@@ -395,6 +404,8 @@ class FakeGpu:
             config=SimpleNamespace(
                 list_physical_devices=lambda _kind: gpus,
                 experimental=SimpleNamespace(
+                    enable_tensor_float_32_execution=(
+                        lambda enabled: self.tensorflow_tf32.append(enabled)),
                     get_device_details=lambda _device: {
                         "device_name": FAKE_GPU})),
             sysconfig=SimpleNamespace(get_build_info=lambda: {
@@ -588,6 +599,36 @@ def test_the_cpu_timing_session_takes_only_the_cpu_provider(
 
     assert fake.providers == [["CPUExecutionProvider"]]
     assert fake.calls["onnx"] == [1]
+
+
+def test_every_gpu_runtime_turns_off_tf32(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path,
+) -> None:
+    fake = FakeGpu()
+
+    _gpu_run(monkeypatch, tmp_path, fake, "--batches", "1")
+
+    backends = fake.torch_module.backends
+    assert backends.cudnn.allow_tf32 is False
+    assert backends.cuda.matmul.allow_tf32 is False
+    assert fake.provider_options == [[{"use_tf32": "0"}]]
+    assert fake.tensorflow_tf32 == [False]
+
+
+def test_gpu_parity_turns_off_tf32_in_the_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SPLICEAI_ONNX_INTRA_OP_THREADS", "4")
+    mtb = _load_script(monkeypatch)
+    fake = FakeGpu()
+    fake.install(monkeypatch, mtb)
+
+    mtb.main(["--check-parity", "--device", "cuda", "--widths", "10001"])
+
+    backends = fake.torch_module.backends
+    assert backends.cudnn.allow_tf32 is False
+    assert backends.cuda.matmul.allow_tf32 is False
+    assert fake.provider_options == [[{}]]
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda"])

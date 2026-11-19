@@ -81,7 +81,13 @@ so run the script on a quiet host.
 The GPU mode (``--device cuda``)
 -------------------------------
 The same three runtimes, on the GPU, in float32 only: a lower precision
-changes the scores.
+changes the scores. The script turns off TF32 in each runtime, because an
+Ampere or newer GPU uses TF32 for float32 convolutions by default:
+``torch.backends.cudnn.allow_tf32`` and
+``torch.backends.cuda.matmul.allow_tf32`` in PyTorch, the ``use_tf32``
+option of ``CUDAExecutionProvider`` in ONNX Runtime and
+``tf.config.experimental.enable_tensor_float_32_execution(False)`` in
+TensorFlow.
 
 * PyTorch: the port moved to the CUDA device, in
   ``torch.inference_mode()``.
@@ -215,6 +221,8 @@ OOM = "oom"
 #: The ``providers`` list of each ONNX session of the script.
 CPU_PROVIDERS = ("CPUExecutionProvider",)
 CUDA_PROVIDERS = ("CUDAExecutionProvider",)
+#: The options of the CUDA provider: no TF32, so the GPU runs in float32.
+CUDA_PROVIDER_OPTIONS = {"use_tf32": "0"}
 #: The rows of the batched parity case.
 PARITY_BATCH = 8
 PARITY_TOLERANCE = 1e-5
@@ -427,10 +435,12 @@ def onnx_session(providers: Sequence[str] = CPU_PROVIDERS) -> Any:
         spliceai_session_options,
     )
 
+    options = [CUDA_PROVIDER_OPTIONS if name == CUDA_PROVIDERS[0] else {}
+               for name in providers]
     with model_path(".onnx") as path:
         return ort.InferenceSession(
             str(path), sess_options=spliceai_session_options(),
-            providers=list(providers))
+            providers=list(providers), provider_options=options)
 
 
 def onnx_predict(session: Any, x: np.ndarray) -> np.ndarray:
@@ -471,6 +481,7 @@ def check_parity(
     with model_path(".h5") as path:
         port = build_torch_port(str(path))
     if device == "cuda":
+        disable_torch_tf32()
         port = port.to("cuda")
         tolerance = GPU_PARITY_TOLERANCE
 
@@ -637,6 +648,19 @@ def torch_cuda_forward(port: Any, x: np.ndarray) -> Any:
             x.astype(np.float32, copy=False)).to("cuda"))
 
 
+def disable_torch_tf32() -> None:
+    """Turn off TF32 in cuDNN and in matmul, so the port runs in float32.
+
+    PyTorch allows TF32 in cuDNN convolutions by default. On an Ampere or
+    newer GPU, TF32 changes the scores.
+    """
+    # pylint: disable=import-outside-toplevel
+    import torch
+
+    torch.backends.cudnn.allow_tf32 = False
+    torch.backends.cuda.matmul.allow_tf32 = False
+
+
 def load_torch_gpu() -> GpuRuntime:
     """The port on the CUDA device, after the device check."""
     # pylint: disable=import-outside-toplevel
@@ -644,6 +668,7 @@ def load_torch_gpu() -> GpuRuntime:
 
     if not torch.cuda.is_available():
         raise DeviceCheckError("torch.cuda.is_available() is false")
+    disable_torch_tf32()
     with model_path(".h5") as path:
         port = build_torch_port(str(path)).to("cuda")
     probe = torch_cuda_forward(port, synthetic_input(1, 10001))
@@ -698,6 +723,9 @@ def load_tensorflow_gpu() -> GpuRuntime:
     if not gpus:
         raise DeviceCheckError(
             'tf.config.list_physical_devices("GPU") is empty')
+    # TensorFlow allows TF32 by default. On an Ampere or newer GPU, TF32
+    # changes the scores.
+    tf.config.experimental.enable_tensor_float_32_execution(enabled=False)
     with model_path(".h5") as path:
         model = tf.keras.models.load_model(str(path))
     build = tf.sysconfig.get_build_info()
