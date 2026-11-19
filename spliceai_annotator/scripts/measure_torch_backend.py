@@ -109,9 +109,10 @@ script exits 1. A CPU number labelled GPU looks valid, so the script never
 gives one.
 
 The batch ladder. The widths stay 10301 and 20201. ``--batches`` gives the
-batch sizes, 1, 2, 4, 8, 16, 32 and 64 by default. On the GPU, the faster
-runtime changes with the batch size. ``--rows`` applies only to the CPU, and
-``--batches`` applies only to the GPU.
+batch sizes, 1, 2, 4, 8, 16, 32 and 64 by default. The script sorts the
+ladder and drops repeated sizes. On the GPU, the faster runtime changes with
+the batch size. ``--rows`` applies only to the CPU, and ``--batches`` applies
+only to the GPU.
 
 The GPU path does no chunking: each call gets the whole batch. The CPU
 budget of 65536 positions caps a call at 6 windows, and that flattens the
@@ -614,7 +615,10 @@ def gpu_facts() -> dict[str, str]:
             capture_output=True, text=True, check=True, timeout=60)
     except (OSError, subprocess.SubprocessError):
         return dict.fromkeys(("name", "memory", "driver_version"), "unknown")
-    values = [v.strip() for v in completed.stdout.splitlines()[0].split(",")]
+    lines = completed.stdout.splitlines()
+    values = [v.strip() for v in lines[0].split(",")] if lines else []
+    if len(values) != 3:
+        return dict.fromkeys(("name", "memory", "driver_version"), "unknown")
     return dict(zip(("name", "memory", "driver_version"), values, strict=True))
 
 
@@ -1018,7 +1022,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.device == "cpu" and args.batches is not None:
         parser.error("--batches applies only to --device cuda: use --rows")
     if args.device == "cuda":
-        args.batches = args.batches or list(DEFAULT_GPU_BATCHES)
+        # An `oom` ends the ladder, so the ladder runs from small to large.
+        args.batches = sorted(set(args.batches or DEFAULT_GPU_BATCHES))
         args.reps = args.reps or DEFAULT_GPU_REPS
     else:
         args.rows = args.rows or DEFAULT_ROWS

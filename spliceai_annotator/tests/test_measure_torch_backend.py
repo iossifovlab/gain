@@ -462,6 +462,20 @@ def test_batches_takes_a_ladder_of_batch_sizes(
         ("3", "5")}
 
 
+def test_the_ladder_runs_sorted_and_without_repeats(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path,
+) -> None:
+    fake = FakeGpu(oom_from_rows={"onnx": 64})
+
+    _, payload = _gpu_run(
+        monkeypatch, tmp_path, fake, "--batches", "64", "1", "4", "4")
+
+    assert payload["batches"] == [1, 4, 64]
+    ladder = {r["runtime"]: r["ms_per_window"] for r in payload["results"]}
+    assert list(ladder["onnx"]) == ["1", "4", "64"]
+    assert ladder["onnx"]["64"] == "oom"
+
+
 @pytest.mark.parametrize(("flags", "message"), [
     (["--device", "cuda", "--rows", "8"], "--rows applies only to"),
     (["--device", "cpu", "--batches", "8"], "--batches applies only to"),
@@ -504,6 +518,51 @@ def test_each_batch_size_gets_one_warm_up_and_five_timed_calls(
     assert fake.calls["tensorflow"] == [2] * 6 + [3] * 6
     assert fake.calls["torch"] == [1] + [2] * 6 + [3] * 6
     assert payload["reps"] == 5
+
+
+class FakeClock:
+    """A `time.perf_counter` that only the fake runtimes advance.
+
+    The n-th call of a runtime over ``rows`` windows takes
+    ``call_ms[n]`` ms.
+    """
+
+    def __init__(self, fake: FakeGpu, call_ms: list[float]) -> None:
+        self.now_ms = 0.0
+        self.call_ms = call_ms
+        self.fake = fake
+        self.fake_run = fake.run
+
+    def run(self, runtime: str, x: Any) -> np.ndarray:
+        output = self.fake_run(runtime, x)
+        nth = self.fake.calls[runtime].count(x.shape[0]) - 1
+        self.now_ms += self.call_ms[nth]
+        return output
+
+    def perf_counter(self) -> float:
+        return self.now_ms / 1000.0
+
+
+@pytest.mark.parametrize("runtime", ["torch", "onnx", "tensorflow"])
+def test_the_result_is_the_median_of_the_timed_calls_per_window(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path, runtime: str,
+) -> None:
+    # The warm-up takes 1000 ms. The median of the timed calls is 30 ms,
+    # and their mean is 40 ms. Batch 2 makes 30 ms a 15 ms window.
+    fake = FakeGpu()
+    clock = FakeClock(fake, [1000.0, 10.0, 20.0, 30.0, 40.0, 100.0])
+    monkeypatch.setattr(fake, "run", clock.run)
+    mtb = _load_script(monkeypatch)
+    fake.install(monkeypatch, mtb)
+    monkeypatch.setattr(
+        mtb, "time", SimpleNamespace(perf_counter=clock.perf_counter))
+    out = tmp_path / "gpu.json"
+
+    mtb.main(["--device", "cuda", "--widths", "10301", "--batches", "2",
+              "--out", str(out)])
+
+    results = {r["runtime"]: r for r in json.loads(out.read_text())["results"]}
+    assert results[runtime]["ms_per_window"] == {"2": 15.0}
 
 
 def test_the_gpu_timing_session_takes_only_the_cuda_provider(
@@ -591,16 +650,30 @@ def test_out_of_gpu_memory_gives_oom_and_ends_the_ladder_at_that_width(
     assert 16 not in fake.calls[runtime]
 
 
+@pytest.mark.parametrize(("runtime", "error"), [
+    ("torch", RuntimeError("cuDNN error: CUDNN_STATUS_EXECUTION_FAILED")),
+    ("onnx", RuntimeError(
+        "[ONNXRuntimeError] : 6 : RUNTIME_EXCEPTION : CUDNN failure 5000")),
+    ("tensorflow", RuntimeError("Failed to call ThenRnnForward")),
+])
 def test_an_error_other_than_out_of_memory_stops_the_run(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path,
+    runtime: str, error: RuntimeError,
 ) -> None:
+    # Each error is a RuntimeError without the out-of-memory marker of its
+    # runtime, as the real errors of a broken GPU call are.
     fake = FakeGpu()
-    monkeypatch.setattr(
-        fake, "run",
-        lambda _runtime, _x: (_ for _ in ()).throw(ValueError("bad shape")))
+    fake_run = fake.run
 
-    with pytest.raises(ValueError, match="bad shape"):
-        _gpu_run(monkeypatch, tmp_path, fake, "--batches", "1")
+    def run(called: str, x: Any) -> np.ndarray:
+        if called == runtime and x.shape[0] == 2:
+            raise error
+        return fake_run(called, x)
+
+    monkeypatch.setattr(fake, "run", run)
+
+    with pytest.raises(RuntimeError, match=re.escape(str(error))):
+        _gpu_run(monkeypatch, tmp_path, fake, "--batches", "2")
 
 
 @pytest.mark.parametrize(("offset", "expected_exit"), [
@@ -663,6 +736,35 @@ def test_the_gpu_json_holds_the_gpu_the_versions_and_the_host(
     assert results["tensorflow"] == {"1": pytest.approx(
         results["tensorflow"]["1"]), "2": "oom"}
     assert all(isinstance(results[r]["2"], float) for r in ("torch", "onnx"))
+
+
+@pytest.mark.parametrize(("stdout", "expected"), [
+    ("NVIDIA GeForce RTX 2080 Ti, 11264 MiB, 580.95\n",
+     {"name": "NVIDIA GeForce RTX 2080 Ti", "memory": "11264 MiB",
+      "driver_version": "580.95"}),
+    ("", dict.fromkeys(("name", "memory", "driver_version"), "unknown")),
+])
+def test_gpu_facts_reads_the_name_the_memory_and_the_driver_of_nvidia_smi(
+    monkeypatch: pytest.MonkeyPatch, stdout: str, expected: dict[str, str],
+) -> None:
+    mtb = _load_script(monkeypatch)
+    monkeypatch.setattr(
+        mtb.shutil, "which", lambda _name: "/usr/bin/nvidia-smi")
+    monkeypatch.setattr(
+        mtb.subprocess, "run",
+        lambda *_args, **_kwargs: SimpleNamespace(stdout=stdout))
+
+    assert mtb.gpu_facts() == expected
+
+
+def test_gpu_facts_is_unknown_without_nvidia_smi(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mtb = _load_script(monkeypatch)
+    monkeypatch.setattr(mtb.shutil, "which", lambda _name: None)
+
+    assert mtb.gpu_facts() == dict.fromkeys(
+        ("name", "memory", "driver_version"), "unknown")
 
 
 def test_the_default_device_times_on_cpu_as_before(
