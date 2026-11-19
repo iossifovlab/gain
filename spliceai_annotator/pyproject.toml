@@ -75,6 +75,24 @@ dev = [
     "onnx==1.22.0",
     "tf2onnx==1.17.0",
 ]
+# The PyTorch spike of #2425: `scripts/measure_torch_backend.py` ports one
+# model to torch.nn and times it against ONNX Runtime and TensorFlow. Not a
+# runtime dependency and not synced by CI. Install it with
+# `uv sync --package gain-spliceai-annotator --group dev --group torch-spike`.
+torch-spike = [
+    "torch",
+]
+
+# A plain PyPI `torch` on Linux pulls in the CUDA stack as `nvidia-*`
+# packages. The CPU index holds builds without them. The index is explicit,
+# so `torch` is the only package that uv takes from it.
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.hatch.version]
 source = "vcs"
