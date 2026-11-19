@@ -69,7 +69,8 @@ read once after the model load and once after the timed passes.
 
 The output also holds the import time of ``torch`` (the first ``import
 torch`` in the PyTorch child), the installed size of the packages that the
-``torch-spike`` group needs (the files that ``importlib.metadata`` lists for
+``torch-spike`` group adds to the runtime dependencies, the ``tensorflow``
+extra and the ``dev`` group (the files that ``importlib.metadata`` lists for
 each package), the thread counts, the host name, the CPU model and the load
 average before and after the run. A busy host measures its other work too,
 so run the script on a quiet host.
@@ -360,7 +361,9 @@ def check_parity(widths: Sequence[int], torch_threads: int) -> int:
             return 1
         difference = float(np.max(np.abs(actual - expected)))
         print(f"width {width}, rows {rows}: {difference:.3e}")
-        largest = max(largest, difference)
+        # `np.maximum` keeps a NaN. The builtin `max` drops it, and a NaN
+        # port would then pass the tolerance check.
+        largest = float(np.maximum(largest, difference))
     print(f"largest absolute difference: {largest:.3e} "
           f"(tolerance {PARITY_TOLERANCE:.0e})")
     return 0 if largest <= PARITY_TOLERANCE else 1
@@ -449,12 +452,24 @@ def run_in_child(
         ).result()
 
 
-def group_requirements(group: str) -> list[Requirement]:
-    """The requirements of a dependency group of this plugin."""
+def pyproject_requirements(group: str) -> list[Requirement]:
+    """The requirements of the dependency group ``group`` of this plugin.
+
+    The name ``baseline`` gives what the timing run installs without the
+    ``torch-spike`` group: the runtime dependencies, the ``tensorflow``
+    extra and the ``dev`` group.
+    """
     pyproject = pathlib.Path(__file__).parent.parent / "pyproject.toml"
     with pyproject.open("rb") as stream:
-        groups = tomllib.load(stream)["dependency-groups"]
-    return [Requirement(spec) for spec in groups[group]]
+        config = tomllib.load(stream)
+    if group == "baseline":
+        specs = (
+            config["project"]["dependencies"]
+            + config["project"]["optional-dependencies"]["tensorflow"]
+            + config["dependency-groups"]["dev"])
+    else:
+        specs = config["dependency-groups"][group]
+    return [Requirement(spec) for spec in specs]
 
 
 def installed_mb(distribution: importlib.metadata.Distribution) -> float:
@@ -467,27 +482,47 @@ def installed_mb(distribution: importlib.metadata.Distribution) -> float:
     return total / 2**20
 
 
-def installed_size(group: str) -> dict[str, float]:
-    """The installed MB of each package that ``group`` needs, recursively.
+def installed_closure(
+    requirements: list[Requirement],
+) -> dict[str, importlib.metadata.Distribution]:
+    """The installed packages that ``requirements`` reach, recursively.
 
-    Walks the requirements of the group and of every installed package that
-    it reaches, with the markers evaluated for this interpreter.
+    The markers are evaluated for this interpreter. A requirement that is
+    not installed ends the walk on that branch.
     """
-    sizes: dict[str, float] = {}
-    pending = group_requirements(group)
+    reached: dict[str, importlib.metadata.Distribution] = {}
+    pending = list(requirements)
     while pending:
         requirement = pending.pop()
         if requirement.marker is not None and \
                 not requirement.marker.evaluate({"extra": ""}):
             continue
         name = requirement.name.lower().replace("_", "-")
-        if name in sizes:
+        if name in reached:
             continue
-        distribution = importlib.metadata.distribution(name)
-        sizes[name] = round(installed_mb(distribution), 1)
+        try:
+            distribution = importlib.metadata.distribution(name)
+        except importlib.metadata.PackageNotFoundError:
+            continue
+        reached[name] = distribution
         pending.extend(
             Requirement(spec) for spec in distribution.requires or [])
-    return sizes
+    return reached
+
+
+def installed_size(group: str) -> dict[str, float]:
+    """The installed MB of each package that ``group`` adds.
+
+    A package that the runtime dependencies, the ``tensorflow`` extra or the
+    ``dev`` group already reach does not count: the group does not add it.
+    """
+    present = installed_closure(pyproject_requirements("baseline"))
+    added = installed_closure(pyproject_requirements(group))
+    return {
+        name: round(installed_mb(distribution), 1)
+        for name, distribution in sorted(added.items())
+        if name not in present
+    }
 
 
 def cpu_model() -> str:
