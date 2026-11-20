@@ -1,9 +1,12 @@
 # SpliceAI differential-test corpus
 
 A frozen hg38 / GENCODE fixture corpus that pins **all 16** `spliceai_annotator`
-attributes from today's TensorFlow output, so the upcoming ONNX migration
-(iossifovlab/gain#297, #299) has real ground truth to be checked against.
-See iossifovlab/gain#320.
+attributes against the committed TensorFlow `baseline.json.gz`. The
+differential test checks the backend that `SPLICEAI_BACKEND` selects, and the
+**gain-spliceai-integration** job runs it once per backend (`tensorflow`,
+`onnx` and `onnx-fused`), so each backend is held to the same TensorFlow ground
+truth. ONNX Runtime is the default backend since ADR 0042
+(iossifovlab/gain#297, #299). See iossifovlab/gain#320.
 
 ## Layout
 
