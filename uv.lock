@@ -1682,6 +1682,7 @@ dev = [
     { name = "pytest-xdist" },
     { name = "ruff" },
     { name = "tf2onnx" },
+    { name = "types-pyyaml" },
 ]
 torch-spike = [
     { name = "torch", version = "2.15.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "platform_python_implementation != 'PyPy' and sys_platform == 'darwin'" },
@@ -1709,6 +1710,7 @@ dev = [
     { name = "pytest-xdist" },
     { name = "ruff", specifier = "==0.16.5" },
     { name = "tf2onnx", specifier = "==1.17.0" },
+    { name = "types-pyyaml" },
 ]
 torch-spike = [{ name = "torch", index = "https://download.pytorch.org/whl/cpu" }]
 

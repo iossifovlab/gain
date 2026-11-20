@@ -24,6 +24,7 @@ dependencies:
   - pytest-xdist
   - ruff==0.16.5
   - tf2onnx==1.17.0
+  - types-pyyaml
   # pip-only: PIP_ONLY in scripts/conda_env.py
   - pip
   - pip:

@@ -55,7 +55,8 @@ def onnx_models(onnx_backend: ModuleType) -> Iterator[list]:
 def _load_single_thread_models(backend: ModuleType) -> list:
     with pytest.MonkeyPatch.context() as patch:
         patch.setenv(ONNX_INTRA_OP_THREADS_ENV, "1")
-        return backend.spliceai_load_models()
+        models: list = backend.spliceai_load_models()
+        return models
 
 
 @pytest.fixture(scope="module", params=ONNX_BACKENDS)
@@ -631,7 +632,7 @@ def test_shipped_budget_keeps_every_buildable_window_on_the_plateau(
     each divisor boundary. The worst case is a width just under one, which is
     not a width anyone would think to parametrize.
     """
-    budget = tensorflow_backend.TENSORFLOW_POSITION_BUDGET
+    budget: int = tensorflow_backend.TENSORFLOW_POSITION_BUDGET
 
     def positions(width: int) -> int:
         return max(1, budget // width) * width

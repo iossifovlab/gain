@@ -59,6 +59,7 @@ dev = [
     "pytest-mock",
     "pytest-xdist",
     "ruff==0.16.5",
+    "types-pyyaml",
     # Build-time-only tooling for the offline .h5 -> .onnx conversion
     # (scripts/convert_models_to_onnx.py) and the equivalence test
     # (tests/test_onnx_equivalence.py). `onnx` provides onnx.checker;
