@@ -155,8 +155,9 @@ nothing else on the GPU, and a load average below 2.
 The throwaway CUDA venv. The CUDA builds stay out of ``uv.lock`` and out of
 the pinned venv: they add several GB of ``nvidia-*`` packages, and one lock
 cannot hold the CPU and the CUDA builds of ``torch``. ``onnxruntime-gpu``
-needs the CUDA 12 wheels of its ``cuda`` and ``cudnn`` extras. A system
-CUDA 13 does not satisfy it. TensorFlow finds no GPU until the
+needs the CUDA wheels of its ``cuda`` and ``cudnn`` extras, with the CUDA
+major version of its build: CUDA 12 for 1.27, CUDA 13 for 1.32. In July, the
+system CUDA 13.3 did not satisfy 1.27. TensorFlow finds no GPU until the
 ``nvidia/*/lib`` directories of the venv are on ``LD_LIBRARY_PATH``. From
 the root of the gain checkout::
 
