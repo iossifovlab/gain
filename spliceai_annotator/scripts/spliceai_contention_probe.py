@@ -381,7 +381,7 @@ def parse_args(argv: Sequence[str] | None = None) -> ProbeConfig:
         description="Does a SpliceAI model runtime answer differently under "
                     "load? (iossifovlab/gain#1275)")
     parser.add_argument(
-        "--backend", choices=REAL_BACKENDS, default="tensorflow",
+        "--backend", choices=REAL_BACKENDS, default="onnx",
         help="model runtime to probe (default: the shipped one)")
     parser.add_argument(
         "--self-test", action="store_true",
