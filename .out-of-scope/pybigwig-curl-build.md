@@ -46,7 +46,7 @@ open when `pyBigWig.remote == 0` with an `OSError` that names the cause
 and both remedies — give the repository a `cache_dir`, or install a
 curl-enabled pyBigWig such as the bioconda build.
 `test_bigwig_remote_build_guard.py` pins that under both builds, and
-`docs/source/binning.rst` tells a user reading a remote bigWig directly
+`docs/source/cli/binning_tool.rst` tells a user reading a remote bigWig directly
 which of the two to pick. That is the durable record this issue asked
 for; a compiled wheel would only have hidden the split again.
 
