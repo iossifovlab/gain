@@ -157,6 +157,19 @@ annotator bins as one bin. Its name is
 track attribute.
 _Avoid_: grouped attribute, per-group column
 
+**SpliceAI backend**:
+One of the shipped ways that the SpliceAI annotator runs its five-model
+ensemble, chosen per process by `SPLICEAI_BACKEND`: `tensorflow`, `onnx` or
+`onnx-fused`. A backend is a part of the annotator. An **inference runtime**
+is not a backend.
+_Avoid_: runtime, engine
+
+**Inference runtime**:
+The library that runs a neural network model: TensorFlow, ONNX Runtime or
+PyTorch. A runtime measurement runs one model through one runtime outside the
+annotator. PyTorch is a runtime that no SpliceAI backend uses.
+_Avoid_: backend
+
 ### Searching
 
 **Search term**:
@@ -619,3 +632,10 @@ _Avoid_: named dask cluster, cluster profile
   the first is *annotation*, and the second is an **axis table**. The `ann_data`
   implementation predates this entry and still says "annotation table" in
   places.
+
+- **"The three SpliceAI backends" means two different sets**, resolved: the
+  three **SpliceAI backends** (`tensorflow`, `onnx`, `onnx-fused`, each a
+  five-model ensemble inside the annotator) versus the three **inference
+  runtimes** (TensorFlow, ONNX Runtime, PyTorch, each running one model alone).
+  A GPU comparison of PyTorch, TensorFlow and ONNX Runtime compares runtimes
+  (gain#2471).
