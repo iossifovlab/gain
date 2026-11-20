@@ -214,11 +214,18 @@ def test_default_process_sweep_does_not_repeat_an_exact_power_of_two() -> None:
     assert probe.default_process_sweep(logical_cpus=8) == (1, 2, 4, 8)
 
 
-def test_parse_args_defaults_to_tensorflow_and_the_annotator_window() -> None:
+def test_parse_args_defaults_to_onnx_and_the_annotator_window() -> None:
+    """ONNX Runtime is the annotator's default backend (ADR 0042)."""
     config = probe.parse_args([])
 
-    assert config.backend == "tensorflow"
+    assert config.backend == "onnx"
     assert config.width == probe.DEFAULT_WIDTH
+
+
+def test_parse_args_still_selects_tensorflow_on_request() -> None:
+    config = probe.parse_args(["--backend", "tensorflow"])
+
+    assert config.backend == "tensorflow"
 
 
 def test_parse_args_reads_an_explicit_process_list() -> None:

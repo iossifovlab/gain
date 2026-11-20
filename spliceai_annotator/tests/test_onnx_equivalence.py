@@ -25,10 +25,12 @@ The suite therefore feeds a real splice-site window as well --
 
 ``onnx`` (the checker) is build-time-only tooling and lives in the ``dev``
 dependency group, so these tests skip cleanly wherever it is absent (e.g. the
-runtime-only CI image). ``onnxruntime`` is no longer dev-only -- issue #297
-promoted it to a runtime dependency when the ONNX backend shipped. Only
-``onnx`` is imported at module scope: ``tensorflow`` and ``onnxruntime`` are
-imported by the fixtures that need them, so
+runtime-only CI image). A missing ``tensorflow`` is different: the ``.h5``
+checks fail unless ``SPLICEAI_EXPECT_NO_TENSORFLOW=1`` declares it expected
+(``tests/tensorflow_gate.py``). ``onnxruntime`` is no longer dev-only --
+issue #297 promoted it to a runtime dependency when the ONNX backend
+shipped. Only ``onnx`` is imported at module scope: ``tensorflow`` and
+``onnxruntime`` are imported by the fixtures that need them, so
 ``test_onnx_passes_checker_with_dynamic_length_axis`` still validates the
 committed artifacts in a lean environment that has neither.
 """
@@ -37,6 +39,8 @@ from typing import Any
 
 import numpy as np
 import pytest
+
+from tests.tensorflow_gate import import_tensorflow
 
 onnx = pytest.importorskip("onnx")
 
@@ -166,8 +170,13 @@ def shared_inputs() -> dict[str, np.ndarray]:
 
 @pytest.fixture(scope="module")
 def keras() -> Any:
-    """Keras, needed only to read the source-of-truth ``.h5`` files."""
-    return pytest.importorskip("tensorflow").keras
+    """Keras, needed only to read the source-of-truth ``.h5`` files.
+
+    Not `importorskip`: these checks are the guard that the ``.onnx`` files
+    reproduce the ``.h5`` files, so a TensorFlow lost by accident must fail
+    them. `import_tensorflow` skips only where the environment declares it.
+    """
+    return import_tensorflow().keras
 
 
 @pytest.fixture(scope="module")

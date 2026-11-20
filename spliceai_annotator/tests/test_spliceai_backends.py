@@ -11,6 +11,7 @@ import pytest
 from spliceai_annotator.utils import one_hot_encode
 
 from spliceai_annotator import spliceai_annotator_impl as impl
+from tests.tensorflow_gate import require_tensorflow
 
 # The narrowest window the CNN accepts: it crops 10000 positions, so
 # `distance=0` gives 10000 + 2*0 + 1 in and a single position out.
@@ -20,10 +21,6 @@ MIN_WIDTH = 10001
 # ceiling -- `max_insertion_length` is configurable up to 2000, which would
 # make it 22001 -- but it is the widest window a default deployment builds.
 MAX_WIDTH = 20201
-
-# Set only in the CI cell that builds without the `tensorflow` extra (the
-# Python 3.14 matrix cell, #299) and in its local twin, `.venv-notf`.
-EXPECT_NO_TENSORFLOW_ENV = "SPLICEAI_EXPECT_NO_TENSORFLOW"
 
 # Spelled out rather than read off the backend module: the tests pin the name
 # an operator types.
@@ -38,17 +35,10 @@ def load_tensorflow_backend() -> ModuleType:
     """Load the TensorFlow backend; skip only where its absence is expected.
 
     Not `importorskip`: the cross-backend assertions in this file are the
-    guard on the ONNX backend, and an environment that lost TensorFlow by
-    accident must fail loudly rather than turn them into silent skips. Only
-    an environment that declares it was built without the extra skips, and
-    even then only if the import really fails.
+    guard on the ONNX backend. `require_tensorflow` holds the rule.
     """
-    if os.environ.get(EXPECT_NO_TENSORFLOW_ENV) != "1":
-        return impl.load_spliceai_backend("tensorflow")
-    try:
-        return impl.load_spliceai_backend("tensorflow")
-    except ImportError as error:
-        pytest.skip(f"{EXPECT_NO_TENSORFLOW_ENV}=1: {error}")
+    return require_tensorflow(
+        lambda: impl.load_spliceai_backend("tensorflow"))
 
 
 @pytest.fixture(scope="module")
@@ -65,7 +55,8 @@ def onnx_models(onnx_backend: ModuleType) -> Iterator[list]:
 def _load_single_thread_models(backend: ModuleType) -> list:
     with pytest.MonkeyPatch.context() as patch:
         patch.setenv(ONNX_INTRA_OP_THREADS_ENV, "1")
-        return backend.spliceai_load_models()
+        models: list = backend.spliceai_load_models()
+        return models
 
 
 @pytest.fixture(scope="module", params=ONNX_BACKENDS)
@@ -641,7 +632,7 @@ def test_shipped_budget_keeps_every_buildable_window_on_the_plateau(
     each divisor boundary. The worst case is a width just under one, which is
     not a width anyone would think to parametrize.
     """
-    budget = tensorflow_backend.TENSORFLOW_POSITION_BUDGET
+    budget: int = tensorflow_backend.TENSORFLOW_POSITION_BUDGET
 
     def positions(width: int) -> int:
         return max(1, budget // width) * width

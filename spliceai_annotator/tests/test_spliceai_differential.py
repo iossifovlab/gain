@@ -1,9 +1,13 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 """Differential test harness for the SpliceAI annotator (issue #320).
 
-Pins all 16 attributes of today's TensorFlow output on a frozen hg38/GENCODE
-fixture corpus, so the upcoming ONNX migration (#297/#299) has real ground
-truth to check against.  Two independent checks per variant:
+Pins all 16 attributes on a frozen hg38/GENCODE fixture corpus against the
+committed TensorFlow ``baseline.json.gz``.  The harness checks whichever
+backend ``SPLICEAI_BACKEND`` selects; the gain-spliceai-integration job runs it
+once per backend (``tensorflow``, ``onnx`` and ``onnx-fused``, see
+``Jenkinsfile.integration``), so each backend is held to the same TensorFlow
+ground truth (ADR 0042 made ONNX Runtime the default).  Two independent checks
+per variant:
 
 * live annotation vs the committed TensorFlow ``baseline.json.gz`` -- tiered by
   measured stability and by each field's own resolution: the raw ``DS_*`` at

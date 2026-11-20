@@ -137,7 +137,8 @@ def five_session_predict(
 
 @pytest.fixture(scope="module")
 def fused_backend(impl: ModuleType) -> ModuleType:
-    return impl.load_spliceai_backend("onnx-fused")
+    backend: ModuleType = impl.load_spliceai_backend("onnx-fused")
+    return backend
 
 
 def _fused_session(impl: ModuleType, model: Any) -> Any:

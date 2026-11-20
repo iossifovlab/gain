@@ -696,6 +696,9 @@ pipeline {
                                         name: 'spliceai_annotator',
                                         pkg: cell.pkg,
                                         tests: cell.tests,
+                                        // mypy checks the tests too, as the
+                                        // core stage does (#2444).
+                                        mypyTarget: 'spliceai_annotator tests',
                                         pytestArgs: cell.pytestArgs,
                                         dockerRunExtra: cell.dockerRunExtra +
                                             ' -e SPLICEAI_BACKEND=tensorflow',
