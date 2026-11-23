@@ -132,7 +132,7 @@ def array_block(
 
 
 def spy_array_folds(mocker: pytest_mock.MockerFixture) -> list[Any]:
-    """Spy on the three array folds of the binner."""
+    """Spy on the three array folds of the track kind."""
     return [
         mocker.spy(fragment_score_tracks, "fold_fragment_starts"),
         mocker.spy(fragment_score_tracks, "fold_fragment_lengths"),
@@ -559,7 +559,7 @@ def streaming_length_fold(
     reads: list[list[Extent]], *, start: int, end: int, bin_size: int,
     aggregator: str, uncovered_value: float | None,
 ) -> np.ndarray:
-    """The oracle: one streaming length fold per track, as the binner.
+    """The oracle: one streaming length fold per track, as the track kind.
 
     Each extent is clipped to the region before the merge by begin.
     """
@@ -734,7 +734,7 @@ def streaming_coverage_fold(
     reads: list[list[Extent]], *, start: int, end: int, bin_size: int,
     aggregator: str, uncovered_value: float | None,
 ) -> np.ndarray:
-    """The oracle: one streaming coverage fold per track, as the binner.
+    """The oracle: one streaming coverage fold per track, as the track kind.
 
     Each extent is clipped to the region before the merge by begin, and
     a NaN value is ``None``, as the record read gives no value of an

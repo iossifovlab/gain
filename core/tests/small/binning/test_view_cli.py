@@ -47,14 +47,14 @@ def view(
 def test_tracks_prints_one_row_per_track(
     binned: pathlib.Path, capsys: pytest.CaptureFixture[str],
 ) -> None:
-    defs = read_tracks(binned)["binner_def"].tolist()
+    defs = read_tracks(binned)["entry_def"].tolist()
 
     code, out, err = view(capsys, binned, "--tracks")
 
     assert (code, err) == (0, "")
     assert out == (
-        "label\tbinner_type\tbinner_index\ttrack_index\tresource_ids"
-        "\tselector\tbinner_def\n"
+        "label\tentry_type\tentry_index\ttrack_index\tresource_ids"
+        "\tselector\tentry_def\n"
         "frags/*:B:sum\tfragment_score\t0\t0\tfrags/s1,frags/s2\tB"
         f"\t{defs[0]}\n"
         "frags/*:T:sum\tfragment_score\t0\t1\tfrags/s1,frags/s2\tT"
@@ -154,15 +154,15 @@ def test_a_bad_combination_is_one_line_on_stderr(
 
 TEXT = h5py.string_dtype(encoding="utf-8")
 TRACK_DTYPE = np.dtype([
-    ("binner_type", TEXT), ("binner_index", "<i8"), ("track_index", "<i8"),
-    ("resource_ids", TEXT), ("selector", TEXT), ("binner_def", TEXT)])
+    ("entry_type", TEXT), ("entry_index", "<i8"), ("track_index", "<i8"),
+    ("resource_ids", TEXT), ("selector", TEXT), ("entry_def", TEXT)])
 
 
 def write_file(
     path: pathlib.Path, resource_ids: list[str], values: list[list[float]],
     selectors: list[str] | None = None,
 ) -> pathlib.Path:
-    """A hand-made layout 2 file: position-score tracks, chr1 bins of 10."""
+    """A hand-made layout 3 file: position-score tracks, chr1 bins of 10."""
     selectors = selectors or [""] * len(resource_ids)
     tracks = np.array([
         ("position_score", i, 0, rid, selectors[i], "{}")
@@ -171,7 +171,7 @@ def write_file(
         [(b"chr1", 10 * i + 1, 10 * i + 10) for i in range(len(values))],
         dtype=[("chrom", "S4"), ("start", "<i8"), ("end", "<i8")])
     with h5py.File(path, "w") as h5:
-        h5.attrs["tracks_layout"] = 2
+        h5.attrs["tracks_layout"] = 3
         h5.create_dataset("tracks", data=tracks)
         h5.create_dataset("bins", data=bins)
         h5.create_dataset("values", data=np.array(values, dtype="<f8"))
@@ -341,7 +341,7 @@ def test_a_file_of_an_older_layout_is_an_error_message(
     assert code == 2
     assert out == ""
     assert err.startswith("binning_tool_view: error: ")
-    assert "only tracks_layout 2 is read" in err
+    assert "only tracks_layout 3 is read" in err
     assert err.count("\n") == 1
     assert "Traceback" not in err
 

@@ -577,7 +577,7 @@ class FragmentScoreTracks:
 
     @staticmethod
     def load_def(text: str) -> FragmentScoreDef:
-        """Read a ``binner_def`` of this kind."""
+        """Read an ``entry_def`` of this kind."""
         return FragmentScoreDef.from_json(text)
 
     @classmethod
@@ -729,7 +729,7 @@ class FragmentScoreTracks:
                 resource_ids=resource_ids,
                 group=group,
                 selector=group,
-                binner_type=entry_type_of(cls.kind),
+                entry_type=entry_type_of(cls.kind),
                 definition=FragmentScoreDef(
                     aggregator=aggregate.aggregator,
                     mode=aggregate.mode,

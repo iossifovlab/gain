@@ -8,8 +8,8 @@ the entry first. Each function raises
 :class:`~gain.binning.RunDefinitionError` for an entry that ``binning_tool``
 refuses, with the same message. The message names the entry as
 ``tracks[0]``, and ``binning_tool`` names it by its position in the
-``tracks`` list. ``fragment_tracks`` takes a ``binner_index`` and names
-the entry as ``tracks[<binner_index>]``.
+``tracks`` list. ``fragment_tracks`` takes an ``entry_index`` and names
+the entry as ``tracks[<entry_index>]``.
 
 Previewing the groups and tracks of an entry
 --------------------------------------------
@@ -94,7 +94,7 @@ the file. The rows hold no name for a track.
 
     jobs = resolve_tracks(entries, repo)
     tracks = tracks_frame(jobs)
-    print(tracks[["binner_type", "resource_ids", "selector"]])
+    print(tracks[["entry_type", "resource_ids", "selector"]])
     print(track_labels(tracks))
 
 API

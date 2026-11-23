@@ -206,7 +206,7 @@ def resolve_tracks(
 ) -> list[BinningJob]:
     """Resolve a ``tracks:`` list against ``grr`` into its jobs.
 
-    Each track of a job carries its ``binner_index``, the position of
+    Each track of a job carries its ``entry_index``, the position of
     its entry in ``tracks``, and its ``track_index``, its position
     among the tracks of that entry.
 
@@ -290,7 +290,7 @@ def name_job_tracks(
     """Name the tracks of all jobs together and give each job its own.
 
     Each label is ``tracks[<index>]``, and the index becomes the
-    ``binner_index`` of each track of the job.  :func:`resolve_tracks`
+    ``entry_index`` of each track of the job.  :func:`resolve_tracks`
     and :func:`gain.binning.fragment_api.fragment_tracks` both call this
     function, so a notebook frame names its tracks as a run does.
     """
@@ -305,7 +305,7 @@ def name_job_tracks(
         for _ in job.tracks:
             tracks.append(replace(
                 next(named),
-                binner_index=int(label.removeprefix("tracks[")[:-1]),
+                entry_index=int(label.removeprefix("tracks[")[:-1]),
                 track_index=next_index[label]))
             next_index[label] += 1
         resolved.append(replace(job, tracks=tuple(tracks), entry=label))

@@ -90,7 +90,7 @@ Each row represents a 10 kb genomic bin. The **mean** track reports the average 
 Configuring a binning run
 -------------------------
 
-A binning analysis is configured using a YAML run definition. Each binner selects one or more genomic resources and produces one or more tracks in the output matrix.
+A binning analysis is configured using a YAML run definition. Each entry of the ``tracks`` list selects one or more genomic resources and produces one or more tracks in the output matrix.
 
 .. _binning-run-definition:
 
@@ -131,7 +131,7 @@ Each entry requires a ``resource_query`` to select resources from the GRR. Queri
 
 An optional ``search_term`` can filter resources using the same full-text search functionality as ``grr_browse``. This requires a repository with a full-text index.
 
-Each binner processes only resources of its supported type. Matching resources are ordered by resource ID, and a query that matches no resources of the appropriate type produces an error.
+Each track kind processes only resources of its supported type. Matching resources are ordered by resource ID, and a query that matches no resources of the appropriate type produces an error.
 
 The GRR itself is selected through GAIn's GRR configuration or command-line options, rather than being specified in the run definition. This allows the same run definition to be used with different GRR locations.
 
@@ -165,9 +165,9 @@ For example, to calculate the median phyloP100way score within each bin:
         resource_query: hg38/scores/phyloP100way
         aggregator: median
 
-The same resource can be processed using different aggregators by including multiple binner entries, as demonstrated in the Getting started example.
+The same resource can be processed using different aggregators by including multiple entries, as demonstrated in the Getting started example.
 
-Only numerical scores (``int`` or ``float``) and aggregators producing numerical results are supported. Resources defining multiple scores cannot currently be processed by a position-score binner.
+Only numerical scores (``int`` or ``float``) and aggregators producing numerical results are supported. Resources defining multiple scores cannot currently be processed by a ``position_score_tracks`` entry.
 
 **Handling missing values**
 
@@ -193,7 +193,7 @@ A ``fragment_score_tracks`` summarizes genomic intervals, such as ATAC-seq fragm
 
 Unlike position-score resources, which provide numerical scores at genomic positions, fragment-score resources contain genomic intervals that may have associated scores. The ``value`` setting determines what numerical value each fragment contributes to the binning calculation. This can be a constant, such as 1 for counting fragments, or a numerical score associated with each fragment.
 
-A simple fragment-score binner can be defined as follows:
+A simple ``fragment_score_tracks`` entry can be defined as follows:
 
 .. code-block:: yaml
 
@@ -469,7 +469,7 @@ The file contains three datasets:
 
 - ``/values``: A numerical matrix with one row per genomic bin and one column per track. Values are stored as 64-bit floating-point numbers (``float64``), with ``NaN`` representing missing values where applicable. The matrix is gzip-compressed.
 - ``/bins``: A table describing the genomic coordinates of each bin, with fields ``chrom``, ``start``, and ``end``. Coordinates are 1-based and inclusive.
-- ``/tracks``: A table describing each track, including its binner type, source resources, score or group identifier, and configuration used to generate it.
+- ``/tracks``: A table describing each track, including its entry type, source resources, score or group identifier, and configuration used to generate it.
 
 Row *i* of ``/values`` corresponds to row *i* of ``/bins``, while column *j* corresponds to row *j* of ``/tracks``. This allows every numerical value to be associated with a genomic region and the resource from which it was calculated.
 
@@ -483,9 +483,9 @@ The HDF5 file also stores attributes describing the binning run:
 - ``coordinates``: The coordinate convention (``1-based-inclusive``).
 - ``gain_version``: The GAIn version used to generate the file.
 - ``created``: The creation time in UTC.
-- ``tracks_layout``: The version of the track metadata format, currently ``2``.
+- ``tracks_layout``: The version of the track metadata format, currently ``3``.
 
-Each track also retains its source resource IDs and binner configuration, allowing the calculations to be traced back to their inputs.
+Each track also retains its source resource IDs and entry configuration, allowing the calculations to be traced back to their inputs.
 
 When local metadata files are used, their paths, sizes, and modification times are recorded in additional file attributes.
 
@@ -543,7 +543,7 @@ Track names and genomic coordinates
 
 **Track names and labels**
 
-Each track is identified by its source resource and, where applicable, its group and aggregator. Track names depend on the binner type and pooling configuration:
+Each track is identified by its source resource and, where applicable, its group and aggregator. Track names depend on the track kind and pooling configuration:
 
 - **Position-score tracks:** Named using the resource ID, such as ``hg38/scores/phyloP100way``.
 - **Unpooled fragment-score tracks:** Named using the resource ID and group, such as ``sc/atac_fragments/donor1:ODC``.
@@ -558,7 +558,7 @@ When the same resource and group are processed with different aggregators, the a
 - ``hg38/scores/phyloP100way:mean``
 - ``hg38/scores/phyloP100way:max``
 
-GAIn ensures that track names are unique during processing. If two binner entries would produce identical names even after adding the aggregator, the run is rejected and the entries must be distinguished using ``name``.
+GAIn ensures that track names are unique during processing. If two entries would produce identical names even after adding the aggregator, the run is rejected and the entries must be distinguished using ``name``.
 
 The HDF5 file stores track metadata rather than the original track names. The ``track_labels`` function generates readable labels from this metadata, including the aggregator. If generated labels are identical, a column-position suffix is added to distinguish them.
 
@@ -573,7 +573,7 @@ Because the same coordinate convention is used throughout GAIn, bin coordinates 
 Output compatibility
 ^^^^^^^^^^^^^^^^^^^^
 
-The HDF5 output format changed after the GAIn 2026.9 releases. Files produced by newer versions use an updated ``/tracks`` dataset layout, identified by the root attribute ``tracks_layout`` with a value of ``2``.
+The HDF5 output format changed after the GAIn 2026.9 releases. Files produced by newer versions use an updated ``/tracks`` dataset layout, identified by the root attribute ``tracks_layout`` with a value of ``3``.
 
 Older files do not contain this attribute and use a different set of track metadata fields. The reference genome attribute was also renamed from ``input_reference_genome`` to ``reference_genome``.
 
@@ -586,9 +586,9 @@ The output format can be identified using ``h5py``:
     with h5py.File("demo.h5", "r") as h5:
         print(h5.attrs.get("tracks_layout"))
 
-A value of ``2`` indicates the current format, while a missing attribute indicates an older format. The ``gain_version`` attribute should not be used to identify the layout, since development builds may use newer formats while reporting an older version.
+A value of ``3`` indicates the current format, while a missing attribute indicates an older format. The ``gain_version`` attribute should not be used to identify the layout, since development builds may use newer formats while reporting an older version.
 
-GAIn's ``read_tracks`` function supports the current layout and raises an error for older or unsupported layouts. Files written by earlier releases are not automatically converted.
+GAIn's ``read_tracks`` function supports the current layout and raises an error for older or unsupported layouts. ``read_tracks`` refuses a file with ``tracks_layout`` ``2``, and the message says to run ``binning_tool`` again. Files written by earlier releases are not automatically converted.
 
 
 
@@ -637,14 +637,14 @@ A run definition contains a reference genome, a ``bins`` block, and a list of
      - Full-text filter combined with ``resource_query``; uses the same
        syntax as ``grr_browse -s``.
 
-Only resources matching the entry's binner type are selected, in resource-ID
+Only resources matching the entry's track kind are selected, in resource-ID
 order. A query matching no resources of the appropriate type is an error.
 Full-text searches require a repository index. The public IossifovLab GRR
 has one; for a directory GRR, create it using ``grr_manage repo-index``.
 The GRR location comes from the default GRR definition or GAIn's ``-g`` /
 ``--grr-directory`` options, not the YAML file (see :doc:`/grr`).
 
-**Position-score binner settings**
+**Position-score track settings**
 
 .. list-table::
    :header-rows: 1
@@ -671,7 +671,7 @@ Position-score resources must contain one numerical (``int`` or ``float``)
 score. Resources with multiple scores and non-numerical aggregators such as
 ``join`` or ``list`` are not supported.
 
-**Fragment-score binner settings**
+**Fragment-score track settings**
 
 .. list-table::
    :header-rows: 1
@@ -753,7 +753,7 @@ ambiguous matrix.
   base pairs rather than fragments, while ``product`` would raise each
   value to a power determined by overlap length. To total overlapping base
   pairs, use ``sum`` with ``value: {value: 1}``.
-- **Missing coverage:** Fragment-score binners do not accept
+- **Missing coverage:** Fragment-score tracks do not accept
   ``none_value_replacement``. Use ``aggregate.uncovered_value`` in the two
   coverage-based modes instead. It must be ``null`` or a finite number;
   explicit ``NaN`` is invalid. ``fragment_start`` does not support it.
@@ -815,7 +815,7 @@ The output contains three datasets. All three can be inspected with
    * - ``/tracks``
      - ``(n_tracks,)``, compound
      - Metadata for each output column, with the same fields for both
-       binner types.
+       track kinds.
 
 Each row of ``/bins`` describes the corresponding row of ``/values``.
 Each row of ``/tracks`` describes the corresponding column of ``/values``.
@@ -828,16 +828,16 @@ The ``/tracks`` dataset uses the following fields:
    * - Field
      - Type
      - Meaning
-   * - ``binner_type``
+   * - ``entry_type``
      - UTF-8 string
      - ``position_score`` or ``fragment_score``.
-   * - ``binner_index``
+   * - ``entry_index``
      - ``int64``
      - Zero-based index of the entry in the run definition's ``tracks`` list.
    * - ``track_index``
      - ``int64``
      - Zero-based index of the track within that entry. Together with
-       ``binner_index``, this uniquely identifies a track in the file.
+       ``entry_index``, this uniquely identifies a track in the file.
    * - ``resource_ids``
      - UTF-8 string
      - Comma-separated IDs of the source resources, in ID order. One ID for
@@ -845,14 +845,14 @@ The ``/tracks`` dataset uses the following fields:
    * - ``selector``
      - UTF-8 string
      - Position-score ID or fragment group identifier.
-   * - ``binner_def``
+   * - ``entry_def``
      - UTF-8 string
      - Canonical JSON definition for the track, using sorted keys and no
        extra whitespace. Missing values appear as JSON ``null``.
 
 The four text fields are variable-length UTF-8 strings. The output does not
 store a track's display name: GAIn constructs labels from the metadata,
-using ``track_labels``. The ``binner_def`` JSON contains:
+using ``track_labels``. The ``entry_def`` JSON contains:
 
 - For position-score tracks: ``aggregator``, ``none_value_replacement``,
   and ``name``.
@@ -869,7 +869,7 @@ The root attributes record the run configuration and provenance:
    * - Attribute
      - Meaning
    * - ``tracks_layout``
-     - ``2`` for the current ``/tracks`` layout; absent in older files.
+     - ``3`` for the current ``/tracks`` layout; absent in the oldest files.
    * - ``reference_genome``
      - Reference genome ID (older files use ``input_reference_genome``).
    * - ``bin_size``
@@ -975,7 +975,7 @@ keeps no record and logs no line for each region that it bins.
 Advanced worked example
 ^^^^^^^^^^^^^^^^^^^^^^^
 
-This example combines position-score and fragment-score binners in one run.
+This example combines position-score and fragment-score entries in one run.
 It summarizes conservation scores and gnomAD v4.1 structural variants over
 two megabases of chromosome 21. The run definition is available as
 :download:`binning_run.yaml <files/binning_run.yaml>`:
@@ -983,15 +983,15 @@ two megabases of chromosome 21. The run definition is available as
 .. literalinclude:: files/binning_run.yaml
     :language: yaml
 
-The first binner selects the conservation resources under ``hg38/scores/*``
+The first entry selects the conservation resources under ``hg38/scores/*``
 using ``search_term: conservation``. In the GRR of this example, fourteen
 resources were found under ``hg38/scores/``, of which
 eight matched as position scores: phastCons and phyloP,
-each for 7, 20, 30, and 100 species. The second binner processes
+each for 7, 20, 30, and 100 species. The second entry processes
 ``hg38/scores/phyloP100way`` again using ``max`` in addition to its default
 ``mean``, yielding nine position-score tracks in total.
 
-The third binner selects the gnomAD structural-variant resource and groups
+The third entry selects the gnomAD structural-variant resource and groups
 variants using its categorical ``deletion_duplication`` score. This adds
 one deletion track and one duplication track. The resource has no
 ``sample_id`` label, so its groups are the bare values. Its ``pool: false``

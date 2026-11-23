@@ -1,4 +1,4 @@
-"""The typed definition of a fragment-score track (``binner_def``)."""
+"""The typed definition of a fragment-score track (``entry_def``)."""
 from __future__ import annotations
 
 import json

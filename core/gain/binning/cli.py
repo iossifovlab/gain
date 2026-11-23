@@ -87,7 +87,7 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         "genome grid, writing one HDF5 file with a bins x tracks matrix.")
     parser.add_argument(
         "run_definition",
-        help="the run definition (YAML): bins and binner entries")
+        help="the run definition (YAML): bins and track entries")
     parser.add_argument(
         "-o", "--output", default=None,
         help="the HDF5 file to write; defaults to the run definition "
@@ -247,7 +247,7 @@ def _local_files(run: RunDefinition) -> list[str]:
         for path in job.local_files))
 
 
-TRACKS_LAYOUT = 2
+TRACKS_LAYOUT = 3
 
 
 def _bin_count(region: BedRegion, bin_size: int) -> int:
@@ -549,6 +549,6 @@ def _tracks_table(jobs: list[BinningJob]) -> npt.NDArray[Any]:
     return np.array(
         list(frame.itertuples(index=False, name=None)),
         dtype=[
-            ("binner_type", text), ("binner_index", "<i8"),
+            ("entry_type", text), ("entry_index", "<i8"),
             ("track_index", "<i8"), ("resource_ids", text),
-            ("selector", text), ("binner_def", text)])
+            ("selector", text), ("entry_def", text)])

@@ -1,7 +1,7 @@
 # pylint: disable=W0621,C0116
 # W0621: the tests take the pytest fixtures by their names.
 # C0116: the test names say what each test checks.
-"""The position binner's array fold agrees with ``get_score_in_bins``.
+"""The position-score track kind's array fold agrees with ``get_score_in_bins``.
 
 ``PositionScoreBinding.bin_region`` folds the batches of
 ``fetch_region_value_arrays`` with numpy for a ``float`` score under
@@ -141,7 +141,7 @@ def a_track(
 ) -> Track:
     return Track(
         name=resource_id, resource_ids=(resource_id,), group="",
-        selector="s", binner_type="position_score",
+        selector="s", entry_type="position_score",
         definition=PositionScoreDef(
             aggregator=aggregator, none_value_replacement=replacement))
 

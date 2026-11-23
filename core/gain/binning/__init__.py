@@ -38,6 +38,12 @@ package.
   group.  ``TRACK_KIND_SUFFIX`` is ``"_tracks"``.  The ``binners`` key of
   a run definition is now ``tracks``, and an entry label is
   ``tracks[<i>]``.
+* gain#2497: the keyword ``binner_index`` of ``fragment_tracks`` is now
+  ``entry_index``.  The ``/tracks`` columns ``binner_type``,
+  ``binner_index`` and ``binner_def`` are now ``entry_type``,
+  ``entry_index`` and ``entry_def``, and so are the fields of ``Track``
+  and the columns of ``tracks_frame``.  ``binning_tool`` writes
+  ``tracks_layout`` 3, and the readers refuse ``tracks_layout`` 2.
 """
 from gain.binning.fragment_api import cell_groups, fragment_tracks
 from gain.binning.fragment_grouping import (

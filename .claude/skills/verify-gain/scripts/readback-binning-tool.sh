@@ -4,9 +4,9 @@
 # Open a binning_tool output with h5py from the checkout's .venv and check:
 #   - the file attribute coordinates is 1-based-inclusive;
 #   - bins holds chr1 1-5, chr1 6-10, chr2 1-5, chr2 6-10;
-#   - the file attribute tracks_layout is 2;
-#   - tracks holds one row: binner_type position_score, resource_ids
-#     mini_positionscore_bw, aggregator mean (read from binner_def);
+#   - the file attribute tracks_layout is 3;
+#   - tracks holds one row: entry_type position_score, resource_ids
+#     mini_positionscore_bw, aggregator mean (read from entry_def);
 #   - values has the shape (4, 1) and holds 0, 0.1, 0.2, 0.3.
 # The bigWig stores float32, so values holds 0.30000001: the values are
 # compared within 1e-6, not exactly. Exits 0 on a match, 1 otherwise.
@@ -47,12 +47,12 @@ with h5py.File(path, "r") as h5:
 
     layout = h5.attrs.get("tracks_layout")
     print(f"readback: tracks_layout = {layout!r}")
-    if layout != 2:
-        fails.append(f"tracks_layout is {layout!r}, not 2")
+    if layout != 3:
+        fails.append(f"tracks_layout is {layout!r}, not 3")
 
     tracks = [
-        (row["binner_type"].decode(), row["resource_ids"].decode(),
-         json.loads(row["binner_def"].decode())["aggregator"])
+        (row["entry_type"].decode(), row["resource_ids"].decode(),
+         json.loads(row["entry_def"].decode())["aggregator"])
         for row in h5["tracks"][()]
     ]
     print(f"readback: tracks = {tracks}")

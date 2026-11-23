@@ -25,7 +25,7 @@ def scores_one(aggregator: str, replacement: float | None = None) -> Track:
     """scores/one: 1.0 over chr1:1-20, 2.0 over chr1:31-35, nothing else."""
     return Track(
         name="scores/one", resource_ids=("scores/one",), group="",
-        selector="s", binner_type="position_score",
+        selector="s", entry_type="position_score",
         definition=PositionScoreDef(
             aggregator=aggregator,
             none_value_replacement=replacement))
@@ -200,7 +200,7 @@ LONG_BIN_SIZE = 2000
 def past_range(aggregator: str) -> Track:
     return Track(
         name="past_range", resource_ids=("past_range",), group="",
-        selector="s", binner_type="position_score",
+        selector="s", entry_type="position_score",
         definition=PositionScoreDef(
             aggregator=aggregator,
             none_value_replacement=None))

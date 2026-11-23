@@ -92,7 +92,7 @@ TRACK_KIND_SUFFIX = "_tracks"
 
 
 def entry_type_of(kind: str) -> str:
-    """The ``binner_type`` the file records for a registered ``kind``.
+    """The ``entry_type`` the file records for a registered ``kind``.
 
     The kind without its ``_tracks`` suffix: ``position_score_tracks``
     is ``position_score``.  The one place the two names are mapped.
@@ -161,12 +161,12 @@ class Track:
     ``selector`` is what picks the track within its resources: the score
     id of a position-score track, the group of a fragment track.
 
-    ``binner_type`` names the kind that produces the column
-    (:func:`entry_type_of`).  ``binner_index`` is the entry's position
+    ``entry_type`` names the kind that produces the column
+    (:func:`entry_type_of`).  ``entry_index`` is the entry's position
     in the run definition's ``tracks`` list and ``track_index`` the
     track's position among all tracks of that entry, in output order.
     ``definition`` holds what is specific to the kind; it is written to
-    the file as ``binner_def``.
+    the file as ``entry_def``.
 
     ``name`` is not written to the file; it keeps the uniqueness check,
     the chunk file names and the plan output.  ``parameters`` is
@@ -182,9 +182,9 @@ class Track:
     resource_ids: tuple[str, ...]
     group: str
     selector: str
-    binner_type: str
+    entry_type: str
     definition: EntryDef
-    binner_index: int = 0
+    entry_index: int = 0
     track_index: int = 0
     parameters: str = ""
 
@@ -221,21 +221,21 @@ class BinningJob:
             for track in self.tracks for resource_id in track.resource_ids))
 
 
-#: The columns of the ``/tracks`` table (``tracks_layout`` 2), in order.
+#: The columns of the ``/tracks`` table (``tracks_layout`` 3), in order.
 TRACKS_COLUMNS = (
-    "binner_type", "binner_index", "track_index", "resource_ids",
-    "selector", "binner_def")
+    "entry_type", "entry_index", "track_index", "resource_ids",
+    "selector", "entry_def")
 
 
 def tracks_frame(jobs: Sequence[BinningJob]) -> pd.DataFrame:
     """Give the ``/tracks`` rows of ``jobs``: one row per track, in order.
 
-    ``binner_type`` is the kind, ``binner_index`` the entry's position
+    ``entry_type`` is the kind, ``entry_index`` the entry's position
     in the ``tracks`` list and ``track_index`` the track's position in
     that entry.  ``resource_ids`` is the comma-separated list of the
     resources a track is computed from, in resource-id order.  A
     resource id never holds a comma.  ``selector`` picks the track in
-    its resources, and ``binner_def`` is the canonical JSON of the
+    its resources, and ``entry_def`` is the canonical JSON of the
     kind's definition.
 
     Parameters
@@ -256,12 +256,12 @@ def tracks_frame(jobs: Sequence[BinningJob]) -> pd.DataFrame:
     """
     frame = pd.DataFrame(
         [
-            (t.binner_type, t.binner_index, t.track_index,
+            (t.entry_type, t.entry_index, t.track_index,
              ",".join(t.resource_ids), t.selector, t.definition.to_json())
             for job in jobs for t in job.tracks
         ],
         columns=list(TRACKS_COLUMNS))
-    return frame.astype({"binner_index": "int64", "track_index": "int64"})
+    return frame.astype({"entry_index": "int64", "track_index": "int64"})
 
 
 class BoundTrackKind(Protocol):
@@ -283,7 +283,7 @@ class TrackKind(Protocol):
 
     kind: ClassVar[str]
 
-    # Optional: ``load_def(text) -> EntryDef`` reads a ``binner_def`` of
+    # Optional: ``load_def(text) -> EntryDef`` reads an ``entry_def`` of
     # this kind back.  A kind without it is read as the plain ``dict``.
 
     @classmethod
@@ -593,7 +593,7 @@ class PositionScoreTracks:
 
     @staticmethod
     def load_def(text: str) -> PositionScoreDef:
-        """Read a ``binner_def`` of this kind."""
+        """Read an ``entry_def`` of this kind."""
         return PositionScoreDef.from_json(text)
 
     ENTRY_KEYS: ClassVar[frozenset[str]] = frozenset({
@@ -663,7 +663,7 @@ class PositionScoreTracks:
                 f"{label}: resource {resource.resource_id!r} defines "
                 f"{len(score.score_definitions)} scores, "
                 f"{sorted(score.score_definitions)}; a track is one score, "
-                f"and this binner takes a resource with exactly one")
+                f"and this track kind takes a resource with exactly one")
         (score_id, score_def), = score.score_definitions.items()
         if score_def.value_type not in NUMERIC_VALUE_TYPES:
             raise RunDefinitionError(
@@ -695,13 +695,13 @@ class PositionScoreTracks:
             raise RunDefinitionError(
                 f"{label}: resource {resource.resource_id!r}: "
                 f"none_value_replacement {replacement!r} must be finite; "
-                f"the binner_def cannot hold NaN or infinity")
+                f"the entry_def cannot hold NaN or infinity")
         return Track(
             name=named_base(name, resource.resource_id),
             resource_ids=(resource.resource_id,),
             group="",
             selector=score_id,
-            binner_type=entry_type_of(cls.kind),
+            entry_type=entry_type_of(cls.kind),
             definition=PositionScoreDef(
                 aggregator=aggregator_name,
                 none_value_replacement=replacement, name=name),
@@ -722,19 +722,19 @@ def aggregator_of(track: Track) -> str:
 
 
 def load_track_def(
-    binner_type: str, text: str,
+    entry_type: str, text: str,
     kinds: dict[str, type[TrackKind]] | None = None,
 ) -> EntryDef | dict[str, Any]:
-    """Read a ``binner_def`` of the file back into its typed definition.
+    """Read an ``entry_def`` of the file back into its typed definition.
 
-    A ``binner_type`` with no installed kind, or a kind without
+    An ``entry_type`` with no installed kind, or a kind without
     ``load_def``, gives the plain ``dict`` of ``json.loads``, so a file
     stays readable without its plugin.
     """
     if kinds is None:
         kinds = discover_track_kinds()
     for kind, track_kind in kinds.items():
-        if entry_type_of(kind) == binner_type:
+        if entry_type_of(kind) == entry_type:
             load_def = getattr(track_kind, "load_def", None)
             if load_def is not None:
                 loaded: EntryDef = load_def(text)

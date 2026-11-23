@@ -97,7 +97,7 @@ def cell_groups(
 
 def fragment_tracks(
     repo: GenomicResourceRepo, entry: FragmentEntry | dict[str, Any],
-    *, binner_index: int = 0, base_dir: str | None = None,
+    *, entry_index: int = 0, base_dir: str | None = None,
 ) -> pd.DataFrame:
     """Give the ``/tracks`` rows that ``binning_tool`` writes for ``entry``.
 
@@ -115,10 +115,10 @@ def fragment_tracks(
     entry
         The entry, or the mapping under the ``fragment_score_tracks``
         key of an entry in a run definition.
-    binner_index
+    entry_index
         The position of the entry in the ``tracks`` list.  It is the
-        ``binner_index`` of each row, and each refusal names the entry
-        as ``tracks[<binner_index>]``.
+        ``entry_index`` of each row, and each refusal names the entry
+        as ``tracks[<entry_index>]``.
     base_dir
         The directory that a relative local ``meta`` file is read from.
         ``None`` is the current directory.
@@ -134,6 +134,6 @@ def fragment_tracks(
     RunDefinitionError
         When ``binning_tool`` refuses the entry.
     """
-    label = f"tracks[{binner_index}]"
+    label = f"tracks[{entry_index}]"
     jobs = _entry_jobs(label, entry, repo, base_dir)
     return tracks_frame(name_job_tracks([(label, job) for job in jobs]))

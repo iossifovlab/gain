@@ -1,5 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
-"""``fragment_score_tracks`` in ``fragment_length`` mode, at the binner.
+"""``fragment_score_tracks`` in ``fragment_length`` mode, at the binding.
 
 A fragment adds its value to every bin it overlaps, weighted by the base
 pairs of the overlap.  The toy fragments are the conftest's; bins are 10
@@ -283,7 +283,7 @@ def test_tracks_records_a_length_track_s_mode_and_uncovered_value(
 
     with h5py.File(output, "r") as h5:
         tracks = h5["tracks"][()]
-    definitions = [json.loads(row["binner_def"]) for row in tracks]
+    definitions = [json.loads(row["entry_def"]) for row in tracks]
     assert [d["mode"] for d in definitions] == [
         "fragment_length", "fragment_length"]
     assert [d["uncovered_value"] for d in definitions] == [None, 0.0]

@@ -1,5 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
-"""``bind(job, grr, quiet=...)`` of the fragment binner kind.
+"""``bind(job, grr, quiet=...)`` of the fragment-score track kind.
 
 The grouped job is the conftest's two samples, ``frags/s1`` and
 ``frags/s2``, grouped by the ``class`` of ``meta/cells``.  On chr1 two

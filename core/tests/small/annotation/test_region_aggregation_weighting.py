@@ -262,10 +262,13 @@ _LONG_RUNS = """
     (1, 2000, -math.inf),
     (2001, 4000, 2.0 ** 500 * 1.5 ** 500),
 ])
-def test_a_region_product_agrees_with_the_binner_over_long_runs(
+def test_a_region_product_agrees_with_the_track_kind_over_long_runs(
     tmp_path: pathlib.Path, start: int, end: int, expected: float,
 ) -> None:
-    """The annotator's region ``product`` is the binner's bin (gain#1766)."""
+    """The annotator's region ``product`` is the track kind's bin.
+
+    See gain#1766.
+    """
     repo = (
         a_grr()
         .with_resource("long_runs", a_position_score()
@@ -275,7 +278,7 @@ def test_a_region_product_agrees_with_the_binner_over_long_runs(
         .build_repo(tmp_path))
     track = Track(
         name="long_runs", resource_ids=("long_runs",), group="",
-        selector="s", binner_type="position_score",
+        selector="s", entry_type="position_score",
         definition=PositionScoreDef(
             aggregator="product",
             none_value_replacement=None))

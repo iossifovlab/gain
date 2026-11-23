@@ -37,6 +37,19 @@ def test_tracks_frame_equals_the_tracks_table_of_the_file(
     pd.testing.assert_frame_equal(frame, read_tracks(output))
 
 
+def test_tracks_frame_has_the_entry_columns_in_order(
+    repo: GenomicResourceRepo,
+) -> None:
+    jobs = resolve_tracks(
+        yaml.safe_load(MIXED_RUN_DEFINITION)["tracks"], repo)
+
+    frame = tracks_frame(jobs)
+
+    assert list(frame.columns) == [
+        "entry_type", "entry_index", "track_index", "resource_ids",
+        "selector", "entry_def"]
+
+
 #: Each public name of ``gain.binning``, and the module that defines it.
 DEFINING_MODULES = {
     **dict.fromkeys([

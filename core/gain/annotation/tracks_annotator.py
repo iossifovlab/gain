@@ -56,7 +56,7 @@ def build_tracks_annotator(
 
 def track_attribute_name(prefix: str, track: Track) -> str:
     """The name of the attribute of ``track``."""
-    return f"{prefix}_{track.binner_index}_{track.track_index}"
+    return f"{prefix}_{track.entry_index}_{track.track_index}"
 
 
 def checked_prefix(prefix: Any) -> str:
@@ -89,15 +89,15 @@ def track_documentation(label: str, row: Mapping[Hashable, Any]) -> str:
 
     ``row`` is the track's row of :func:`gain.binning.tracks_frame`.  The
     label and the field values are code spans, so a renderer shows them
-    verbatim.  The ``binner_def`` field is shown as indented JSON.
+    verbatim.  The ``entry_def`` field is shown as indented JSON.
     """
     fields = "\n".join(
         f"* `{field}`: {code_span(row[field])}"
-        for field in TRACKS_COLUMNS if field != "binner_def")
+        for field in TRACKS_COLUMNS if field != "entry_def")
     definition = json.dumps(
-        json.loads(row["binner_def"]), indent=2, sort_keys=True)
+        json.loads(row["entry_def"]), indent=2, sort_keys=True)
     return (
-        f"{code_span(label)}\n\n{fields}\n\n`binner_def`:\n\n"
+        f"{code_span(label)}\n\n{fields}\n\n`entry_def`:\n\n"
         f"```\n{definition}\n```")
 
 
@@ -179,7 +179,7 @@ class TracksAnnotator(AnnotatorBase):
     """Answers each track of a ``tracks:`` list over an annotatable.
 
     Each track is one attribute, named
-    ``<prefix>_<binner_index>_<track_index>``, of type ``float``.  The
+    ``<prefix>_<entry_index>_<track_index>``, of type ``float``.  The
     annotator bins an annotatable as the one bin of the grid whose bin
     size is the end of the annotatable.  A NaN value is ``None``.
     """

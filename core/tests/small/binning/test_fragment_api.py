@@ -222,13 +222,13 @@ def test_a_constant_group_gives_an_empty_frame_with_the_three_columns(
     assert list(frame.columns) == ["resource_id", "score_value", "group"]
 
 
-def test_fragment_tracks_gives_each_row_the_binner_index(
+def test_fragment_tracks_gives_each_row_the_entry_index(
     repo: GenomicResourceRepo,
 ) -> None:
     frame = fragment_tracks(
-        repo, {"resource_query": "frags/*", "pool": False}, binner_index=2)
+        repo, {"resource_query": "frags/*", "pool": False}, entry_index=2)
 
-    assert frame["binner_index"].tolist() == [2, 2]
+    assert frame["entry_index"].tolist() == [2, 2]
     assert frame["track_index"].tolist() == [0, 1]
 
 
@@ -258,10 +258,10 @@ def test_fragment_tracks_equals_its_rows_in_a_run_with_a_sibling_entry(
     binning_tool(run_definition, grr_dir, work / "bins.h5")
     pair = read_tracks(work / "bins.h5")
 
-    frame = fragment_tracks(repo, by_max, binner_index=1)
+    frame = fragment_tracks(repo, by_max, entry_index=1)
 
     pd.testing.assert_frame_equal(
-        frame, pair[pair["binner_index"] == 1].reset_index(drop=True))
+        frame, pair[pair["entry_index"] == 1].reset_index(drop=True))
 
 
 REFUSALS: dict[str, dict[str, Any]] = {
@@ -280,7 +280,7 @@ REFUSALS: dict[str, dict[str, Any]] = {
 CALLS: dict[str, tuple[Callable[..., Any], str]] = {
     "cell_groups": (cell_groups, "tracks[0]"),
     "fragment_tracks": (
-        functools.partial(fragment_tracks, binner_index=2), "tracks[2]"),
+        functools.partial(fragment_tracks, entry_index=2), "tracks[2]"),
 }
 
 

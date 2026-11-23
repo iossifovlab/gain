@@ -3,7 +3,7 @@ Printing a binning file with ``binning_tool_view``
 
 ``binning_tool_view`` prints the ``/tracks``, ``/bins`` and ``/values``
 tables of a ``binning_tool`` HDF5 file as tab-separated text on stdout. It
-reads only files with ``tracks_layout = 2``. For any other file it prints
+reads only files with ``tracks_layout = 3``. For any other file it prints
 the error of :func:`gain.binning.h5_reader.read_tracks` on stderr and exits
 with code 2. Every error the tool detects after parsing its arguments is one
 line on stderr, with exit code 2, and no traceback. A mistake in the

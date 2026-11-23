@@ -281,14 +281,14 @@ def test_annotate_doc_shows_the_label_and_the_six_fields_of_a_track(
     documentation = attribute_documentation(page, "atac_0_0")
     assert "<p><code>pair/a:all:mean</code></p>" in documentation
     for field, value in [
-            ("binner_type", "fragment_score"),
-            ("binner_index", "0"),
+            ("entry_type", "fragment_score"),
+            ("entry_index", "0"),
             ("track_index", "0"),
             ("resource_ids", "pair/a"),
             ("selector", "all")]:
         assert f"<li><code>{field}</code>: <code>{value}</code></li>" \
             in documentation
-    assert "<code>binner_def</code>:" in documentation
+    assert "<code>entry_def</code>:" in documentation
     assert textwrap.dedent("""\
         {
           "aggregator": "mean",
@@ -320,9 +320,9 @@ def test_the_rendered_documentation_shows_the_label_and_fields_verbatim(
     label: str,
 ) -> None:
     row: dict[Hashable, Any] = {
-        "binner_type": "fragment_score", "binner_index": 0,
+        "entry_type": "fragment_score", "entry_index": 0,
         "track_index": 0, "resource_ids": label, "selector": label,
-        "binner_def": "{}"}
+        "entry_def": "{}"}
 
     rendered = render_markdown(
         tracks_annotator.track_documentation(label, row))
@@ -512,7 +512,7 @@ def test_a_renamed_kind_in_the_annotator_is_refused(
 def test_an_entry_error_has_the_words_of_parse_run_definition(
     repo: GenomicResourceRepo,
 ) -> None:
-    entries = [fragment_entry(), {"no_such_binner": {}}]
+    entries = [fragment_entry(), {"no_such_kind": {}}]
     with pytest.raises(RunDefinitionError) as run_error:
         parse_run_definition(
             {"bins": {"bin_size": 10}, "tracks": entries}, repo,

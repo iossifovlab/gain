@@ -48,7 +48,7 @@ def test_an_exact_id_entry_becomes_one_track_named_by_the_resource(
     assert run.tracks == [
         Track(
             name="scores/one", resource_ids=("scores/one",), group="",
-            selector="s", binner_type="position_score",
+            selector="s", entry_type="position_score",
             definition=PositionScoreDef(aggregator="max")),
     ]
 
@@ -271,7 +271,7 @@ def test_adjacent_regions_do_not_overlap(
     assert run.regions == [BedRegion("chr1", 11, 20), BedRegion("chr1", 1, 10)]
 
 
-def test_an_unknown_binner_kind_is_a_parse_error_listing_the_known_kinds(
+def test_an_unknown_track_kind_is_a_parse_error_listing_the_known_kinds(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
 ) -> None:
     # Kinds come from the ``gain.binning.track_kinds`` entry-point group; the
@@ -279,7 +279,7 @@ def test_an_unknown_binner_kind_is_a_parse_error_listing_the_known_kinds(
     config = {
         "bins": {"bin_size": 10},
         "tracks": [
-            {"no_such_binner": {"resource_query": "scores/one"}},
+            {"no_such_kind": {"resource_query": "scores/one"}},
         ],
     }
 
@@ -288,7 +288,7 @@ def test_an_unknown_binner_kind_is_a_parse_error_listing_the_known_kinds(
 
     message = str(excinfo.value)
     assert "tracks[0]" in message
-    assert "no_such_binner" in message
+    assert "no_such_kind" in message
     assert "fragment_score_tracks" in message
     assert "position_score_tracks" in message
 
@@ -338,13 +338,13 @@ def test_an_entry_that_is_not_a_one_key_mapping_is_a_parse_error(
         "configuration")
 
 
-STUB_KIND = "stub_binner"
+STUB_KIND = "stub_tracks"
 
 
 def a_stub_track(resource_id: str, aggregator: str) -> Track:
     return Track(
         name=resource_id, resource_ids=(resource_id,), group="",
-        selector="s", binner_type=entry_type_of(STUB_KIND),
+        selector="s", entry_type=entry_type_of(STUB_KIND),
         definition=PositionScoreDef(
             aggregator=aggregator,
             none_value_replacement=None))
@@ -388,7 +388,7 @@ def test_a_job_with_no_tracks_is_a_parse_error_naming_its_entry(
             repo, genome, monkeypatch)
 
     assert str(excinfo.value) == (
-        "tracks[0]: stub_binner resolved the entry into a job with "
+        "tracks[0]: stub_tracks resolved the entry into a job with "
         "no tracks; every job needs at least one")
 
 
@@ -396,7 +396,7 @@ def test_a_job_naming_another_kind_is_a_parse_error_naming_its_entry(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The task graph finds a job's binner by the kind the job names, so a
+    # The task graph finds a job's track kind by the kind the job names, so a
     # job must name the kind that produced it -- refused here, with the
     # entry's label, rather than as a bare KeyError while the graph is
     # built.
@@ -408,7 +408,7 @@ def test_a_job_naming_another_kind_is_a_parse_error_naming_its_entry(
             repo, genome, monkeypatch)
 
     assert str(excinfo.value) == (
-        "tracks[0]: stub_binner resolved the entry into a job bound by "
+        "tracks[0]: stub_tracks resolved the entry into a job bound by "
         "'position_score_tracks'; a job is bound by the kind that "
         "produced it")
 
@@ -514,7 +514,7 @@ def test_search_term_on_a_repository_without_an_index_is_a_parse_error(
     ({"resource_query": "scores/one", "aggregator": "mediann"}, "mediann"),
     ({"resource_query": "scores/one", "none_value_replacement": "zero"},
      "none_value_replacement"),
-    # NaN and infinity cannot be written to the canonical binner_def, so
+    # NaN and infinity cannot be written to the canonical entry_def, so
     # the parser refuses them before any chunk is computed.
     ({"resource_query": "scores/one", "none_value_replacement": float("nan")},
      "finite"),
@@ -620,7 +620,7 @@ def test_an_unknown_top_level_key_is_a_parse_error(
 ) -> None:
     config = {
         "bins": {"bin_size": 10},
-        "binner": [
+        "entries": [
             {"position_score_tracks": {"resource_query": "scores/one"}},
         ],
     }
@@ -628,7 +628,7 @@ def test_an_unknown_top_level_key_is_a_parse_error(
     with pytest.raises(RunDefinitionError) as excinfo:
         parse_run_definition(config, repo, genome)
 
-    assert "binner" in str(excinfo.value)
+    assert "entries" in str(excinfo.value)
 
 
 @pytest.mark.parametrize("extra", [

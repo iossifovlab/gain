@@ -64,7 +64,7 @@ expect_error() {
 }
 
 expect tracks 0 \
-    $'label\tbinner_type\tbinner_index\ttrack_index\tresource_ids\tselector\tbinner_def' \
+    $'label\tentry_type\tentry_index\ttrack_index\tresource_ids\tselector\tentry_def' \
     "$label"$'\tposition_score\t0\t0\tmini_positionscore_bw\tpos_bw_0\t{"aggregator":"mean","name":null,"none_value_replacement":null}'
 expect bins 0 \
     "$bins_header" $'chr1\t1\t5' $'chr1\t6\t10' $'chr2\t1\t5' $'chr2\t6\t10'

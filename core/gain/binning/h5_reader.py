@@ -11,7 +11,9 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
-_TRACKS_LAYOUT = 2
+_TRACKS_LAYOUT = 3
+#: The layout before the columns of ``/tracks`` took the entry names.
+_RENAMED_TRACKS_LAYOUT = 2
 
 type Source = str | os.PathLike[str] | h5py.File
 
@@ -59,6 +61,11 @@ def _check_tracks_layout(h5: h5py.File) -> None:
     layout = h5.attrs.get("tracks_layout")
     if layout == _TRACKS_LAYOUT:
         return
+    if layout == _RENAMED_TRACKS_LAYOUT:
+        raise ValueError(
+            f"{h5.filename}: tracks_layout {layout} is not read; "
+            f"run binning_tool again with --force to write "
+            f"tracks_layout {_TRACKS_LAYOUT}")
     if layout is not None:
         raise ValueError(
             f"{h5.filename}: tracks_layout {layout}, "
@@ -79,7 +86,7 @@ def _check_tracks_layout(h5: h5py.File) -> None:
 
 
 def read_tracks(source: Source) -> pd.DataFrame:
-    """Read ``/tracks`` of a ``tracks_layout = 2`` file.
+    """Read ``/tracks`` of a ``tracks_layout = 3`` file.
 
     Row *j* describes column *j* of ``/values``. The text fields are
     ``str``.
@@ -102,7 +109,8 @@ def read_tracks(source: Source) -> pd.DataFrame:
     ValueError
         If ``/tracks`` is missing, is not a dataset or is not compound,
         or if the ``tracks_layout`` attribute of the file is missing or
-        is not 2. The message names the file.
+        is not 3. The message names the file; for ``tracks_layout`` 2 it
+        says to run ``binning_tool`` again.
     OSError
         If a path is missing or is not an HDF5 file. ``h5py`` raises it.
     """
@@ -185,14 +193,14 @@ def read_values(source: Source) -> npt.NDArray[np.float64]:
 
 
 def _label_base(
-    resource_ids: str, selector: str, binner_type: str,
+    resource_ids: str, selector: str, entry_type: str,
     definition: dict[str, Any],
 ) -> str:
     name = definition.get("name")
     prefixed = f"{name}/{resource_ids}" if name else resource_ids
-    if binner_type == "position_score":
+    if entry_type == "position_score":
         return prefixed
-    if binner_type == "fragment_score":
+    if entry_type == "fragment_score":
         if definition.get("pool"):
             base = name or definition.get("resource_query") or resource_ids
         else:
@@ -207,7 +215,7 @@ def track_labels(tracks_df: pd.DataFrame) -> list[str]:
     """Return one display label for each track, in row order.
 
     The label is read from ``resource_ids``, ``selector`` and the JSON
-    ``binner_def`` alone. Equal labels get ``#<position>`` appended.
+    ``entry_def`` alone. Equal labels get ``#<position>`` appended.
 
     Parameters
     ----------
@@ -223,19 +231,19 @@ def track_labels(tracks_df: pd.DataFrame) -> list[str]:
     Raises
     ------
     KeyError
-        If ``tracks_df`` has no ``binner_type``, ``resource_ids``,
-        ``selector`` or ``binner_def`` column.
+        If ``tracks_df`` has no ``entry_type``, ``resource_ids``,
+        ``selector`` or ``entry_def`` column.
     ValueError
-        If a ``binner_def`` is not JSON.
+        If an ``entry_def`` is not JSON.
     """
     labels: list[str] = []
-    for binner_type, resource_ids, selector, binner_def in zip(
-            tracks_df["binner_type"].astype(str),
+    for entry_type, resource_ids, selector, entry_def in zip(
+            tracks_df["entry_type"].astype(str),
             tracks_df["resource_ids"].astype(str),
             tracks_df["selector"].astype(str),
-            tracks_df["binner_def"].astype(str), strict=True):
-        definition = json.loads(binner_def) or {}
-        label = _label_base(resource_ids, selector, binner_type, definition)
+            tracks_df["entry_def"].astype(str), strict=True):
+        definition = json.loads(entry_def) or {}
+        label = _label_base(resource_ids, selector, entry_type, definition)
         aggregator = definition.get("aggregator")
         if aggregator:
             label = f"{label}:{aggregator}"

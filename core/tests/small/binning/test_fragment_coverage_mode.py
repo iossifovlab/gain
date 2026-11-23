@@ -1,5 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
-"""``fragment_score_tracks`` in ``coverage_profile`` mode, at the binner.
+"""``fragment_score_tracks`` in ``coverage_profile`` mode, at the binding.
 
 Each track's fragments, clipped to the region, make a coverage profile
 -- per position, the sum of the values of the fragments over it -- and
@@ -309,7 +309,7 @@ def test_tracks_records_a_coverage_track_s_mode_and_uncovered_value(
 
     with h5py.File(output, "r") as h5:
         tracks = h5["tracks"][()]
-    definitions = [json.loads(row["binner_def"]) for row in tracks]
+    definitions = [json.loads(row["entry_def"]) for row in tracks]
     assert [d["mode"] for d in definitions] == [
         "coverage_profile", "coverage_profile"]
     assert [d["uncovered_value"] for d in definitions] == [0.0, None]
