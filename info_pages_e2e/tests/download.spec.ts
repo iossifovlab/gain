@@ -46,20 +46,28 @@ function downloadButton(page: Page) {
   return page.locator('#download-btn');
 }
 
-/** Choose Download -> JSON and return the name and the parsed file. */
-async function downloadJson(
-  page: Page,
-): Promise<{ name: string; body: any }> {
+/** Choose Download -> `format` and return the name and the text of the file. */
+async function downloadFile(
+  page: Page, format: 'JSON' | 'CSV',
+): Promise<{ name: string; text: string }> {
   await downloadButton(page).click();
   const [download] = await Promise.all([
     page.waitForEvent('download'),
-    page.getByRole('menuitem', { name: 'JSON' }).click(),
+    page.getByRole('menuitem', { name: format }).click(),
   ]);
   const file = await download.path();
   return {
     name: download.suggestedFilename(),
-    body: JSON.parse(fs.readFileSync(file, 'utf8')),
+    text: fs.readFileSync(file, 'utf8'),
   };
+}
+
+/** Choose Download -> JSON and return the name and the parsed file. */
+async function downloadJson(
+  page: Page,
+): Promise<{ name: string; body: any }> {
+  const { name, text } = await downloadFile(page, 'JSON');
+  return { name, body: JSON.parse(text) };
 }
 
 test('Download -> JSON writes the rows the table shows, in its order', async ({
@@ -175,4 +183,92 @@ test('with the search module blocked there is no Download button', async ({
   await expect(page.locator('#resource-table tbody tr')).toHaveCount(
     LABELLED_RESOURCE_COUNT);
   await expect(downloadButton(page)).toHaveCount(0);
+});
+
+/**
+ * Split RFC 4180 text into records of cells. Each record must end in
+ * CRLF. A quoted cell may hold a comma, a CRLF and a doubled quote.
+ */
+function parseCsv(text: string): string[][] {
+  const records: string[][] = [];
+  let record: string[] = [];
+  let i = 0;
+  while (i < text.length) {
+    let cell = '';
+    if (text[i] === '"') {
+      i += 1;
+      while (!(text[i] === '"' && text[i + 1] !== '"')) {
+        if (i >= text.length) throw new Error('unclosed quote');
+        cell += text[i];
+        i += text[i] === '"' ? 2 : 1;
+      }
+      i += 1;
+    } else {
+      while (i < text.length && text[i] !== ',' && text[i] !== '\r'
+        && text[i] !== '\n') {
+        cell += text[i];
+        i += 1;
+      }
+    }
+    record.push(cell);
+    if (text[i] === ',') {
+      i += 1;
+    } else if (text.startsWith('\r\n', i)) {
+      records.push(record);
+      record = [];
+      i += 2;
+    } else {
+      throw new Error(`no CRLF after a record, at ${i}`);
+    }
+  }
+  if (record.length) throw new Error('the last record has no CRLF');
+  return records;
+}
+
+test('Download -> CSV writes the records of the JSON download', async ({
+  page,
+}) => {
+  await openLabelledIndex(page);
+  await search(page, LABELLED_SEARCH_TERM);
+  await expect(downloadButton(page)).toHaveText('Download 3 ▾');
+  const { body } = await downloadJson(page);
+
+  const { name, text } = await downloadFile(page, 'CSV');
+
+  const records = parseCsv(text);
+  expect(records[0]).toEqual(
+    ['id', 'type', 'version', 'size_bytes', 'summary', 'labels']);
+  expect(records.slice(1)).toEqual(body.resources.map((r: any) => [
+    r.id, r.type, r.version, String(r.size_bytes), r.summary,
+    JSON.stringify(r.labels),
+  ]));
+  expect(text.startsWith(
+    'id,type,version,size_bytes,summary,labels\r\n')).toBe(true);
+  expect(text.endsWith('\r\n')).toBe(true);
+  expect(text).toContain(
+    ',"Expression atlas, with the ""basal"" set.",');
+  expect(text).toContain(
+    ',"{""modality"":[""RNA"",""ATAC""],""tissue"":""basal ganglia"",'
+    + '""donors"":""12""}"\r\n');
+  expect(name).toMatch(
+    new RegExp(`^all-${LABELLED_SEARCH_TERM}-\\d{4}-\\d{2}-\\d{2}\\.csv$`));
+});
+
+test('Download -> CSV quotes a cell that holds a line break', async ({
+  page,
+}) => {
+  await openLabelledIndex(page);
+  await search(page, LABELLED_SEARCH_TERM);
+  await expect(downloadButton(page)).toHaveText('Download 3 ▾');
+  /* No fixture summary holds a line break, so give the first record one. */
+  const summary = 'First line\nsecond line';
+  await page.evaluate((text) => {
+    const w = window as any;
+    w.rowData[w.currentIds[0]].summary = text;
+  }, summary);
+
+  const { text } = await downloadFile(page, 'CSV');
+
+  expect(text).toContain(',"First line\nsecond line",');
+  expect(parseCsv(text)[1][4]).toBe(summary);
 });

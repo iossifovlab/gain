@@ -259,12 +259,14 @@
             setTimeout(() => URL.revokeObjectURL(url), 10000);
         }
 
+        /** The search that the table shows: the whole repository. */
+        function downloadSearch() {
+            return { q: lastSearch.q, type: lastSearch.type, folder: "" };
+        }
+
         function downloadJson() {
             const generated = new Date().toISOString();
-            // The table lists the whole repository, so no folder.
-            const search = {
-                q: lastSearch.q, type: lastSearch.type, folder: "",
-            };
+            const search = downloadSearch();
             const file = {
                 repository: new URL(".", document.baseURI).href,
                 search,
@@ -274,6 +276,36 @@
             saveFile(
                 downloadFileName(search, generated, "json"),
                 JSON.stringify(file, null, 2), "application/json");
+        }
+
+        const CSV_COLUMNS = [
+            "id", "type", "version", "size_bytes", "summary", "labels",
+        ];
+
+        /** One RFC 4180 cell: quoted when it holds , " CR or LF. */
+        function csvCell(value) {
+            const text = String(value);
+            return /[",\r\n]/.test(text)
+                ? `"${text.replace(/"/g, '""')}"` : text;
+        }
+
+        /*
+         * The records of the JSON download as RFC 4180 text (gain#2489):
+         * one header line, CRLF after each record, and the labels as one
+         * cell that holds their JSON object.
+         */
+        function downloadCsv() {
+            const generated = new Date().toISOString();
+            const lines = [CSV_COLUMNS].concat(
+                downloadRecords().map((record) => CSV_COLUMNS.map(
+                    (column) => column === "labels"
+                        ? JSON.stringify(record.labels) : record[column])));
+            const text = lines
+                .map((line) => line.map(csvCell).join(",") + "\r\n")
+                .join("");
+            saveFile(
+                downloadFileName(downloadSearch(), generated, "csv"),
+                text, "text/csv;charset=utf-8");
         }
 
         function createDownloadControl() {
@@ -288,11 +320,6 @@
             menu.id = "download-menu";
             menu.setAttribute("role", "menu");
             menu.hidden = true;
-            const jsonItem = document.createElement("button");
-            jsonItem.type = "button";
-            jsonItem.setAttribute("role", "menuitem");
-            jsonItem.textContent = "JSON";
-            menu.append(jsonItem);
             control.append(button, menu);
             document.getElementById("view-toggle-row").append(control);
 
@@ -307,10 +334,19 @@
             document.addEventListener("keydown", (e) => {
                 if (e.key === "Escape") setOpen(false);
             });
-            jsonItem.addEventListener("click", () => {
-                setOpen(false);
-                downloadJson();
-            });
+            for (const [label, download] of [
+                ["JSON", downloadJson], ["CSV", downloadCsv],
+            ]) {
+                const item = document.createElement("button");
+                item.type = "button";
+                item.setAttribute("role", "menuitem");
+                item.textContent = label;
+                item.addEventListener("click", () => {
+                    setOpen(false);
+                    download();
+                });
+                menu.append(item);
+            }
 
             downloadButton = button;
             updateDownloadCount();
