@@ -177,15 +177,13 @@ Using the VEP effect annotator
 ------------------------------
 GAIn has an extensible annotation infrastructure. In addition to the annotators included with GAIn, specialized annotators can be added through separately installed packages. In this example, we use ``vep_effect_annotator`` to predict variant consequences with the Ensembl Variant Effect Predictor (VEP). This annotator is available through the separately installed ``gain-vep-annotator`` package. Whereas ``vep_full_annotator`` requires a separately downloaded local VEP cache, ``vep_effect_annotator`` uses reference genome and gene models resources from a GAIn GRR. For a more detailed description of both VEP annotators and their configuration options, see the `VEP annotators <https://iossifovlab.com/gaindocs/annotation_infrastructure.html#vep-annotators>`_ section of the Annotation infrastructure page.
 
-Before continuing, install the ``gain-vep-annotator`` package in your current GAIn environment. Among conda channels, the annotator packages are published only on the ``iossifovlab`` channel, and bioconda carries only ``gain-core``.
+Before continuing, install the ``gain-vep-annotator`` package in your current GAIn environment.
 
 .. code-block:: bash
 
     mamba install \
         -c conda-forge \
         -c bioconda \
-        -c iossifovlab \
-        -c defaults \
         gain-vep-annotator
 
 The VEP annotators run VEP inside Docker containers. On macOS, install Docker Desktop by following the `official Docker Desktop installation instructions <https://docs.docker.com/desktop/setup/install/mac-install/>`_. After installation, open Docker Desktop and wait for Docker to finish starting.
