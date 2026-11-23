@@ -1,4 +1,4 @@
-"""``binning_tracks_annotator``: the tracks of a ``tracks:`` list.
+"""``tracks_annotator``: the tracks of a ``tracks:`` list.
 
 The annotator resolves the list with the code of ``binning_tool`` and
 answers one float attribute for each track, for each annotatable
@@ -48,10 +48,10 @@ MAX_TRACKS = 2000
 VCF_KEY_PATTERN = "[A-Za-z_][0-9A-Za-z_.]*"
 
 
-def build_binning_tracks_annotator(
+def build_tracks_annotator(
     pipeline: AnnotationPipeline, info: AnnotatorInfo,
 ) -> Annotator:
-    return BinningTracksAnnotator(pipeline, info)
+    return TracksAnnotator(pipeline, info)
 
 
 def track_attribute_name(prefix: str, track: Track) -> str:
@@ -113,7 +113,7 @@ def labeled_tracks_frame(jobs: list[BinningJob]) -> pd.DataFrame:
             tracks_frame([job])
         except ValueError as error:
             raise ValueError(
-                f"{job.entry}: binning_tracks_annotator refuses a "
+                f"{job.entry}: tracks_annotator refuses a "
                 f"definition with a NaN or an infinity, as binning_tool "
                 f"does: {error}") from error
     return tracks_frame(jobs)
@@ -129,7 +129,7 @@ class LocalFilesError(ValueError):
 
     def __init__(self, label: str) -> None:
         super().__init__(
-            f"{label}: binning_tracks_annotator does not read a local "
+            f"{label}: tracks_annotator does not read a local "
             f"file, such as a meta file_name, because a pipeline has no "
             f"directory of a run definition; give meta a resource_id or "
             f"a resource_label")
@@ -171,11 +171,11 @@ def refuse_too_many_tracks(tracks: list[Track]) -> None:
     """Refuse more than :data:`MAX_TRACKS` tracks, naming their number."""
     if len(tracks) > MAX_TRACKS:
         raise ValueError(
-            f"binning_tracks_annotator gives at most {MAX_TRACKS} "
+            f"tracks_annotator gives at most {MAX_TRACKS} "
             f"tracks; the tracks entries give {len(tracks)}")
 
 
-class BinningTracksAnnotator(AnnotatorBase):
+class TracksAnnotator(AnnotatorBase):
     """Answers each track of a ``tracks:`` list over an annotatable.
 
     Each track is one attribute, named
@@ -187,7 +187,7 @@ class BinningTracksAnnotator(AnnotatorBase):
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo):
         if info.attributes:
             raise ValueError(
-                "binning_tracks_annotator takes no attributes list, "
+                "tracks_annotator takes no attributes list, "
                 "because the tracks entries define the attributes: one "
                 "for each track")
         self._grr = pipeline.repository
@@ -228,9 +228,9 @@ class BinningTracksAnnotator(AnnotatorBase):
 Annotator that gives one float attribute for each track of a `tracks:`
 list of `binning_tool` entries.
 
-<a href="{self.BASE_DOC_URL}#binning-tracks-annotator" target="_blank">More info</a>
+<a href="{self.BASE_DOC_URL}#tracks-annotator" target="_blank">More info</a>
 
-""")  # ruff: ignore[line-too-long]
+""")
         for attr in self._attributes:
             attr._documentation = (  # ruff: ignore[private-member-access]
                 documentation[attr.source])

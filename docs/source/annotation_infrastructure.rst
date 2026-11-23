@@ -893,10 +893,10 @@ is still reported at its own full extent, and the ``count`` attribute counts the
 fragments that were kept — so raising either threshold lowers ``count`` as well as
 changing the aggregated attribute values.
 
-binning_tracks_annotator
-^^^^^^^^^^^^^^^^^^^^^^^^
+tracks_annotator
+^^^^^^^^^^^^^^^^
 
-``binning_tracks_annotator`` gives the values of ``binning_tool`` for each
+``tracks_annotator`` gives the values of ``binning_tool`` for each
 annotatable. It takes a ``tracks:`` list with the spelling of a
 ``binning_tool`` run definition. The :doc:`/cli/binning_tool` page and
 :ref:`binning-run-definition` give the keys of an entry.
@@ -909,7 +909,7 @@ example a mean over no fragments, gives an empty value.
 
 .. code:: yaml
 
-    - binning_tracks_annotator:
+    - tracks_annotator:
         prefix: atac
         tracks:
           - fragment_score_tracks:

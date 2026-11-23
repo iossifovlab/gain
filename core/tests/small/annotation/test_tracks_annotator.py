@@ -1,5 +1,5 @@
 # pylint: disable=redefined-outer-name,C0114,C0116
-"""``binning_tracks_annotator``: one float attribute per track (ADR 0041).
+"""``tracks_annotator``: one float attribute per track (ADR 0041).
 
 The annotator resolves a ``tracks:`` list the way ``binning_tool`` does
 and bins each annotatable as one bin of the grid whose bin size is the
@@ -35,7 +35,7 @@ from typing import Any
 import pysam
 import pytest
 import yaml
-from gain.annotation import binning_tracks_annotator
+from gain.annotation import tracks_annotator
 from gain.annotation.annotatable import (
     Annotatable,
     CNVAllele,
@@ -47,7 +47,7 @@ from gain.annotation.annotate_vcf import cli as annotate_vcf
 from gain.annotation.annotation_config import AnnotationConfigurationError
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
-from gain.annotation.binning_tracks_annotator import LocalFilesError
+from gain.annotation.tracks_annotator import LocalFilesError
 from gain.binning.cli import cli as binning_tool
 from gain.binning.fragment_score_tracks import FragmentScoreBinding
 from gain.binning.h5_reader import read_values
@@ -123,7 +123,7 @@ def tracks_pipeline(
     repo: GenomicResourceRepo, entries: list[dict[str, Any]],
     **parameters: Any,
 ) -> AnnotationPipeline:
-    config = yaml.safe_dump([{"binning_tracks_annotator": {
+    config = yaml.safe_dump([{"tracks_annotator": {
         **parameters, "tracks": entries}}])
     return load_pipeline_from_yaml(config, repo)
 
@@ -230,7 +230,7 @@ def test_annotate_vcf_writes_each_track_with_its_label(
         chr1   15  .  A   T   .    .      .
     """))
     pipeline = tmp_path / "pipeline.yaml"
-    pipeline.write_text(yaml.safe_dump([{"binning_tracks_annotator": {
+    pipeline.write_text(yaml.safe_dump([{"tracks_annotator": {
         "prefix": "atac", "tracks": [UNPOOLED_PAIR]}}]))
     output = tmp_path / "out.vcf"
 
@@ -269,7 +269,7 @@ def test_annotate_doc_shows_the_label_and_the_six_fields_of_a_track(
     pair_grr_dir: pathlib.Path, tmp_path: pathlib.Path,
 ) -> None:
     pipeline = tmp_path / "pipeline.yaml"
-    pipeline.write_text(yaml.safe_dump([{"binning_tracks_annotator": {
+    pipeline.write_text(yaml.safe_dump([{"tracks_annotator": {
         "prefix": "atac", "tracks": [UNPOOLED_PAIR]}}]))
     output = tmp_path / "doc.html"
 
@@ -307,7 +307,7 @@ def test_annotate_doc_shows_the_label_and_the_six_fields_of_a_track(
         assert f"<li><code>{field}</code>: <code>{value}</code></li>" \
             in second
     assert (
-        "annotation_infrastructure.html#binning-tracks-annotator" in page)
+        "annotation_infrastructure.html#tracks-annotator" in page)
 
 
 @pytest.mark.parametrize("label", [
@@ -325,7 +325,7 @@ def test_the_rendered_documentation_shows_the_label_and_fields_verbatim(
         "binner_def": "{}"}
 
     rendered = render_markdown(
-        binning_tracks_annotator.track_documentation(label, row))
+        tracks_annotator.track_documentation(label, row))
 
     assert "<img" not in rendered
     assert "<em>" not in rendered
@@ -482,7 +482,7 @@ def test_an_empty_attributes_list_gives_every_track_attribute(
 def test_the_renamed_binners_parameter_is_refused(
     repo: GenomicResourceRepo, tracks: dict[str, Any],
 ) -> None:
-    config = yaml.safe_dump([{"binning_tracks_annotator": {
+    config = yaml.safe_dump([{"tracks_annotator": {
         "binners": [fragment_entry()], **tracks}}])
 
     with pytest.raises(AnnotationConfigurationError) as excinfo:
@@ -572,7 +572,7 @@ def test_the_refusal_after_resolution_holds_without_the_one_before(
     # file without meta.file_name, so this test removes the first
     # refusal.  If the first refusal moves, move the patch with it.
     monkeypatch.setattr(
-        binning_tracks_annotator, "refuse_local_file_names",
+        tracks_annotator, "refuse_local_file_names",
         lambda _entries: None)
 
     with pytest.raises(AnnotationConfigurationError) as excinfo:
@@ -589,7 +589,7 @@ def test_a_resolved_job_with_local_files_is_refused(
     jobs = resolve_tracks([LOCAL_CELL_GROUPING], repo)
 
     with pytest.raises(LocalFilesError) as excinfo:
-        binning_tracks_annotator.refuse_local_files(jobs)
+        tracks_annotator.refuse_local_files(jobs)
 
     assert jobs[0].local_files
     assert str(excinfo.value) == str(LocalFilesError("tracks[0]"))

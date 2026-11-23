@@ -315,7 +315,7 @@ class TrackKind(Protocol):
 
         With ``quiet``, the binding keeps no record and logs no line for
         each region it bins.  ``binning_tool`` binds with the default,
-        ``False``.  ``binning_tracks_annotator`` binds with ``True``, so
+        ``False``.  ``tracks_annotator`` binds with ``True``, so
         a kind must accept ``quiet`` to work in the annotator.
         """
 

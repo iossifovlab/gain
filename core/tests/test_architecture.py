@@ -269,7 +269,7 @@ def test_the_grr_does_not_import_the_annotation_layer(
 def test_binning_does_not_import_the_annotation_layer() -> None:
     """``binning`` sits below ``annotation``, by ADR 0041.
 
-    ``binning_tracks_annotator`` in ``annotation`` resolves and binds the
+    ``tracks_annotator`` in ``annotation`` resolves and binds the
     binners of ``binning``, so ``annotation`` imports ``binning``.  The
     other direction is forbidden: ``binning_tool`` reads scores and
     writes a matrix, and nothing in it is an annotation.  Code that both

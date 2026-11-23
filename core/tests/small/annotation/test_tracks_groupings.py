@@ -1,5 +1,5 @@
 # pylint: disable=redefined-outer-name,C0114,C0116
-"""The groupings of ``binning_tool`` in ``binning_tracks_annotator``.
+"""The groupings of ``binning_tool`` in ``tracks_annotator``.
 
 The GRR holds two samples, ``frags/s1`` and ``frags/s2``, and their cell
 metadata table ``meta/cells``.  Each sample carries its ``sample_id``
@@ -104,7 +104,7 @@ def repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
 def tracks_pipeline(
     repo: GenomicResourceRepo, *entries: dict[str, Any],
 ) -> AnnotationPipeline:
-    config = yaml.safe_dump([{"binning_tracks_annotator": {
+    config = yaml.safe_dump([{"tracks_annotator": {
         "tracks": [{"fragment_score_tracks": entry}
                     for entry in entries]}}])
     return load_pipeline_from_yaml(config, repo)

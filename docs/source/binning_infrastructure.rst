@@ -967,7 +967,7 @@ A plugin adds a track kind with an entry point in the
 ``bind(job, grr, *, quiet=False)``, and ``bind`` returns a context manager
 whose value bins one region at a time.
 
-``binning_tool`` calls ``bind(job, grr)``. ``binning_tracks_annotator``
+``binning_tool`` calls ``bind(job, grr)``. ``tracks_annotator``
 calls ``bind(job, grr, quiet=True)``, so a kind that does not accept the
 keyword ``quiet`` fails in the annotator. With ``quiet=True``, a binding
 keeps no record and logs no line for each region that it bins.
