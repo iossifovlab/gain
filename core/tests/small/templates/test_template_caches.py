@@ -1,4 +1,5 @@
-"""``reset_caches`` forgets the environment and the provider templates.
+"""``reset_caches`` forgets the environment, the provider templates and
+the digest of the page templates.
 
 The Jinja environment and the merged provider-template dict are
 process-wide singletons, built on first use.  Every test in this package
@@ -8,13 +9,22 @@ provider registered after the reset is seen.
 """
 from __future__ import annotations
 
+import pathlib
 from unittest.mock import patch
 
 import pytest
-from gain.templates import get_jinja_env, get_template, reset_caches
+from gain.templates import (
+    get_jinja_env,
+    get_template,
+    reset_caches,
+    templates_digest,
+)
 from jinja2 import TemplateNotFound
 
-from tests.small.templates.conftest import make_entry_point
+from tests.small.templates.conftest import (
+    copy_page_input_dir,
+    make_entry_point,
+)
 
 
 def test_the_environment_is_rebuilt_after_a_reset() -> None:
@@ -42,3 +52,72 @@ def test_a_provider_registered_after_a_reset_is_seen() -> None:
 
     with patch("gain.templates.entry_points", return_value=[late]):
         assert get_template("late.jinja").render(v="one") == "late one"
+
+
+@pytest.fixture
+def template_files(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> pathlib.Path:
+    """A copy of the page templates that the digest reads in their place."""
+    return copy_page_input_dir("template_files", tmp_path, monkeypatch)
+
+
+def test_the_digest_reads_the_templates_once_until_a_reset(
+    template_files: pathlib.Path,
+) -> None:
+    first = templates_digest()
+    page = template_files / "basic.jinja"
+    page.write_text(page.read_text() + "<!-- changed -->\n")
+
+    second = templates_digest()
+    reset_caches()
+    third = templates_digest()
+
+    assert second == first
+    assert third != first
+
+
+def test_the_digest_does_not_depend_on_the_listing_order(
+    template_files: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    one = make_entry_point("one", lambda: {"one.jinja": "one"})
+    two = make_entry_point("two", lambda: {"two.jinja": "two"})
+    with patch("gain.templates.entry_points", return_value=[one, two]):
+        first = templates_digest()
+    reset_caches()
+    listed = pathlib.Path.iterdir
+    monkeypatch.setattr(
+        pathlib.Path, "iterdir",
+        lambda self: iter(sorted(listed(self), reverse=True)))
+
+    with patch("gain.templates.entry_points", return_value=[two, one]):
+        second = templates_digest()
+
+    assert sorted(listed(template_files), reverse=True) != sorted(
+        listed(template_files))
+    assert second == first
+
+
+def test_a_renamed_template_file_changes_the_digest(
+    template_files: pathlib.Path,
+) -> None:
+    """The new name keeps the file in its place in the sorted order."""
+    first = templates_digest()
+    page = template_files / "basic.jinja"
+    page.rename(template_files / "basicx.jinja")
+
+    reset_caches()
+
+    assert templates_digest() != first
+
+
+def test_a_renamed_provider_template_changes_the_digest() -> None:
+    old = make_entry_point("p", lambda: {"old.jinja": "same source"})
+    new = make_entry_point("p", lambda: {"new.jinja": "same source"})
+    with patch("gain.templates.entry_points", return_value=[old]):
+        first = templates_digest()
+
+    reset_caches()
+
+    with patch("gain.templates.entry_points", return_value=[new]):
+        assert templates_digest() != first

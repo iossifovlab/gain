@@ -79,8 +79,11 @@ able to render an import that points somewhere the publisher did not.
 """
 from __future__ import annotations
 
+import hashlib
+import operator
 from dataclasses import dataclass, field
 from importlib.metadata import entry_points
+from importlib.resources import files
 from typing import TYPE_CHECKING
 
 from jinja2 import (
@@ -100,28 +103,31 @@ from gain.templates.static_assets import (
 from gain.utils.chromosome_order import natural_chromosome_key
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
+    from importlib.resources.abc import Traversable
 
 
 @dataclass
 class _TemplateCache:
     env: Environment | None = field(default=None)
     provider_cache: dict[str, str] | None = field(default=None)
+    templates_digest: str | None = field(default=None)
 
 
 _state = _TemplateCache()
 
 
 def reset_caches() -> None:
-    """Forget the built environment and the merged provider templates.
+    """Forget the environment, the provider templates and their digest.
 
-    Both are process-wide and built on first use, so a test that
+    All three are process-wide and built on first use, so a test that
     registers a template provider, or patches what one returns, needs
     the next call to build afresh -- this is the one way to ask for that
     without reaching into the cache itself.
     """
     _state.env = None
     _state.provider_cache = None
+    _state.templates_digest = None
 
 
 MARKDOWN_TEMPLATES = frozenset({
@@ -146,6 +152,59 @@ def _get_provider_templates() -> dict[str, str]:
                 merged[name] = source
         _state.provider_cache = merged
     return _state.provider_cache
+
+
+#: The directories of the package that the pages read, by name: the
+#: templates that the ``PackageLoader`` of :func:`get_jinja_env` reads,
+#: and the static files that a page links to, the fonts among them.
+_PAGE_INPUT_DIRS: dict[str, Traversable] = {
+    "template_files": files("gain.templates") / "template_files",
+    "static": files("gain.templates") / "static",
+}
+
+
+def _files_under(
+    directory: Traversable, prefix: str,
+) -> Iterator[tuple[str, Traversable]]:
+    """Yield the relative path and the entry of each file under a dir."""
+    for entry in directory.iterdir():
+        path = f"{prefix}/{entry.name}"
+        if entry.is_dir():
+            yield from _files_under(entry, path)
+        elif entry.is_file():
+            yield path, entry
+
+
+def templates_digest() -> str:
+    """Return the hex digest of the page templates and the static files.
+
+    The digest covers the relative path and the bytes of each file under
+    the ``template_files`` and the ``static`` directories of the package,
+    and the name and the source of each template that a provider supplies.
+    It does not depend on the order in which the file system or the entry
+    points list them. It is computed once per process:
+    :func:`reset_caches` forgets it.
+    """
+    if _state.templates_digest is None:
+        hasher = hashlib.sha256()
+
+        def feed(*parts: bytes) -> None:
+            # Each part goes in with its length, so no two inputs collide.
+            for part in parts:
+                hasher.update(len(part).to_bytes(8, "big"))
+                hasher.update(part)
+
+        package_files = sorted(
+            (item for name, directory in _PAGE_INPUT_DIRS.items()
+             for item in _files_under(directory, name)),
+            key=operator.itemgetter(0),
+        )
+        for path, entry in package_files:
+            feed(b"file", path.encode(), entry.read_bytes())
+        for name, source in sorted(_get_provider_templates().items()):
+            feed(b"provider", name.encode(), source.encode())
+        _state.templates_digest = hasher.hexdigest()
+    return _state.templates_digest
 
 
 class _ProviderLoader(BaseLoader):

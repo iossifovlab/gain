@@ -11,10 +11,12 @@ fixture, shared by the sorter and shadow-root modules.
 from __future__ import annotations
 
 import pathlib
+import shutil
 import textwrap
 from collections.abc import Callable, Iterator
 from unittest.mock import MagicMock
 
+import gain.templates
 import pytest
 from gain.gene_scores.implementations.gene_scores_impl import (
     GeneScoreImplementation,
@@ -113,3 +115,19 @@ def make_entry_point(
     entry_point.name = name
     entry_point.load.return_value = provider
     return entry_point
+
+
+def copy_page_input_dir(
+    name: str, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> pathlib.Path:
+    """Copy one page-input directory that the digest reads in its place.
+
+    ``name`` is a key of ``gain.templates._PAGE_INPUT_DIRS``. The copy
+    lives under ``tmp_path``, so a test changes it without a write into
+    the installed package.
+    """
+    dirs = gain.templates._PAGE_INPUT_DIRS  # ruff: ignore[private-member-access] -- the seam the digest reads
+    copy = tmp_path / name
+    shutil.copytree(str(dirs[name]), copy)
+    monkeypatch.setitem(dirs, name, copy)
+    return copy

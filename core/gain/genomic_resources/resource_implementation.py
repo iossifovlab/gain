@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import copy
 import enum
-import functools
 import hashlib
 import json
 import threading
@@ -10,16 +9,14 @@ import weakref
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from importlib import metadata
 from typing import Any, ClassVar, NamedTuple, cast
 
 import apsw
 from cerberus import Validator
 
-import gain
 from gain import logging
 from gain.task_graph.graph import TaskDesc
-from gain.templates import get_template
+from gain.templates import get_template, templates_digest
 from gain.templates.breadcrumb import Crumb, page_breadcrumb
 from gain.templates.static_assets import climb_to_root
 from gain.utils.helpers import convert_size
@@ -290,46 +287,6 @@ class DerivedFilesState(enum.Enum):
     is nothing wrong with the resource."""
 
 
-@functools.cache
-def _distributions_of_packages() -> Mapping[str, list[str]]:
-    """Map each top-level import package to the distributions that ship it.
-
-    The files that a distribution records come first. An editable install
-    records no package files, so the modules that its entry points name
-    count too: each kind is registered through an entry point. Built once
-    per process, because the scan reads the metadata of every installed
-    distribution.
-    """
-    mapping = {
-        package: list(names)
-        for package, names in metadata.packages_distributions().items()
-    }
-    for distribution in metadata.distributions():
-        name = distribution.metadata["Name"]
-        for entry_point in distribution.entry_points:
-            package = entry_point.module.partition(".")[0]
-            names = mapping.setdefault(package, [])
-            if name not in names:
-                names.append(name)
-    return mapping
-
-
-def _distribution_version(module_name: str) -> str | None:
-    """Return the version of the distribution that ships ``module_name``.
-
-    ``None`` means that no installed distribution ships the module, for
-    example a class that a script or a test defines.
-    """
-    package = module_name.partition(".")[0]
-    distributions = _distributions_of_packages().get(package)
-    if not distributions:
-        return None
-    try:
-        return metadata.version(distributions[0])
-    except metadata.PackageNotFoundError:
-        return None
-
-
 class ResourceStatistics:
     """
     Base class for statistics.
@@ -369,9 +326,12 @@ class GenomicResourceImplementation(ABC):
         replace it with the validated form.
     page_fingerprint_enabled : bool
         Whether :meth:`page_fingerprint` computes a page fingerprint for
-        the kind. ``True`` by default. A kind sets ``False`` when its info
-        pages read inputs that the page fingerprint does not cover. A
-        repair then renders the info pages of the kind on every run.
+        the kind. ``True`` by default. The page fingerprint covers the
+        page templates, the static files, the manifest, the statistics
+        hash, the info hash and the page dependencies. It does not cover
+        the version of gain. A kind sets ``False`` when its info pages read
+        inputs that the page fingerprint does not cover. A repair then
+        renders the info pages of the kind on every run.
     """
 
     page_fingerprint_enabled: ClassVar[bool] = True
@@ -511,12 +471,21 @@ class GenomicResourceImplementation(ABC):
     ) -> str | None:
         """Compute the page fingerprint of the info pages of the resource.
 
-        A kind does not override the method. The digest covers the version
-        of gain, the version of the distribution that ships the class of
-        the kind, the full id and the manifest of the resource,
-        :meth:`calc_statistics_hash`, :meth:`calc_info_hash`, and the full
-        id and the manifest of each resource that
-        :meth:`page_dependencies` lists.
+        A kind does not override the method. The digest covers these
+        inputs:
+
+        - the digest of the page templates and the static files, from
+          :func:`gain.templates.templates_digest`. It covers the provider
+          templates too.
+        - the full id and the manifest of the resource.
+        - :meth:`calc_statistics_hash` and :meth:`calc_info_hash`.
+        - the full id and the manifest of each resource that
+          :meth:`page_dependencies` lists.
+
+        A new version of gain, or of the distribution that ships the kind,
+        does not change the digest by itself. After a change to the Python
+        code that builds the page data, run ``repo-repair --force`` or
+        ``repo-info``.
 
         Parameters
         ----------
@@ -533,8 +502,7 @@ class GenomicResourceImplementation(ABC):
         if not self.page_fingerprint_enabled:
             return None
         inputs: dict[str, Any] = {
-            # Read through the module at call time, not imported by name.
-            "gain_version": gain.__version__,
+            "templates_digest": templates_digest(),
             "full_id": self.resource.get_full_id(),
             "manifest": self.resource.get_manifest().to_manifest_entries(),
             "statistics_hash": self.calc_statistics_hash().hex(),
@@ -553,9 +521,6 @@ class GenomicResourceImplementation(ABC):
             })
         if dependencies:
             inputs["dependencies"] = dependencies
-        kind_version = _distribution_version(type(self).__module__)
-        if kind_version is not None:
-            inputs["kind_version"] = kind_version
         return hashlib.sha256(
             json.dumps(inputs, sort_keys=True).encode()).hexdigest()
 
