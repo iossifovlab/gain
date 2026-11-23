@@ -1,5 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
-"""``fragment_score_binner`` in ``coverage_profile`` mode, at the binner.
+"""``fragment_score_tracks`` in ``coverage_profile`` mode, at the binding.
 
 Each track's fragments, clipped to the region, make a coverage profile
 -- per position, the sum of the values of the fragments over it -- and
@@ -17,7 +17,7 @@ from typing import Any
 import h5py
 import numpy as np
 import pytest
-from gain.binning.binners import RunDefinitionError
+from gain.binning.tracks import RunDefinitionError
 from gain.genomic_resources.reference_genome import (
     ReferenceGenome,
     build_reference_genome_from_resource,
@@ -36,19 +36,19 @@ from tests.small.binning.test_binning_tool_cli import (
     read_matrix,
     write_run_definition,
 )
-from tests.small.binning.test_fragment_binner import (
-    BY_CLASS,
-    BY_SAMPLE_LABEL,
-    bin_entry,
-    bin_regions,
-    parse_fragment_entry,
-)
 from tests.small.binning.test_fragment_length_mode import (
     CHR1,
     CHR2,
     bound_block,
     length,
     split_run,
+)
+from tests.small.binning.test_fragment_score_tracks import (
+    BY_CLASS,
+    BY_SAMPLE_LABEL,
+    bin_entry,
+    bin_regions,
+    parse_fragment_entry,
 )
 
 nan = np.nan
@@ -254,7 +254,7 @@ def test_a_coverage_aggregate_it_cannot_honour_is_refused(
         parse_fragment_entry(coverage(**aggregate), repo, genome)
 
     message = str(excinfo.value)
-    assert message.startswith("binners[0].aggregate")
+    assert message.startswith("tracks[0].aggregate")
     for fragment in fragments:
         assert fragment in message
 
@@ -309,7 +309,7 @@ def test_tracks_records_a_coverage_track_s_mode_and_uncovered_value(
 
     with h5py.File(output, "r") as h5:
         tracks = h5["tracks"][()]
-    definitions = [json.loads(row["binner_def"]) for row in tracks]
+    definitions = [json.loads(row["entry_def"]) for row in tracks]
     assert [d["mode"] for d in definitions] == [
         "coverage_profile", "coverage_profile"]
     assert [d["uncovered_value"] for d in definitions] == [0.0, None]

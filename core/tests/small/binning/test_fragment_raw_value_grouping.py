@@ -1,5 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
-"""``fragment_score_binner`` grouped by the raw value of a ``str`` score.
+"""``fragment_score_tracks`` grouped by the raw value of a ``str`` score.
 
 ``group: {group_score_id: S}`` gives one track per distinct value of
 ``S``, the set read from the score's full categorical histogram.  The
@@ -30,8 +30,7 @@ from typing import Any
 import h5py
 import numpy as np
 import pytest
-from gain.binning.binners import BinningJob, discover_binner_kinds
-from gain.binning.fragment_binner import (
+from gain.binning.fragment_score_tracks import (
     FragmentBinningJob,
     FragmentScoreBinding,
 )
@@ -40,6 +39,7 @@ from gain.binning.run_definition import (
     RunDefinitionError,
     parse_run_definition,
 )
+from gain.binning.tracks import BinningJob, discover_track_kinds
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.repository import GenomicResourceRepo
@@ -55,7 +55,7 @@ from tests.small.binning.conftest import S1_FRAGMENTS, S2_FRAGMENTS
 from tests.small.binning.test_binning_tool_cli import binning_tool
 
 BIN_SIZE = 10
-KIND = "fragment_score_binner"
+KIND = "fragment_score_tracks"
 CHR1 = BedRegion("chr1", 1, 40)
 BY_CELL = {"group_score_id": "cell"}
 S1_BY_CELL = [
@@ -72,14 +72,14 @@ def parse(
 ) -> RunDefinition:
     return parse_run_definition({
         "bins": {"bin_size": BIN_SIZE},
-        "binners": [{KIND: entry}],
+        "tracks": [{KIND: entry}],
     }, repo, genome)
 
 
 def bin_job(
     job: BinningJob, region: BedRegion, repo: GenomicResourceRepo,
 ) -> np.ndarray:
-    with discover_binner_kinds()[job.binner].bind(job, repo) as bound:
+    with discover_track_kinds()[job.kind].bind(job, repo) as bound:
         return bound.bin_region(region, BIN_SIZE)
 
 
@@ -154,22 +154,22 @@ def refusal(
     with pytest.raises(RunDefinitionError) as excinfo:
         parse(entry, repo, genome)
     message = str(excinfo.value)
-    assert message.startswith("binners[0]")
+    assert message.startswith("tracks[0]")
     return message
 
 
 @pytest.mark.parametrize("group,fragments", [
     # An unknown score names the resource's scores.
     ({"group_score_id": "barcode"},
-     ["binners[0].group", "'frags/s1'", "no score 'barcode'"]),
+     ["tracks[0].group", "'frags/s1'", "no score 'barcode'"]),
     # Not a str score: count, aggregated by a constant here.
     ({"group_score_id": "count"},
-     ["binners[0].group", "'frags/s1'", "'count'", "'int'"]),
+     ["tracks[0].group", "'frags/s1'", "'count'", "'int'"]),
     # Mixed with the constant or the metadata form.
     ({"group_score_id": "cell", "group": "all"},
-     ["binners[0].group", "group_score_id", "not both"]),
+     ["tracks[0].group", "group_score_id", "not both"]),
     ({"group_score_id": "cell", "group_meta_column": "class"},
-     ["binners[0].group", "group_score_id", "not both"]),
+     ["tracks[0].group", "group_score_id", "not both"]),
 ])
 def test_a_malformed_value_grouping_is_refused_naming_what_is_wrong(
     stats_repo: GenomicResourceRepo, genome: ReferenceGenome,
@@ -191,7 +191,7 @@ def test_grouping_by_the_aggregated_score_is_refused(
                        "group": {"group_score_id": "count"},
                        "value": {"score_id": "count"}}, stats_repo, genome)
 
-    assert "binners[0].group" in message
+    assert "tracks[0].group" in message
     assert "'frags/s1'" in message
     assert "'count' is the aggregated score" in message
 
@@ -586,7 +586,7 @@ def test_a_value_outside_the_histogram_is_dropped_and_counted(
                    repo, genome).jobs
 
     with caplog.at_level(logging.INFO, logger="gain.binning"), \
-            discover_binner_kinds()[job.binner].bind(job, repo) as bound:
+            discover_track_kinds()[job.kind].bind(job, repo) as bound:
         block = bound.bin_region(CHR1, BIN_SIZE)
 
     assert isinstance(bound, FragmentScoreBinding)
@@ -640,9 +640,9 @@ def tool_run_definition(directory: pathlib.Path, *entries: str) -> pathlib.Path:
         bins:
           bin_size: 10
           regions: ["chr1:1-40", chr2]
-        binners:
+        tracks:
     """) + "".join(
-        f"- fragment_score_binner: {entry}\n" for entry in entries))
+        f"- fragment_score_tracks: {entry}\n" for entry in entries))
     return path
 
 
@@ -661,13 +661,13 @@ def test_dry_run_reports_the_histogram_s_group_count(
 
     out = capsys.readouterr().out
     assert (
-        "binners[0]: fragment_score_binner\n"
+        "tracks[0]: fragment_score_tracks\n"
         "    resources: frags/s1\n"
         "    tables: none\n"
         "    groups: 4\n"
         "    tracks: 4\n") in out
     assert (
-        "binners[1]: fragment_score_binner\n"
+        "tracks[1]: fragment_score_tracks\n"
         "    resources: frags/odd, frags/s1\n"
         "    tables: none\n"
         "    groups: 6\n"

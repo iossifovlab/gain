@@ -1,4 +1,4 @@
-"""The configuration side of the ``fragment_score_binner`` binner.
+"""The configuration side of the ``fragment_score_tracks`` track kind.
 
 The GRR convention's constants for single-cell fragment resources, the
 spec classes of an entry (:class:`FragmentEntry` and its blocks), the
@@ -23,13 +23,13 @@ from zipfile import BadZipFile
 import numpy as np
 import pandas as pd
 
-from gain.binning.binners import (
+from gain.binning.fragment_array_folds import LENGTH_AGGREGATORS
+from gain.binning.tracks import (
     NUMERIC_VALUE_TYPES,
     RunDefinitionError,
     check_keys,
     entry_name,
 )
-from gain.binning.fragment_array_folds import LENGTH_AGGREGATORS
 from gain.genomic_resources.data_frame_resource import (
     load_data_frame_from_resource,
 )
@@ -840,7 +840,7 @@ CONSTANT_GROUP_META = (
 
 @dataclass(frozen=True)
 class FragmentEntry:
-    """A ``fragment_score_binner`` entry of a run definition.
+    """A ``fragment_score_tracks`` entry of a run definition.
 
     Attributes
     ----------
@@ -929,7 +929,7 @@ def _located[Made](
 
 
 def _entry_from_config(label: str, config: Any) -> FragmentEntry:
-    """Read the inner config of a ``fragment_score_binner`` entry."""
+    """Read the inner config of a ``fragment_score_tracks`` entry."""
     check_keys(label, config, ENTRY_KEYS)
     name = entry_name(label, config)
     return _located(

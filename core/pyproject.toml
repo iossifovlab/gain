@@ -72,9 +72,9 @@ binning_tool = "gain.binning.cli:cli"
 binning_tool_view = "gain.binning.view_cli:cli"
 to_gpf_gene_models_format = "gain.genomic_resources.gene_models.to_gpf_gene_models_format:main"
 
-[project.entry-points."gain.binning.binners"]
-position_score_binner = "gain.binning.binners:PositionScoreBinner"
-fragment_score_binner = "gain.binning.fragment_binner:FragmentScoreBinner"
+[project.entry-points."gain.binning.track_kinds"]
+position_score_tracks = "gain.binning.tracks:PositionScoreTracks"
+fragment_score_tracks = "gain.binning.fragment_score_tracks:FragmentScoreTracks"
 
 [project.entry-points."gain.genomic_resources.plugins"]
 default_grr = "gain.genomic_resources.genomic_context:DefaultRepositoryContextProvider"
@@ -121,7 +121,7 @@ cnv_collection = "gain.annotation.fragment_score_annotator:build_fragment_score_
 cnv_collection_annotator = "gain.annotation.fragment_score_annotator:build_fragment_score_annotator"
 chrom_mapping = "gain.annotation.chrom_mapping_annotator:build_chrom_mapping_annotator"
 debug_annotator = "gain.annotation.debug_annotator:build_annotator"
-binning_tracks_annotator = "gain.annotation.binning_tracks_annotator:build_binning_tracks_annotator"
+tracks_annotator = "gain.annotation.tracks_annotator:build_tracks_annotator"
 
 [dependency-groups]
 # scanpy is no longer a runtime dependency of anything: gain reads both

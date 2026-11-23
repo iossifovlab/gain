@@ -7,15 +7,15 @@ HDF5 file. GAIn provides the package ``gain.binning`` as the Python side of
 ``binning_tool``: a script or a notebook uses it to prepare the entries of a
 run and to read the file that the run writes.
 
-A binning run has three parts. An **entry** is one item of the ``binners``
-list of a run definition, and it names a binner kind and the resources that
+A binning run has three parts. An **entry** is one item of the ``tracks``
+list of a run definition, and it names a track kind and the resources that
 it reads. A **group** is the set of fragments that one fragment track
 reduces, and its name is the selector of the track. A **track** is one
 column of the output matrix, and each track belongs to one entry.
 
 A notebook works with ``gain.binning`` in four steps:
 
-1. Build a ``fragment_score_binner`` entry from the spec classes, as
+1. Build a ``fragment_score_tracks`` entry from the spec classes, as
    :doc:`binning/entries` describes.
 2. Preview the groups and the tracks of the entry without a run, as
    :doc:`binning/groups_and_tracks` describes.
@@ -25,10 +25,10 @@ A notebook works with ``gain.binning`` in four steps:
    describes.
 
 The package has two limits. Python does not run a binning: only
-``binning_tool`` writes the file of a run. Only the ``fragment_score_binner``
-entries have spec classes. A ``position_score_binner`` entry has no spec
+``binning_tool`` writes the file of a run. Only the ``fragment_score_tracks``
+entries have spec classes. A ``position_score_tracks`` entry has no spec
 class: you write it as a mapping, in the YAML of a run definition or as a
-dict that you pass to ``resolve_binners``.
+dict that you pass to ``resolve_tracks``.
 
 The examples of this chapter import the package ``gain.grr`` as ``grr`` and
 call the repository ``repo``:

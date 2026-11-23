@@ -15,12 +15,6 @@ import numpy.typing as npt
 import pytest
 import pytest_mock
 from gain import __version__
-from gain.binning.binners import (
-    Binner,
-    BinningJob,
-    PositionScoreDef,
-    Track,
-)
 from gain.binning.cli import (
     _bin_chunks,
     _build_task_graph,
@@ -28,6 +22,12 @@ from gain.binning.cli import (
     cli,
 )
 from gain.binning.run_definition import RunDefinition
+from gain.binning.tracks import (
+    BinningJob,
+    PositionScoreDef,
+    Track,
+    TrackKind,
+)
 from gain.genomic_resources import genomic_context as gc_mod
 from gain.genomic_resources.genomic_context_base import (
     GC_REFERENCE_GENOME_KEY,
@@ -49,21 +49,21 @@ from gain.genomic_resources.testing.table_score_builder import (
 from gain.utils.regions import BedRegion
 
 # A track for the chunk-writing task, which names chunks after it and
-# hands it to the binner.  Which binner kind produced it does not reach
+# hands it to the track kind.  Which kind produced it does not reach
 # the task -- the graph has already resolved the kind to a class.
 TRACK = Track(
     name="scores/one", resource_ids=("scores/one",), group="",
-    selector="s", binner_type="stub",
+    selector="s", entry_type="stub",
     definition=PositionScoreDef(aggregator="max"))
-JOB = BinningJob(binner="stub_binner", tracks=(TRACK,))
+JOB = BinningJob(kind="stub_tracks", tracks=(TRACK,))
 
 RUN_DEFINITION = textwrap.dedent("""
     reference_genome: genome
     bins:
       bin_size: 10
       regions: ["chr1:1-40", chr2]
-    binners:
-    - position_score_binner:
+    tracks:
+    - position_score_tracks:
         resource_query: "scores/*"
 """)
 
@@ -182,12 +182,12 @@ def test_tracks_describes_each_column_with_its_provenance(
         tracks = h5["tracks"][()]
 
     assert list(tracks.dtype.names) == [
-        "binner_type", "binner_index", "track_index", "resource_ids",
-        "selector", "binner_def"]
+        "entry_type", "entry_index", "track_index", "resource_ids",
+        "selector", "entry_def"]
     assert [
         (row["resource_ids"], row["selector"],
-         json.loads(row["binner_def"])["aggregator"],
-         json.loads(row["binner_def"])["none_value_replacement"])
+         json.loads(row["entry_def"])["aggregator"],
+         json.loads(row["entry_def"])["none_value_replacement"])
         for row in tracks
     ] == [
         (b"scores/one", b"s", "max", None),
@@ -200,10 +200,10 @@ TWO_KIND_RUN_DEFINITION = textwrap.dedent("""
     bins:
       bin_size: 10
       regions: ["chr1:1-40", chr2]
-    binners:
-    - position_score_binner:
+    tracks:
+    - position_score_tracks:
         resource_query: "scores/one"
-    - fragment_score_binner:
+    - fragment_score_tracks:
         resource_query: "frags/s1"
         pool: false
 """)
@@ -226,7 +226,7 @@ def test_tracks_records_each_column_s_mode_and_uncovered_value(
     with h5py.File(output, "r") as h5:
         tracks = h5["tracks"][()]
 
-    definitions = [json.loads(row["binner_def"]) for row in tracks]
+    definitions = [json.loads(row["entry_def"]) for row in tracks]
     assert [d.get("mode") for d in definitions] == [None, "fragment_start"]
     assert [d.get("uncovered_value", "absent") for d in definitions] == [
         "absent", None]
@@ -298,10 +298,10 @@ REPEATED_RUN_DEFINITION = textwrap.dedent("""
     bins:
       bin_size: 10
       regions: ["chr1:1-40"]
-    binners:
-    - position_score_binner:
+    tracks:
+    - position_score_tracks:
         resource_query: "scores/*"
-    - position_score_binner:
+    - position_score_tracks:
         resource_query: "scores/one"
         aggregator: min
 """)
@@ -318,7 +318,7 @@ def test_a_repeated_resource_is_named_by_aggregator_in_the_tracks_table(
         tracks = h5["tracks"][()]
         shape = h5["values"].shape
     assert [
-        (row["resource_ids"], json.loads(row["binner_def"])["aggregator"])
+        (row["resource_ids"], json.loads(row["entry_def"])["aggregator"])
         for row in tracks
     ] == [
         (b"scores/one", "max"), (b"scores/two", "mean"),
@@ -345,11 +345,11 @@ NAMED_RUN_DEFINITION = textwrap.dedent("""
     bins:
       bin_size: 10
       regions: ["chr1:1-40"]
-    binners:
-    - position_score_binner:
+    tracks:
+    - position_score_tracks:
         resource_query: "scores/one"
         name: a
-    - position_score_binner:
+    - position_score_tracks:
         resource_query: "scores/one"
         name: b
 """)
@@ -368,7 +368,7 @@ def test_entries_differing_only_in_name_store_one_track_under_each_name(
         tracks = h5["tracks"][()]
         values = h5["values"][()]
     assert [
-        (row["resource_ids"], json.loads(row["binner_def"])["name"])
+        (row["resource_ids"], json.loads(row["entry_def"])["name"])
         for row in tracks
     ] == [(b"scores/one", "a"), (b"scores/one", "b")]
     np.testing.assert_array_equal(
@@ -386,8 +386,8 @@ def test_dry_run_reports_a_run_definition_error_and_writes_nothing(
         reference_genome: genome
         bins:
           bin_size: 10
-        binners:
-        - position_score_binner:
+        tracks:
+        - position_score_tracks:
             resource_query: "scores/*"
             search_term: one
     """))
@@ -398,7 +398,7 @@ def test_dry_run_reports_a_run_definition_error_and_writes_nothing(
     assert excinfo.value.code == 1
     err = capsys.readouterr().err
     assert str(run_definition) in err
-    assert "binners[0]" in err
+    assert "tracks[0]" in err
     assert "search_term" in err
     assert not output.exists()
     assert not (output.parent / "bins_work").exists()
@@ -459,8 +459,8 @@ def test_the_genome_named_in_the_run_definition_defines_the_grid(
         reference_genome: {CONTEXT_GENOME}
         bins:
           bin_size: 10
-        binners:
-        - position_score_binner:
+        tracks:
+        - position_score_tracks:
             resource_query: "scores/*"
     """))
 
@@ -477,8 +477,8 @@ def test_a_run_definition_without_a_genome_is_a_parse_error(
         bins:
           bin_size: 10
           regions: ["chr1:1-40"]
-        binners:
-        - position_score_binner:
+        tracks:
+        - position_score_tracks:
             resource_query: "scores/*"
     """))
 
@@ -567,8 +567,8 @@ def test_the_context_genome_is_not_a_fallback(
         bins:
           bin_size: 10
           regions: ["chr1:1-40"]
-        binners:
-        - position_score_binner:
+        tracks:
+        - position_score_tracks:
             resource_query: "scores/*"
     """))
 
@@ -767,10 +767,10 @@ def test_another_budget_writes_the_same_chunk_files_byte_for_byte(
 
 
 class StubBinding:
-    """A bound stub binner: its block per region comes from ``answer``.
+    """A bound stub track kind: its block per region comes from ``answer``.
 
     It records whether it was left through ``__exit__``, so a test reads
-    the caller's use of the protocol, not a binner's internals.
+    the caller's use of the protocol, not a track kind's internals.
     """
 
     def __init__(
@@ -795,22 +795,22 @@ class StubBinding:
         return self.answer(region)
 
 
-def a_stub_binner(binding: StubBinding) -> type[Binner]:
-    class StubBinner:
-        kind = "stub_binner"
+def a_stub_track_kind(binding: StubBinding) -> type[TrackKind]:
+    class StubTrackKind:
+        kind = "stub_tracks"
 
         @staticmethod
         def bind(_job: BinningJob, _grr: GenomicResourceRepo) -> StubBinding:
             return binding
 
-    return cast(type[Binner], StubBinner)
+    return cast(type[TrackKind], StubTrackKind)
 
 
 def definition_of(repo: GenomicResourceRepo) -> dict[str, Any]:
     """The definition ``_bin_chunks`` builds its GRR from.
 
     A filesystem test repository has no definition.  An empty one builds
-    the default GRR, as ``None`` does, and the stub binner never reads it.
+    the default GRR, as ``None`` does, and the stub track kind never reads it.
     """
     return repo.definition or {}
 
@@ -819,11 +819,11 @@ def one_bin_of(value: float) -> Callable[[BedRegion], Any]:
     return lambda _region: np.array([[value]], dtype=np.float64)
 
 
-def test_a_task_saves_each_chunk_as_the_binner_returns_it(
+def test_a_task_saves_each_chunk_as_the_track_kind_returns_it(
     repo: GenomicResourceRepo, tmp_path: pathlib.Path,
 ) -> None:
     # Peak memory is one region, not one bundle, which holds only if the
-    # task saves each block before asking for the next.  This binner
+    # task saves each block before asking for the next.  This binding
     # records, at each ask, which chunks are already on disk.
     chunk_dir = str(tmp_path)
     regions = [BedRegion("chr1", start, start + 9) for start in (1, 11, 21)]
@@ -836,7 +836,7 @@ def test_a_task_saves_each_chunk_as_the_binner_returns_it(
             [path for path in paths if pathlib.Path(path).exists()]))
 
     _bin_chunks(
-        a_stub_binner(binding), JOB, regions, 10, definition_of(repo),
+        a_stub_track_kind(binding), JOB, regions, 10, definition_of(repo),
         chunk_dir)
 
     assert on_disk_at_each_ask == [[], paths[:1], paths[:2]]
@@ -850,13 +850,13 @@ def test_a_task_saves_column_i_of_a_block_to_track_i(
     # each column goes to its own track's chunk.
     chunk_dir = str(tmp_path)
     other = replace(TRACK, name="scores/two", resource_ids=("scores/two",))
-    job = BinningJob(binner="stub_binner", tracks=(TRACK, other))
+    job = BinningJob(kind="stub_tracks", tracks=(TRACK, other))
     region = BedRegion("chr1", 1, 20)
     binding = StubBinding(lambda _region: np.array(
         [[1.0, 10.0], [2.0, 20.0]], dtype=np.float64))
 
     _bin_chunks(
-        a_stub_binner(binding), job, [region], 10, definition_of(repo),
+        a_stub_track_kind(binding), job, [region], 10, definition_of(repo),
         chunk_dir)
 
     np.testing.assert_array_equal(
@@ -883,7 +883,7 @@ def test_a_task_closes_its_binding_when_saving_a_chunk_fails(
 
     with pytest.raises(OSError) as failure:
         _bin_chunks(
-            a_stub_binner(binding), JOB, regions, 10, definition_of(repo),
+            a_stub_track_kind(binding), JOB, regions, 10, definition_of(repo),
             chunk_dir)
 
     assert failure.value.filename == str(unwritable)
@@ -905,7 +905,7 @@ def test_a_wrong_shaped_block_fails_the_task_and_writes_no_chunk(
 
     with pytest.raises(ValueError, match=r"\(1, 1\)"):
         _bin_chunks(
-            a_stub_binner(binding), JOB, [region], 10, definition_of(repo),
+            a_stub_track_kind(binding), JOB, [region], 10, definition_of(repo),
             chunk_dir)
 
     assert not pathlib.Path(
@@ -929,12 +929,13 @@ def test_a_task_declares_a_chunk_per_track_of_its_job_and_region(
     run = RunDefinition(
         reference_genome="genome", bin_size=10, regions=regions,
         jobs=[
-            BinningJob(binner="stub_binner", tracks=(TRACK, other)),
-            BinningJob(binner="stub_binner", tracks=(lone,)),
+            BinningJob(kind="stub_tracks", tracks=(TRACK, other)),
+            BinningJob(kind="stub_tracks", tracks=(lone,)),
         ])
     monkeypatch.setattr(
-        "gain.binning.cli.discover_binner_kinds",
-        lambda: {"stub_binner": a_stub_binner(StubBinding(one_bin_of(1.0)))})
+        "gain.binning.cli.discover_track_kinds",
+        lambda: {
+            "stub_tracks": a_stub_track_kind(StubBinding(one_bin_of(1.0)))})
     work_dir = tmp_path / "work"
     chunk_dir = str(work_dir / "chunks")
     # The graph hands its workers the repository's definition, so it is
@@ -979,7 +980,7 @@ def test_a_block_of_another_dtype_fails_the_task_and_writes_no_chunk(
 
     with pytest.raises(ValueError, match="float64"):
         _bin_chunks(
-            a_stub_binner(binding), JOB, [region], 10, definition_of(repo),
+            a_stub_track_kind(binding), JOB, [region], 10, definition_of(repo),
             chunk_dir)
 
     assert not pathlib.Path(
@@ -999,8 +1000,8 @@ def test_a_set_replacement_is_named_by_its_value(
         bins:
           bin_size: 10
           regions: ["chr1:1-40"]
-        binners:
-        - position_score_binner:
+        tracks:
+        - position_score_tracks:
             resource_query: "scores/one"
             none_value_replacement: 0.0
     """))
@@ -1028,8 +1029,8 @@ def test_a_bundle_of_many_regions_is_one_task_with_a_short_id(
         bins:
           bin_size: 10
           regions: [{windows}, chr2]
-        binners:
-        - position_score_binner:
+        tracks:
+        - position_score_tracks:
             resource_query: "scores/*"
     """))
 
@@ -1078,8 +1079,8 @@ def test_a_budget_of_zero_or_less_runs_one_task_per_track(
         bins:
           bin_size: 10
           regions: [{windows}, chr2]
-        binners:
-        - position_score_binner:
+        tracks:
+        - position_score_tracks:
             resource_query: "scores/*"
     """))
 
@@ -1112,7 +1113,7 @@ def test_another_run_definition_sharing_the_work_dir_is_not_served_stale_chunks(
 
     with h5py.File(output, "r") as h5:
         aggregators = [
-            json.loads(row["binner_def"])["aggregator"]
+            json.loads(row["entry_def"])["aggregator"]
             for row in h5["tracks"][()]]
     # On this toy data min and max agree bin for bin, so the provenance
     # is what tells a rewritten file from a stale one.
@@ -1123,7 +1124,7 @@ def test_the_process_pool_executor_yields_the_same_matrix(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path,
     run_definition: pathlib.Path, output: pathlib.Path,
 ) -> None:
-    # Every task argument crosses a process boundary: the binner class,
+    # Every task argument crosses a process boundary: the track kind,
     # the track, the region, the GRR definition and the run definition.
     # argparse takes the last -j.
     binning_tool(run_definition, grr_dir, output, "-j", "2", "--process-pool")
@@ -1167,8 +1168,8 @@ MIXED_RUN_DEFINITION = textwrap.dedent("""
     bins:
       bin_size: 10
       regions: ["chr1:1-40", chr2]
-    binners:
-    - fragment_score_binner:
+    tracks:
+    - fragment_score_tracks:
         resource_query: "frags/*"
         group:
           cell_score_id: cell
@@ -1180,11 +1181,11 @@ MIXED_RUN_DEFINITION = textwrap.dedent("""
           - column: sample_id
             label: sample_id
         value: {value: 1}
-    - fragment_score_binner:
+    - fragment_score_tracks:
         resource_query: frags/s1
         pool: false
         value: {value: 1}
-    - position_score_binner:
+    - position_score_tracks:
         resource_query: scores/one
 """)
 
@@ -1239,8 +1240,8 @@ def test_tracks_records_each_track_s_group_and_resources(
         tracks = h5["tracks"][()]
     assert "resource_id" not in tracks.dtype.names
     assert [
-        (row["binner_type"], row["selector"], row["resource_ids"],
-         json.loads(row["binner_def"])["aggregator"])
+        (row["entry_type"], row["selector"], row["resource_ids"],
+         json.loads(row["entry_def"])["aggregator"])
         for row in tracks
     ] == [
         (b"fragment_score", b"B", b"frags/s1,frags/s2", "sum"),
@@ -1340,9 +1341,9 @@ def fragment_entries(*entries: str) -> str:
         bins:
           bin_size: 10
           regions: ["chr1:1-40", chr2]
-        binners:
+        tracks:
     """) + "".join(
-        f"- fragment_score_binner: {entry}\n" for entry in entries)
+        f"- fragment_score_tracks: {entry}\n" for entry in entries)
 
 
 @pytest.mark.parametrize("first, second", [
@@ -1422,8 +1423,8 @@ def test_the_old_genome_key_is_refused_with_the_rename(
         genome_keys + "\n" + textwrap.dedent("""
             bins:
               bin_size: 10
-            binners:
-            - position_score_binner:
+            tracks:
+            - position_score_tracks:
                 resource_query: "scores/*"
         """))
 

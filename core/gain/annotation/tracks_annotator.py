@@ -1,4 +1,4 @@
-"""``binning_tracks_annotator``: the tracks of a ``binners:`` list.
+"""``tracks_annotator``: the tracks of a ``tracks:`` list.
 
 The annotator resolves the list with the code of ``binning_tool`` and
 answers one float attribute for each track, for each annotatable
@@ -24,16 +24,19 @@ from gain.annotation.annotation_pipeline import (
     AttributeSpec,
 )
 from gain.annotation.annotator_base import AnnotatedValues, AnnotatorBase
-from gain.binning.binners import (
+from gain.binning.h5_reader import track_labels
+from gain.binning.run_definition import (
+    refuse_renamed_tracks_key,
+    resolve_tracks,
+)
+from gain.binning.tracks import (
     TRACKS_COLUMNS,
     BinningJob,
-    BoundBinner,
+    BoundTrackKind,
     Track,
-    discover_binner_kinds,
+    discover_track_kinds,
     tracks_frame,
 )
-from gain.binning.h5_reader import track_labels
-from gain.binning.run_definition import resolve_binners
 from gain.utils.regions import BedRegion
 
 DEFAULT_PREFIX = "track"
@@ -45,15 +48,15 @@ MAX_TRACKS = 2000
 VCF_KEY_PATTERN = "[A-Za-z_][0-9A-Za-z_.]*"
 
 
-def build_binning_tracks_annotator(
+def build_tracks_annotator(
     pipeline: AnnotationPipeline, info: AnnotatorInfo,
 ) -> Annotator:
-    return BinningTracksAnnotator(pipeline, info)
+    return TracksAnnotator(pipeline, info)
 
 
 def track_attribute_name(prefix: str, track: Track) -> str:
     """The name of the attribute of ``track``."""
-    return f"{prefix}_{track.binner_index}_{track.track_index}"
+    return f"{prefix}_{track.entry_index}_{track.track_index}"
 
 
 def checked_prefix(prefix: Any) -> str:
@@ -86,15 +89,15 @@ def track_documentation(label: str, row: Mapping[Hashable, Any]) -> str:
 
     ``row`` is the track's row of :func:`gain.binning.tracks_frame`.  The
     label and the field values are code spans, so a renderer shows them
-    verbatim.  The ``binner_def`` field is shown as indented JSON.
+    verbatim.  The ``entry_def`` field is shown as indented JSON.
     """
     fields = "\n".join(
         f"* `{field}`: {code_span(row[field])}"
-        for field in TRACKS_COLUMNS if field != "binner_def")
+        for field in TRACKS_COLUMNS if field != "entry_def")
     definition = json.dumps(
-        json.loads(row["binner_def"]), indent=2, sort_keys=True)
+        json.loads(row["entry_def"]), indent=2, sort_keys=True)
     return (
-        f"{code_span(label)}\n\n{fields}\n\n`binner_def`:\n\n"
+        f"{code_span(label)}\n\n{fields}\n\n`entry_def`:\n\n"
         f"```\n{definition}\n```")
 
 
@@ -103,21 +106,21 @@ def labeled_tracks_frame(jobs: list[BinningJob]) -> pd.DataFrame:
 
     ``tracks_frame`` refuses a definition with a NaN or an infinity, as
     ``binning_tool`` does.  This refusal names the annotator and the
-    ``binners`` entry, so the author finds the wrong entry.
+    ``tracks`` entry, so the author finds the wrong entry.
     """
     for job in jobs:
         try:
             tracks_frame([job])
         except ValueError as error:
             raise ValueError(
-                f"{job.entry}: binning_tracks_annotator refuses a "
+                f"{job.entry}: tracks_annotator refuses a "
                 f"definition with a NaN or an infinity, as binning_tool "
                 f"does: {error}") from error
     return tracks_frame(jobs)
 
 
 class LocalFilesError(ValueError):
-    """An entry of a ``binners:`` list that reads a local file.
+    """An entry of a ``tracks:`` list that reads a local file.
 
     ``binning_tool`` reads a relative local file from the directory of
     the run definition.  A pipeline has no such directory, so the
@@ -126,28 +129,28 @@ class LocalFilesError(ValueError):
 
     def __init__(self, label: str) -> None:
         super().__init__(
-            f"{label}: binning_tracks_annotator does not read a local "
+            f"{label}: tracks_annotator does not read a local "
             f"file, such as a meta file_name, because a pipeline has no "
             f"directory of a run definition; give meta a resource_id or "
             f"a resource_label")
 
 
-def refuse_local_file_names(binners: Any) -> None:
+def refuse_local_file_names(tracks: Any) -> None:
     """Refuse an entry whose ``meta`` names a ``file_name``, unread.
 
     An annotation pipeline can come from an untrusted user.  A kind
     reads the file when the list is resolved, and an error of that read
     can quote the file, so this refusal comes before the resolution.
     """
-    if not isinstance(binners, list):
+    if not isinstance(tracks, list):
         return
-    for index, entry in enumerate(binners):
+    for index, entry in enumerate(tracks):
         if not isinstance(entry, dict):
             continue
         for config in entry.values():
             meta = config.get("meta") if isinstance(config, dict) else None
             if isinstance(meta, dict) and "file_name" in meta:
-                raise LocalFilesError(f"binners[{index}]")
+                raise LocalFilesError(f"tracks[{index}]")
 
 
 def refuse_local_files(jobs: list[BinningJob]) -> None:
@@ -168,15 +171,15 @@ def refuse_too_many_tracks(tracks: list[Track]) -> None:
     """Refuse more than :data:`MAX_TRACKS` tracks, naming their number."""
     if len(tracks) > MAX_TRACKS:
         raise ValueError(
-            f"binning_tracks_annotator gives at most {MAX_TRACKS} "
-            f"tracks; the binners entries give {len(tracks)}")
+            f"tracks_annotator gives at most {MAX_TRACKS} "
+            f"tracks; the tracks entries give {len(tracks)}")
 
 
-class BinningTracksAnnotator(AnnotatorBase):
-    """Answers each track of a ``binners:`` list over an annotatable.
+class TracksAnnotator(AnnotatorBase):
+    """Answers each track of a ``tracks:`` list over an annotatable.
 
     Each track is one attribute, named
-    ``<prefix>_<binner_index>_<track_index>``, of type ``float``.  The
+    ``<prefix>_<entry_index>_<track_index>``, of type ``float``.  The
     annotator bins an annotatable as the one bin of the grid whose bin
     size is the end of the annotatable.  A NaN value is ``None``.
     """
@@ -184,15 +187,16 @@ class BinningTracksAnnotator(AnnotatorBase):
     def __init__(self, pipeline: AnnotationPipeline, info: AnnotatorInfo):
         if info.attributes:
             raise ValueError(
-                "binning_tracks_annotator takes no attributes list, "
-                "because the binners entries define the attributes: one "
+                "tracks_annotator takes no attributes list, "
+                "because the tracks entries define the attributes: one "
                 "for each track")
         self._grr = pipeline.repository
         self._prefix = checked_prefix(
             info.parameters.get("prefix", DEFAULT_PREFIX))
-        binners = info.parameters.get("binners")
-        refuse_local_file_names(binners)
-        self._jobs = resolve_binners(binners, self._grr)
+        refuse_renamed_tracks_key(info.parameters)
+        tracks = info.parameters.get("tracks")
+        refuse_local_file_names(tracks)
+        self._jobs = resolve_tracks(tracks, self._grr)
         refuse_local_files(self._jobs)
         # The pipeline caches these resources.  The locality guard of
         # ``annotate_utils.check_resource_locality`` also sees them: on a
@@ -216,17 +220,17 @@ class BinningTracksAnnotator(AnnotatorBase):
                 self._names, self._labels, frame.to_dict("records"),
                 strict=True)}
         self._stack: ExitStack | None = None
-        self._bound: list[BoundBinner] = []
+        self._bound: list[BoundTrackKind] = []
         super().__init__(pipeline, info)
 
         info.documentation += textwrap.dedent(f"""
 
-Annotator that gives one float attribute for each track of a `binners:`
+Annotator that gives one float attribute for each track of a `tracks:`
 list of `binning_tool` entries.
 
-<a href="{self.BASE_DOC_URL}#binning-tracks-annotator" target="_blank">More info</a>
+<a href="{self.BASE_DOC_URL}#tracks-annotator" target="_blank">More info</a>
 
-""")  # ruff: ignore[line-too-long]
+""")
         for attr in self._attributes:
             attr._documentation = (  # ruff: ignore[private-member-access]
                 documentation[attr.source])
@@ -244,11 +248,11 @@ list of `binning_tool` entries.
 
     def open(self) -> Annotator:
         if self._stack is None:
-            kinds = discover_binner_kinds()
+            kinds = discover_track_kinds()
             with ExitStack() as stack:
                 self._bound = [
                     stack.enter_context(
-                        kinds[job.binner].bind(
+                        kinds[job.kind].bind(
                             job, self._grr, quiet=True))
                     for job in self._jobs]
                 self._stack = stack.pop_all()

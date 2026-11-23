@@ -1,7 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 # Same header as test_fragment_raw_value_grouping.py: fixtures shadow names
 # (W0621, W0613), tests need no docstrings (C0114, C0116) and reach into
-# private binner names (W0212).
+# private names of the track kind (W0212).
 """``BoundCellGrouping``: a filter column becomes text once per call."""
 from types import SimpleNamespace
 from typing import Any
@@ -9,7 +9,7 @@ from typing import Any
 import pandas as pd
 import pytest
 from gain.binning import fragment_grouping
-from gain.binning.fragment_binner import (
+from gain.binning.fragment_score_tracks import (
     BoundCellGrouping,
     DuplicateBarcodeError,
     MetaFilter,

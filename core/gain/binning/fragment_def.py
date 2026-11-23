@@ -1,11 +1,11 @@
-"""The typed definition of a fragment-score track (``binner_def``)."""
+"""The typed definition of a fragment-score track (``entry_def``)."""
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
 from typing import Self
 
-from gain.binning.binners import canonical_json
+from gain.binning.tracks import canonical_json
 
 __all__ = ["FragmentScoreDef"]
 

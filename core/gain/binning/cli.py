@@ -26,21 +26,24 @@ import numpy.typing as npt
 import yaml
 
 from gain import __version__
-from gain.binning.binners import (
-    Binner,
-    BinningJob,
-    Track,
-    aggregator_of,
-    discover_binner_kinds,
-    tracks_frame,
-)
-from gain.binning.fragment_binner import BoundCellGrouping, FragmentBinningJob
 from gain.binning.fragment_def import FragmentScoreDef
+from gain.binning.fragment_score_tracks import (
+    BoundCellGrouping,
+    FragmentBinningJob,
+)
 from gain.binning.run_definition import (
     RunDefinition,
     RunDefinitionError,
     parse_run_definition,
     refuse_renamed_genome_key,
+)
+from gain.binning.tracks import (
+    BinningJob,
+    Track,
+    TrackKind,
+    aggregator_of,
+    discover_track_kinds,
+    tracks_frame,
 )
 from gain.genomic_resources.genomic_context import (
     build_cli_genomic_context,
@@ -84,7 +87,7 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         "genome grid, writing one HDF5 file with a bins x tracks matrix.")
     parser.add_argument(
         "run_definition",
-        help="the run definition (YAML): bins and binner entries")
+        help="the run definition (YAML): bins and track entries")
     parser.add_argument(
         "-o", "--output", default=None,
         help="the HDF5 file to write; defaults to the run definition "
@@ -220,7 +223,7 @@ def _print_fragment_entries(run: RunDefinition) -> None:
             job.grouping.table.name for job in jobs
             if isinstance(job.grouping, BoundCellGrouping)})
         groups = {track.group for job in jobs for track in job.tracks}
-        print(f"{entry}: {jobs[0].binner}")
+        print(f"{entry}: {jobs[0].kind}")
         print(f"    resources: {', '.join(resources)}")
         print(f"    tables: {', '.join(tables) or 'none'}")
         print(f"    groups: {len(groups)}")
@@ -244,7 +247,7 @@ def _local_files(run: RunDefinition) -> list[str]:
         for path in job.local_files))
 
 
-TRACKS_LAYOUT = 2
+TRACKS_LAYOUT = 3
 
 
 def _bin_count(region: BedRegion, bin_size: int) -> int:
@@ -263,7 +266,7 @@ def _build_task_graph(
     are changes.
     """
     assert grr.definition is not None
-    kinds = discover_binner_kinds()
+    kinds = discover_track_kinds()
     graph = TaskGraph()
     graph.input_files.append(args["run_definition"])
     # A local metadata table decides which track each barcode reaches,
@@ -284,7 +287,7 @@ def _build_task_graph(
             ]
             chunk_tasks.append(graph.create_task(
                 _task_id(job, bundle, run.bin_size), _bin_chunks,
-                args=[kinds[job.binner], job, bundle, run.bin_size,
+                args=[kinds[job.kind], job, bundle, run.bin_size,
                       grr.definition, chunk_dir],
                 output_files=paths,
             ))
@@ -411,7 +414,7 @@ def _repository(definition: str) -> GenomicResourceRepo:
 
 
 def _bin_chunks(
-    binner: type[Binner], job: BinningJob, regions: list[BedRegion],
+    track_kind: type[TrackKind], job: BinningJob, regions: list[BedRegion],
     bin_size: int, grr_definition: dict[str, Any], chunk_dir: str,
 ) -> None:
     """Write one chunk per track of a job and region of a bundle.
@@ -430,19 +433,19 @@ def _bin_chunks(
     chunks is written.
     """
     grr = _repository(json.dumps(grr_definition, sort_keys=True))
-    with binner.bind(job, grr) as bound:
+    with track_kind.bind(job, grr) as bound:
         for region in regions:
             block = bound.bin_region(region, bin_size)
             expected = (_bin_count(region, bin_size), len(job.tracks))
             if block.shape != expected:
                 raise ValueError(
-                    f"{binner.kind} returned a block of shape "
+                    f"{track_kind.kind} returned a block of shape "
                     f"{block.shape} for {region.chrom}:{region.start}-"
                     f"{region.stop} at bin size {bin_size}; expected "
                     f"{expected}, one row per bin and one column per track")
             if block.dtype != np.float64:
                 raise ValueError(
-                    f"{binner.kind} returned a {block.dtype} block for "
+                    f"{track_kind.kind} returned a {block.dtype} block for "
                     f"{region.chrom}:{region.start}-{region.stop}; "
                     f"expected float64")
             for column, track in enumerate(job.tracks):
@@ -546,6 +549,6 @@ def _tracks_table(jobs: list[BinningJob]) -> npt.NDArray[Any]:
     return np.array(
         list(frame.itertuples(index=False, name=None)),
         dtype=[
-            ("binner_type", text), ("binner_index", "<i8"),
+            ("entry_type", text), ("entry_index", "<i8"),
             ("track_index", "<i8"), ("resource_ids", text),
-            ("selector", text), ("binner_def", text)])
+            ("selector", text), ("entry_def", text)])

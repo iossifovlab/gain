@@ -1,5 +1,5 @@
 # pylint: disable=C0116
-"""``fragment_score_binner`` on resources without a ``sample_id`` label.
+"""``fragment_score_tracks`` on resources without a ``sample_id`` label.
 
 A merged multi-sample fragment file has no single sample.  Without a
 ``meta``, a cell grouping of such a resource reads every row of its cell
@@ -12,7 +12,7 @@ import pathlib
 from typing import Any
 
 import pytest
-from gain.binning.fragment_binner import (
+from gain.binning.fragment_score_tracks import (
     CELL_META_RESOURCE_ID_LABEL,
     SAMPLE_ID_LABEL,
     FragmentBinningJob,

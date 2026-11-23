@@ -893,30 +893,30 @@ is still reported at its own full extent, and the ``count`` attribute counts the
 fragments that were kept — so raising either threshold lowers ``count`` as well as
 changing the aggregated attribute values.
 
-binning_tracks_annotator
-^^^^^^^^^^^^^^^^^^^^^^^^
+tracks_annotator
+^^^^^^^^^^^^^^^^
 
-``binning_tracks_annotator`` gives the values of ``binning_tool`` for each
-annotatable. It takes a ``binners:`` list with the spelling of a
+``tracks_annotator`` gives the values of ``binning_tool`` for each
+annotatable. It takes a ``tracks:`` list with the spelling of a
 ``binning_tool`` run definition. The :doc:`/cli/binning_tool` page and
 :ref:`binning-run-definition` give the keys of an entry.
 
 Each track of the entries becomes one attribute of type ``float``, named
-``<prefix>_<binner_index>_<track_index>``. The default ``prefix`` is
+``<prefix>_<entry_index>_<track_index>``. The default ``prefix`` is
 ``track``. The annotator bins each annotatable as one bin, so a value equals
 the value of ``binning_tool`` for the same window. A fold that gives NaN, for
 example a mean over no fragments, gives an empty value.
 
 .. code:: yaml
 
-    - binning_tracks_annotator:
+    - tracks_annotator:
         prefix: atac
-        binners:
-          - fragment_score_binner:
+        tracks:
+          - fragment_score_tracks:
               resource_query: atac/pbmc
               group: {}
               aggregate: {mode: fragment_start}
-          - fragment_score_binner:
+          - fragment_score_tracks:
               resource_query: atac/pbmc
               group: {group: all}
               aggregate: {mode: coverage_profile, aggregator: mean}
@@ -927,8 +927,8 @@ and the second entry gives ``atac_1_0``.
 The description of an attribute is the label of its track, which
 ``annotate_vcf`` writes as the INFO ``Description``. ``annotate_doc`` shows
 the label and the six fields of the ``/tracks`` row of the track:
-``binner_type``, ``binner_index``, ``track_index``, ``resource_ids``,
-``selector`` and ``binner_def``.
+``entry_type``, ``entry_index``, ``track_index``, ``resource_ids``,
+``selector`` and ``entry_def``.
 
 The annotator refuses these mistakes when the pipeline loads:
 

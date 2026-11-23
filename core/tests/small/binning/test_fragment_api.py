@@ -29,11 +29,11 @@ from gain.binning import (
     fragment_tracks,
     read_tracks,
 )
-from gain.binning.fragment_binner import (
+from gain.binning.fragment_score_tracks import (
     FragmentBinningJob,
-    FragmentScoreBinner,
+    FragmentScoreTracks,
 )
-from gain.binning.run_definition import resolve_binners
+from gain.binning.run_definition import resolve_tracks
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing import build_filesystem_test_repository
@@ -52,7 +52,7 @@ from tests.small.binning.conftest import (
 )
 from tests.small.binning.test_binning_tool_cli import binning_tool
 
-KIND = "fragment_score_binner"
+KIND = "fragment_score_tracks"
 CONVENTION: dict[str, Any] = {"cell_meta_resource_id": "meta/cells"}
 
 
@@ -106,7 +106,7 @@ def run_tool(
     run_definition.write_text(yaml.safe_dump({
         "reference_genome": "genome",
         "bins": {"bin_size": 10, "regions": ["chr1:1-40"]},
-        "binners": [{KIND: entry}],
+        "tracks": [{KIND: entry}],
     }))
     output = work / "bins.h5"
     binning_tool(run_definition, grr_dir, output)
@@ -160,8 +160,8 @@ def given_entry(case: str) -> Any:
 
 
 def test_the_hand_built_entry_reads_as_its_dict() -> None:
-    assert FragmentScoreBinner.entry_from_config(
-        "binners[0]", BY_CELL_CLASS) == BY_CELL_CLASS_ENTRY
+    assert FragmentScoreTracks.entry_from_config(
+        "tracks[0]", BY_CELL_CLASS) == BY_CELL_CLASS_ENTRY
 
 
 @pytest.mark.parametrize("case", list(PARITY_CASES))
@@ -185,9 +185,9 @@ def bound_groups(
     The rows come in the order of the resources, then of the keys.
     """
     rows: list[tuple[str, str, str]] = []
-    for job in resolve_binners([{KIND: config}], repo, base_dir=base_dir):
+    for job in resolve_tracks([{KIND: config}], repo, base_dir=base_dir):
         assert isinstance(job, FragmentBinningJob)
-        track_maps = FragmentScoreBinner.bind(job, repo).track_maps
+        track_maps = FragmentScoreTracks.bind(job, repo).track_maps
         if track_maps is None:
             continue
         for resource_id, track_map in zip(
@@ -222,13 +222,13 @@ def test_a_constant_group_gives_an_empty_frame_with_the_three_columns(
     assert list(frame.columns) == ["resource_id", "score_value", "group"]
 
 
-def test_fragment_tracks_gives_each_row_the_binner_index(
+def test_fragment_tracks_gives_each_row_the_entry_index(
     repo: GenomicResourceRepo,
 ) -> None:
     frame = fragment_tracks(
-        repo, {"resource_query": "frags/*", "pool": False}, binner_index=2)
+        repo, {"resource_query": "frags/*", "pool": False}, entry_index=2)
 
-    assert frame["binner_index"].tolist() == [2, 2]
+    assert frame["entry_index"].tolist() == [2, 2]
     assert frame["track_index"].tolist() == [0, 1]
 
 
@@ -251,17 +251,17 @@ def test_fragment_tracks_equals_its_rows_in_a_run_with_a_sibling_entry(
     run_definition.write_text(yaml.safe_dump({
         "reference_genome": "genome",
         "bins": {"bin_size": 10, "regions": ["chr1:1-40"]},
-        "binners": [
+        "tracks": [
             {KIND: {**by_max, "aggregate": {"aggregator": "sum"}}},
             {KIND: by_max}],
     }))
     binning_tool(run_definition, grr_dir, work / "bins.h5")
     pair = read_tracks(work / "bins.h5")
 
-    frame = fragment_tracks(repo, by_max, binner_index=1)
+    frame = fragment_tracks(repo, by_max, entry_index=1)
 
     pd.testing.assert_frame_equal(
-        frame, pair[pair["binner_index"] == 1].reset_index(drop=True))
+        frame, pair[pair["entry_index"] == 1].reset_index(drop=True))
 
 
 REFUSALS: dict[str, dict[str, Any]] = {
@@ -278,9 +278,9 @@ REFUSALS: dict[str, dict[str, Any]] = {
 #: Each function, called as a notebook user calls it, and the label of
 #: the entry that it passes on.
 CALLS: dict[str, tuple[Callable[..., Any], str]] = {
-    "cell_groups": (cell_groups, "binners[0]"),
+    "cell_groups": (cell_groups, "tracks[0]"),
     "fragment_tracks": (
-        functools.partial(fragment_tracks, binner_index=2), "binners[2]"),
+        functools.partial(fragment_tracks, entry_index=2), "tracks[2]"),
 }
 
 
@@ -292,7 +292,7 @@ def test_a_refusal_is_the_one_of_parse_entry_for_the_same_label(
     function, label = CALLS[call]
     config = REFUSALS[refusal]
     with pytest.raises(RunDefinitionError) as expected:
-        FragmentScoreBinner.parse_entry(label, config, repo)
+        FragmentScoreTracks.parse_entry(label, config, repo)
 
     with pytest.raises(RunDefinitionError) as refused:
         function(repo, config)

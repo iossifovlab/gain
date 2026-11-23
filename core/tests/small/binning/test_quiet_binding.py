@@ -1,5 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
-"""``bind(job, grr, quiet=...)`` of the fragment binner kind.
+"""``bind(job, grr, quiet=...)`` of the fragment-score track kind.
 
 The grouped job is the conftest's two samples, ``frags/s1`` and
 ``frags/s2``, grouped by the ``class`` of ``meta/cells``.  On chr1 two
@@ -11,9 +11,9 @@ import logging
 
 import numpy as np
 import pytest
-from gain.binning.binners import BinningJob, discover_binner_kinds
-from gain.binning.fragment_binner import FragmentScoreBinding
+from gain.binning.fragment_score_tracks import FragmentScoreBinding
 from gain.binning.run_definition import parse_run_definition
+from gain.binning.tracks import BinningJob, discover_track_kinds
 from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.utils.regions import BedRegion
@@ -36,7 +36,7 @@ def grouped_job(
 ) -> BinningJob:
     (job,) = parse_run_definition({
         "bins": {"bin_size": BIN_SIZE},
-        "binners": [{"fragment_score_binner": BY_CLASS}],
+        "tracks": [{"fragment_score_tracks": BY_CLASS}],
     }, repo, genome).jobs
     return job
 
@@ -47,7 +47,7 @@ def bin_two_regions(
 ) -> tuple[list[np.ndarray], dict[tuple[str, str], int], list[str]]:
     """The blocks of chr1 and chr2, the dropped record and the log lines."""
     with caplog.at_level(logging.INFO, logger="gain.binning"), \
-            discover_binner_kinds()[job.binner].bind(
+            discover_track_kinds()[job.kind].bind(
                 job, repo, **bind_args) as bound:
         blocks = [bound.bin_region(region, BIN_SIZE)
                   for region in (CHR1, CHR2)]

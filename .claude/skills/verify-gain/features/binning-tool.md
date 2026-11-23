@@ -7,8 +7,8 @@ bins x tracks matrix.
 ## Sub-features
 
 - Positional `run_definition`: a YAML file with `reference_genome`,
-  `bins` (here `bin_size: 5`) and a list of `binners` (here one
-  `position_score_binner` over `mini_positionscore_bw`).
+  `bins` (here `bin_size: 5`) and a list of `tracks` (here one
+  `position_score_tracks` over `mini_positionscore_bw`).
 - `-o OUTPUT`: the HDF5 file. Default: the run definition with an `.h5`
   suffix, beside it.
 - `-w WORK_DIR`: the per-chunk intermediate files. Default: a sibling of
@@ -17,8 +17,8 @@ bins x tracks matrix.
 - `-j JOBS`: parallel jobs.
 - `-g GRR_FILENAME`: the GRR definition.
 - The HDF5 file holds the datasets `bins` (`chrom`, `start`, `end`),
-  `tracks` (one row per track: `binner_type`, `binner_index`,
-  `track_index`, `resource_ids`, `selector` and `binner_def`) and `values`
+  `tracks` (one row per track: `entry_type`, `entry_index`,
+  `track_index`, `resource_ids`, `selector` and `entry_def`) and `values`
   (bins x tracks), and the file attributes `coordinates` and
   `tracks_layout`.
 
@@ -30,8 +30,8 @@ A user writes `bin.yaml`:
 reference_genome: mini_genome
 bins:
   bin_size: 5
-binners:
-- position_score_binner:
+tracks:
+- position_score_tracks:
     resource_query: mini_positionscore_bw
 ```
 
@@ -63,9 +63,9 @@ The drive keeps `bin.yaml`, the output `bins.h5` and
 | chr2 1-5 | 0.2 |
 | chr2 6-10 | 0.3 |
 
-`coordinates` is `1-based-inclusive`, and `tracks_layout` is `2`. `tracks`
-holds one row: `binner_type` is `position_score`, `resource_ids` is
-`mini_positionscore_bw`, and the `aggregator` in `binner_def` is `mean`.
+`coordinates` is `1-based-inclusive`, and `tracks_layout` is `3`. `tracks`
+holds one row: `entry_type` is `position_score`, `resource_ids` is
+`mini_positionscore_bw`, and the `aggregator` in `entry_def` is `mean`.
 
 Pass: `exit_code.txt` is `0` and
 `scripts/readback-binning-tool.sh evidence/binning-tool/bins.h5` exits 0.

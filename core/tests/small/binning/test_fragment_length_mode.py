@@ -1,5 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
-"""``fragment_score_binner`` in ``fragment_length`` mode, at the binner.
+"""``fragment_score_tracks`` in ``fragment_length`` mode, at the binding.
 
 A fragment adds its value to every bin it overlaps, weighted by the base
 pairs of the overlap.  The toy fragments are the conftest's; bins are 10
@@ -29,8 +29,8 @@ from typing import Any
 import h5py
 import numpy as np
 import pytest
-from gain.binning.binners import discover_binner_kinds
-from gain.binning.fragment_binner import FragmentScoreBinding
+from gain.binning.fragment_score_tracks import FragmentScoreBinding
+from gain.binning.tracks import discover_track_kinds
 from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.utils.regions import BedRegion
@@ -40,7 +40,7 @@ from tests.small.binning.test_binning_tool_cli import (
     read_matrix,
     write_run_definition,
 )
-from tests.small.binning.test_fragment_binner import (
+from tests.small.binning.test_fragment_score_tracks import (
     BIN_SIZE,
     BY_CLASS,
     BY_SAMPLE_LABEL,
@@ -148,7 +148,7 @@ def bound_block(
 ) -> tuple[np.ndarray, dict[tuple[str, str], int]]:
     """The block of a one-job entry over ``region``, and its dropped counts."""
     (job,) = parse_fragment_entry(entry, repo, genome).jobs
-    with discover_binner_kinds()[job.binner].bind(job, repo) as bound:
+    with discover_track_kinds()[job.kind].bind(job, repo) as bound:
         assert isinstance(bound, FragmentScoreBinding)
         block = bound.bin_region(region, BIN_SIZE)
         return block, bound.dropped
@@ -176,7 +176,7 @@ def test_a_dropped_fragment_is_counted_in_every_region_it_reaches(
         length(group=BY_CLASS, meta=BY_SAMPLE_LABEL), repo, genome).jobs
     regions = [BedRegion("chr1", 1, 33), BedRegion("chr1", 34, 40)]
 
-    with discover_binner_kinds()[job.binner].bind(job, repo) as bound:
+    with discover_track_kinds()[job.kind].bind(job, repo) as bound:
         assert isinstance(bound, FragmentScoreBinding)
         for region in regions:
             bound.bin_region(region, BIN_SIZE)
@@ -233,9 +233,9 @@ def split_run(*aggregates: str) -> str:
         bins:
           bin_size: 10
           regions: ["chr1:1-20", "chr1:21-40", chr2]
-        binners:
+        tracks:
     """) + "".join(
-        f"- fragment_score_binner: {{resource_query: frags/s1, "
+        f"- fragment_score_tracks: {{resource_query: frags/s1, "
         f"pool: false, name: e{index}, aggregate: {aggregate}}}\n"
         for index, aggregate in enumerate(aggregates))
 
@@ -283,7 +283,7 @@ def test_tracks_records_a_length_track_s_mode_and_uncovered_value(
 
     with h5py.File(output, "r") as h5:
         tracks = h5["tracks"][()]
-    definitions = [json.loads(row["binner_def"]) for row in tracks]
+    definitions = [json.loads(row["entry_def"]) for row in tracks]
     assert [d["mode"] for d in definitions] == [
         "fragment_length", "fragment_length"]
     assert [d["uncovered_value"] for d in definitions] == [None, 0.0]
@@ -326,7 +326,7 @@ def test_dry_run_reports_a_length_entry_s_mode_and_uncovered_value(
         write_run_definition(output, split_run(LENGTH_SUM, LENGTH_MEAN_0)),
         grr_dir, output, "--dry-run")
 
-    entries = capsys.readouterr().out.split("binners[")[1:]
+    entries = capsys.readouterr().out.split("tracks[")[1:]
     assert len(entries) == 2
     assert (
         "    mode: fragment_length\n"

@@ -1,5 +1,5 @@
 # pylint: disable=redefined-outer-name,C0114,C0116
-"""The groupings of ``binning_tool`` in ``binning_tracks_annotator``.
+"""The groupings of ``binning_tool`` in ``tracks_annotator``.
 
 The GRR holds two samples, ``frags/s1`` and ``frags/s2``, and their cell
 metadata table ``meta/cells``.  Each sample carries its ``sample_id``
@@ -28,7 +28,7 @@ from gain.annotation.annotatable import Region
 from gain.annotation.annotation_config import AnnotationConfigurationError
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
-from gain.binning.fragment_binner import (
+from gain.binning.fragment_score_tracks import (
     CELL_META_RESOURCE_ID_LABEL,
     SAMPLE_ID_LABEL,
 )
@@ -104,8 +104,8 @@ def repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
 def tracks_pipeline(
     repo: GenomicResourceRepo, *entries: dict[str, Any],
 ) -> AnnotationPipeline:
-    config = yaml.safe_dump([{"binning_tracks_annotator": {
-        "binners": [{"fragment_score_binner": entry}
+    config = yaml.safe_dump([{"tracks_annotator": {
+        "tracks": [{"fragment_score_tracks": entry}
                     for entry in entries]}}])
     return load_pipeline_from_yaml(config, repo)
 

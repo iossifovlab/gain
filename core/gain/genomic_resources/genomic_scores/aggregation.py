@@ -335,10 +335,10 @@ def fold_region_segments(
 #: whole set of aggregators the fold accepts -- the ones whose answer is a
 #: float.  This is the fragment surfaces' rule (a bin with no fragment has
 #: nothing to fold), and it differs on purpose from the position-score
-#: binner's, which stores NaN for an uncovered bin unless the track's
+#: track kind's, which stores NaN for an uncovered bin unless the track's
 #: ``none_value_replacement`` says otherwise; that key does not exist on
 #: the fragment kind.  The two rules agree on ``count``: its aggregator
-#: answers ``0`` for no values, so the position-score binner stores 0.0
+#: answers ``0`` for no values, so the position-score track kind stores 0.0
 #: for an uncovered bin of a ``count`` track too.
 EMPTY_BIN_VALUES: dict[str, float] = {
     "count": 0.0,
@@ -383,7 +383,7 @@ def fold_into_bins(
     a fresh aggregator of its ``column`` in the bin holding its
     ``position``.  ``aggregators`` names one aggregator per column, which
     is how a caller gives each column its meaning -- one per query for a
-    score's binned read, one per group for a binner.
+    score's binned read, one per group for a track kind.
 
     The answer is a ``float64`` array of shape ``(n_bins, n_columns)``.
     Row ``i`` is bin ``calc_bin_index(bin_size, start) + i`` of the grid

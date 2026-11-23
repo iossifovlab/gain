@@ -1,8 +1,8 @@
 Entries
 =======
 
-An entry is one item of the ``binners`` list of a run definition. A
-``fragment_score_binner`` entry reduces, in each bin, the values of the
+An entry is one item of the ``tracks`` list of a run definition. A
+``fragment_score_tracks`` entry reduces, in each bin, the values of the
 fragments of the ``fragment_score`` resources that its query matches. GAIn
 provides the spec classes of the package ``gain.binning`` to build such an
 entry in Python. :class:`~gain.binning.FragmentEntry` is the entry itself,

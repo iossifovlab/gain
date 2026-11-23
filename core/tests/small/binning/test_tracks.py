@@ -5,10 +5,10 @@ import pathlib
 import numpy as np
 import pytest
 import pytest_mock
-from gain.binning.binners import (
+from gain.binning.tracks import (
     BinningJob,
-    PositionScoreBinner,
     PositionScoreDef,
+    PositionScoreTracks,
     Track,
     numeric_aggregators,
 )
@@ -25,21 +25,21 @@ def scores_one(aggregator: str, replacement: float | None = None) -> Track:
     """scores/one: 1.0 over chr1:1-20, 2.0 over chr1:31-35, nothing else."""
     return Track(
         name="scores/one", resource_ids=("scores/one",), group="",
-        selector="s", binner_type="position_score",
+        selector="s", entry_type="position_score",
         definition=PositionScoreDef(
             aggregator=aggregator,
             none_value_replacement=replacement))
 
 
 def a_job(track: Track) -> BinningJob:
-    return BinningJob(binner="position_score_binner", tracks=(track,))
+    return BinningJob(kind="position_score_tracks", tracks=(track,))
 
 
 def one_region(
     track: Track, region: BedRegion, repo: GenomicResourceRepo,
 ) -> np.ndarray:
     """The block of a one-region binding, as the track's one column."""
-    with PositionScoreBinner.bind(a_job(track), repo) as bound:
+    with PositionScoreTracks.bind(a_job(track), repo) as bound:
         block = bound.bin_region(region, BIN_SIZE)
     assert block.shape == (len(block), 1)
     return block[:, 0]
@@ -133,7 +133,7 @@ def test_a_binding_returns_each_region_its_own_one_column_block(
         BedRegion("chr1", 31, 40),
     ]
 
-    with PositionScoreBinner.bind(a_job(scores_one("max")), repo) as bound:
+    with PositionScoreTracks.bind(a_job(scores_one("max")), repo) as bound:
         blocks = [bound.bin_region(region, BIN_SIZE) for region in regions]
 
     assert [b.shape for b in blocks] == [(3, 1), (2, 1), (1, 1)]
@@ -146,7 +146,7 @@ def test_a_binding_returns_each_region_its_own_one_column_block(
 def test_a_binding_closes_the_score_when_the_with_ends(
     repo: GenomicResourceRepo,
 ) -> None:
-    with PositionScoreBinner.bind(a_job(scores_one("max")), repo) as bound:
+    with PositionScoreTracks.bind(a_job(scores_one("max")), repo) as bound:
         bound.bin_region(BedRegion("chr1", 1, 10), BIN_SIZE)
         score = bound.score
         assert score.is_open()
@@ -163,7 +163,7 @@ def test_a_binding_closes_the_score_when_the_with_fails(
     closes = mocker.spy(PositionScore, "close")
 
     def fail_inside_the_binding() -> None:
-        with PositionScoreBinner.bind(
+        with PositionScoreTracks.bind(
                 a_job(scores_one("max")), repo) as bound:
             bound.bin_region(BedRegion("chr1", 1, 10), BIN_SIZE)
             raise OSError("chunk not saved")
@@ -186,7 +186,7 @@ def test_a_binding_opens_the_score_once_however_many_regions(
         for start in (1, 11, 21, 31, 41, 51)
     ]
 
-    with PositionScoreBinner.bind(a_job(scores_one("max")), repo) as bound:
+    with PositionScoreTracks.bind(a_job(scores_one("max")), repo) as bound:
         blocks = [bound.bin_region(region, BIN_SIZE) for region in regions]
 
     assert opens.call_count == 1
@@ -200,7 +200,7 @@ LONG_BIN_SIZE = 2000
 def past_range(aggregator: str) -> Track:
     return Track(
         name="past_range", resource_ids=("past_range",), group="",
-        selector="s", binner_type="position_score",
+        selector="s", entry_type="position_score",
         definition=PositionScoreDef(
             aggregator=aggregator,
             none_value_replacement=None))
@@ -221,7 +221,7 @@ def a_past_range_repo(
 def bin_past_range(
     track: Track, repo: GenomicResourceRepo,
 ) -> np.ndarray:
-    with PositionScoreBinner.bind(a_job(track), repo) as bound:
+    with PositionScoreTracks.bind(a_job(track), repo) as bound:
         block = bound.bin_region(BedRegion("chr1", 1, 4000), LONG_BIN_SIZE)
     return block[:, 0]
 

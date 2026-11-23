@@ -47,18 +47,18 @@ def test_read_tracks_returns_one_row_per_track_from_a_path(
     tracks = read_tracks(binned)
 
     assert list(tracks.columns) == [
-        "binner_type", "binner_index", "track_index", "resource_ids",
-        "selector", "binner_def"]
-    assert tracks["binner_type"].tolist() == [
+        "entry_type", "entry_index", "track_index", "resource_ids",
+        "selector", "entry_def"]
+    assert tracks["entry_type"].tolist() == [
         "fragment_score", "fragment_score", "fragment_score",
         "position_score"]
     assert tracks["selector"].tolist() == ["B", "T", "all", "s"]
     assert tracks["resource_ids"].tolist() == [
         "frags/s1,frags/s2", "frags/s1,frags/s2", "frags/s1",
         "scores/one"]
-    assert tracks["binner_index"].tolist() == [0, 0, 1, 2]
+    assert tracks["entry_index"].tolist() == [0, 0, 1, 2]
     assert tracks["track_index"].tolist() == [0, 1, 0, 0]
-    assert tracks["binner_def"].iloc[3] == (
+    assert tracks["entry_def"].iloc[3] == (
         '{"aggregator":"max","name":null,"none_value_replacement":null}')
 
 
@@ -137,17 +137,17 @@ def test_a_column_the_reader_does_not_know_arrives_in_the_frame(
     tmp_path: pathlib.Path,
 ) -> None:
     dtype = np.dtype([
-        ("binner_type", TEXT), ("resource_ids", TEXT),
-        ("binner_def", TEXT), ("extra_column", "<f4"),
+        ("entry_type", TEXT), ("resource_ids", TEXT),
+        ("entry_def", TEXT), ("extra_column", "<f4"),
         ("extra_text", TEXT)])
     path = write_table(
         tmp_path / "t.h5", "tracks", dtype,
-        [("position_score", "a/b", "{}", 0.5, "hello")], layout=2)
+        [("position_score", "a/b", "{}", 0.5, "hello")], layout=3)
 
     tracks = read_tracks(path)
 
     assert list(tracks.columns) == [
-        "binner_type", "resource_ids", "binner_def", "extra_column",
+        "entry_type", "resource_ids", "entry_def", "extra_column",
         "extra_text"]
     assert tracks["extra_column"].tolist() == [0.5]
     assert tracks["extra_text"].tolist() == ["hello"]
@@ -205,10 +205,27 @@ def test_an_open_file_without_a_layout_attribute_is_refused_and_stays_open(
 def test_a_newer_tracks_layout_is_refused(tmp_path: pathlib.Path) -> None:
     dtype = np.dtype([("name", TEXT)])
     path = write_table(
-        tmp_path / "new.h5", "tracks", dtype, [("a",)], layout=3)
+        tmp_path / "new.h5", "tracks", dtype, [("a",)], layout=4)
 
-    with pytest.raises(ValueError, match=r"new\.h5.*tracks_layout 3"):
+    with pytest.raises(ValueError, match=r"new\.h5.*tracks_layout 4"):
         read_tracks(path)
+
+
+def test_a_tracks_layout_2_file_is_refused_with_a_re_run_message(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Only the attribute decides the layout: the columns of the table
+    # are not read before the refusal.
+    dtype = np.dtype([("resource_ids", TEXT)])
+    path = write_table(
+        tmp_path / "two.h5", "tracks", dtype, [("a",)], layout=2)
+
+    with pytest.raises(ValueError) as refusal:
+        read_tracks(path)
+
+    assert str(refusal.value) == (
+        f"{path}: tracks_layout 2 is not read; "
+        f"run binning_tool again with --force to write tracks_layout 3")
 
 
 def test_a_missing_dataset_names_the_file_and_the_dataset(
@@ -379,11 +396,11 @@ def test_an_open_file_values_error_names_the_file(
 
 
 def a_track(
-    binner_type: str, resource_ids: str, selector: str, **definition: Any,
+    entry_type: str, resource_ids: str, selector: str, **definition: Any,
 ) -> dict[str, Any]:
     return {
-        "binner_type": binner_type, "resource_ids": resource_ids,
-        "selector": selector, "binner_def": json.dumps(definition)}
+        "entry_type": entry_type, "resource_ids": resource_ids,
+        "selector": selector, "entry_def": json.dumps(definition)}
 
 
 def labels_of(*tracks: dict[str, Any]) -> list[str]:
@@ -452,7 +469,7 @@ def test_equal_labels_all_get_their_position_appended() -> None:
         "scores/one:max#3"]
 
 
-def test_a_binner_type_with_no_installed_kind_still_gets_a_label() -> None:
+def test_an_entry_type_with_no_installed_kind_still_gets_a_label() -> None:
     assert labels_of(
         a_track("gone_plugin", "some/res", "sel", aggregator="mean"),
     ) == ["some/res:sel:mean"]
@@ -472,7 +489,7 @@ def test_a_pooled_fragment_with_no_name_or_query_uses_the_resources() -> None:
     ) == ["frags/s1,frags/s2:B:sum"]
 
 
-def test_an_unknown_binner_type_with_an_empty_selector_has_no_separator(
+def test_an_unknown_entry_type_with_an_empty_selector_has_no_separator(
 ) -> None:
     assert labels_of(
         a_track("gone_plugin", "some/res", "", aggregator="mean"),

@@ -1,8 +1,8 @@
-"""Binner kinds: how a run-definition entry becomes tracks and values.
+"""Track kinds: how a run-definition entry becomes tracks and values.
 
-Kinds are discovered through the ``gain.binning.binners`` entry-point
-group, so a kind -- the position-score binner here, the fragment-score
-binner in :mod:`gain.binning.fragment_binner`, an external plugin --
+Kinds are discovered through the ``gain.binning.track_kinds`` entry-point
+group, so a kind -- the position-score track kind here, the fragment-score
+track kind in :mod:`gain.binning.fragment_score_tracks`, an external plugin --
 registers the way every other gain plugin does, without editing the tool.
 """
 from __future__ import annotations
@@ -50,7 +50,7 @@ from gain.genomic_resources.resource_query import ResourceQueryParseError
 from gain.genomic_resources.score_def import GenomicScoreDef
 from gain.utils.regions import BedRegion
 
-BINNERS_ENTRY_POINT_GROUP = "gain.binning.binners"
+TRACK_KINDS_ENTRY_POINT_GROUP = "gain.binning.track_kinds"
 
 NUMERIC_VALUE_TYPES = {"int", "float"}
 
@@ -88,16 +88,16 @@ class RunDefinitionError(ValueError):
     """A run definition that cannot be resolved into a run."""
 
 
-BINNER_SUFFIX = "_binner"
+TRACK_KIND_SUFFIX = "_tracks"
 
 
-def binner_type_of(kind: str) -> str:
-    """The ``binner_type`` the file records for a registered ``kind``.
+def entry_type_of(kind: str) -> str:
+    """The ``entry_type`` the file records for a registered ``kind``.
 
-    The kind without its ``_binner`` suffix: ``position_score_binner``
+    The kind without its ``_tracks`` suffix: ``position_score_tracks``
     is ``position_score``.  The one place the two names are mapped.
     """
-    return kind.removesuffix(BINNER_SUFFIX)
+    return kind.removesuffix(TRACK_KIND_SUFFIX)
 
 
 def canonical_json(fields: dict[str, Any]) -> str:
@@ -111,7 +111,7 @@ def canonical_json(fields: dict[str, Any]) -> str:
         ensure_ascii=False, allow_nan=False)
 
 
-class BinnerDef(Protocol):
+class EntryDef(Protocol):
     """The typed definition of a track: what the other columns do not say."""
 
     def to_json(self) -> str:
@@ -161,12 +161,12 @@ class Track:
     ``selector`` is what picks the track within its resources: the score
     id of a position-score track, the group of a fragment track.
 
-    ``binner_type`` names the kind that produces the column
-    (:func:`binner_type_of`).  ``binner_index`` is the entry's position
-    in the run definition's ``binners`` list and ``track_index`` the
+    ``entry_type`` names the kind that produces the column
+    (:func:`entry_type_of`).  ``entry_index`` is the entry's position
+    in the run definition's ``tracks`` list and ``track_index`` the
     track's position among all tracks of that entry, in output order.
     ``definition`` holds what is specific to the kind; it is written to
-    the file as ``binner_def``.
+    the file as ``entry_def``.
 
     ``name`` is not written to the file; it keeps the uniqueness check,
     the chunk file names and the plan output.  ``parameters`` is
@@ -182,9 +182,9 @@ class Track:
     resource_ids: tuple[str, ...]
     group: str
     selector: str
-    binner_type: str
-    definition: BinnerDef
-    binner_index: int = 0
+    entry_type: str
+    definition: EntryDef
+    entry_index: int = 0
     track_index: int = 0
     parameters: str = ""
 
@@ -193,14 +193,15 @@ class Track:
 class BinningJob:
     """What one task binds to: tracks read together from one binding.
 
-    ``binner`` names the kind that binds it, which is how the task graph
-    finds the binner.  ``tracks`` are the job's columns, in order; the
-    block a binding returns for a region has one column per track.
+    ``kind`` names the track kind that binds it, which is how the task
+    graph finds the track kind.  ``tracks`` are the job's columns, in
+    order; the block a binding returns for a region has one column per
+    track.
     ``entry`` labels the run-definition entry the job was resolved from
-    (``binners[2]``), set when the run definition is parsed.
+    (``tracks[2]``), set when the run definition is parsed.
     """
 
-    binner: str
+    kind: str
     tracks: tuple[Track, ...]
     entry: str = ""
 
@@ -220,21 +221,21 @@ class BinningJob:
             for track in self.tracks for resource_id in track.resource_ids))
 
 
-#: The columns of the ``/tracks`` table (``tracks_layout`` 2), in order.
+#: The columns of the ``/tracks`` table (``tracks_layout`` 3), in order.
 TRACKS_COLUMNS = (
-    "binner_type", "binner_index", "track_index", "resource_ids",
-    "selector", "binner_def")
+    "entry_type", "entry_index", "track_index", "resource_ids",
+    "selector", "entry_def")
 
 
 def tracks_frame(jobs: Sequence[BinningJob]) -> pd.DataFrame:
     """Give the ``/tracks`` rows of ``jobs``: one row per track, in order.
 
-    ``binner_type`` is the kind, ``binner_index`` the entry's position
-    in the ``binners`` list and ``track_index`` the track's position in
+    ``entry_type`` is the kind, ``entry_index`` the entry's position
+    in the ``tracks`` list and ``track_index`` the track's position in
     that entry.  ``resource_ids`` is the comma-separated list of the
     resources a track is computed from, in resource-id order.  A
     resource id never holds a comma.  ``selector`` picks the track in
-    its resources, and ``binner_def`` is the canonical JSON of the
+    its resources, and ``entry_def`` is the canonical JSON of the
     kind's definition.
 
     Parameters
@@ -255,15 +256,15 @@ def tracks_frame(jobs: Sequence[BinningJob]) -> pd.DataFrame:
     """
     frame = pd.DataFrame(
         [
-            (t.binner_type, t.binner_index, t.track_index,
+            (t.entry_type, t.entry_index, t.track_index,
              ",".join(t.resource_ids), t.selector, t.definition.to_json())
             for job in jobs for t in job.tracks
         ],
         columns=list(TRACKS_COLUMNS))
-    return frame.astype({"binner_index": "int64", "track_index": "int64"})
+    return frame.astype({"entry_index": "int64", "track_index": "int64"})
 
 
-class BoundBinner(Protocol):
+class BoundTrackKind(Protocol):
     """A job bound to its resources: bins them one region at a time."""
 
     def bin_region(
@@ -277,12 +278,12 @@ class BoundBinner(Protocol):
         """
 
 
-class Binner(Protocol):
-    """What a registered binner kind provides."""
+class TrackKind(Protocol):
+    """What a registered track kind provides."""
 
     kind: ClassVar[str]
 
-    # Optional: ``load_def(text) -> BinnerDef`` reads a ``binner_def`` of
+    # Optional: ``load_def(text) -> EntryDef`` reads an ``entry_def`` of
     # this kind back.  A kind without it is read as the plain ``dict``.
 
     @classmethod
@@ -293,7 +294,7 @@ class Binner(Protocol):
         """Resolve one run-definition entry into jobs.
 
         The entry's tracks are the jobs' tracks, in order.
-        ``label`` names the entry in error messages (``binners[2]``).
+        ``label`` names the entry in error messages (``tracks[2]``).
         ``base_dir`` is the run definition's directory, passed only when
         the run definition was read from a file; a kind that reads a
         local file resolves a relative path against it.
@@ -304,7 +305,7 @@ class Binner(Protocol):
     @staticmethod
     def bind(
         job: BinningJob, grr: GenomicResourceRepo, *, quiet: bool = False,
-    ) -> AbstractContextManager[BoundBinner]:
+    ) -> AbstractContextManager[BoundTrackKind]:
         """Bind ``job`` to its resources for as long as the ``with`` lasts.
 
         A task binds once and asks for every region of its bundle through
@@ -314,7 +315,7 @@ class Binner(Protocol):
 
         With ``quiet``, the binding keeps no record and logs no line for
         each region it bins.  ``binning_tool`` binds with the default,
-        ``False``.  ``binning_tracks_annotator`` binds with ``True``, so
+        ``False``.  ``tracks_annotator`` binds with ``True``, so
         a kind must accept ``quiet`` to work in the annotator.
         """
 
@@ -585,14 +586,14 @@ class PositionScoreBinding:
             dtype=np.float64)
 
 
-class PositionScoreBinner:
+class PositionScoreTracks:
     """Bins ``position_score`` resources matched by a ``resource_query``."""
 
-    kind: ClassVar[str] = "position_score_binner"
+    kind: ClassVar[str] = "position_score_tracks"
 
     @staticmethod
     def load_def(text: str) -> PositionScoreDef:
-        """Read a ``binner_def`` of this kind."""
+        """Read an ``entry_def`` of this kind."""
         return PositionScoreDef.from_json(text)
 
     ENTRY_KEYS: ClassVar[frozenset[str]] = frozenset({
@@ -614,7 +615,7 @@ class PositionScoreBinner:
         name = entry_name(label, config)
         matches = match_resources(label, config, grr, "position_score")
         return [
-            BinningJob(binner=cls.kind, tracks=(cls._track_of(
+            BinningJob(kind=cls.kind, tracks=(cls._track_of(
                 label, resource,
                 name=name,
                 aggregator=config.get("aggregator"),
@@ -662,7 +663,7 @@ class PositionScoreBinner:
                 f"{label}: resource {resource.resource_id!r} defines "
                 f"{len(score.score_definitions)} scores, "
                 f"{sorted(score.score_definitions)}; a track is one score, "
-                f"and this binner takes a resource with exactly one")
+                f"and this track kind takes a resource with exactly one")
         (score_id, score_def), = score.score_definitions.items()
         if score_def.value_type not in NUMERIC_VALUE_TYPES:
             raise RunDefinitionError(
@@ -694,13 +695,13 @@ class PositionScoreBinner:
             raise RunDefinitionError(
                 f"{label}: resource {resource.resource_id!r}: "
                 f"none_value_replacement {replacement!r} must be finite; "
-                f"the binner_def cannot hold NaN or infinity")
+                f"the entry_def cannot hold NaN or infinity")
         return Track(
             name=named_base(name, resource.resource_id),
             resource_ids=(resource.resource_id,),
             group="",
             selector=score_id,
-            binner_type=binner_type_of(cls.kind),
+            entry_type=entry_type_of(cls.kind),
             definition=PositionScoreDef(
                 aggregator=aggregator_name,
                 none_value_replacement=replacement, name=name),
@@ -721,32 +722,32 @@ def aggregator_of(track: Track) -> str:
 
 
 def load_track_def(
-    binner_type: str, text: str,
-    kinds: dict[str, type[Binner]] | None = None,
-) -> BinnerDef | dict[str, Any]:
-    """Read a ``binner_def`` of the file back into its typed definition.
+    entry_type: str, text: str,
+    kinds: dict[str, type[TrackKind]] | None = None,
+) -> EntryDef | dict[str, Any]:
+    """Read an ``entry_def`` of the file back into its typed definition.
 
-    A ``binner_type`` with no installed kind, or a kind without
+    An ``entry_type`` with no installed kind, or a kind without
     ``load_def``, gives the plain ``dict`` of ``json.loads``, so a file
     stays readable without its plugin.
     """
     if kinds is None:
-        kinds = discover_binner_kinds()
-    for kind, binner in kinds.items():
-        if binner_type_of(kind) == binner_type:
-            load_def = getattr(binner, "load_def", None)
+        kinds = discover_track_kinds()
+    for kind, track_kind in kinds.items():
+        if entry_type_of(kind) == entry_type:
+            load_def = getattr(track_kind, "load_def", None)
             if load_def is not None:
-                loaded: BinnerDef = load_def(text)
+                loaded: EntryDef = load_def(text)
                 return loaded
             break
     plain: dict[str, Any] = json.loads(text)
     return plain
 
 
-def discover_binner_kinds() -> dict[str, type[Binner]]:
-    """Map every registered binner kind to its class, by the class's kind."""
-    kinds: dict[str, type[Binner]] = {}
-    for entry in entry_points(group=BINNERS_ENTRY_POINT_GROUP):
-        binner = entry.load()
-        kinds[binner.kind] = binner
+def discover_track_kinds() -> dict[str, type[TrackKind]]:
+    """Map every registered track kind to its class, by the class's kind."""
+    kinds: dict[str, type[TrackKind]] = {}
+    for entry in entry_points(group=TRACK_KINDS_ENTRY_POINT_GROUP):
+        track_kind = entry.load()
+        kinds[track_kind.kind] = track_kind
     return kinds

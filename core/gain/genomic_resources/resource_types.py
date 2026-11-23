@@ -373,6 +373,17 @@ LEGACY_ANNOTATOR_NAMES = {
 }
 
 
+#: Annotator types GAIn no longer accepts because the type has a new
+#: name, mapped to the new name.
+#:
+#: No alias keeps an old name working (ADR 0044).  The refusal names no
+#: release, because the release in
+#: ``RETIRED_VOCABULARY_REMOVAL_RELEASE`` removed only ``np_score``.
+RENAMED_ANNOTATOR_NAMES = {
+    "binning_tracks_annotator": "tracks_annotator",
+}
+
+
 #: Annotator names GAIn no longer accepts, mapped to what to write instead.
 #:
 #: The annotator half of the same retirement (gain#919): these named the
@@ -384,14 +395,21 @@ LEGACY_ANNOTATOR_NAMES = {
 #: they are on opposite sides of an import edge: ``annotation_factory``
 #: turns the name into a factory, and ``annotation_config`` turns it into a
 #: resource set while parsing -- and the former imports the latter.
+#:
+#: It also holds every name of ``RENAMED_ANNOTATOR_NAMES``, so the two
+#: seams refuse a renamed annotator type with the same check.
 RETIRED_ANNOTATOR_NAMES = {
     "np_score": "allele_score",
     "np_score_annotator": "allele_score_annotator",
+    **RENAMED_ANNOTATOR_NAMES,
 }
 
 
 def retired_annotator_message(annotator_type: str) -> str:
     """Return the refusal text for one use of a retired annotator name.
+
+    A renamed annotator type of ``RENAMED_ANNOTATOR_NAMES`` gets a
+    message that names the new type and no release.
 
     Silent about ``allele_score_mode``, unlike its resource-type sibling
     above: the mode was only ever derived from the resource, and an
@@ -399,6 +417,11 @@ def retired_annotator_message(annotator_type: str) -> str:
     naming both retired spellings is told about the annotator first and
     about the resource -- with its mode advice -- once that is fixed.
     """
+    if annotator_type in RENAMED_ANNOTATOR_NAMES:
+        return (
+            f"annotator '{annotator_type}' was renamed; write "
+            f"'{RENAMED_ANNOTATOR_NAMES[annotator_type]}' instead"
+        )
     return (
         f"annotator '{annotator_type}' was removed in GAIn "
         f"{RETIRED_VOCABULARY_REMOVAL_RELEASE}; write "

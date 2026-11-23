@@ -109,7 +109,7 @@ def test_a_term_beside_a_type_still_needs_the_index(
     """Only the term is the index's filter; adding a type does not excuse it.
 
     The typed failure, not the message: a group skips a child on it, and
-    the CLI and the binner dispatch on it (ADR 0012).
+    the CLI and the track kind dispatch on it (ADR 0012).
     """
     with pytest.raises(SearchIndexUnavailableError):
         list(unindexed_mixed_grr.search_resources(

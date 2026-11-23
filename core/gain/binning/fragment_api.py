@@ -1,4 +1,4 @@
-"""The groups and the tracks of a ``fragment_score_binner`` entry.
+"""The groups and the tracks of a ``fragment_score_tracks`` entry.
 
 A notebook user reads what ``binning_tool`` would bin for one entry,
 without a run: :func:`cell_groups` gives the group of each cell, and
@@ -12,14 +12,14 @@ from typing import Any
 
 import pandas as pd
 
-from gain.binning.binners import BinningJob, tracks_frame
-from gain.binning.fragment_binner import (
+from gain.binning.fragment_grouping import FragmentEntry
+from gain.binning.fragment_score_tracks import (
     FragmentBinningJob,
-    FragmentScoreBinner,
+    FragmentScoreTracks,
     job_track_maps,
 )
-from gain.binning.fragment_grouping import FragmentEntry
 from gain.binning.run_definition import name_job_tracks
+from gain.binning.tracks import BinningJob, tracks_frame
 from gain.genomic_resources.repository import GenomicResourceRepo
 
 __all__ = ["CELL_GROUPS_COLUMNS", "cell_groups", "fragment_tracks"]
@@ -34,8 +34,8 @@ def _entry_jobs(
 ) -> list[BinningJob]:
     """Resolve ``entry``, read from a dict when it is one, into its jobs."""
     if not isinstance(entry, FragmentEntry):
-        entry = FragmentScoreBinner.entry_from_config(label, entry)
-    return FragmentScoreBinner.entry_jobs(
+        entry = FragmentScoreTracks.entry_from_config(label, entry)
+    return FragmentScoreTracks.entry_jobs(
         label, entry, repo, base_dir=base_dir)
 
 
@@ -64,14 +64,14 @@ def cell_groups(
     The key of a cell grouping is the barcode of a cell.  The key of a
     value grouping is a value of its score.  A fragment with a key that
     no row lists reaches no track.  Each refusal names the entry as
-    ``binners[0]``.
+    ``tracks[0]``.
 
     Parameters
     ----------
     repo
         The repository that the query of the entry searches.
     entry
-        The entry, or the mapping under the ``fragment_score_binner``
+        The entry, or the mapping under the ``fragment_score_tracks``
         key of an entry in a run definition.
     base_dir
         The directory that a relative local ``meta`` file is read from.
@@ -89,7 +89,7 @@ def cell_groups(
     RunDefinitionError
         When ``binning_tool`` refuses the entry.
     """
-    jobs = _entry_jobs("binners[0]", entry, repo, base_dir)
+    jobs = _entry_jobs("tracks[0]", entry, repo, base_dir)
     return pd.DataFrame(
         [row for job in jobs for row in _job_groups(job, repo)],
         columns=list(CELL_GROUPS_COLUMNS))
@@ -97,7 +97,7 @@ def cell_groups(
 
 def fragment_tracks(
     repo: GenomicResourceRepo, entry: FragmentEntry | dict[str, Any],
-    *, binner_index: int = 0, base_dir: str | None = None,
+    *, entry_index: int = 0, base_dir: str | None = None,
 ) -> pd.DataFrame:
     """Give the ``/tracks`` rows that ``binning_tool`` writes for ``entry``.
 
@@ -113,12 +113,12 @@ def fragment_tracks(
     repo
         The repository that the query of the entry searches.
     entry
-        The entry, or the mapping under the ``fragment_score_binner``
+        The entry, or the mapping under the ``fragment_score_tracks``
         key of an entry in a run definition.
-    binner_index
-        The position of the entry in the ``binners`` list.  It is the
-        ``binner_index`` of each row, and each refusal names the entry
-        as ``binners[<binner_index>]``.
+    entry_index
+        The position of the entry in the ``tracks`` list.  It is the
+        ``entry_index`` of each row, and each refusal names the entry
+        as ``tracks[<entry_index>]``.
     base_dir
         The directory that a relative local ``meta`` file is read from.
         ``None`` is the current directory.
@@ -134,6 +134,6 @@ def fragment_tracks(
     RunDefinitionError
         When ``binning_tool`` refuses the entry.
     """
-    label = f"binners[{binner_index}]"
+    label = f"tracks[{entry_index}]"
     jobs = _entry_jobs(label, entry, repo, base_dir)
     return tracks_frame(name_job_tracks([(label, job) for job in jobs]))

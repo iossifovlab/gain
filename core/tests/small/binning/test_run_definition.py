@@ -2,17 +2,17 @@
 from typing import Any
 
 import pytest
-from gain.binning.binners import (
-    BinningJob,
-    PositionScoreDef,
-    Track,
-    binner_type_of,
-)
 from gain.binning.run_definition import (
     RENAMED_GENOME_KEY_MESSAGE,
     RunDefinition,
     RunDefinitionError,
     parse_run_definition,
+)
+from gain.binning.tracks import (
+    BinningJob,
+    PositionScoreDef,
+    Track,
+    entry_type_of,
 )
 from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.repository import GenomicResourceRepo
@@ -26,7 +26,7 @@ def parse_one_entry(
 ) -> RunDefinition:
     return parse_run_definition({
         "bins": {"bin_size": 10},
-        "binners": [{"position_score_binner": entry}],
+        "tracks": [{"position_score_tracks": entry}],
     }, repo, genome)
 
 
@@ -35,8 +35,8 @@ def parse_regions(
 ) -> RunDefinition:
     return parse_run_definition({
         "bins": {"bin_size": 10, "regions": regions},
-        "binners": [
-            {"position_score_binner": {"resource_query": "scores/one"}}],
+        "tracks": [
+            {"position_score_tracks": {"resource_query": "scores/one"}}],
     }, repo, genome)
 
 
@@ -48,7 +48,7 @@ def test_an_exact_id_entry_becomes_one_track_named_by_the_resource(
     assert run.tracks == [
         Track(
             name="scores/one", resource_ids=("scores/one",), group="",
-            selector="s", binner_type="position_score",
+            selector="s", entry_type="position_score",
             definition=PositionScoreDef(aggregator="max")),
     ]
 
@@ -95,9 +95,9 @@ def test_an_entry_matching_nothing_is_a_parse_error_naming_the_entry(
     # produced no column: a typo must not shrink the matrix.
     config = {
         "bins": {"bin_size": 10},
-        "binners": [
-            {"position_score_binner": {"resource_query": "scores/one"}},
-            {"position_score_binner": {"resource_query": "scoers/*"}},
+        "tracks": [
+            {"position_score_tracks": {"resource_query": "scores/one"}},
+            {"position_score_tracks": {"resource_query": "scoers/*"}},
         ],
     }
 
@@ -105,7 +105,7 @@ def test_an_entry_matching_nothing_is_a_parse_error_naming_the_entry(
         parse_run_definition(config, repo, genome)
 
     assert "scoers/*" in str(excinfo.value)
-    assert "binners[1]" in str(excinfo.value)
+    assert "tracks[1]" in str(excinfo.value)
 
 
 def test_an_entry_overrides_the_aggregator_and_replacement_for_every_match(
@@ -150,7 +150,7 @@ def test_a_search_term_that_eliminates_every_match_names_the_term(
             indexed_repo, genome)
 
     message = str(excinfo.value)
-    assert "binners[0]" in message
+    assert "tracks[0]" in message
     assert "'zzzz'" in message
     assert "'scores/one'" in message
 
@@ -167,7 +167,7 @@ def test_a_malformed_search_term_is_a_parse_error_naming_the_entry(
             indexed_repo, genome)
 
     message = str(excinfo.value)
-    assert "binners[0]" in message
+    assert "tracks[0]" in message
     assert "one AND" in message
 
 
@@ -202,8 +202,8 @@ def test_regions_are_parsed_in_gain_notation_and_kept_in_listed_order(
     # inclusive bounds; the listed order is the row order.
     config = {
         "bins": {"bin_size": 10, "regions": ["chr2", "chr1:11-35"]},
-        "binners": [
-            {"position_score_binner": {"resource_query": "scores/one"}},
+        "tracks": [
+            {"position_score_tracks": {"resource_query": "scores/one"}},
         ],
     }
 
@@ -271,15 +271,15 @@ def test_adjacent_regions_do_not_overlap(
     assert run.regions == [BedRegion("chr1", 11, 20), BedRegion("chr1", 1, 10)]
 
 
-def test_an_unknown_binner_kind_is_a_parse_error_listing_the_known_kinds(
+def test_an_unknown_track_kind_is_a_parse_error_listing_the_known_kinds(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
 ) -> None:
-    # Kinds come from the ``gain.binning.binners`` entry-point group; the
+    # Kinds come from the ``gain.binning.track_kinds`` entry-point group; the
     # message names what IS registered so a typo is a one-look fix.
     config = {
         "bins": {"bin_size": 10},
-        "binners": [
-            {"no_such_binner": {"resource_query": "scores/one"}},
+        "tracks": [
+            {"no_such_kind": {"resource_query": "scores/one"}},
         ],
     }
 
@@ -287,35 +287,35 @@ def test_an_unknown_binner_kind_is_a_parse_error_listing_the_known_kinds(
         parse_run_definition(config, repo, genome)
 
     message = str(excinfo.value)
-    assert "binners[0]" in message
-    assert "no_such_binner" in message
-    assert "fragment_score_binner" in message
-    assert "position_score_binner" in message
+    assert "tracks[0]" in message
+    assert "no_such_kind" in message
+    assert "fragment_score_tracks" in message
+    assert "position_score_tracks" in message
 
 
-@pytest.mark.parametrize("binners", [
+@pytest.mark.parametrize("tracks", [
     {},
-    {"binners": []},
-    {"binners": {"position_score_binner": {"resource_query": "scores/one"}}},
+    {"tracks": []},
+    {"tracks": {"position_score_tracks": {"resource_query": "scores/one"}}},
 ])
-def test_binners_missing_or_empty_is_a_parse_error(
+def test_tracks_missing_or_empty_is_a_parse_error(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
-    binners: dict[str, Any],
+    tracks: dict[str, Any],
 ) -> None:
-    config = {"bins": {"bin_size": 10}, **binners}
+    config = {"bins": {"bin_size": 10}, **tracks}
 
     with pytest.raises(RunDefinitionError) as excinfo:
         parse_run_definition(config, repo, genome)
 
     assert str(excinfo.value) == (
-        "binners must be a non-empty list of binner entries")
+        "tracks must be a non-empty list of track entries")
 
 
 @pytest.mark.parametrize("entry", [
-    "position_score_binner",
+    "position_score_tracks",
     {
-        "position_score_binner": {"resource_query": "scores/one"},
-        "fragment_score_binner": {"resource_query": "scores/one"},
+        "position_score_tracks": {"resource_query": "scores/one"},
+        "fragment_score_tracks": {"resource_query": "scores/one"},
     },
     {},
 ])
@@ -324,8 +324,8 @@ def test_an_entry_that_is_not_a_one_key_mapping_is_a_parse_error(
 ) -> None:
     config = {
         "bins": {"bin_size": 10},
-        "binners": [
-            {"position_score_binner": {"resource_query": "scores/one"}},
+        "tracks": [
+            {"position_score_tracks": {"resource_query": "scores/one"}},
             entry,
         ],
     }
@@ -334,17 +334,17 @@ def test_an_entry_that_is_not_a_one_key_mapping_is_a_parse_error(
         parse_run_definition(config, repo, genome)
 
     assert str(excinfo.value) == (
-        "binners[1]: an entry is a one-key mapping of binner kind to its "
+        "tracks[1]: an entry is a one-key mapping of track kind to its "
         "configuration")
 
 
-STUB_KIND = "stub_binner"
+STUB_KIND = "stub_tracks"
 
 
 def a_stub_track(resource_id: str, aggregator: str) -> Track:
     return Track(
         name=resource_id, resource_ids=(resource_id,), group="",
-        selector="s", binner_type=binner_type_of(STUB_KIND),
+        selector="s", entry_type=entry_type_of(STUB_KIND),
         definition=PositionScoreDef(
             aggregator=aggregator,
             none_value_replacement=None))
@@ -355,7 +355,7 @@ def parse_stub_jobs(
     genome: ReferenceGenome, monkeypatch: pytest.MonkeyPatch,
 ) -> RunDefinition:
     """Parse one entry of a stub kind that resolves it into ``jobs``."""
-    class StubBinner:
+    class StubTrackKind:
         """A kind that resolves every entry into the given jobs."""
 
         kind = STUB_KIND
@@ -367,11 +367,11 @@ def parse_stub_jobs(
             return list(jobs)
 
     monkeypatch.setattr(
-        "gain.binning.run_definition.discover_binner_kinds",
-        lambda: {STUB_KIND: StubBinner})
+        "gain.binning.run_definition.discover_track_kinds",
+        lambda: {STUB_KIND: StubTrackKind})
     return parse_run_definition({
         "bins": {"bin_size": 10},
-        "binners": [{STUB_KIND: {}}],
+        "tracks": [{STUB_KIND: {}}],
     }, repo, genome)
 
 
@@ -384,11 +384,11 @@ def test_a_job_with_no_tracks_is_a_parse_error_naming_its_entry(
     # where it enters the run, naming the entry that produced it.
     with pytest.raises(RunDefinitionError) as excinfo:
         parse_stub_jobs(
-            [BinningJob(binner=STUB_KIND, tracks=())],
+            [BinningJob(kind=STUB_KIND, tracks=())],
             repo, genome, monkeypatch)
 
     assert str(excinfo.value) == (
-        "binners[0]: stub_binner resolved the entry into a job with "
+        "tracks[0]: stub_tracks resolved the entry into a job with "
         "no tracks; every job needs at least one")
 
 
@@ -396,7 +396,7 @@ def test_a_job_naming_another_kind_is_a_parse_error_naming_its_entry(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The task graph finds a job's binner by the kind the job names, so a
+    # The task graph finds a job's track kind by the kind the job names, so a
     # job must name the kind that produced it -- refused here, with the
     # entry's label, rather than as a bare KeyError while the graph is
     # built.
@@ -404,12 +404,12 @@ def test_a_job_naming_another_kind_is_a_parse_error_naming_its_entry(
 
     with pytest.raises(RunDefinitionError) as excinfo:
         parse_stub_jobs(
-            [BinningJob(binner="position_score_binner", tracks=(track,))],
+            [BinningJob(kind="position_score_tracks", tracks=(track,))],
             repo, genome, monkeypatch)
 
     assert str(excinfo.value) == (
-        "binners[0]: stub_binner resolved the entry into a job bound by "
-        "'position_score_binner'; a job is bound by the kind that "
+        "tracks[0]: stub_tracks resolved the entry into a job bound by "
+        "'position_score_tracks'; a job is bound by the kind that "
         "produced it")
 
 
@@ -422,10 +422,10 @@ def test_each_job_keeps_its_own_tracks_once_the_run_names_them(
     # each named track must then go back to the job it came from, a
     # two-track job keeping both.
     run = parse_stub_jobs([
-        BinningJob(binner=STUB_KIND, tracks=(
+        BinningJob(kind=STUB_KIND, tracks=(
             a_stub_track("scores/one", "max"),
             a_stub_track("scores/two", "mean"))),
-        BinningJob(binner=STUB_KIND, tracks=(
+        BinningJob(kind=STUB_KIND, tracks=(
             a_stub_track("scores/one", "mean"),)),
     ], repo, genome, monkeypatch)
 
@@ -445,9 +445,9 @@ def test_a_resource_matched_by_two_entries_names_both_tracks_by_aggregator(
     # first, while a resource matched once keeps its bare id.
     config = {
         "bins": {"bin_size": 10},
-        "binners": [
-            {"position_score_binner": {"resource_query": "scores/*"}},
-            {"position_score_binner": {
+        "tracks": [
+            {"position_score_tracks": {"resource_query": "scores/*"}},
+            {"position_score_tracks": {
                 "resource_query": "scores/one", "aggregator": "min"}},
         ],
     }
@@ -471,9 +471,9 @@ def test_two_entries_producing_one_track_are_a_parse_error_naming_both(
     # and neither could a reader of the ``/tracks`` table.
     config = {
         "bins": {"bin_size": 10},
-        "binners": [
-            {"position_score_binner": {"resource_query": "scores/*"}},
-            {"position_score_binner": {
+        "tracks": [
+            {"position_score_tracks": {"resource_query": "scores/*"}},
+            {"position_score_tracks": {
                 "resource_query": "scores/two", "aggregator": "mean",
                 "none_value_replacement": 0.0}},
         ],
@@ -484,8 +484,8 @@ def test_two_entries_producing_one_track_are_a_parse_error_naming_both(
 
     message = str(excinfo.value)
     assert "scores/two:mean" in message
-    assert "binners[0]" in message
-    assert "binners[1]" in message
+    assert "tracks[0]" in message
+    assert "tracks[1]" in message
 
 
 def test_search_term_on_a_repository_without_an_index_is_a_parse_error(
@@ -500,7 +500,7 @@ def test_search_term_on_a_repository_without_an_index_is_a_parse_error(
             repo, genome)
 
     message = str(excinfo.value)
-    assert "binners[0]" in message
+    assert "tracks[0]" in message
     assert "search_term" in message
     assert "index" in message
 
@@ -514,7 +514,7 @@ def test_search_term_on_a_repository_without_an_index_is_a_parse_error(
     ({"resource_query": "scores/one", "aggregator": "mediann"}, "mediann"),
     ({"resource_query": "scores/one", "none_value_replacement": "zero"},
      "none_value_replacement"),
-    # NaN and infinity cannot be written to the canonical binner_def, so
+    # NaN and infinity cannot be written to the canonical entry_def, so
     # the parser refuses them before any chunk is computed.
     ({"resource_query": "scores/one", "none_value_replacement": float("nan")},
      "finite"),
@@ -540,7 +540,7 @@ def test_a_malformed_entry_is_a_parse_error_naming_what_is_wrong(
     with pytest.raises(RunDefinitionError) as excinfo:
         parse_one_entry(entry, repo, genome)
 
-    assert "binners[0]" in str(excinfo.value)
+    assert "tracks[0]" in str(excinfo.value)
     assert fragment in str(excinfo.value)
 
 
@@ -585,8 +585,8 @@ def test_a_malformed_bins_block_is_a_parse_error_naming_the_key(
 ) -> None:
     config = {
         "bins": bins,
-        "binners": [
-            {"position_score_binner": {"resource_query": "scores/one"}},
+        "tracks": [
+            {"position_score_tracks": {"resource_query": "scores/one"}},
         ],
     }
 
@@ -603,8 +603,8 @@ def test_the_task_budget_is_not_a_run_definition_key(
     # run definition describes the matrix, so the key is a stray one.
     config = {
         "bins": {"bin_size": 10, "task_budget": 50},
-        "binners": [
-            {"position_score_binner": {"resource_query": "scores/one"}},
+        "tracks": [
+            {"position_score_tracks": {"resource_query": "scores/one"}},
         ],
     }
 
@@ -620,15 +620,15 @@ def test_an_unknown_top_level_key_is_a_parse_error(
 ) -> None:
     config = {
         "bins": {"bin_size": 10},
-        "binner": [
-            {"position_score_binner": {"resource_query": "scores/one"}},
+        "entries": [
+            {"position_score_tracks": {"resource_query": "scores/one"}},
         ],
     }
 
     with pytest.raises(RunDefinitionError) as excinfo:
         parse_run_definition(config, repo, genome)
 
-    assert "binner" in str(excinfo.value)
+    assert "entries" in str(excinfo.value)
 
 
 @pytest.mark.parametrize("extra", [
@@ -642,8 +642,8 @@ def test_the_parser_refuses_the_renamed_genome_key_by_itself(
     """A direct caller, not the CLI, gets the rename message."""
     config = {
         "bins": {"bin_size": 10},
-        "binners": [
-            {"position_score_binner": {"resource_query": "scores/one"}},
+        "tracks": [
+            {"position_score_tracks": {"resource_query": "scores/one"}},
         ],
         **extra,
     }
@@ -652,3 +652,39 @@ def test_the_parser_refuses_the_renamed_genome_key_by_itself(
         parse_run_definition(config, repo, genome)
 
     assert str(excinfo.value) == RENAMED_GENOME_KEY_MESSAGE
+
+
+def test_the_parser_refuses_the_renamed_binners_key(
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+) -> None:
+    config = {
+        "bins": {"bin_size": 10},
+        "binners": [
+            {"position_score_tracks": {"resource_query": "scores/one"}},
+        ],
+    }
+
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_run_definition(config, repo, genome)
+
+    assert str(excinfo.value) == "binners was renamed tracks; rename the key"
+
+
+@pytest.mark.parametrize("old, new", [
+    ("position_score_binner", "position_score_tracks"),
+    ("fragment_score_binner", "fragment_score_tracks"),
+])
+def test_the_parser_refuses_a_renamed_kind_naming_the_new_kind(
+    old: str, new: str,
+    repo: GenomicResourceRepo, genome: ReferenceGenome,
+) -> None:
+    config = {
+        "bins": {"bin_size": 10},
+        "tracks": [{old: {"resource_query": "scores/one"}}],
+    }
+
+    with pytest.raises(RunDefinitionError) as excinfo:
+        parse_run_definition(config, repo, genome)
+
+    assert str(excinfo.value) == (
+        f"tracks[0]: {old} was renamed {new}; rename the kind")

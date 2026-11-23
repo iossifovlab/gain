@@ -249,14 +249,14 @@ A docstring says what the code does *now*; it does not narrate how it got that w
 Test: read it as someone who never saw the old code; a sentence that only makes sense if you knew the previous version is history, cut it. Applies to new and edited docstrings; do not rewrite untouched ones in an unrelated PR.
 </important>
 
-<important if="you are adding an annotator, a resource type, a genomic-context provider, or a binner">
+<important if="you are adding an annotator, a resource type, a genomic-context provider, or a track kind">
 
 Extensibility is by Python entry points declared in `core/pyproject.toml`:
 
 1. `gain.genomic_resources.plugins` — genomic context providers (DefaultRepository, CLI, CLIAnnotation)
 2. `gain.genomic_resources.implementations` — position/allele scores, liftover chain, genome, gene models, fragment score (config type `fragment_score`, legacy `cnv_collection` also accepted), annotation pipeline, gene score, gene set collection
 3. `gain.annotation.annotators` — all built-in annotator types (score, effect, gene set, liftover, normalize allele, fragment score with the same two config names, chrom mapping, gene score, simple effect, debug)
-4. `gain.binning.binners` — the binning tool's binners
+4. `gain.binning.track_kinds` — the track kinds of the binning tool (ADR 0044)
 
 Annotator plugins in this repo register additional annotators through their own entry points.
 </important>

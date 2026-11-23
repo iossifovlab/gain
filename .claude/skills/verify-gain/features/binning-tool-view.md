@@ -7,7 +7,7 @@
 
 - Positional `file`: the HDF5 file that `binning_tool` wrote.
 - `--tracks`: the `/tracks` table, one row per track, headed `label
-  binner_type binner_index track_index resource_ids selector binner_def`.
+  entry_type entry_index track_index resource_ids selector entry_def`.
 - `--bins`: the `/bins` table, headed `chrom start end`.
 - `--matrix`: the `/values` matrix, one column per track. With `--bins`,
   one joined table: the bin columns, then one column per track.
@@ -58,7 +58,7 @@ The expected values. Columns are separated by one tab:
 
 | Case | Arguments | Exit | Expected output |
 | --- | --- | --- | --- |
-| `tracks` | `--tracks` | 0 | header `label binner_type binner_index track_index resource_ids selector binner_def`, and one row `mini_positionscore_bw:mean position_score 0 0 mini_positionscore_bw pos_bw_0 {"aggregator":"mean","name":null,"none_value_replacement":null}` |
+| `tracks` | `--tracks` | 0 | header `label entry_type entry_index track_index resource_ids selector entry_def`, and one row `mini_positionscore_bw:mean position_score 0 0 mini_positionscore_bw pos_bw_0 {"aggregator":"mean","name":null,"none_value_replacement":null}` |
 | `bins` | `--bins` | 0 | header `chrom start end`, then `chr1 1 5`, `chr1 6 10`, `chr2 1 5`, `chr2 6 10` |
 | `joined` | `--bins --matrix` | 0 | header `chrom start end mini_positionscore_bw:mean`, then the four bins with the values `0.0`, `0.10000000149011612`, `0.20000000298023224`, `0.30000001192092896` |
 | `region` | `--bins --matrix --region chr2` | 0 | the header, then only the two `chr2` rows |

@@ -7,9 +7,9 @@ repository without a run, so a notebook sees the groups and the tracks of
 the entry first. Each function raises
 :class:`~gain.binning.RunDefinitionError` for an entry that ``binning_tool``
 refuses, with the same message. The message names the entry as
-``binners[0]``, and ``binning_tool`` names it by its position in the
-``binners`` list. ``fragment_tracks`` takes a ``binner_index`` and names
-the entry as ``binners[<binner_index>]``.
+``tracks[0]``, and ``binning_tool`` names it by its position in the
+``tracks`` list. ``fragment_tracks`` takes an ``entry_index`` and names
+the entry as ``tracks[<entry_index>]``.
 
 Previewing the groups and tracks of an entry
 --------------------------------------------
@@ -59,7 +59,7 @@ The example below builds the entry of :doc:`entries` and previews it:
     tracks = fragment_tracks(repo, entry)
     print(tracks[["resource_ids", "selector"]])
 
-Each function also takes the mapping under the ``fragment_score_binner``
+Each function also takes the mapping under the ``fragment_score_tracks``
 key of a run definition in place of a ``FragmentEntry``. The user page
 :doc:`/binning_infrastructure` describes the keys of that mapping. A
 relative local ``meta`` file is read from ``base_dir``, or from the
@@ -68,15 +68,15 @@ current directory without it.
 Previewing a whole run definition
 ---------------------------------
 
-:func:`~gain.binning.resolve_binners` resolves the whole ``binners`` list of
+:func:`~gain.binning.resolve_tracks` resolves the whole ``tracks`` list of
 a run definition into its jobs, as ``binning_tool`` does before a run. A
 notebook calls it to check a run definition with position-score entries
 too, or to see the labels of the tracks of all its entries together. The
-list holds one mapping of a binner kind to its configuration for each
+list holds one mapping of a track kind to its configuration for each
 entry, as the YAML of the run definition does.
 
 :func:`~gain.binning.tracks_frame` gives the ``/tracks`` rows of the jobs
-that ``resolve_binners`` returns, one row for each track, in the order of
+that ``resolve_tracks`` returns, one row for each track, in the order of
 the file. The rows hold no name for a track.
 :func:`~gain.binning.track_labels` builds the label of each row, as
 :ref:`binning-track-labels` describes:
@@ -84,17 +84,17 @@ the file. The rows hold no name for a track.
 .. code-block:: python
 
     import gain.grr as grr
-    from gain.binning import resolve_binners, track_labels, tracks_frame
+    from gain.binning import resolve_tracks, track_labels, tracks_frame
 
     repo = grr.build_genomic_resource_repository()
-    binners = [
-        {"position_score_binner": {"resource_query": "hg38/scores/phyloP*"}},
-        {"fragment_score_binner": {"resource_query": "frags/*"}},
+    entries = [
+        {"position_score_tracks": {"resource_query": "hg38/scores/phyloP*"}},
+        {"fragment_score_tracks": {"resource_query": "frags/*"}},
     ]
 
-    jobs = resolve_binners(binners, repo)
+    jobs = resolve_tracks(entries, repo)
     tracks = tracks_frame(jobs)
-    print(tracks[["binner_type", "resource_ids", "selector"]])
+    print(tracks[["entry_type", "resource_ids", "selector"]])
     print(track_labels(tracks))
 
 API
@@ -108,13 +108,13 @@ The names below are exported by the package ``gain.binning``.
 
    cell_groups
    fragment_tracks
-   resolve_binners
+   resolve_tracks
    tracks_frame
 
 .. autofunction:: cell_groups
 
 .. autofunction:: fragment_tracks
 
-.. autofunction:: resolve_binners
+.. autofunction:: resolve_tracks
 
 .. autofunction:: tracks_frame

@@ -45,8 +45,8 @@ Labels of the tracks
 --------------------
 
 The file does not store a name for a track, so ``track_labels`` builds each
-label from ``resource_ids``, ``selector``, ``binner_type`` and
-``binner_def``:
+label from ``resource_ids``, ``selector``, ``entry_type`` and
+``entry_def``:
 
 - The label of a position-score track is its resource id and its
   aggregator, for example ``hg38/scores/phyloP100way:mean``.

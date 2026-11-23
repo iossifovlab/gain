@@ -31,10 +31,10 @@ import pytest
 from gain.annotation.annotatable import Region
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
-from gain.binning.binners import (
+from gain.binning.tracks import (
     BinningJob,
-    PositionScoreBinner,
     PositionScoreDef,
+    PositionScoreTracks,
     Track,
 )
 from gain.genomic_resources.aggregators import ScoreAggregationQuery
@@ -262,10 +262,13 @@ _LONG_RUNS = """
     (1, 2000, -math.inf),
     (2001, 4000, 2.0 ** 500 * 1.5 ** 500),
 ])
-def test_a_region_product_agrees_with_the_binner_over_long_runs(
+def test_a_region_product_agrees_with_the_track_kind_over_long_runs(
     tmp_path: pathlib.Path, start: int, end: int, expected: float,
 ) -> None:
-    """The annotator's region ``product`` is the binner's bin (gain#1766)."""
+    """The annotator's region ``product`` is the track kind's bin.
+
+    See gain#1766.
+    """
     repo = (
         a_grr()
         .with_resource("long_runs", a_position_score()
@@ -275,11 +278,11 @@ def test_a_region_product_agrees_with_the_binner_over_long_runs(
         .build_repo(tmp_path))
     track = Track(
         name="long_runs", resource_ids=("long_runs",), group="",
-        selector="s", binner_type="position_score",
+        selector="s", entry_type="position_score",
         definition=PositionScoreDef(
             aggregator="product",
             none_value_replacement=None))
-    job = BinningJob(binner="position_score_binner", tracks=(track,))
+    job = BinningJob(kind="position_score_tracks", tracks=(track,))
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - position_score:
             resource_id: long_runs
@@ -290,7 +293,7 @@ def test_a_region_product_agrees_with_the_binner_over_long_runs(
 
     with pipeline:
         annotated = pipeline.annotate(Region("chr1", start, end))["s"]
-    with PositionScoreBinner.bind(job, repo) as bound:
+    with PositionScoreTracks.bind(job, repo) as bound:
         binned = bound.bin_region(
             BedRegion("chr1", start, end), end - start + 1)
 
