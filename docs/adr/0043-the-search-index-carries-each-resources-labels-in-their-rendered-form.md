@@ -55,9 +55,14 @@ change.
 ## Consequences
 
 - A reader that knows only `contents`, such as `grr_browse` or an older root
-  page, ignores the new table. A GRR gets the table at its next `grr_manage`
-  run, and the same run writes the root page that reads it. A root page that can
-  offer the resource list therefore always has the table.
+  page, ignores the new table.
+- The index build skips the rebuild when the `contents_md5` that the index
+  records matches `.CONTENTS` (`_contents_db_is_current` in `cli_manifest.py`).
+  An unchanged GRR would therefore keep an index without the new table after a
+  gain upgrade. So the index also records a schema version in
+  `contents_metadata`, and an index with an older version or no version is not
+  current. The first `grr_manage` run after the upgrade then rebuilds the index
+  and writes the root page that reads it.
 - The search index is now more than a search structure. The **Search index**
   entry of the glossary says that it also holds the labels.
 - The labels are stored twice: once space-joined for search and once as JSON
