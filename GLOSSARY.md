@@ -83,13 +83,15 @@ _Avoid_: summary page, index page, resource info
 
 **Page fingerprint**:
 A digest of everything the **info pages** of one resource were rendered from:
-the resource's manifest and statistics, the versions of gain and of the
-package that provides the resource kind, and the other resources the pages
+the resource's manifest and statistics, the page templates and the static
+files that gain ships, and the other resources the pages
 read, such as the reference genome that a score's label
 resolves to. Each info page carries its own fingerprint. A repair renders the
 pages again only when the fingerprint differs or `--force` is given. The
 `repo-info` and `resource-info` commands ignore the fingerprint and always
-render the pages.
+render the pages. A new version of gain does not change the fingerprint by
+itself: if the new code changes what the pages show, the operator renders
+them again with `--force` or `repo-info`.
 _Avoid_: info hash, page hash
 
 **Column vocabulary**:
@@ -158,10 +160,10 @@ coarse CNV effect instead.
 _Avoid_: region cutoff, length limit, maximum region length
 
 **Track attribute**:
-An attribute of a `binning_tracks_annotator`. It is the value of one
+An attribute of a `tracks_annotator`. It is the value of one
 **track** of the annotator's **entries** over an annotatable, which the
 annotator bins as one bin. Its name is
-`<prefix>_<binner_index>_<track_index>`. Every track of the entries is a
+`<prefix>_<entry_index>_<track_index>`. Every track of the entries is a
 track attribute.
 _Avoid_: grouped attribute, per-group column
 
@@ -432,10 +434,10 @@ reason a read of one is not a read of the other
 
 **Track**:
 One column of the `binning_tool` output matrix, or one **track attribute** of
-a `binning_tracks_annotator`. Row *j* of `/tracks` describes column *j* of
-`/values`. A track belongs to one **entry**, named by its `binner_index`, and
+a `tracks_annotator`. Row *j* of `/tracks` describes column *j* of
+`/values`. A track belongs to one **entry**, named by its `entry_index`, and
 has a `track_index` among the tracks of that entry. The file does not store a track name. The kind-specific part of a track
-is its `binner_def`.
+is its `entry_def`.
 _Avoid_: series
 
 **Selector**:
@@ -448,23 +450,30 @@ _Avoid_: group (for a position-score track), filter
 **Track label**:
 The display name of a **track**, returned by `track_labels` in
 `gain.binning.h5_reader`. The file does not store it. The function builds it
-from `resource_ids`, **selector** and `binner_def`. For a position-score
+from `resource_ids`, **selector** and `entry_def`. For a position-score
 track the base is the resource id, or `<name>/<resource id>` when the entry has
 a `name`. For a pooled fragment track the base is the `name`, or the resource
 query when there is no `name`, followed by `:<selector>`. For an unpooled
 fragment track the base is the resource id, or `<name>/<resource id>`,
 followed by `:<selector>`. The label ends with `:<aggregator>` when
-`binner_def` has an aggregator. Every **track** in a set of equal labels gets
+`entry_def` has an aggregator. Every **track** in a set of equal labels gets
 `#<position>` appended, where the position is the row of the **track** in the
 DataFrame.
 _Avoid_: track name (the name of an entry is the optional `name` in
-`binner_def`)
+`entry_def`)
 
 **Entry**:
-One item of the `binners` list of a run definition or of a
-`binning_tracks_annotator`. An entry names a binner kind and the resources
+One item of the `tracks` list of a run definition or of a
+`tracks_annotator`. An entry names a **track kind** and the resources
 that it reads, and it makes one or more **tracks**.
-_Avoid_: binner (the kind that reads an entry), job, task
+_Avoid_: track kind (the kind that reads an entry), binner, job, task
+
+**Track kind**:
+The kind of an **entry**, for example `position_score_tracks` or
+`fragment_score_tracks`. A track kind reads the resources of an entry and
+makes its **tracks**. The name of the kind without its `_tracks` suffix is the
+`entry_type` of each of its tracks.
+_Avoid_: binner, binner kind, binner type
 
 **Group**:
 The fragments that one fragment **track** reduces. The name of the group is

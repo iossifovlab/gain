@@ -105,6 +105,7 @@ of one decision will drift.
 | [0041](0041-the-annotation-layer-may-call-the-binners.md) | The annotation layer may call the binners | accepted |
 | [0042](0042-onnx-runtime-is-the-default-spliceai-backend.md) | ONNX Runtime is the default SpliceAI backend, and TensorFlow is optional | accepted |
 | [0043](0043-the-search-index-carries-each-resources-labels-in-their-rendered-form.md) | The search index carries each resource's labels in their rendered form | proposed |
+| [0044](0044-a-track-kind-replaces-the-binner.md) | A track kind replaces the binner | accepted |
 
 > **Note:** `0003` was allocated twice, by two changes that landed the same day.
 > "Numbers are never reused" is a rule about not re-issuing a *retired* number;

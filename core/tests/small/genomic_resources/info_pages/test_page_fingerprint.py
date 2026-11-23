@@ -6,9 +6,10 @@ rendered from. A repair compares it with the page fingerprint stored in
 ``index.html`` to decide whether the pages render again.
 """
 import pathlib
-from importlib import metadata
+from collections.abc import Callable
 from typing import Any
 
+import gain.templates
 import pytest
 from gain.genomic_resources import cli_info
 from gain.genomic_resources.cli import cli_manage
@@ -32,6 +33,8 @@ from gain.genomic_resources.testing.builders import a_grr
 from gain.genomic_resources.testing.data_frame_builder import a_data_frame
 from gain.task_graph.graph import TaskDesc
 
+from tests.small.templates.conftest import copy_page_input_dir
+
 
 @pytest.fixture
 def data_frame_repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
@@ -44,24 +47,54 @@ def _implementation(
     return DataFrameResourceImplementation(repo.get_resource("df"))
 
 
-def test_a_new_distribution_version_changes_the_fingerprint(
+def test_a_new_page_template_changes_the_fingerprint(
     data_frame_repo: GenomicResourceRepo,
-    monkeypatch: pytest.MonkeyPatch,
+    provided_template: Callable[[str], None],
 ) -> None:
+    provided_template("first source")
     before = _implementation(data_frame_repo).page_fingerprint(
         data_frame_repo)
-    real_version = metadata.version
-
-    def version(name: str) -> str:
-        if name == "gain-core":
-            return "9999.0.0"
-        return real_version(name)
-
-    monkeypatch.setattr(metadata, "version", version)
+    provided_template("second source")
 
     after = _implementation(data_frame_repo).page_fingerprint(
         data_frame_repo)
 
+    assert before is not None
+    assert after != before
+
+
+def test_a_new_gain_version_leaves_the_fingerprint_unchanged(
+    data_frame_repo: GenomicResourceRepo,
+    newer_gain_version: Callable[[], None],
+) -> None:
+    before = _implementation(data_frame_repo).page_fingerprint(
+        data_frame_repo)
+    newer_gain_version()
+
+    after = _implementation(data_frame_repo).page_fingerprint(
+        data_frame_repo)
+
+    assert before is not None
+    assert after == before
+
+
+def test_a_new_static_file_changes_the_fingerprint(
+    tmp_path: pathlib.Path,
+    data_frame_repo: GenomicResourceRepo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    static = copy_page_input_dir("static", tmp_path, monkeypatch)
+    gain.templates.reset_caches()
+    before = _implementation(data_frame_repo).page_fingerprint(
+        data_frame_repo)
+    font = static / "fonts" / "roboto-v51-latin.woff2"
+    font.write_bytes(font.read_bytes() + b"\0")
+    gain.templates.reset_caches()
+
+    after = _implementation(data_frame_repo).page_fingerprint(
+        data_frame_repo)
+
+    gain.templates.reset_caches()
     assert before is not None
     assert after != before
 

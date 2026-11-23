@@ -4,6 +4,13 @@ The ``repo-info``, ``repo-repair``, ``resource-info`` and
 ``resource-repair`` commands, which build the statistics first and then
 write the info pages of each resource. A repair skips the info pages of a
 resource whose page fingerprint is unchanged.
+
+The page fingerprint covers the page templates and the static files of
+gain, the provider templates, the manifest, the statistics hash, the info
+hash and the page dependencies of the resource. A new gain version alone
+does not change it, so a repair after an upgrade renders no page again.
+After a change to the Python code that builds the page data, run
+``repo-repair --force`` or ``repo-info``.
 """
 import dataclasses
 from collections.abc import Mapping, Sequence

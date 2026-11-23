@@ -4,9 +4,9 @@ import os
 import pathlib
 import re
 import textwrap
+from collections.abc import Callable
 from typing import Any
 
-import gain
 import pytest
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
@@ -362,17 +362,31 @@ def test_a_repair_renders_only_the_resource_with_a_deleted_page(
     assert statistics_page.is_file()
 
 
-def test_a_new_gain_version_makes_a_repair_render_every_page(
+def test_a_new_page_template_makes_a_repair_render_every_page(
     data_frame_grr: pathlib.Path,
     caplog: pytest.LogCaptureFixture,
-    monkeypatch: pytest.MonkeyPatch,
+    provided_template: Callable[[str], None],
 ) -> None:
+    provided_template("first source")
     _run(caplog, _repair(data_frame_grr))
-    monkeypatch.setattr(gain, "__version__", "9999.0.0")
+    provided_template("second source")
 
     summary = _run(caplog, _repair(data_frame_grr))
 
     assert summary == ["info pages: rendered 2, skipped 0"]
+
+
+def test_a_new_gain_version_makes_a_repair_render_no_page(
+    data_frame_grr: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+    newer_gain_version: Callable[[], None],
+) -> None:
+    _run(caplog, _repair(data_frame_grr))
+    newer_gain_version()
+
+    summary = _run(caplog, _repair(data_frame_grr))
+
+    assert summary == ["info pages: rendered 0, skipped 2"]
 
 
 def test_a_page_without_a_fingerprint_tag_renders_again(
@@ -506,9 +520,11 @@ def test_a_failed_index_page_write_makes_the_next_repair_render_again(
     data_frame_grr: pathlib.Path,
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
+    provided_template: Callable[[str], None],
 ) -> None:
+    provided_template("first source")
     _run(caplog, _repair(data_frame_grr))
-    monkeypatch.setattr(gain, "__version__", "9999.0.0")
+    provided_template("second source")
     real_open = FsspecReadWriteProtocol.open_raw_file
     statistics_page = data_frame_grr / "df_one" / "statistics" / "index.html"
     statistics_before = statistics_page.read_text()

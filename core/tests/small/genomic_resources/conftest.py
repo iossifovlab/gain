@@ -16,9 +16,12 @@ import shutil
 import textwrap
 import threading
 from collections.abc import Callable, Generator, Iterable, Iterator
+from importlib import metadata
 from typing import Any
 from unittest import mock
 
+import gain
+import gain.templates
 import pytest
 import pytest_mock
 from gain.genomic_resources.cli import cli_manage
@@ -57,6 +60,8 @@ from gain.genomic_resources.testing.table_score_builder import a_position_score
 from gain.genomic_resources.testing.vcf_info_score_builder import (
     VcfInfoScoreBuilder,
 )
+
+from tests.small.templates.conftest import make_entry_point
 
 logger = logging.getLogger(__name__)
 
@@ -1028,3 +1033,48 @@ def phrase_sites(
         for path in sources
         if (count := path.read_text().count(phrase))
     )
+
+
+@pytest.fixture
+def provided_template(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[Callable[[str], None]]:
+    """Supply one page template through a provider entry point.
+
+    The fixture returns a setter of the source of the template. Each call
+    resets the template caches, as a new process would start afresh.
+    """
+    sources = {"provided.jinja": ""}
+    entry_point = make_entry_point("provided", lambda: dict(sources))
+    monkeypatch.setattr(
+        gain.templates, "entry_points", lambda **_: [entry_point])
+
+    def set_source(source: str) -> None:
+        sources["provided.jinja"] = source
+        gain.templates.reset_caches()
+
+    yield set_source
+    gain.templates.reset_caches()
+
+
+@pytest.fixture
+def newer_gain_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Callable[[], None]:
+    """Return a setter that makes gain report a newer version.
+
+    The setter patches ``gain.__version__`` and the version that
+    ``importlib.metadata.version`` reports for ``gain-core``.
+    """
+    real_version = metadata.version
+
+    def version(name: str) -> str:
+        if name == "gain-core":
+            return "9999.0.0"
+        return real_version(name)
+
+    def set_newer() -> None:
+        monkeypatch.setattr(metadata, "version", version)
+        monkeypatch.setattr(gain, "__version__", "9999.0.0")
+
+    return set_newer
