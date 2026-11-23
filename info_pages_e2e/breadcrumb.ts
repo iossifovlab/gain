@@ -1,12 +1,12 @@
 import { type Page } from '@playwright/test';
 
 /**
- * Locators for a breadcrumb trail, wherever one is drawn.
+ * Locators for the breadcrumb trail in the header bar of a page.
  *
- * The index page's hierarchical view renders its trail from script, and
- * a resource page renders the same markup -- same element id, same
- * classes -- from a template in its header (gain#1477). One definition
- * of how to read a trail, so the two specs agree about what a crumb is.
+ * Every info page renders its trail from a template into its header,
+ * and the index page's tree module redraws it from script (gain#1477,
+ * gain#2483). One definition of how to read a trail, so the specs agree
+ * about what a crumb is.
  */
 
 /**
@@ -28,9 +28,7 @@ export function breadcrumbLink(page: Page, name: string) {
  *
  * `allTextContents` rather than `allInnerTexts`: the latter reports text
  * as *rendered*, collapsing whitespace runs and reading nothing at all
- * from a hidden element -- and the index page's breadcrumb is hidden
- * whenever the table view is showing. This reads what the page actually
- * set.
+ * from a hidden element. This reads what the page actually set.
  *
  * The separators are excluded by selecting the crumbs themselves, so the
  * result is the trail and not the trail interleaved with "/".

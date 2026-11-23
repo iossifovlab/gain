@@ -812,13 +812,11 @@ function resourceNames(page: Page): Promise<string[]> {
  * number, so that a row which had stopped rendering the count at all is
  * a failure here rather than a `NaN` compared against a `NaN`.
  *
- * `innerText` here, where `breadcrumbTrail` below explains at length why
- * it uses `allTextContents` instead. The difference is what each reads
- * from a *hidden* element -- nothing, and the real text, respectively --
- * and the breadcrumb is hidden whenever the table is showing. These two
- * read rows out of `#hierarchical-list`, which is only ever asked about
- * while the tree is on screen, so what is wanted here is the text as
- * rendered.
+ * `innerText` here, where `breadcrumbTrail` uses `allTextContents`
+ * instead. The difference is what each reads from a *hidden* element --
+ * nothing, and the real text, respectively. These two read rows out of
+ * `#hierarchical-list`, which is only ever asked about while the tree is
+ * on screen, so what is wanted here is the text as rendered.
  */
 function folderCount(page: Page, name: string): Promise<string> {
   return folderRow(page, name).locator('.hv-count').innerText();

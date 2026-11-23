@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 from gain.templates import get_template
+from gain.templates.breadcrumb import index_page_breadcrumb
 
 PROBE = "gainxss558"
 
@@ -58,7 +59,7 @@ def _render_browse_page(
     }
     return get_template("grr_index.jinja").render(
         data={res_id: row},
-        has_about=False,
+        breadcrumb=index_page_breadcrumb(),
         sqlite3_hash="deadbeef",
     )
 

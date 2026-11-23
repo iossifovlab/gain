@@ -36,8 +36,8 @@ def bare_repo(settled_repo: pathlib.Path) -> pathlib.Path:
 
     The settled template is fully repaired, assets included; a test
     about publishing them has to start from a repository that has none.
-    The ``about.md`` is what makes the publisher render ``about.html``,
-    so the about page can be pinned beside the others.
+    The publisher renders ``about.html`` for every repository. The
+    ``about.md`` gives that page real content to pin beside the others.
     """
     shutil.rmtree(settled_repo / ".static", ignore_errors=True)
     assert not (settled_repo / ".static").exists()

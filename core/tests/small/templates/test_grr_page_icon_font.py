@@ -47,6 +47,7 @@ from typing import Any
 
 import pytest
 from gain.templates import get_template
+from gain.templates.breadcrumb import index_page_breadcrumb
 from gain.templates.static_assets import SQLITE_WASM_MODULE_PATH
 
 from tests.small.templates.page_css import font_faces_in, rules_in
@@ -153,7 +154,7 @@ def browse_page() -> str:
     }
     return get_template("grr_index.jinja").render(
         data={"cadd": row},
-        has_about=False,
+        breadcrumb=index_page_breadcrumb(),
         sqlite3_hash="deadbeef",
     )
 
@@ -163,7 +164,8 @@ def about_page() -> str:
     """The about page rendered around already-converted markdown.
 
     ``build_index_info`` converts ``about.md`` with markdown2 and passes
-    the HTML in; the page is only emitted when that file exists.
+    the HTML in. It publishes the page for every repository, with a
+    default line when there is no ``about.md``.
     """
     return get_template("grr_about.jinja").render(
         about_contents="<h1>About this GRR</h1><p>Text.</p>",

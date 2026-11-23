@@ -113,3 +113,48 @@ def test_the_about_page_sizes_a_table_like_its_prose(
 
     assert "p" in sizes, sizes
     assert sizes.get("table") == sizes["p"], sizes
+
+
+#: The line ``about.html`` shows when the repository has no ``about.md``.
+_NO_DESCRIPTION = "This repository has no description yet."
+
+
+def _build_repository(
+    root_path: pathlib.Path, about_md: str | None,
+) -> str:
+    """Build a one-resource repository and return its ``about.html``."""
+    content: dict = {
+        "one": {
+            GR_CONF_FILE_NAME: "type: basic\n",
+            "data.txt": "alabala",
+        },
+    }
+    if about_md is not None:
+        content["about.md"] = about_md
+    setup_directories(root_path, content)
+    proto = build_filesystem_test_protocol(root_path)
+
+    proto.build_index_info()
+
+    return (root_path / _ABOUT_PAGE).read_text(encoding="utf8")
+
+
+def test_a_repository_without_about_md_publishes_the_default_line(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Every GRR publishes ``about.html``, so the About link never breaks."""
+    page = _build_repository(tmp_path / "grr", about_md=None)
+
+    assert _NO_DESCRIPTION in page
+
+
+def test_a_repository_with_about_md_publishes_its_rendered_text(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The curated text replaces the default line."""
+    page = _build_repository(
+        tmp_path / "grr", about_md="# Our scores\n\nThe curated text.\n")
+
+    assert "<h1>Our scores</h1>" in page
+    assert "<p>The curated text.</p>" in page
+    assert _NO_DESCRIPTION not in page

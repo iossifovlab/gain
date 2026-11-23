@@ -237,6 +237,24 @@ def test_repo_info_does_not_rewrite_unchanged_root_pages(
     assert _rewritten_root_pages(path) == []
 
 
+def test_repo_info_does_not_rewrite_the_default_about_page(
+    proto_fixture: tuple[pathlib.Path, FsspecReadWriteProtocol],
+) -> None:
+    """A repository without ``about.md`` still gets an ``about.html``.
+
+    The page shows the default line, and its bytes do not change from
+    one run to the next, so the second run leaves it alone (gain#2450).
+    """
+    path, _proto = proto_fixture
+    assert not (path / "about.md").exists()
+    cli_manage(["repo-info", "-R", str(path), "-j", "1"])
+    _pin_root_pages(path)
+
+    cli_manage(["repo-info", "-R", str(path), "-j", "1"])
+
+    assert "about.html" not in _rewritten_root_pages(path)
+
+
 def test_repo_info_rewrites_the_about_page_when_about_md_changes(
     proto_fixture: tuple[pathlib.Path, FsspecReadWriteProtocol],
 ) -> None:

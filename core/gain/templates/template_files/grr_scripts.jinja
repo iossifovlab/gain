@@ -852,11 +852,18 @@
                 return el;
             }
 
-            function renderBreadcrumb() {
+            /**
+             * Draw the trail to `path` into the header's `#breadcrumb`.
+             *
+             * The table view passes `[]`: the table lists the whole
+             * repository, so its trail is the root alone, as text, and a
+             * folder trail above it would name the wrong scope.
+             */
+            function renderBreadcrumb(path) {
                 breadcrumbEl.innerHTML = "";
                 const crumbs = [{ name: "All resources", path: [] }];
-                currentPath.forEach((seg, i) => {
-                    crumbs.push({ name: seg, path: currentPath.slice(0, i + 1) });
+                path.forEach((seg, i) => {
+                    crumbs.push({ name: seg, path: path.slice(0, i + 1) });
                 });
                 crumbs.forEach((crumb, i) => {
                     if (i > 0) {
@@ -1066,7 +1073,7 @@
 
             function navigateTo(path) {
                 currentPath = path;
-                renderBreadcrumb();
+                renderBreadcrumb(currentPath);
                 renderList();
             }
 
@@ -1274,6 +1281,10 @@
                     // way out rather than the one arriving, and drop the
                     // query on every load that carries one.
                     canonicalise({ ...state, path: reached });
+                } else {
+                    // The table keeps `currentPath`, so the tree button
+                    // still returns to the folder the reader left.
+                    renderBreadcrumb([]);
                 }
                 // Last, and from here rather than from the two functions
                 // above, because this is the one place that knows a move
@@ -1502,7 +1513,6 @@
             // this feature exists to serve, so it is the one case worth
             // not doing twice.
             if (parseHash(location.hash).view !== "hierarchical") {
-                renderBreadcrumb();
                 renderList();
             }
 

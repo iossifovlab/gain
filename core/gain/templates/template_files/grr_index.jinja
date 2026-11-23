@@ -197,10 +197,6 @@
 
       {% include "copy_button_styles.jinja" %}
 
-      #nav-about {
-        margin-left: auto;
-      }
-
       #id-col-header,
       #type-col-header,
       #version-col-header,
@@ -311,11 +307,6 @@
         margin-bottom: 8px;
       }
 
-      #breadcrumb {
-        margin-bottom: 8px;
-        font-size: 15px;
-      }
-
       {% include "breadcrumb_styles.jinja" %}
 
       #hierarchical-list {
@@ -423,11 +414,10 @@
  </head>
 {% include "grr_scripts.jinja" %}
  <body>
-     {% if has_about %}
-     <nav id="page-header">
-       <a id="nav-about" href="about.html">About</a>
-     </nav>
-     {% endif %}
+     {#- The header bar of every info page (gain#2483).  The tree
+         module redraws the trail for a folder of the hierarchical
+         view; the table view keeps the root as text. #}
+     {% include "breadcrumb.jinja" %}
      <div id="section-resources">
         <p class="loading">Loading search</p>
         <div id="search-container" style="display: none;">
@@ -498,7 +488,6 @@
         </div>
         <div id="hierarchical-wrapper" style="display: none;">
           <div id="hv-status" style="display: none;"></div>
-          <nav id="breadcrumb"></nav>
           <div id="hierarchical-list"></div>
         </div>
         <p class="searching" style="display: none;">Searching</p>

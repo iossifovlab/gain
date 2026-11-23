@@ -101,6 +101,10 @@ from gain.genomic_resources.repository_search import (
     SearchIndexUnavailableError,
 )
 from gain.templates import get_template
+from gain.templates.breadcrumb import (
+    about_page_breadcrumb,
+    index_page_breadcrumb,
+)
 from gain.templates.markdown_support import render_markdown as markdown
 from gain.templates.static_assets import repository_static_files
 from gain.utils.fs_utils import S3_PRESIGN_EXPIRATION_SECONDS
@@ -2796,11 +2800,12 @@ class FsspecReadWriteProtocol(
                 "res_summary": res.get_summary(),
             }
 
+        # Every repository publishes the page, with or without an
+        # ``about.md``: the About link in the header of every info page
+        # then needs no fact about the repository (gain#2483).
         about_md_path = os.path.join(self.url, "about.md")
-        has_about = self.filesystem.exists(about_md_path)
-
         about_html_content = ""
-        if has_about:
+        if self.filesystem.exists(about_md_path):
             with self.filesystem.open(
                     about_md_path, "rt", encoding="utf8") as infile:
                 about_md_raw = infile.read()
@@ -2813,12 +2818,17 @@ class FsspecReadWriteProtocol(
                 )
                 raise ValueError from e
 
-            if about_template is not None:
-                about_page = get_template(about_template).render(
-                    about_contents=about_html_content)
-            else:
-                about_page = about_html_content
-            self._publish_page_if_changed("about.html", about_page)
+        # Without a template there is no default line to show, so a
+        # repository with no ``about.md`` then gets no page at all
+        # rather than an empty one.
+        if about_template is not None:
+            self._publish_page_if_changed(
+                "about.html",
+                get_template(about_template).render(
+                    about_contents=about_html_content,
+                    breadcrumb=about_page_breadcrumb()))
+        elif about_html_content:
+            self._publish_page_if_changed("about.html", about_html_content)
 
         sqlite3_hash = ""
         gz_path = os.path.join(self.url, GR_SQLITE_META_FILE_NAME)
@@ -2836,7 +2846,7 @@ class FsspecReadWriteProtocol(
             GR_INDEX_FILE_NAME,
             get_template(repository_template).render(
                 data=result,
-                has_about=has_about,
+                breadcrumb=index_page_breadcrumb(),
                 sqlite3_hash=sqlite3_hash,
             ))
 
