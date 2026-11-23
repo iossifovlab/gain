@@ -16,9 +16,11 @@ import shutil
 import textwrap
 import threading
 from collections.abc import Callable, Generator, Iterable, Iterator
+from importlib import metadata
 from typing import Any
 from unittest import mock
 
+import gain
 import gain.templates
 import pytest
 import pytest_mock
@@ -1053,3 +1055,26 @@ def provided_template(
 
     yield set_source
     gain.templates.reset_caches()
+
+
+@pytest.fixture
+def newer_gain_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Callable[[], None]:
+    """Return a setter that makes gain report a newer version.
+
+    The setter patches ``gain.__version__`` and the version that
+    ``importlib.metadata.version`` reports for ``gain-core``.
+    """
+    real_version = metadata.version
+
+    def version(name: str) -> str:
+        if name == "gain-core":
+            return "9999.0.0"
+        return real_version(name)
+
+    def set_newer() -> None:
+        monkeypatch.setattr(metadata, "version", version)
+        monkeypatch.setattr(gain, "__version__", "9999.0.0")
+
+    return set_newer

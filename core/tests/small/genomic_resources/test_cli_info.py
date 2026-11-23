@@ -5,10 +5,8 @@ import pathlib
 import re
 import textwrap
 from collections.abc import Callable
-from importlib import metadata
 from typing import Any
 
-import gain
 import pytest
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.fsspec_protocol import FsspecReadWriteProtocol
@@ -381,18 +379,10 @@ def test_a_new_page_template_makes_a_repair_render_every_page(
 def test_a_new_gain_version_makes_a_repair_render_no_page(
     data_frame_grr: pathlib.Path,
     caplog: pytest.LogCaptureFixture,
-    monkeypatch: pytest.MonkeyPatch,
+    newer_gain_version: Callable[[], None],
 ) -> None:
     _run(caplog, _repair(data_frame_grr))
-    real_version = metadata.version
-
-    def version(name: str) -> str:
-        if name == "gain-core":
-            return "9999.0.0"
-        return real_version(name)
-
-    monkeypatch.setattr(metadata, "version", version)
-    monkeypatch.setattr(gain, "__version__", "9999.0.0")
+    newer_gain_version()
 
     summary = _run(caplog, _repair(data_frame_grr))
 

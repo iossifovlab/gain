@@ -6,12 +6,9 @@ rendered from. A repair compares it with the page fingerprint stored in
 ``index.html`` to decide whether the pages render again.
 """
 import pathlib
-import shutil
 from collections.abc import Callable
-from importlib import metadata
 from typing import Any
 
-import gain
 import gain.templates
 import pytest
 from gain.genomic_resources import cli_info
@@ -35,6 +32,8 @@ from gain.genomic_resources.testing import (
 from gain.genomic_resources.testing.builders import a_grr
 from gain.genomic_resources.testing.data_frame_builder import a_data_frame
 from gain.task_graph.graph import TaskDesc
+
+from tests.small.templates.conftest import copy_page_input_dir
 
 
 @pytest.fixture
@@ -66,19 +65,11 @@ def test_a_new_page_template_changes_the_fingerprint(
 
 def test_a_new_gain_version_leaves_the_fingerprint_unchanged(
     data_frame_repo: GenomicResourceRepo,
-    monkeypatch: pytest.MonkeyPatch,
+    newer_gain_version: Callable[[], None],
 ) -> None:
     before = _implementation(data_frame_repo).page_fingerprint(
         data_frame_repo)
-    real_version = metadata.version
-
-    def version(name: str) -> str:
-        if name == "gain-core":
-            return "9999.0.0"
-        return real_version(name)
-
-    monkeypatch.setattr(metadata, "version", version)
-    monkeypatch.setattr(gain, "__version__", "9999.0.0")
+    newer_gain_version()
 
     after = _implementation(data_frame_repo).page_fingerprint(
         data_frame_repo)
@@ -92,10 +83,7 @@ def test_a_new_static_file_changes_the_fingerprint(
     data_frame_repo: GenomicResourceRepo,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    static = tmp_path / "static"
-    shutil.copytree(
-        str(gain.templates._PAGE_INPUT_DIRS["static"]), static)
-    monkeypatch.setitem(gain.templates._PAGE_INPUT_DIRS, "static", static)
+    static = copy_page_input_dir("static", tmp_path, monkeypatch)
     gain.templates.reset_caches()
     before = _implementation(data_frame_repo).page_fingerprint(
         data_frame_repo)

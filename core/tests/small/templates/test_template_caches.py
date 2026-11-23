@@ -10,10 +10,8 @@ provider registered after the reset is seen.
 from __future__ import annotations
 
 import pathlib
-import shutil
 from unittest.mock import patch
 
-import gain.templates as templates
 import pytest
 from gain.templates import (
     get_jinja_env,
@@ -23,7 +21,10 @@ from gain.templates import (
 )
 from jinja2 import TemplateNotFound
 
-from tests.small.templates.conftest import make_entry_point
+from tests.small.templates.conftest import (
+    copy_page_input_dir,
+    make_entry_point,
+)
 
 
 def test_the_environment_is_rebuilt_after_a_reset() -> None:
@@ -58,11 +59,7 @@ def template_files(
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
 ) -> pathlib.Path:
     """A copy of the page templates that the digest reads in their place."""
-    copy = tmp_path / "template_files"
-    shutil.copytree(
-        str(templates._PAGE_INPUT_DIRS["template_files"]), copy)
-    monkeypatch.setitem(templates._PAGE_INPUT_DIRS, "template_files", copy)
-    return copy
+    return copy_page_input_dir("template_files", tmp_path, monkeypatch)
 
 
 def test_the_digest_reads_the_templates_once_until_a_reset(
