@@ -2,8 +2,11 @@
 
 - **Status:** proposed
 - **Date:** 2026-11-23
-- **Issues:** none yet. The resource list issues follow from the design session
-  of 2026-11-23, and this record gets their numbers when they are filed.
+- **Issues:** [gain#2488](https://github.com/iossifovlab/gain/issues/2488) (the
+  `resource_labels` table and the JSON download), with
+  [gain#2489](https://github.com/iossifovlab/gain/issues/2489),
+  [gain#2490](https://github.com/iossifovlab/gain/issues/2490) and
+  [gain#2491](https://github.com/iossifovlab/gain/issues/2491)
 
 ## Context
 
