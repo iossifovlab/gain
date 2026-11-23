@@ -488,6 +488,18 @@ test.describe('with scripts disabled', () => {
       expect(row.href).toBe(`${row.id}/index.html`);
     }
   });
+
+  test('an address that names a folder still shows every row', async ({
+    page,
+  }) => {
+    await openBrowseIndexWithoutSearch(page, '#/hg19/legacy');
+
+    const rows = page.locator('#resource-table tbody tr');
+    await expect(rows).toHaveCount(BROWSE_RESOURCE_COUNT);
+    for (const row of await rows.all()) {
+      await expect(row).toBeVisible();
+    }
+  });
 });
 
 /* ---- The browse view lives in the URL hash (#578) ---- */
