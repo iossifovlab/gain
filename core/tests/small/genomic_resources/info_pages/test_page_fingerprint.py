@@ -6,9 +6,13 @@ rendered from. A repair compares it with the page fingerprint stored in
 ``index.html`` to decide whether the pages render again.
 """
 import pathlib
+import shutil
+from collections.abc import Callable
 from importlib import metadata
 from typing import Any
 
+import gain
+import gain.templates
 import pytest
 from gain.genomic_resources import cli_info
 from gain.genomic_resources.cli import cli_manage
@@ -44,7 +48,23 @@ def _implementation(
     return DataFrameResourceImplementation(repo.get_resource("df"))
 
 
-def test_a_new_distribution_version_changes_the_fingerprint(
+def test_a_new_page_template_changes_the_fingerprint(
+    data_frame_repo: GenomicResourceRepo,
+    provided_template: Callable[[str], None],
+) -> None:
+    provided_template("first source")
+    before = _implementation(data_frame_repo).page_fingerprint(
+        data_frame_repo)
+    provided_template("second source")
+
+    after = _implementation(data_frame_repo).page_fingerprint(
+        data_frame_repo)
+
+    assert before is not None
+    assert after != before
+
+
+def test_a_new_gain_version_leaves_the_fingerprint_unchanged(
     data_frame_repo: GenomicResourceRepo,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -58,10 +78,35 @@ def test_a_new_distribution_version_changes_the_fingerprint(
         return real_version(name)
 
     monkeypatch.setattr(metadata, "version", version)
+    monkeypatch.setattr(gain, "__version__", "9999.0.0")
 
     after = _implementation(data_frame_repo).page_fingerprint(
         data_frame_repo)
 
+    assert before is not None
+    assert after == before
+
+
+def test_a_new_static_file_changes_the_fingerprint(
+    tmp_path: pathlib.Path,
+    data_frame_repo: GenomicResourceRepo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    static = tmp_path / "static"
+    shutil.copytree(
+        str(gain.templates._PAGE_INPUT_DIRS["static"]), static)
+    monkeypatch.setitem(gain.templates._PAGE_INPUT_DIRS, "static", static)
+    gain.templates.reset_caches()
+    before = _implementation(data_frame_repo).page_fingerprint(
+        data_frame_repo)
+    font = static / "fonts" / "roboto-v51-latin.woff2"
+    font.write_bytes(font.read_bytes() + b"\0")
+    gain.templates.reset_caches()
+
+    after = _implementation(data_frame_repo).page_fingerprint(
+        data_frame_repo)
+
+    gain.templates.reset_caches()
     assert before is not None
     assert after != before
 

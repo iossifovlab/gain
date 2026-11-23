@@ -19,6 +19,7 @@ from collections.abc import Callable, Generator, Iterable, Iterator
 from typing import Any
 from unittest import mock
 
+import gain.templates
 import pytest
 import pytest_mock
 from gain.genomic_resources.cli import cli_manage
@@ -57,6 +58,8 @@ from gain.genomic_resources.testing.table_score_builder import a_position_score
 from gain.genomic_resources.testing.vcf_info_score_builder import (
     VcfInfoScoreBuilder,
 )
+
+from tests.small.templates.conftest import make_entry_point
 
 logger = logging.getLogger(__name__)
 
@@ -1028,3 +1031,25 @@ def phrase_sites(
         for path in sources
         if (count := path.read_text().count(phrase))
     )
+
+
+@pytest.fixture
+def provided_template(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[Callable[[str], None]]:
+    """Supply one page template through a provider entry point.
+
+    The fixture returns a setter of the source of the template. Each call
+    resets the template caches, as a new process would start afresh.
+    """
+    sources = {"provided.jinja": ""}
+    entry_point = make_entry_point("provided", lambda: dict(sources))
+    monkeypatch.setattr(
+        gain.templates, "entry_points", lambda **_: [entry_point])
+
+    def set_source(source: str) -> None:
+        sources["provided.jinja"] = source
+        gain.templates.reset_caches()
+
+    yield set_source
+    gain.templates.reset_caches()

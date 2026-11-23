@@ -4,6 +4,8 @@ import os
 import pathlib
 import re
 import textwrap
+from collections.abc import Callable
+from importlib import metadata
 from typing import Any
 
 import gain
@@ -362,17 +364,39 @@ def test_a_repair_renders_only_the_resource_with_a_deleted_page(
     assert statistics_page.is_file()
 
 
-def test_a_new_gain_version_makes_a_repair_render_every_page(
+def test_a_new_page_template_makes_a_repair_render_every_page(
+    data_frame_grr: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+    provided_template: Callable[[str], None],
+) -> None:
+    provided_template("first source")
+    _run(caplog, _repair(data_frame_grr))
+    provided_template("second source")
+
+    summary = _run(caplog, _repair(data_frame_grr))
+
+    assert summary == ["info pages: rendered 2, skipped 0"]
+
+
+def test_a_new_gain_version_makes_a_repair_render_no_page(
     data_frame_grr: pathlib.Path,
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _run(caplog, _repair(data_frame_grr))
+    real_version = metadata.version
+
+    def version(name: str) -> str:
+        if name == "gain-core":
+            return "9999.0.0"
+        return real_version(name)
+
+    monkeypatch.setattr(metadata, "version", version)
     monkeypatch.setattr(gain, "__version__", "9999.0.0")
 
     summary = _run(caplog, _repair(data_frame_grr))
 
-    assert summary == ["info pages: rendered 2, skipped 0"]
+    assert summary == ["info pages: rendered 0, skipped 2"]
 
 
 def test_a_page_without_a_fingerprint_tag_renders_again(
@@ -506,9 +530,11 @@ def test_a_failed_index_page_write_makes_the_next_repair_render_again(
     data_frame_grr: pathlib.Path,
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
+    provided_template: Callable[[str], None],
 ) -> None:
+    provided_template("first source")
     _run(caplog, _repair(data_frame_grr))
-    monkeypatch.setattr(gain, "__version__", "9999.0.0")
+    provided_template("second source")
     real_open = FsspecReadWriteProtocol.open_raw_file
     statistics_page = data_frame_grr / "df_one" / "statistics" / "index.html"
     statistics_before = statistics_page.read_text()

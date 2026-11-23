@@ -1,4 +1,5 @@
-"""``reset_caches`` forgets the environment and the provider templates.
+"""``reset_caches`` forgets the environment, the provider templates and
+the digest of the page templates.
 
 The Jinja environment and the merged provider-template dict are
 process-wide singletons, built on first use.  Every test in this package
@@ -8,10 +9,18 @@ provider registered after the reset is seen.
 """
 from __future__ import annotations
 
+import pathlib
+import shutil
 from unittest.mock import patch
 
+import gain.templates as templates
 import pytest
-from gain.templates import get_jinja_env, get_template, reset_caches
+from gain.templates import (
+    get_jinja_env,
+    get_template,
+    reset_caches,
+    templates_digest,
+)
 from jinja2 import TemplateNotFound
 
 from tests.small.templates.conftest import make_entry_point
@@ -42,3 +51,30 @@ def test_a_provider_registered_after_a_reset_is_seen() -> None:
 
     with patch("gain.templates.entry_points", return_value=[late]):
         assert get_template("late.jinja").render(v="one") == "late one"
+
+
+@pytest.fixture
+def template_files(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> pathlib.Path:
+    """A copy of the page templates that the digest reads in their place."""
+    copy = tmp_path / "template_files"
+    shutil.copytree(
+        str(templates._PAGE_INPUT_DIRS["template_files"]), copy)
+    monkeypatch.setitem(templates._PAGE_INPUT_DIRS, "template_files", copy)
+    return copy
+
+
+def test_the_digest_reads_the_templates_once_until_a_reset(
+    template_files: pathlib.Path,
+) -> None:
+    first = templates_digest()
+    page = template_files / "basic.jinja"
+    page.write_text(page.read_text() + "<!-- changed -->\n")
+
+    second = templates_digest()
+    reset_caches()
+    third = templates_digest()
+
+    assert second == first
+    assert third != first
