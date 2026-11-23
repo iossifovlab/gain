@@ -3,6 +3,9 @@ import * as fs from 'fs';
 import { expect, test, type Page } from '@playwright/test';
 
 import {
+  BROWSE_ID_ONLY_RESOURCE_ID,
+  BROWSE_RESOURCE_COUNT,
+  FIXTURE_BROWSE_GRR,
   FIXTURE_LABELLED_GRR,
   LABELLED_LIST_LABEL,
   LABELLED_NUMBER_LABEL,
@@ -271,4 +274,148 @@ test('Download -> CSV quotes a cell that holds a line break', async ({
 
   expect(text).toContain(',"First line\nsecond line",');
   expect(parseCsv(text)[1][4]).toBe(summary);
+});
+
+/* ---- The download of the tree view (gain#2490) ---- */
+
+/**
+ * A term of the browse GRR that matches the two resources of
+ * `hg38/scores/conservation` and `Zoo/alpha`, and no other resource.
+ * At `hg38/scores` it so has matches in a sub-folder, a match outside
+ * the folder, and a resource of the folder that it does not match.
+ */
+const SCATTERED_TERM = 'a';
+
+/** The folder that the tree tests browse, and its sub-folder. */
+const SCORES_FOLDER = ['hg38', 'scores'];
+const SCORES_PATH = SCORES_FOLDER.join('/');
+const CONSERVATION_FOLDER = 'conservation';
+
+/** The two resources of `hg38/scores/conservation`, in ID order. */
+const CONSERVATION_RESOURCE_IDS = [
+  'hg38/scores/conservation/phastcons', BROWSE_ID_ONLY_RESOURCE_ID,
+];
+
+/** The names of the folders that the tree lists. */
+function folderNames(page: Page) {
+  return page.locator('#hierarchical-list .hv-folder .hv-name');
+}
+
+/**
+ * Open the browse GRR's index page at `hash` and wait for its search
+ * index. `resources` is the count of the search across the whole
+ * repository, which the hidden `#status` reports.
+ */
+async function openBrowseIndex(
+  page: Page, hash: string, resources: number,
+): Promise<void> {
+  await serveGrr(page, FIXTURE_BROWSE_GRR);
+  await page.goto(indexPageUrl() + hash);
+  await expect(page.locator('#status')).toHaveText(
+    `${resources} resources`);
+}
+
+test('in the tree, Download -> JSON writes the matches under the folder', async ({
+  page,
+}) => {
+  await openBrowseIndex(
+    page, `#/${SCORES_PATH}?q=${SCATTERED_TERM}`, 3);
+  await expect(downloadButton(page)).toHaveText('Download 2 ▾');
+
+  const { name, body } = await downloadJson(page);
+
+  expect(body.search).toEqual({
+    q: SCATTERED_TERM, type: '', folder: SCORES_PATH,
+  });
+  expect(body.resources.map((r: any) => r.id)).toEqual(
+    CONSERVATION_RESOURCE_IDS);
+  expect(name).toBe(
+    `${SCORES_FOLDER.join('-')}-${SCATTERED_TERM}-`
+    + `${body.generated.slice(0, 10)}.json`);
+});
+
+test('in the tree with no search, the download holds the whole folder', async ({
+  page,
+}) => {
+  await openBrowseIndex(
+    page, `#/${SCORES_PATH}`, BROWSE_RESOURCE_COUNT);
+  await expect(downloadButton(page)).toHaveText('Download 3 ▾');
+
+  const whole = await downloadJson(page);
+  await folderNames(page)
+    .getByText(CONSERVATION_FOLDER, { exact: true }).click();
+  await expect(downloadButton(page)).toHaveText('Download 2 ▾');
+  const sub = await downloadJson(page);
+
+  expect(whole.body.search).toEqual(
+    { q: '', type: '', folder: SCORES_PATH });
+  expect(whole.body.resources.map((r: any) => r.id)).toEqual([
+    ...CONSERVATION_RESOURCE_IDS, 'hg38/scores/coverage',
+  ]);
+  expect(sub.body.search.folder).toBe(
+    `${SCORES_PATH}/${CONSERVATION_FOLDER}`);
+  expect(sub.body.resources.map((r: any) => r.id)).toEqual(
+    CONSERVATION_RESOURCE_IDS);
+});
+
+test('after a search in the tree, the tree still prunes to the matches', async ({
+  page,
+}) => {
+  await openBrowseIndex(
+    page, `#/${SCORES_PATH}`, BROWSE_RESOURCE_COUNT);
+  await expect(downloadButton(page)).toHaveText('Download 3 ▾');
+
+  await search(page, SCATTERED_TERM);
+
+  await expect(downloadButton(page)).toHaveText('Download 2 ▾');
+  await expect(folderNames(page))
+    .toHaveText([CONSERVATION_FOLDER]);
+  await expect(page.locator('#hierarchical-list .hv-resource'))
+    .toHaveCount(0);
+  await expect(page.locator('#hv-status')).toHaveText(
+    `2 of 3 resources under ${SCORES_PATH} match`);
+});
+
+test('a second onResults listener keeps the tree pruning', async ({
+  page,
+}) => {
+  await openBrowseIndex(
+    page, `#/${SCORES_PATH}`, BROWSE_RESOURCE_COUNT);
+  /* A later consumer of the search results, next to the tree's own one.
+   * A single listener slot would drop the tree's listener here. */
+  await page.evaluate(() => {
+    const w = window as any;
+    w.secondListenerTerms = [];
+    w.grrSearch.onResults(({ search }: any) => {
+      w.secondListenerTerms.push(search.q);
+    });
+  });
+
+  await search(page, SCATTERED_TERM);
+
+  await expect(folderNames(page))
+    .toHaveText([CONSERVATION_FOLDER]);
+  await expect(page.locator('#hv-status')).toHaveText(
+    `2 of 3 resources under ${SCORES_PATH} match`);
+  expect(await page.evaluate(
+    () => (window as any).secondListenerTerms)).toContain(SCATTERED_TERM);
+});
+
+test('back in the table, the download holds every match again', async ({
+  page,
+}) => {
+  await openBrowseIndex(
+    page, `#/${SCORES_PATH}?q=${SCATTERED_TERM}`, 3);
+  await expect(downloadButton(page)).toHaveText('Download 2 ▾');
+
+  await page.locator('#table-view-btn').click();
+
+  await expect(downloadButton(page)).toHaveText('Download 3 ▾');
+  const { name, body } = await downloadJson(page);
+  expect(body.search).toEqual({ q: SCATTERED_TERM, type: '', folder: '' });
+  expect(body.resources).toHaveLength(3);
+  expect(body.resources.map((r: any) => r.id)).toEqual(
+    expect.arrayContaining(CONSERVATION_RESOURCE_IDS));
+  expect(name).toBe(
+    `all-${SCATTERED_TERM}-${body.generated.slice(0, 10)}.json`);
 });

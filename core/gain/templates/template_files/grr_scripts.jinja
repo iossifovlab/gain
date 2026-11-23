@@ -127,7 +127,7 @@
          * -- across a `window` seam, where the two spellings could drift
          * with nothing to catch them.
          *
-         * `ids` unsorted, because the one listener sorts by name and this
+         * `ids` unsorted, because the tree sorts by name and this
          * order is the table's column sort -- passing it on would be
          * handing over a detail of a view the listener is not.
          */
@@ -135,7 +135,9 @@
             lastIds = ids;
             lastSearch = search || { q: "", type: "" };
             refreshData(sortedIds(ids));
-            searchResults({ search, ids });
+            for (const listener of resultListeners) {
+                listener({ search, ids });
+            }
         }
 
         function UpdateStatus() {
@@ -197,10 +199,35 @@
 
         const MAX_FILE_NAME_LENGTH = 80;
 
+        /*
+         * The tree, when it is the view showing, or null (gain#2490).
+         *
+         * In the tree the download holds every match under the current
+         * folder, sub-folders included. The tree publishes that folder
+         * and its matches through `window.grrTree`, because a folder
+         * move uses `pushState` and so fires no `hashchange` that this
+         * module could follow.
+         */
+        function shownTree() {
+            const tree = window.grrTree;
+            return tree && tree.isShowing() ? tree : null;
+        }
+
+        /*
+         * The full ids that a download writes, in its order. The tree
+         * lists one level at a time, so its records take the default ID
+         * order of the table.
+         */
+        function downloadIds() {
+            const tree = shownTree();
+            return tree
+                ? [...tree.ids()].sort(compareById) : window.currentIds;
+        }
+
         function updateDownloadCount() {
             if (downloadButton === null) return;
             downloadButton.textContent =
-                `Download ${window.currentIds.length} \u25BE`;
+                `Download ${downloadIds().length} \u25BE`;
         }
 
         /** The resource id, without the version that `version` holds. */
@@ -215,7 +242,7 @@
                 sql: "SELECT full_id, labels FROM resource_labels",
                 returnValue: "resultRows",
             }).map(([fullId, json]) => [fullId, JSON.parse(json)]));
-            return window.currentIds.map((fullId) => {
+            return downloadIds().map((fullId) => {
                 const row = window.rowData[fullId];
                 return {
                     id: resourceIdOf(fullId, row.version),
@@ -259,9 +286,17 @@
             setTimeout(() => URL.revokeObjectURL(url), 10000);
         }
 
-        /** The search that the table shows: the whole repository. */
+        /*
+         * The search that the view shows. The table shows the whole
+         * repository, and the tree shows its current folder.
+         */
         function downloadSearch() {
-            return { q: lastSearch.q, type: lastSearch.type, folder: "" };
+            const tree = shownTree();
+            return {
+                q: lastSearch.q,
+                type: lastSearch.type,
+                folder: tree ? tree.folder().join("/") : "",
+            };
         }
 
         function downloadJson() {
@@ -349,6 +384,7 @@
             }
 
             downloadButton = button;
+            if (window.grrTree) window.grrTree.onChange(updateDownloadCount);
             updateDownloadCount();
         }
 
@@ -476,7 +512,7 @@
          * search that restores the whole repository and the malformed one
          * that degrades to it.
          */
-        let searchResults = () => {};
+        const resultListeners = [];
 
         window.grrSearch = {
             current: currentSearch,
@@ -531,9 +567,13 @@
              * by the time it runs, the controls are only the current state
              * of the box, which a reader mid-word has already moved on
              * from. What arrives here is a matched pair.
+             *
+             * Each listener is kept, in the order it was added: the tree
+             * prunes to the matches, and the download follows the tree
+             * (gain#2490).
              */
             onResults(listener) {
-                searchResults = listener;
+                resultListeners.push(listener);
             },
         };
 
@@ -1205,6 +1245,37 @@
                 renderStatus(node);
             }
 
+            /** Every full id under `node`, at any depth. */
+            function idsUnder(node) {
+                const ids = node.resources.map((res) => res.fullId);
+                for (const child of Object.values(node.children)) {
+                    ids.push(...idsUnder(child));
+                }
+                return ids;
+            }
+
+            /*
+             * The seam that the download reads (gain#2490): whether the
+             * tree is showing, its current folder, and the matches under
+             * that folder at any depth. The listeners are told after each
+             * folder move, each change of view and each search.
+             */
+            let treeShowing = false;
+            const treeListeners = [];
+
+            function announceTree() {
+                for (const listener of treeListeners) listener();
+            }
+
+            window.grrTree = {
+                isShowing: () => treeShowing,
+                folder: () => [...currentPath],
+                ids: () => idsUnder(listedFolder(currentPath)),
+                onChange(listener) {
+                    treeListeners.push(listener);
+                },
+            };
+
             function navigateTo(path) {
                 currentPath = path;
                 renderBreadcrumb(currentPath);
@@ -1400,6 +1471,7 @@
             function applyHash() {
                 const state = parseHash(location.hash);
                 const isHier = state.view === "hierarchical";
+                treeShowing = isHier;
                 setView(state.view);
                 applySearch(state);
                 // The table has no folder to resolve and no address of its
@@ -1435,6 +1507,7 @@
                 // anyone, so the scope it would recompute is the one
                 // already showing.
                 renderPlaceholder(isHier);
+                announceTree();
             }
 
             /**
@@ -1629,12 +1702,14 @@
                 // was rendered on the way in, or pre-rendered for the view
                 // toggle. Re-rendering it would rebuild the whole listing
                 // to arrive back where it started.
-                if (next === listing) return;
-                listing = next;
-                // The breadcrumb is untouched: the reader has not moved,
-                // and a search that redrew the trail would be saying they
-                // had.
-                renderList();
+                if (next !== listing) {
+                    listing = next;
+                    // The breadcrumb is untouched: the reader has not
+                    // moved, and a search that redrew the trail would be
+                    // saying they had.
+                    renderList();
+                }
+                announceTree();
             });
 
             // `hashchange` only. A same-document fragment move fires
