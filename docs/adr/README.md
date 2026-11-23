@@ -106,6 +106,7 @@ of one decision will drift.
 | [0042](0042-onnx-runtime-is-the-default-spliceai-backend.md) | ONNX Runtime is the default SpliceAI backend, and TensorFlow is optional | accepted |
 | [0043](0043-the-search-index-carries-each-resources-labels-in-their-rendered-form.md) | The search index carries each resource's labels in their rendered form | accepted |
 | [0044](0044-a-track-kind-replaces-the-binner.md) | A track kind replaces the binner | accepted |
+| [0045](0045-a-grr-opts-into-the-extended-search-with-a-search-yaml-at-its-root.md) | A GRR opts into the extended search with a `search.yaml` at its root | accepted |
 
 > **Note:** `0003` was allocated twice, by two changes that landed the same day.
 > "Numbers are never reused" is a rule about not re-issuing a *retired* number;

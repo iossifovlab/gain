@@ -205,6 +205,18 @@ One condition on one label inside a **resource query** — `key = value` or
 evaluates it, `matches` is the only definition of the comparison.
 _Avoid_: predicate, label filter
 
+**Extended search**:
+The dialog on a GRR's root `index.html` where a reader picks values of
+**facets**. Values of one facet are **alternatives** of each other, and the
+facets, the search term and the type must all hold. A GRR without a
+`search.yaml` at its root has no extended search.
+_Avoid_: advanced search, faceted search, filters
+
+**Facet**:
+A **label** key that a GRR's `search.yaml` offers in the **extended search**,
+shown with its values and the number of resources that each value would give.
+_Avoid_: filter, category, label filter
+
 ### Tabular score statistics
 
 **Segment**:
