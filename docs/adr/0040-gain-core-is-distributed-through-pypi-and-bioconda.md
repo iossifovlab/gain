@@ -4,6 +4,8 @@
 - **Date:** 2026-10-27
 - **Amended:** 2026-11-13 by [gain#1967](https://github.com/iossifovlab/gain/issues/1967).
   `iossifovlab` keeps `gain-core` for every release. See [Amendment — gain#1967](#amendment--gain1967-gain-core-stays-on-iossifovlab).
+  Amended again 2026-11-23 by [gain#2419](https://github.com/iossifovlab/gain/issues/2419).
+  The user-facing gain docs name bioconda only. See [Amendment — gain#2419](#amendment--gain2419-gain-docs-name-bioconda-only).
 - **Issues:** [gain#1958](https://github.com/iossifovlab/gain/issues/1958) (the epic),
   [bioconda/bioconda-recipes#70746](https://github.com/bioconda/bioconda-recipes/pull/70746)
   (the first bioconda recipe, `recipes/gain-core/meta.yaml`),
@@ -15,6 +17,7 @@
   [gain#1962](https://github.com/iossifovlab/gain/issues/1962) (the bioconda-recipes PR),
   [gain#1963](https://github.com/iossifovlab/gain/issues/1963) (this record)
   and [gain#1967](https://github.com/iossifovlab/gain/issues/1967) (the amendment)
+  and [gain#2419](https://github.com/iossifovlab/gain/issues/2419) (the second amendment)
 
 ## Context
 
@@ -63,6 +66,8 @@ Round one covers `gain-core` only. `gain-vep-annotator` gets its own recipe
 later (gain#1966). The SpliceAI annotator and the demo annotator never go to
 bioconda, but they go to PyPI, because the upload loop costs nothing more for
 them.
+
+*The SpliceAI annotator now goes to bioconda. See [Amendment — gain#2419](#amendment--gain2419-gain-docs-name-bioconda-only).*
 
 ### Why the PyPI sdist
 
@@ -121,6 +126,7 @@ before the old channel goes away.
 - A release now reaches bioconda days after the tag. A user who needs a
   release on the day of the tag installs it from PyPI or from the
   anaconda.org channel.
+  *The user-facing docs no longer name `iossifovlab` as a release-day path. See [Amendment — gain#2419](#amendment--gain2419-gain-docs-name-bioconda-only).*
 
 ## Amendment — gain#1967: gain-core stays on iossifovlab
 
@@ -151,3 +157,27 @@ opens bumps, but bioconda still lags.
 
 The gpf side, the probe of `gpf-release` and the install order, is
 [iossifovlab/gpf#1181](https://github.com/iossifovlab/gpf/issues/1181).
+
+## Amendment — gain#2419: gain docs name bioconda only
+
+*Added 2026-11-23. Everything above is the original record and the first amendment, and is left as written.*
+
+On 2026-11-17 we made five decisions about the conda channels of gain:
+
+1. The anaconda.org channel `iossifovlab` is for internal use only.
+   `gain-release` does not change: it still uploads every package to the
+   channel. The reason: a gpf release pins an exact `gain-core` on the day of
+   the gain release.
+2. Among conda channels, the user-facing gain docs name bioconda only. They do
+   not name `iossifovlab`, and they give no conda release-day workaround. A
+   conda user waits until the release is on bioconda. PyPI stays as the
+   public `pip` path. See "Why the PyPI sdist".
+3. `gain-vep-annotator`
+   ([gain#1966](https://github.com/iossifovlab/gain/issues/1966)) and
+   `gain-spliceai-annotator`
+   ([gain#2420](https://github.com/iossifovlab/gain/issues/2420)) get bioconda
+   recipes. The demo annotator stays off bioconda.
+4. The nightly bioconda lag check covers the two annotators
+   ([gain#2421](https://github.com/iossifovlab/gain/issues/2421)).
+5. The rule covers gain only. The gpf packages exist only on `iossifovlab`, so
+   the gpf docs keep `-c iossifovlab`.
