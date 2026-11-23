@@ -31,11 +31,13 @@ from markupsafe import escape
 
 _TBODY = re.compile(r"<tbody>(.*)</tbody>", re.DOTALL)
 _LINK_TEXT = re.compile(r"<a\b[^>]*>([^<]*)</a>")
+_DATA_BYTES = re.compile(r'^<tr data-bytes="(\d+)">')
 
 
 class Published(NamedTuple):
     tbody: str
     summaries: dict[str, str]
+    sizes: dict[str, int]
 
 
 @pytest.fixture(scope="module")
@@ -50,6 +52,11 @@ def published(tmp_path_factory: pytest.TempPathFactory) -> Published:
         tbody=match.group(1),
         summaries={
             res.get_full_id(): res.get_summary() or ""
+            for res in repo.get_all_resources()
+        },
+        sizes={
+            res.get_full_id(): sum(
+                entry.size for entry in res.get_manifest().entries.values())
             for res in repo.get_all_resources()
         },
     )
@@ -85,3 +92,14 @@ def test_a_row_carries_its_id_only_as_the_link_and_its_text(
 
 def test_the_rows_carry_no_indentation(published: Published) -> None:
     assert re.search(r">\s+<", published.tbody) is None
+
+
+def test_a_row_carries_the_exact_byte_count_of_its_resource(
+    published: Published,
+) -> None:
+    for row in _rows(published.tbody):
+        link = _LINK_TEXT.search(row)
+        assert link is not None, row
+        data_bytes = _DATA_BYTES.search(row)
+        assert data_bytes is not None, row
+        assert int(data_bytes.group(1)) == published.sizes[link.group(1)]

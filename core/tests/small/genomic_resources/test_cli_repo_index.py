@@ -1,12 +1,17 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import gzip
+import json
 import logging
 import pathlib
 from typing import Any
 
+import apsw
 import pytest
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.repository_ids import GR_SQLITE_META_FILE_NAME
+from gain.genomic_resources.resource_query import label_alternatives
 from gain.genomic_resources.score_implementation import ScoreImplementationBase
+from gain.genomic_resources.testing.builders import a_basic_resource, a_grr
 
 from .conftest import (
     GLOBAL_ARTIFACTS,
@@ -88,3 +93,130 @@ def test_repo_index_blames_the_resource_the_fts_walk_failed_on(
     ]
     assert any("<sub/two>" in message for message in failures)
     assert not any("<sub/one>" in message for message in failures)
+
+
+def _read_index(repo_path: pathlib.Path) -> apsw.Connection:
+    """The published search index of ``repo_path``, opened in memory."""
+    conn = apsw.Connection(":memory:")
+    conn.deserialize("main", gzip.decompress(
+        (repo_path / GR_SQLITE_META_FILE_NAME).read_bytes()))
+    return conn
+
+
+def _a_labelled_grr(repo_path: pathlib.Path) -> None:
+    a_grr().with_resource(
+        "atlas",
+        a_basic_resource().with_labels(
+            modality=["RNA", "ATAC"], tissue="basal ganglia", donors=12),
+    ).build_repo(repo_path)
+
+
+def test_repo_index_keeps_the_rendered_labels_of_each_resource(
+    tmp_path: pathlib.Path,
+) -> None:
+    _a_labelled_grr(tmp_path)
+
+    cli_manage(["repo-index", "-R", str(tmp_path)])
+
+    index = _read_index(tmp_path)
+    rows = index.execute(
+        "SELECT full_id, labels FROM resource_labels").fetchall()
+    assert [
+        (full_id, json.loads(str(labels))) for full_id, labels in rows
+    ] == [
+        ("atlas", {
+            "modality": ["RNA", "ATAC"],
+            "tissue": "basal ganglia",
+            "donors": label_alternatives(12)[0],
+        }),
+    ]
+
+
+def test_repo_index_leaves_the_fts_contents_table_as_it_was(
+    tmp_path: pathlib.Path,
+) -> None:
+    _a_labelled_grr(tmp_path)
+
+    cli_manage(["repo-index", "-R", str(tmp_path)])
+
+    index = _read_index(tmp_path)
+    columns = [
+        row[1] for row in index.execute("PRAGMA table_info(contents)")]
+    assert columns == [
+        "full_id", "id", "type", "description", "summary",
+        "modality", "tissue", "donors",
+    ]
+    assert index.execute(
+        "SELECT modality FROM contents").fetchall() == [("RNA ATAC",)]
+
+
+def _rewrite_index(repo_path: pathlib.Path, *statements: str) -> None:
+    """Run ``statements`` on the published index and publish it again."""
+    index = _read_index(repo_path)
+    for statement in statements:
+        index.execute(statement)
+    (repo_path / GR_SQLITE_META_FILE_NAME).write_bytes(
+        gzip.compress(bytes(index.serialize("main"))))
+
+
+def test_repo_index_rebuilds_an_index_with_no_schema_version(
+    tmp_path: pathlib.Path,
+) -> None:
+    _a_labelled_grr(tmp_path)
+    cli_manage(["repo-index", "-R", str(tmp_path)])
+    # What an older release published: the same `contents_md5`, no
+    # version and no labels table.
+    _rewrite_index(
+        tmp_path,
+        "DROP TABLE resource_labels",
+        "DELETE FROM contents_metadata WHERE key != 'contents_md5'",
+    )
+
+    cli_manage(["repo-index", "-R", str(tmp_path)])
+
+    index = _read_index(tmp_path)
+    assert index.execute(
+        "SELECT full_id FROM resource_labels").fetchall() == [("atlas",)]
+
+
+def test_repo_index_rebuilds_an_index_with_an_older_schema_version(
+    tmp_path: pathlib.Path,
+) -> None:
+    _a_labelled_grr(tmp_path)
+    cli_manage(["repo-index", "-R", str(tmp_path)])
+    # An index that records an older version, on the same `contents_md5`
+    # and with no labels table.
+    _rewrite_index(
+        tmp_path,
+        "DROP TABLE resource_labels",
+        "UPDATE contents_metadata SET value = '1' "
+        "WHERE key = 'schema_version'",
+    )
+
+    cli_manage(["repo-index", "-R", str(tmp_path)])
+
+    index = _read_index(tmp_path)
+    assert index.execute(
+        "SELECT full_id FROM resource_labels").fetchall() == [("atlas",)]
+    assert index.execute(
+        "SELECT value FROM contents_metadata WHERE key = 'schema_version'",
+    ).fetchall() != [("1",)]
+
+
+def test_repo_index_keeps_an_index_with_the_current_schema_version(
+    tmp_path: pathlib.Path,
+) -> None:
+    _a_labelled_grr(tmp_path)
+    cli_manage(["repo-index", "-R", str(tmp_path)])
+    # A rebuild would drop this row.
+    _rewrite_index(
+        tmp_path,
+        "INSERT INTO contents_metadata (key, value) VALUES ('kept', 'yes')",
+    )
+
+    cli_manage(["repo-index", "-R", str(tmp_path)])
+
+    index = _read_index(tmp_path)
+    assert index.execute(
+        "SELECT value FROM contents_metadata WHERE key = 'kept'",
+    ).fetchall() == [("yes",)]

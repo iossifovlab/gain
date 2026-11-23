@@ -7,11 +7,12 @@ contents database that the other commands publish.
 import argparse
 import dataclasses
 import gzip
+import json
 import operator
 import os
 import pathlib
 from collections.abc import Sequence
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import apsw
 
@@ -49,6 +50,7 @@ from gain.genomic_resources.resource_implementation import (
     merge_index_columns,
     validate_index_columns,
 )
+from gain.genomic_resources.resource_query import label_alternatives
 from gain.utils.verbosity_configuration import VerbosityConfiguration
 
 logger = logging.getLogger("grr_manage")
@@ -212,6 +214,13 @@ def _build_content_file(
 _INCOMPLETE_INDEX_SUFFIX = ":incomplete"
 
 
+#: The version of the layout of the search index. An index with another
+#: version, or with none, is rebuilt even when `.CONTENTS` is unchanged, so
+#: a new release replaces an index that an older release published.
+#: Version 2 adds the `resource_labels` table (gain#2488).
+_INDEX_SCHEMA_VERSION = "2"
+
+
 def _index_contents_md5(current_md5: str, left_out: set[str]) -> str:
     """Return the `contents_md5` value to store with the index."""
     if left_out:
@@ -265,7 +274,10 @@ def _create_contents_db(
 def _contents_db_is_current(
     gzip_sqlite_filepath: str, current_md5: str,
 ) -> bool:
-    """Return whether the existing index image records ``current_md5``."""
+    """Return whether the existing index records ``current_md5``.
+
+    The index must also record the current `_INDEX_SCHEMA_VERSION`.
+    """
     if not os.path.exists(gzip_sqlite_filepath):
         return False
     try:
@@ -273,11 +285,17 @@ def _contents_db_is_current(
             pathlib.Path(gzip_sqlite_filepath).read_bytes())
         conn = apsw.Connection(":memory:")
         conn.deserialize("main", raw)
-        row = conn.execute(
-            "SELECT value FROM contents_metadata "
-            "WHERE key = 'contents_md5'",
-        ).fetchone()
-        if row and row[0] == current_md5:
+        recorded = {
+            str(key): value
+            for key, value in conn.execute(
+                "SELECT key, value FROM contents_metadata "
+                "WHERE key IN ('contents_md5', 'schema_version')",
+            ).fetchall()
+        }
+        if recorded == {
+            "contents_md5": current_md5,
+            "schema_version": _INDEX_SCHEMA_VERSION,
+        }:
             return True
     except Exception:
         logger.debug(
@@ -287,7 +305,27 @@ def _contents_db_is_current(
     return False
 
 
-_IndexInfo = tuple[str, tuple[str, ...], tuple[str, ...]]
+_IndexInfo = tuple[str, tuple[str, ...], tuple[str, ...], str]
+
+#: The ``(header, row, labels)`` of one resource that joined the index.
+_IndexEntry = tuple[tuple[str, ...], tuple[str, ...], str]
+
+
+def _rendered_labels(labels: dict[str, Any]) -> str:
+    """Return the labels of a resource as the JSON of their rendered form.
+
+    A list label stays a list of strings, also with one element or none,
+    and a scalar label is the one string that `label_alternatives` gives.
+    The FTS columns cannot keep this difference: they store the list
+    `[RNA, ATAC]` and the scalar `RNA ATAC` as the same text (ADR 0043).
+    """
+    rendered: dict[str, str | list[str]] = {}
+    for key, value in labels.items():
+        if isinstance(value, (list, tuple)):
+            rendered[str(key)] = [str(element) for element in value]
+        else:
+            rendered[str(key)] = label_alternatives(value)[0]
+    return json.dumps(rendered, ensure_ascii=False)
 
 
 def _collect_index_infos(
@@ -296,7 +334,8 @@ def _collect_index_infos(
 ) -> tuple[list[_IndexInfo], set[str], set[str]]:
     """Collect the index info of each resource of the repository.
 
-    Returns the collected ``(resource_id, header, row)`` entries, the ids
+    Returns the collected ``(resource_id, header, row, labels)`` entries,
+    where ``labels`` is the JSON of the rendered labels, the ids
     of the resources that failed and the ids of the resources skipped
     because they are in ``already_failed``.
     """
@@ -317,7 +356,9 @@ def _collect_index_infos(
             # -- including one an implementation adds on its own -- reaches
             # the interpolated SQL below unvetted (gain#464).
             validate_index_columns(res.resource_id, header)
-            collected.append((res.resource_id, header, row))
+            collected.append((
+                res.resource_id, header, row,
+                _rendered_labels(res.get_labels())))
         except Exception as err:  # ruff: ignore[blind-except]
             report_resource_failure(
                 err, "skipping FTS index for", res.resource_id)
@@ -328,12 +369,12 @@ def _collect_index_infos(
 def _merge_index_headers(
     collected: list[_IndexInfo],
     failed: set[str],
-) -> tuple[list[str], list[tuple[tuple[str, ...], tuple[str, ...]]]]:
+) -> tuple[list[str], list[_IndexEntry]]:
     """Merge the collected headers into the columns of the index table.
 
     Adds the id of each resource that cannot join the union to ``failed``.
-    Returns the column spellings and the ``(header, row)`` entries of the
-    resources that joined.
+    Returns the column spellings and the ``(header, row, labels)`` entries
+    of the resources that joined.
     """
     # The index table's columns are the union of the headers, and a header
     # that is sound on its own can still be unusable next to another
@@ -346,8 +387,8 @@ def _merge_index_headers(
     # resources is rejected independent of the order the repository
     # happens to list them in.
     claimed: dict[str, IndexColumn] = {}
-    index_infos: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
-    for resource_id, header, row in sorted(
+    index_infos: list[_IndexEntry] = []
+    for resource_id, header, row, labels in sorted(
             collected, key=operator.itemgetter(0)):
         try:
             claimed = merge_index_columns(resource_id, header, claimed)
@@ -356,14 +397,14 @@ def _merge_index_headers(
                 err, "skipping FTS index for", resource_id)
             failed.add(resource_id)
             continue
-        index_infos.append((header, row))
+        index_infos.append((header, row, labels))
     return [spelling for spelling, _ in claimed.values()], index_infos
 
 
 def _build_contents_db_image(
     contents_md5: str,
     columns: list[str],
-    index_infos: list[tuple[tuple[str, ...], tuple[str, ...]]],
+    index_infos: list[_IndexEntry],
 ) -> bytes:
     """Build the gzip image of the FTS SQLite index.
 
@@ -383,9 +424,25 @@ def _build_contents_db_image(
         conn.execute(
             "CREATE TABLE contents_metadata (key TEXT PRIMARY KEY, value TEXT)",
         )
-        conn.execute(
+        conn.executemany(
             "INSERT INTO contents_metadata (key, value) VALUES (?, ?)",
-            ("contents_md5", contents_md5),
+            [
+                ("contents_md5", contents_md5),
+                ("schema_version", _INDEX_SCHEMA_VERSION),
+            ],
+        )
+        # A plain table beside `contents`, keyed by the full id that
+        # `contents` answers a search with. The page reads the labels of
+        # a download from here (gain#2488).
+        conn.execute(
+            "CREATE TABLE resource_labels "
+            "(full_id TEXT PRIMARY KEY, labels TEXT)",
+        )
+        conn.executemany(
+            "INSERT INTO resource_labels (full_id, labels) VALUES (?, ?)",
+            # The first field of every row is its full id (the order of
+            # `GR_INDEX_RESOURCE_FIELDS`).
+            [(row[0], labels) for _, row, labels in index_infos],
         )
 
         if columns:
@@ -406,7 +463,7 @@ def _build_contents_db_image(
                 f"INSERT INTO contents ({cols_str}) "  # ruff: ignore[hardcoded-sql-expression]
                 f"VALUES ({', '.join(['?'] * len(columns))})"
             )
-            for header, row in index_infos:
+            for header, row, _ in index_infos:
                 header_idx = {col: i for i, col in enumerate(header)}
                 full_row = tuple(
                     row[header_idx[col]] if col in header_idx else ""

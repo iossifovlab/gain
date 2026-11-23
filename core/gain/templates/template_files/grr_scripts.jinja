@@ -36,21 +36,6 @@
         };
 
 
-        function parseSizeToBytes(sizeStr) {
-            const units = {
-                'B': 1,
-                'KB': 1024,
-                'MB': 1024 * 1024,
-                'GB': 1024 * 1024 * 1024,
-                'TB': 1024 * 1024 * 1024 * 1024,
-            };
-            const match = sizeStr.match(/^([\d.]+)\s*([A-Z]+)$/);
-            if (!match) return 0;
-            const [, value, unit] = match;
-            const multiplier = units[unit] || 1;
-            return parseFloat(value) * multiplier;
-        }
-
         // The table's rows, looked up once: a search hides and rewrites
         // them, it never adds or removes one.
         const tableRows = document.querySelectorAll(".contents > tbody > tr");
@@ -68,7 +53,9 @@
                 "id": id,
                 "version": cells[2].textContent.trim(),
                 "size": sizeStr,
-                "sizeInBytes": parseSizeToBytes(sizeStr),
+                // The exact count, which the row carries beside the
+                // rounded text (gain#2488).
+                "sizeInBytes": Number(row.dataset.bytes),
                 "summary": cells[4].textContent.trim(),
                 "url": link.getAttribute("href").trim(),
             };
@@ -146,6 +133,7 @@
          */
         function applyRefreshData(ids, search) {
             lastIds = ids;
+            lastSearch = search || { q: "", type: "" };
             refreshData(sortedIds(ids));
             searchResults({ search, ids });
         }
@@ -162,6 +150,7 @@
                 statusError.style.display = "none";
             }
             status.textContent = `${window.currentIds.length} resources`;
+            updateDownloadCount();
         }
 
         function refreshData(ids) {
@@ -184,6 +173,7 @@
                 link.textContent = rowData.id;
                 cells[2].textContent = rowData.version;
                 cells[3].textContent = rowData.size;
+                row.dataset.bytes = rowData.sizeInBytes;
                 cells[4].textContent = rowData.summary;
                 window.titleRow(
                     cells, rowData.type, rowData.id, rowData.summary);
@@ -191,6 +181,139 @@
             }
 
             UpdateStatus();
+        }
+
+        /*
+         * The download of what the table lists (gain#2488).
+         *
+         * The records are the rows of `window.currentIds`, in its order,
+         * so the file matches what the reader sees, a column sort
+         * included. The count on the button follows the same refresh.
+         * The labels come from the search index, so the button is made
+         * only once the index has loaded.
+         */
+        let lastSearch = { q: "", type: "" };
+        let downloadButton = null;
+
+        const MAX_FILE_NAME_LENGTH = 80;
+
+        function updateDownloadCount() {
+            if (downloadButton === null) return;
+            downloadButton.textContent =
+                `Download ${window.currentIds.length} \u25BE`;
+        }
+
+        /** The resource id, without the version that `version` holds. */
+        function resourceIdOf(fullId, version) {
+            const suffix = `(${version})`;
+            return fullId.endsWith(suffix)
+                ? fullId.slice(0, -suffix.length) : fullId;
+        }
+
+        function downloadRecords() {
+            const labels = new Map(window.sqlite3.exec({
+                sql: "SELECT full_id, labels FROM resource_labels",
+                returnValue: "resultRows",
+            }).map(([fullId, json]) => [fullId, JSON.parse(json)]));
+            return window.currentIds.map((fullId) => {
+                const row = window.rowData[fullId];
+                return {
+                    id: resourceIdOf(fullId, row.version),
+                    type: row.type,
+                    version: row.version,
+                    size_bytes: row.sizeInBytes,
+                    summary: row.summary,
+                    labels: labels.get(fullId) || {},
+                };
+            });
+        }
+
+        /** `text` with each run of unsafe characters made one "-". */
+        function safeFileNamePart(text) {
+            return text.replace(/[^A-Za-z0-9._]+/g, "-")
+                .replace(/^[-.]+|[-.]+$/g, "");
+        }
+
+        function downloadFileName(search, generated, extension) {
+            const folder = search.folder.split("/")
+                .map(safeFileNamePart).filter(Boolean).join("-");
+            const parts = [folder || "all"];
+            const term = safeFileNamePart(search.q);
+            if (term) parts.push(term);
+            const suffix = `-${generated.slice(0, 10)}.${extension}`;
+            const stem = parts.join("-")
+                .slice(0, MAX_FILE_NAME_LENGTH - suffix.length)
+                .replace(/[-.]+$/, "");
+            return stem + suffix;
+        }
+
+        function saveFile(name, text, mimeType) {
+            const url = URL.createObjectURL(
+                new Blob([text], { type: mimeType }));
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = name;
+            document.body.append(link);
+            link.click();
+            link.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 10000);
+        }
+
+        function downloadJson() {
+            const generated = new Date().toISOString();
+            // The table lists the whole repository, so no folder.
+            const search = {
+                q: lastSearch.q, type: lastSearch.type, folder: "",
+            };
+            const file = {
+                repository: new URL(".", document.baseURI).href,
+                search,
+                generated,
+                resources: downloadRecords(),
+            };
+            saveFile(
+                downloadFileName(search, generated, "json"),
+                JSON.stringify(file, null, 2), "application/json");
+        }
+
+        function createDownloadControl() {
+            const control = document.createElement("div");
+            control.id = "download";
+            const button = document.createElement("button");
+            button.type = "button";
+            button.id = "download-btn";
+            button.setAttribute("aria-haspopup", "menu");
+            button.setAttribute("aria-expanded", "false");
+            const menu = document.createElement("div");
+            menu.id = "download-menu";
+            menu.setAttribute("role", "menu");
+            menu.hidden = true;
+            const jsonItem = document.createElement("button");
+            jsonItem.type = "button";
+            jsonItem.setAttribute("role", "menuitem");
+            jsonItem.textContent = "JSON";
+            menu.append(jsonItem);
+            control.append(button, menu);
+            document.getElementById("view-toggle-row").append(control);
+
+            const setOpen = (open) => {
+                menu.hidden = !open;
+                button.setAttribute("aria-expanded", String(open));
+            };
+            button.addEventListener("click", () => setOpen(menu.hidden));
+            document.addEventListener("click", (e) => {
+                if (!control.contains(e.target)) setOpen(false);
+            });
+            document.addEventListener("keydown", (e) => {
+                if (e.key === "Escape") setOpen(false);
+            });
+            jsonItem.addEventListener("click", () => {
+                setOpen(false);
+                downloadJson();
+            });
+
+            downloadButton = button;
+            updateDownloadCount();
         }
 
         // Looked up once. All three are static markup that nothing
@@ -216,6 +339,7 @@
             // The unfiltered repository, and announced as exactly that --
             // no search has run yet, whatever the box may already hold.
             applyRefreshData(Array.from(window.all_ids), null)
+            createDownloadControl();
 
             resolve(window.sqlite3)
         });

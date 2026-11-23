@@ -284,6 +284,54 @@
         justify-content: flex-end;
       }
 
+      #download {
+        position: relative;
+        margin-left: 10px;
+      }
+
+      #download-btn,
+      #download-menu button {
+        background: white;
+        color: #24699E;
+        font-size: 15px;
+        font-family: inherit;
+        padding: 8px 16px;
+        cursor: pointer;
+      }
+
+      #download-btn {
+        border: 1px solid #85a2b9;
+        border-radius: 6px;
+      }
+
+      #download-menu {
+        position: absolute;
+        right: 0;
+        top: 100%;
+        z-index: 10;
+        margin-top: 4px;
+        display: flex;
+        flex-direction: column;
+        min-width: 100%;
+        background: white;
+        border: 1px solid #85a2b9;
+        border-radius: 6px;
+        overflow: hidden;
+      }
+
+      #download-menu[hidden] {
+        display: none;
+      }
+
+      #download-menu button {
+        border: none;
+        text-align: left;
+      }
+
+      #download-menu button:hover {
+        background: #eef3f7;
+      }
+
       #view-toggle {
         display: inline-flex;
         border: 1px solid #85a2b9;
@@ -580,9 +628,11 @@
                 tooltips and the copy icon -- is added by
                 the script that follows the table; without it the
                 table still reads in full, in the published order
-                (gain#1351). -#}
+                (gain#1351).  `data-bytes` is the exact size of the
+                resource, which the Size column sorts on and a download
+                writes out; the cell shows it rounded (gain#2488). -#}
             {%- for key, value in data.items() -%}
-            <tr><td>{{value['type']}}</td><td><a href="{{key}}/index.html">{{key}}</a></td><td>{{value['res_version']}}</td><td>{{value['res_size']}}</td><td>{{value['res_summary']}}</td></tr>
+            <tr data-bytes="{{value['res_bytes']}}"><td>{{value['type']}}</td><td><a href="{{key}}/index.html">{{key}}</a></td><td>{{value['res_version']}}</td><td>{{value['res_size']}}</td><td>{{value['res_summary']}}</td></tr>
             {%- endfor %}
           </tbody>
         </table>
