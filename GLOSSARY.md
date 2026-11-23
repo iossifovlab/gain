@@ -61,10 +61,18 @@ search for any of them.
 _Avoid_: tag, attribute, annotation (which means variant annotation here), metadata
 
 **Search index**:
-The `.CONTENTS.sqlite3.gz` FTS5 artefact a GRR publishes alongside its
-resources, built by `grr_manage`. It is a **separate artefact from the
-resources** and nothing forces it to be current.
+The `.CONTENTS.sqlite3.gz` artefact a GRR publishes alongside its
+resources, built by `grr_manage`. It holds the FTS5 table that a term search
+runs against, and the **labels** of each resource in their rendered form. It is
+a **separate artefact from the resources** and nothing forces it to be current.
 _Avoid_: contents db, FTS, catalogue
+
+**Resource list**:
+A CSV or JSON file of the resources that one view of a GRR's root `index.html`
+lists. Each record holds the resource's id, type, version, size in bytes,
+summary and **labels**, and the JSON form also names the repository and the
+search that selected the resources.
+_Avoid_: export, dump, catalogue, download
 
 **Info page**:
 One of the two HTML pages that `grr_manage` generates inside each resource:
