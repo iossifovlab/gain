@@ -12,7 +12,7 @@ import pytest
 import yaml
 from gain.binning import tracks_frame
 from gain.binning.h5_reader import read_tracks
-from gain.binning.run_definition import resolve_binners
+from gain.binning.run_definition import resolve_tracks
 from gain.genomic_resources.repository import GenomicResourceRepo
 
 from tests.small.binning.test_binning_tool_cli import (
@@ -29,7 +29,7 @@ def test_tracks_frame_equals_the_tracks_table_of_the_file(
     output = tmp_path / "bins.h5"
     binning_tool(
         write_run_definition(output, MIXED_RUN_DEFINITION), grr_dir, output)
-    jobs = resolve_binners(
+    jobs = resolve_tracks(
         yaml.safe_load(MIXED_RUN_DEFINITION)["binners"], repo)
 
     frame = tracks_frame(jobs)
@@ -43,9 +43,9 @@ DEFINING_MODULES = {
         "Aggregate", "CellGrouping", "ConstantContribution", "ConstantGroup",
         "FragmentEntry", "MetaFilter", "MetaSource", "ScoreContribution",
         "ValueGrouping"], "gain.binning.fragment_grouping"),
-    "RunDefinitionError": "gain.binning.binners",
-    "tracks_frame": "gain.binning.binners",
-    "resolve_binners": "gain.binning.run_definition",
+    "RunDefinitionError": "gain.binning.tracks",
+    "tracks_frame": "gain.binning.tracks",
+    "resolve_tracks": "gain.binning.run_definition",
     "cell_groups": "gain.binning.fragment_api",
     "fragment_tracks": "gain.binning.fragment_api",
     **dict.fromkeys([
@@ -65,7 +65,7 @@ def test_the_public_names_of_gain_binning_are_its_all() -> None:
         "FragmentEntry", "MetaFilter", "MetaSource", "RunDefinitionError",
         "ScoreContribution", "ValueGrouping",
         "cell_groups", "fragment_tracks",
-        "resolve_binners", "tracks_frame",
+        "resolve_tracks", "tracks_frame",
         "read_tracks", "read_bins", "read_values", "track_labels"])
     assert public == set(gain.binning.__all__) == set(DEFINING_MODULES)
 

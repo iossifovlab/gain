@@ -15,12 +15,12 @@ import warnings
 import numpy as np
 import pytest
 import pytest_mock
-from gain.binning.binners import (
+from gain.binning.position_fold import ArrayBinFold
+from gain.binning.tracks import (
     PositionScoreBinding,
     PositionScoreDef,
     Track,
 )
-from gain.binning.position_fold import ArrayBinFold
 from gain.genomic_resources.aggregators import to_float64
 from gain.genomic_resources.genomic_scores import (
     DEFAULT_VALUE_ARRAYS_BATCH_SIZE,

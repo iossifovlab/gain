@@ -9,7 +9,7 @@ from typing import Any
 import pandas as pd
 import pytest
 from gain.binning import fragment_grouping
-from gain.binning.fragment_binner import (
+from gain.binning.fragment_score_tracks import (
     BoundCellGrouping,
     DuplicateBarcodeError,
     MetaFilter,

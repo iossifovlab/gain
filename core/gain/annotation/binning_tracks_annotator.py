@@ -24,16 +24,16 @@ from gain.annotation.annotation_pipeline import (
     AttributeSpec,
 )
 from gain.annotation.annotator_base import AnnotatedValues, AnnotatorBase
-from gain.binning.binners import (
+from gain.binning.h5_reader import track_labels
+from gain.binning.run_definition import resolve_tracks
+from gain.binning.tracks import (
     TRACKS_COLUMNS,
     BinningJob,
-    BoundBinner,
+    BoundTrackKind,
     Track,
-    discover_binner_kinds,
+    discover_track_kinds,
     tracks_frame,
 )
-from gain.binning.h5_reader import track_labels
-from gain.binning.run_definition import resolve_binners
 from gain.utils.regions import BedRegion
 
 DEFAULT_PREFIX = "track"
@@ -192,7 +192,7 @@ class BinningTracksAnnotator(AnnotatorBase):
             info.parameters.get("prefix", DEFAULT_PREFIX))
         binners = info.parameters.get("binners")
         refuse_local_file_names(binners)
-        self._jobs = resolve_binners(binners, self._grr)
+        self._jobs = resolve_tracks(binners, self._grr)
         refuse_local_files(self._jobs)
         # The pipeline caches these resources.  The locality guard of
         # ``annotate_utils.check_resource_locality`` also sees them: on a
@@ -216,7 +216,7 @@ class BinningTracksAnnotator(AnnotatorBase):
                 self._names, self._labels, frame.to_dict("records"),
                 strict=True)}
         self._stack: ExitStack | None = None
-        self._bound: list[BoundBinner] = []
+        self._bound: list[BoundTrackKind] = []
         super().__init__(pipeline, info)
 
         info.documentation += textwrap.dedent(f"""
@@ -244,11 +244,11 @@ list of `binning_tool` entries.
 
     def open(self) -> Annotator:
         if self._stack is None:
-            kinds = discover_binner_kinds()
+            kinds = discover_track_kinds()
             with ExitStack() as stack:
                 self._bound = [
                     stack.enter_context(
-                        kinds[job.binner].bind(
+                        kinds[job.kind].bind(
                             job, self._grr, quiet=True))
                     for job in self._jobs]
                 self._stack = stack.pop_all()

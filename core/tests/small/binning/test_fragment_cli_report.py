@@ -14,7 +14,7 @@ import textwrap
 import h5py
 import numpy as np
 import pytest
-from gain.binning.fragment_binner import (
+from gain.binning.fragment_score_tracks import (
     CELL_META_RESOURCE_ID_LABEL,
     CELL_SCORE,
     COUNT_SCORE,

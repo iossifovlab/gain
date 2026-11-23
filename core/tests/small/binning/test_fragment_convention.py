@@ -29,8 +29,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import pytest
-from gain.binning.binners import BinningJob, discover_binner_kinds
-from gain.binning.fragment_binner import (
+from gain.binning.fragment_score_tracks import (
     BARCODE_COLUMN,
     CELL_META_RESOURCE_ID_LABEL,
     CELL_SCORE,
@@ -46,6 +45,7 @@ from gain.binning.run_definition import (
     RunDefinitionError,
     parse_run_definition,
 )
+from gain.binning.tracks import BinningJob, discover_track_kinds
 from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing.builders import a_grr
@@ -133,7 +133,7 @@ def parse(
 def bin_job(
     job: BinningJob, region: BedRegion, repo: GenomicResourceRepo,
 ) -> np.ndarray:
-    with discover_binner_kinds()[job.binner].bind(job, repo) as bound:
+    with discover_track_kinds()[job.kind].bind(job, repo) as bound:
         return bound.bin_region(region, BIN_SIZE)
 
 
@@ -497,7 +497,7 @@ def test_dropped_fragments_are_counted_and_logged_per_resource_and_region(
     chr2 = BedRegion("chr2", 1, 40)
 
     with caplog.at_level(logging.INFO, logger="gain.binning"), \
-            discover_binner_kinds()[job.binner].bind(job, repo) as bound:
+            discover_track_kinds()[job.kind].bind(job, repo) as bound:
         bound.bin_region(CHR1, BIN_SIZE)
         bound.bin_region(chr2, BIN_SIZE)
 
@@ -522,7 +522,7 @@ def test_a_fully_annotated_resource_drops_no_fragment(
         ("frags/s1", labelled("S1", meta="meta/full")))
     (job,) = parse({"resource_query": "frags/s1"}, repo, genome).jobs
 
-    with discover_binner_kinds()[job.binner].bind(job, repo) as bound:
+    with discover_track_kinds()[job.kind].bind(job, repo) as bound:
         bound.bin_region(CHR1, BIN_SIZE)
 
     assert isinstance(bound, FragmentScoreBinding)

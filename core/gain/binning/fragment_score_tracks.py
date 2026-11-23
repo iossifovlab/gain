@@ -100,14 +100,6 @@ import numpy as np
 import numpy.typing as npt
 
 from gain import logging
-from gain.binning.binners import (
-    BinningJob,
-    RunDefinitionError,
-    Track,
-    binner_type_of,
-    match_resources,
-    named_base,
-)
 from gain.binning.fragment_array_folds import (
     CoverageRead,
     InexactLevelsError,
@@ -176,6 +168,14 @@ from gain.binning.fragment_grouping import (
     _resolve_value_grouping,
     _Tables,
 )
+from gain.binning.tracks import (
+    BinningJob,
+    RunDefinitionError,
+    Track,
+    entry_type_of,
+    match_resources,
+    named_base,
+)
 from gain.genomic_resources.genomic_scores import FragmentScore
 from gain.genomic_resources.genomic_scores.records import RecordArrays
 from gain.genomic_resources.repository import (
@@ -221,7 +221,7 @@ __all__ = [
     "DuplicateBarcodeError",
     "FragmentBinningJob",
     "FragmentScoreBinding",
-    "FragmentScoreBinner",
+    "FragmentScoreTracks",
     "MetaFilter",
     "MetaTable",
     "job_track_maps",
@@ -570,7 +570,7 @@ def _fold_of(
         uncovered_value=definition.uncovered_value)
 
 
-class FragmentScoreBinner:
+class FragmentScoreTracks:
     """Bins ``fragment_score`` resources matched by a ``resource_query``."""
 
     kind: ClassVar[str] = "fragment_score_binner"
@@ -729,7 +729,7 @@ class FragmentScoreBinner:
                 resource_ids=resource_ids,
                 group=group,
                 selector=group,
-                binner_type=binner_type_of(cls.kind),
+                binner_type=entry_type_of(cls.kind),
                 definition=FragmentScoreDef(
                     aggregator=aggregate.aggregator,
                     mode=aggregate.mode,
@@ -743,7 +743,7 @@ class FragmentScoreBinner:
             for group in groups
         )
         return FragmentBinningJob(
-            binner=cls.kind, tracks=tracks, resource_ids=resource_ids,
+            kind=cls.kind, tracks=tracks, resource_ids=resource_ids,
             score_id=score_id, value=value,
             grouping=grouping, warnings=warnings)
 
@@ -774,7 +774,7 @@ def job_track_maps(
 
     The key is a barcode for a cell grouping and a score value for a
     value grouping.  A job with a constant group gives ``None``.
-    :meth:`FragmentScoreBinner.bind` and the notebook view of
+    :meth:`FragmentScoreTracks.bind` and the notebook view of
     :mod:`gain.binning.fragment_api` both call this function, so the two
     map each key the same way.  ``resources`` are the resources of the
     job, fetched from ``grr`` when not given.

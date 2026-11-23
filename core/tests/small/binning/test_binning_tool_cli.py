@@ -15,12 +15,6 @@ import numpy.typing as npt
 import pytest
 import pytest_mock
 from gain import __version__
-from gain.binning.binners import (
-    Binner,
-    BinningJob,
-    PositionScoreDef,
-    Track,
-)
 from gain.binning.cli import (
     _bin_chunks,
     _build_task_graph,
@@ -28,6 +22,12 @@ from gain.binning.cli import (
     cli,
 )
 from gain.binning.run_definition import RunDefinition
+from gain.binning.tracks import (
+    BinningJob,
+    PositionScoreDef,
+    Track,
+    TrackKind,
+)
 from gain.genomic_resources import genomic_context as gc_mod
 from gain.genomic_resources.genomic_context_base import (
     GC_REFERENCE_GENOME_KEY,
@@ -55,7 +55,7 @@ TRACK = Track(
     name="scores/one", resource_ids=("scores/one",), group="",
     selector="s", binner_type="stub",
     definition=PositionScoreDef(aggregator="max"))
-JOB = BinningJob(binner="stub_binner", tracks=(TRACK,))
+JOB = BinningJob(kind="stub_binner", tracks=(TRACK,))
 
 RUN_DEFINITION = textwrap.dedent("""
     reference_genome: genome
@@ -795,15 +795,15 @@ class StubBinding:
         return self.answer(region)
 
 
-def a_stub_binner(binding: StubBinding) -> type[Binner]:
-    class StubBinner:
+def a_stub_track_kind(binding: StubBinding) -> type[TrackKind]:
+    class StubTrackKind:
         kind = "stub_binner"
 
         @staticmethod
         def bind(_job: BinningJob, _grr: GenomicResourceRepo) -> StubBinding:
             return binding
 
-    return cast(type[Binner], StubBinner)
+    return cast(type[TrackKind], StubTrackKind)
 
 
 def definition_of(repo: GenomicResourceRepo) -> dict[str, Any]:
@@ -836,7 +836,7 @@ def test_a_task_saves_each_chunk_as_the_binner_returns_it(
             [path for path in paths if pathlib.Path(path).exists()]))
 
     _bin_chunks(
-        a_stub_binner(binding), JOB, regions, 10, definition_of(repo),
+        a_stub_track_kind(binding), JOB, regions, 10, definition_of(repo),
         chunk_dir)
 
     assert on_disk_at_each_ask == [[], paths[:1], paths[:2]]
@@ -850,13 +850,13 @@ def test_a_task_saves_column_i_of_a_block_to_track_i(
     # each column goes to its own track's chunk.
     chunk_dir = str(tmp_path)
     other = replace(TRACK, name="scores/two", resource_ids=("scores/two",))
-    job = BinningJob(binner="stub_binner", tracks=(TRACK, other))
+    job = BinningJob(kind="stub_binner", tracks=(TRACK, other))
     region = BedRegion("chr1", 1, 20)
     binding = StubBinding(lambda _region: np.array(
         [[1.0, 10.0], [2.0, 20.0]], dtype=np.float64))
 
     _bin_chunks(
-        a_stub_binner(binding), job, [region], 10, definition_of(repo),
+        a_stub_track_kind(binding), job, [region], 10, definition_of(repo),
         chunk_dir)
 
     np.testing.assert_array_equal(
@@ -883,7 +883,7 @@ def test_a_task_closes_its_binding_when_saving_a_chunk_fails(
 
     with pytest.raises(OSError) as failure:
         _bin_chunks(
-            a_stub_binner(binding), JOB, regions, 10, definition_of(repo),
+            a_stub_track_kind(binding), JOB, regions, 10, definition_of(repo),
             chunk_dir)
 
     assert failure.value.filename == str(unwritable)
@@ -905,7 +905,7 @@ def test_a_wrong_shaped_block_fails_the_task_and_writes_no_chunk(
 
     with pytest.raises(ValueError, match=r"\(1, 1\)"):
         _bin_chunks(
-            a_stub_binner(binding), JOB, [region], 10, definition_of(repo),
+            a_stub_track_kind(binding), JOB, [region], 10, definition_of(repo),
             chunk_dir)
 
     assert not pathlib.Path(
@@ -929,12 +929,13 @@ def test_a_task_declares_a_chunk_per_track_of_its_job_and_region(
     run = RunDefinition(
         reference_genome="genome", bin_size=10, regions=regions,
         jobs=[
-            BinningJob(binner="stub_binner", tracks=(TRACK, other)),
-            BinningJob(binner="stub_binner", tracks=(lone,)),
+            BinningJob(kind="stub_binner", tracks=(TRACK, other)),
+            BinningJob(kind="stub_binner", tracks=(lone,)),
         ])
     monkeypatch.setattr(
-        "gain.binning.cli.discover_binner_kinds",
-        lambda: {"stub_binner": a_stub_binner(StubBinding(one_bin_of(1.0)))})
+        "gain.binning.cli.discover_track_kinds",
+        lambda: {
+            "stub_binner": a_stub_track_kind(StubBinding(one_bin_of(1.0)))})
     work_dir = tmp_path / "work"
     chunk_dir = str(work_dir / "chunks")
     # The graph hands its workers the repository's definition, so it is
@@ -979,7 +980,7 @@ def test_a_block_of_another_dtype_fails_the_task_and_writes_no_chunk(
 
     with pytest.raises(ValueError, match="float64"):
         _bin_chunks(
-            a_stub_binner(binding), JOB, [region], 10, definition_of(repo),
+            a_stub_track_kind(binding), JOB, [region], 10, definition_of(repo),
             chunk_dir)
 
     assert not pathlib.Path(

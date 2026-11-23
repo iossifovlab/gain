@@ -7,9 +7,9 @@ are two samples, and ``meta/cells`` is their cell metadata table.
 from typing import Any
 
 import numpy as np
-from gain.binning.binners import BinningJob, discover_binner_kinds
-from gain.binning.fragment_binner import FragmentBinningJob
+from gain.binning.fragment_score_tracks import FragmentBinningJob
 from gain.binning.run_definition import parse_run_definition
+from gain.binning.tracks import BinningJob, discover_track_kinds
 from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.utils.regions import BedRegion
@@ -71,7 +71,7 @@ def test_a_cell_grouped_job_bins_its_classes_over_a_region(
     # CCC, which has no class.  31-40: EEE (T), and DDD, which has no row.
     job = one_job(repo, genome, "fragment_score_binner", BY_CLASS)
 
-    with discover_binner_kinds()[job.binner].bind(job, repo) as bound:
+    with discover_track_kinds()[job.kind].bind(job, repo) as bound:
         block = bound.bin_region(CHR1, BIN_SIZE)
 
     assert [track.selector for track in job.tracks] == ["B", "T"]

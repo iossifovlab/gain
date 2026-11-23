@@ -49,12 +49,12 @@ from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
 from gain.annotation.binning_tracks_annotator import LocalFilesError
 from gain.binning.cli import cli as binning_tool
-from gain.binning.fragment_binner import FragmentScoreBinding
+from gain.binning.fragment_score_tracks import FragmentScoreBinding
 from gain.binning.h5_reader import read_values
 from gain.binning.run_definition import (
     RunDefinitionError,
     parse_run_definition,
-    resolve_binners,
+    resolve_tracks,
 )
 from gain.genomic_resources.reference_genome import (
     build_reference_genome_from_resource_id,
@@ -552,7 +552,7 @@ def test_the_refusal_after_resolution_holds_without_the_one_before(
 def test_a_resolved_job_with_local_files_is_refused(
     repo: GenomicResourceRepo,
 ) -> None:
-    jobs = resolve_binners([LOCAL_CELL_GROUPING], repo)
+    jobs = resolve_tracks([LOCAL_CELL_GROUPING], repo)
 
     with pytest.raises(LocalFilesError) as excinfo:
         binning_tracks_annotator.refuse_local_files(jobs)

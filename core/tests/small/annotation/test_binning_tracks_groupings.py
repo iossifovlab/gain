@@ -28,7 +28,7 @@ from gain.annotation.annotatable import Region
 from gain.annotation.annotation_config import AnnotationConfigurationError
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
-from gain.binning.fragment_binner import (
+from gain.binning.fragment_score_tracks import (
     CELL_META_RESOURCE_ID_LABEL,
     SAMPLE_ID_LABEL,
 )

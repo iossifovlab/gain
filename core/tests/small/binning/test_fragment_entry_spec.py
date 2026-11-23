@@ -21,7 +21,7 @@ from gain.binning import (
     ScoreContribution,
     ValueGrouping,
 )
-from gain.binning.fragment_binner import FragmentScoreBinner
+from gain.binning.fragment_score_tracks import FragmentScoreTracks
 
 LABEL = "binners[0]"
 QUERY = "frags/*"
@@ -74,7 +74,7 @@ FORMS: list[tuple[str, dict[str, Any], FragmentEntry]] = [
 def test_a_hand_built_entry_equals_the_parsed_entry(
     config: dict[str, Any], by_hand: FragmentEntry,
 ) -> None:
-    parsed = FragmentScoreBinner.entry_from_config(LABEL, config)
+    parsed = FragmentScoreTracks.entry_from_config(LABEL, config)
 
     assert parsed == by_hand
 
@@ -361,7 +361,7 @@ def test_a_constructor_refuses_with_the_words_of_the_parser(
     config: dict[str, Any], label: str, construct: Callable[[], object],
 ) -> None:
     with pytest.raises(RunDefinitionError) as parsed:
-        FragmentScoreBinner.entry_from_config(LABEL, config)
+        FragmentScoreTracks.entry_from_config(LABEL, config)
     with pytest.raises(RunDefinitionError) as built:
         construct()
 
@@ -380,7 +380,7 @@ def test_a_constructor_refusal_names_no_label() -> None:
 @pytest.mark.parametrize("key", ["resource_id", "resource_label", "file_name"])
 def test_a_null_meta_source_is_refused_by_its_key(key: str) -> None:
     with pytest.raises(RunDefinitionError) as parsed:
-        FragmentScoreBinner.entry_from_config(
+        FragmentScoreTracks.entry_from_config(
             LABEL, entry(group={}, meta={key: None}))
 
     assert str(parsed.value) == (
@@ -404,7 +404,7 @@ def test_a_filter_value_that_is_not_text_is_refused() -> None:
 
 
 def test_a_parsed_filter_value_that_is_a_number_becomes_text() -> None:
-    parsed = FragmentScoreBinner.entry_from_config(LABEL, entry(group={}, meta={
+    parsed = FragmentScoreTracks.entry_from_config(LABEL, entry(group={}, meta={
         "resource_id": "meta/cells",
         "filter": [{"column": "batch", "value": 2}]}))
 
@@ -414,7 +414,7 @@ def test_a_parsed_filter_value_that_is_a_number_becomes_text() -> None:
 
 def test_a_null_filter_label_is_refused_by_its_key() -> None:
     with pytest.raises(RunDefinitionError) as parsed:
-        FragmentScoreBinner.entry_from_config(LABEL, entry(group={}, meta={
+        FragmentScoreTracks.entry_from_config(LABEL, entry(group={}, meta={
             "resource_id": "meta/cells",
             "filter": [{"column": "sample", "label": None}]}))
 
@@ -452,7 +452,7 @@ def test_a_replaced_meta_file_takes_the_format_of_its_suffix() -> None:
 
 
 def test_a_blank_search_term_equals_none() -> None:
-    parsed = FragmentScoreBinner.entry_from_config(
+    parsed = FragmentScoreTracks.entry_from_config(
         LABEL, entry(search_term=" "))
 
     assert parsed == FragmentEntry(QUERY)

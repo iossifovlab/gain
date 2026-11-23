@@ -30,8 +30,7 @@ from typing import Any
 import h5py
 import numpy as np
 import pytest
-from gain.binning.binners import BinningJob, discover_binner_kinds
-from gain.binning.fragment_binner import (
+from gain.binning.fragment_score_tracks import (
     FragmentBinningJob,
     FragmentScoreBinding,
 )
@@ -40,6 +39,7 @@ from gain.binning.run_definition import (
     RunDefinitionError,
     parse_run_definition,
 )
+from gain.binning.tracks import BinningJob, discover_track_kinds
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.repository import GenomicResourceRepo
@@ -79,7 +79,7 @@ def parse(
 def bin_job(
     job: BinningJob, region: BedRegion, repo: GenomicResourceRepo,
 ) -> np.ndarray:
-    with discover_binner_kinds()[job.binner].bind(job, repo) as bound:
+    with discover_track_kinds()[job.kind].bind(job, repo) as bound:
         return bound.bin_region(region, BIN_SIZE)
 
 
@@ -586,7 +586,7 @@ def test_a_value_outside_the_histogram_is_dropped_and_counted(
                    repo, genome).jobs
 
     with caplog.at_level(logging.INFO, logger="gain.binning"), \
-            discover_binner_kinds()[job.binner].bind(job, repo) as bound:
+            discover_track_kinds()[job.kind].bind(job, repo) as bound:
         block = bound.bin_region(CHR1, BIN_SIZE)
 
     assert isinstance(bound, FragmentScoreBinding)

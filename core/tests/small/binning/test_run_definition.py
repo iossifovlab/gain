@@ -2,17 +2,17 @@
 from typing import Any
 
 import pytest
-from gain.binning.binners import (
-    BinningJob,
-    PositionScoreDef,
-    Track,
-    binner_type_of,
-)
 from gain.binning.run_definition import (
     RENAMED_GENOME_KEY_MESSAGE,
     RunDefinition,
     RunDefinitionError,
     parse_run_definition,
+)
+from gain.binning.tracks import (
+    BinningJob,
+    PositionScoreDef,
+    Track,
+    entry_type_of,
 )
 from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.repository import GenomicResourceRepo
@@ -274,7 +274,7 @@ def test_adjacent_regions_do_not_overlap(
 def test_an_unknown_binner_kind_is_a_parse_error_listing_the_known_kinds(
     repo: GenomicResourceRepo, genome: ReferenceGenome,
 ) -> None:
-    # Kinds come from the ``gain.binning.binners`` entry-point group; the
+    # Kinds come from the ``gain.binning.track_kinds`` entry-point group; the
     # message names what IS registered so a typo is a one-look fix.
     config = {
         "bins": {"bin_size": 10},
@@ -344,7 +344,7 @@ STUB_KIND = "stub_binner"
 def a_stub_track(resource_id: str, aggregator: str) -> Track:
     return Track(
         name=resource_id, resource_ids=(resource_id,), group="",
-        selector="s", binner_type=binner_type_of(STUB_KIND),
+        selector="s", binner_type=entry_type_of(STUB_KIND),
         definition=PositionScoreDef(
             aggregator=aggregator,
             none_value_replacement=None))
@@ -355,7 +355,7 @@ def parse_stub_jobs(
     genome: ReferenceGenome, monkeypatch: pytest.MonkeyPatch,
 ) -> RunDefinition:
     """Parse one entry of a stub kind that resolves it into ``jobs``."""
-    class StubBinner:
+    class StubTrackKind:
         """A kind that resolves every entry into the given jobs."""
 
         kind = STUB_KIND
@@ -367,8 +367,8 @@ def parse_stub_jobs(
             return list(jobs)
 
     monkeypatch.setattr(
-        "gain.binning.run_definition.discover_binner_kinds",
-        lambda: {STUB_KIND: StubBinner})
+        "gain.binning.run_definition.discover_track_kinds",
+        lambda: {STUB_KIND: StubTrackKind})
     return parse_run_definition({
         "bins": {"bin_size": 10},
         "binners": [{STUB_KIND: {}}],
@@ -384,7 +384,7 @@ def test_a_job_with_no_tracks_is_a_parse_error_naming_its_entry(
     # where it enters the run, naming the entry that produced it.
     with pytest.raises(RunDefinitionError) as excinfo:
         parse_stub_jobs(
-            [BinningJob(binner=STUB_KIND, tracks=())],
+            [BinningJob(kind=STUB_KIND, tracks=())],
             repo, genome, monkeypatch)
 
     assert str(excinfo.value) == (
@@ -404,7 +404,7 @@ def test_a_job_naming_another_kind_is_a_parse_error_naming_its_entry(
 
     with pytest.raises(RunDefinitionError) as excinfo:
         parse_stub_jobs(
-            [BinningJob(binner="position_score_binner", tracks=(track,))],
+            [BinningJob(kind="position_score_binner", tracks=(track,))],
             repo, genome, monkeypatch)
 
     assert str(excinfo.value) == (
@@ -422,10 +422,10 @@ def test_each_job_keeps_its_own_tracks_once_the_run_names_them(
     # each named track must then go back to the job it came from, a
     # two-track job keeping both.
     run = parse_stub_jobs([
-        BinningJob(binner=STUB_KIND, tracks=(
+        BinningJob(kind=STUB_KIND, tracks=(
             a_stub_track("scores/one", "max"),
             a_stub_track("scores/two", "mean"))),
-        BinningJob(binner=STUB_KIND, tracks=(
+        BinningJob(kind=STUB_KIND, tracks=(
             a_stub_track("scores/one", "mean"),)),
     ], repo, genome, monkeypatch)
 

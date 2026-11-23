@@ -15,7 +15,7 @@ import pytest
     binning.read_bins,
     binning.read_values,
     binning.track_labels,
-    binning.resolve_binners,
+    binning.resolve_tracks,
 ])
 @pytest.mark.parametrize("section", ["Parameters", "Returns", "Raises"])
 def test_docstring_has_section(

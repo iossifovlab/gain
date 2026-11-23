@@ -11,9 +11,9 @@ import logging
 
 import numpy as np
 import pytest
-from gain.binning.binners import BinningJob, discover_binner_kinds
-from gain.binning.fragment_binner import FragmentScoreBinding
+from gain.binning.fragment_score_tracks import FragmentScoreBinding
 from gain.binning.run_definition import parse_run_definition
+from gain.binning.tracks import BinningJob, discover_track_kinds
 from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.utils.regions import BedRegion
@@ -47,7 +47,7 @@ def bin_two_regions(
 ) -> tuple[list[np.ndarray], dict[tuple[str, str], int], list[str]]:
     """The blocks of chr1 and chr2, the dropped record and the log lines."""
     with caplog.at_level(logging.INFO, logger="gain.binning"), \
-            discover_binner_kinds()[job.binner].bind(
+            discover_track_kinds()[job.kind].bind(
                 job, repo, **bind_args) as bound:
         blocks = [bound.bin_region(region, BIN_SIZE)
                   for region in (CHR1, CHR2)]

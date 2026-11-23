@@ -29,8 +29,8 @@ from typing import Any
 import h5py
 import numpy as np
 import pytest
-from gain.binning.binners import discover_binner_kinds
-from gain.binning.fragment_binner import FragmentScoreBinding
+from gain.binning.fragment_score_tracks import FragmentScoreBinding
+from gain.binning.tracks import discover_track_kinds
 from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.utils.regions import BedRegion
@@ -40,7 +40,7 @@ from tests.small.binning.test_binning_tool_cli import (
     read_matrix,
     write_run_definition,
 )
-from tests.small.binning.test_fragment_binner import (
+from tests.small.binning.test_fragment_score_tracks import (
     BIN_SIZE,
     BY_CLASS,
     BY_SAMPLE_LABEL,
@@ -148,7 +148,7 @@ def bound_block(
 ) -> tuple[np.ndarray, dict[tuple[str, str], int]]:
     """The block of a one-job entry over ``region``, and its dropped counts."""
     (job,) = parse_fragment_entry(entry, repo, genome).jobs
-    with discover_binner_kinds()[job.binner].bind(job, repo) as bound:
+    with discover_track_kinds()[job.kind].bind(job, repo) as bound:
         assert isinstance(bound, FragmentScoreBinding)
         block = bound.bin_region(region, BIN_SIZE)
         return block, bound.dropped
@@ -176,7 +176,7 @@ def test_a_dropped_fragment_is_counted_in_every_region_it_reaches(
         length(group=BY_CLASS, meta=BY_SAMPLE_LABEL), repo, genome).jobs
     regions = [BedRegion("chr1", 1, 33), BedRegion("chr1", 34, 40)]
 
-    with discover_binner_kinds()[job.binner].bind(job, repo) as bound:
+    with discover_track_kinds()[job.kind].bind(job, repo) as bound:
         assert isinstance(bound, FragmentScoreBinding)
         for region in regions:
             bound.bin_region(region, BIN_SIZE)

@@ -199,15 +199,15 @@ def source_root(tmp_path: pathlib.Path) -> pathlib.Path:
     (root / "gain" / "binning").mkdir(parents=True)
     (root / "gain" / "__init__.py").write_text("")
     (root / "gain" / "binning" / "__init__.py").write_text("")
-    (root / "gain" / "binning" / "binners.py").write_text("")
+    (root / "gain" / "binning" / "tracks.py").write_text("")
     return root
 
 
 @pytest.mark.parametrize(("namespace", "expected"), [
-    ("gain.binning.binners", "core/gain/binning/binners.py"),
+    ("gain.binning.tracks", "core/gain/binning/tracks.py"),
     ("gain.binning", "core/gain/binning/__init__.py"),
-    ("gain.binning.binners.BoundBinner", "core/gain/binning/binners.py"),
-    ("gain.binning.binners.Region<T>", "core/gain/binning/binners.py"),
+    ("gain.binning.tracks.BoundTrackKind", "core/gain/binning/tracks.py"),
+    ("gain.binning.tracks.Region<T>", "core/gain/binning/tracks.py"),
 ])
 def test_namespace_maps_to_the_file_of_its_longest_module_prefix(
     crap_report_html: ModuleType, source_root: pathlib.Path,
@@ -239,7 +239,7 @@ def test_hotspot_of_a_namespace_without_a_file_has_zero_commits(
     rows = [crap_report_html.CrapRow("f", "other.pkg", 1, 0.0, 5.0)]
 
     hotspots = crap_report_html.rank_hotspots(
-        rows, {"core/gain/binning/binners.py": 3}, source_root)
+        rows, {"core/gain/binning/tracks.py": 3}, source_root)
 
     assert [(hotspot.commits, hotspot.score) for hotspot in hotspots] == [
         (0, 0.0)]

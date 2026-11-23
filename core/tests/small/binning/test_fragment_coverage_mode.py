@@ -17,7 +17,7 @@ from typing import Any
 import h5py
 import numpy as np
 import pytest
-from gain.binning.binners import RunDefinitionError
+from gain.binning.tracks import RunDefinitionError
 from gain.genomic_resources.reference_genome import (
     ReferenceGenome,
     build_reference_genome_from_resource,
@@ -36,19 +36,19 @@ from tests.small.binning.test_binning_tool_cli import (
     read_matrix,
     write_run_definition,
 )
-from tests.small.binning.test_fragment_binner import (
-    BY_CLASS,
-    BY_SAMPLE_LABEL,
-    bin_entry,
-    bin_regions,
-    parse_fragment_entry,
-)
 from tests.small.binning.test_fragment_length_mode import (
     CHR1,
     CHR2,
     bound_block,
     length,
     split_run,
+)
+from tests.small.binning.test_fragment_score_tracks import (
+    BY_CLASS,
+    BY_SAMPLE_LABEL,
+    bin_entry,
+    bin_regions,
+    parse_fragment_entry,
 )
 
 nan = np.nan

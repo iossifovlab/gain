@@ -12,7 +12,7 @@ import pathlib
 from typing import Any
 
 import pytest
-from gain.binning.fragment_binner import (
+from gain.binning.fragment_score_tracks import (
     CELL_META_RESOURCE_ID_LABEL,
     SAMPLE_ID_LABEL,
     FragmentBinningJob,

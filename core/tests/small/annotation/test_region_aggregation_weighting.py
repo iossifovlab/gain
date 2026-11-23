@@ -31,10 +31,10 @@ import pytest
 from gain.annotation.annotatable import Region
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.annotation.annotation_pipeline import AnnotationPipeline
-from gain.binning.binners import (
+from gain.binning.tracks import (
     BinningJob,
-    PositionScoreBinner,
     PositionScoreDef,
+    PositionScoreTracks,
     Track,
 )
 from gain.genomic_resources.aggregators import ScoreAggregationQuery
@@ -279,7 +279,7 @@ def test_a_region_product_agrees_with_the_binner_over_long_runs(
         definition=PositionScoreDef(
             aggregator="product",
             none_value_replacement=None))
-    job = BinningJob(binner="position_score_binner", tracks=(track,))
+    job = BinningJob(kind="position_score_binner", tracks=(track,))
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - position_score:
             resource_id: long_runs
@@ -290,7 +290,7 @@ def test_a_region_product_agrees_with_the_binner_over_long_runs(
 
     with pipeline:
         annotated = pipeline.annotate(Region("chr1", start, end))["s"]
-    with PositionScoreBinner.bind(job, repo) as bound:
+    with PositionScoreTracks.bind(job, repo) as bound:
         binned = bound.bin_region(
             BedRegion("chr1", start, end), end - start + 1)
 

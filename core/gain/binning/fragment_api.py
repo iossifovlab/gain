@@ -12,14 +12,14 @@ from typing import Any
 
 import pandas as pd
 
-from gain.binning.binners import BinningJob, tracks_frame
-from gain.binning.fragment_binner import (
+from gain.binning.fragment_grouping import FragmentEntry
+from gain.binning.fragment_score_tracks import (
     FragmentBinningJob,
-    FragmentScoreBinner,
+    FragmentScoreTracks,
     job_track_maps,
 )
-from gain.binning.fragment_grouping import FragmentEntry
 from gain.binning.run_definition import name_job_tracks
+from gain.binning.tracks import BinningJob, tracks_frame
 from gain.genomic_resources.repository import GenomicResourceRepo
 
 __all__ = ["CELL_GROUPS_COLUMNS", "cell_groups", "fragment_tracks"]
@@ -34,8 +34,8 @@ def _entry_jobs(
 ) -> list[BinningJob]:
     """Resolve ``entry``, read from a dict when it is one, into its jobs."""
     if not isinstance(entry, FragmentEntry):
-        entry = FragmentScoreBinner.entry_from_config(label, entry)
-    return FragmentScoreBinner.entry_jobs(
+        entry = FragmentScoreTracks.entry_from_config(label, entry)
+    return FragmentScoreTracks.entry_jobs(
         label, entry, repo, base_dir=base_dir)
 
 

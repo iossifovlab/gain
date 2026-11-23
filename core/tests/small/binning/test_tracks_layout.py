@@ -1,6 +1,6 @@
 # Fixture-heavy test module: pytest fixtures are injected by name (W0621,
 # W0613) and tests are named by behavior (C0114, C0116); same set as
-# test_binners.py.
+# test_tracks.py.
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import pathlib
 import textwrap
@@ -10,17 +10,17 @@ from typing import Any, cast
 import h5py
 import numpy as np
 import pytest
-from gain.binning.binners import (
-    Binner,
+from gain.binning.cli import _bin_chunks, _chunk_path, _write_hdf5
+from gain.binning.fragment_def import FragmentScoreDef
+from gain.binning.fragment_score_tracks import FragmentScoreTracks
+from gain.binning.run_definition import RunDefinition
+from gain.binning.tracks import (
     BinningJob,
-    PositionScoreBinner,
     PositionScoreDef,
+    PositionScoreTracks,
+    TrackKind,
     load_track_def,
 )
-from gain.binning.cli import _bin_chunks, _chunk_path, _write_hdf5
-from gain.binning.fragment_binner import FragmentScoreBinner
-from gain.binning.fragment_def import FragmentScoreDef
-from gain.binning.run_definition import RunDefinition
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.utils.regions import BedRegion
 
@@ -28,7 +28,7 @@ from tests.small.binning.test_binning_tool_cli import (
     MIXED_RUN_DEFINITION,
     TRACK,
     StubBinding,
-    a_stub_binner,
+    a_stub_track_kind,
     binning_tool,
     one_bin_of,
     write_run_definition,
@@ -121,9 +121,9 @@ def test_a_binner_type_with_no_installed_kind_reads_as_a_plain_dict() -> None:
 
 
 def test_an_installed_kind_reads_its_binner_def_as_its_definition() -> None:
-    kinds = cast(dict[str, type[Binner]], {
-        "position_score_binner": PositionScoreBinner,
-        "fragment_score_binner": FragmentScoreBinner})
+    kinds = cast(dict[str, type[TrackKind]], {
+        "position_score_binner": PositionScoreTracks,
+        "fragment_score_binner": FragmentScoreTracks})
     position = PositionScoreDef(aggregator="max")
 
     assert load_track_def(
@@ -133,12 +133,12 @@ def test_an_installed_kind_reads_its_binner_def_as_its_definition() -> None:
 def test_a_kind_without_load_def_runs_and_reads_as_a_plain_dict(
     tmp_path: pathlib.Path,
 ) -> None:
-    stub = a_stub_binner(StubBinding(one_bin_of(1.0)))
+    stub = a_stub_track_kind(StubBinding(one_bin_of(1.0)))
     assert not hasattr(stub, "load_def")
     region = BedRegion("chr1", 1, 10)
     run = RunDefinition(
         reference_genome="genome", bin_size=10, regions=[region],
-        jobs=[BinningJob(binner="stub_binner", tracks=(TRACK,))])
+        jobs=[BinningJob(kind="stub_binner", tracks=(TRACK,))])
     chunk = _chunk_path(str(tmp_path), TRACK, region, 10)
     _bin_chunks(
         stub, run.jobs[0], [region], 10, cast(Any, None), str(tmp_path))
@@ -191,7 +191,7 @@ def test_a_nan_in_a_definition_is_refused_and_does_not_reach_the_file(
     run = RunDefinition(
         reference_genome="genome", bin_size=10,
         regions=[BedRegion("chr1", 1, 10)],
-        jobs=[BinningJob(binner="stub_binner", tracks=(nan_track,))])
+        jobs=[BinningJob(kind="stub_binner", tracks=(nan_track,))])
     chunk = _chunk_path(str(tmp_path), nan_track, run.regions[0], 10)
     np.save(chunk, np.array([1.0]))
     output = tmp_path / "out.h5"

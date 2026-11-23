@@ -27,12 +27,12 @@ from typing import Any
 import numpy as np
 import pytest
 import pytest_mock
-from gain.binning.binners import BinningJob, discover_binner_kinds
 from gain.binning.run_definition import (
     RunDefinition,
     RunDefinitionError,
     parse_run_definition,
 )
+from gain.binning.tracks import BinningJob, discover_track_kinds
 from gain.genomic_resources.aggregators import ScoreAggregationQuery
 from gain.genomic_resources.genomic_scores import FragmentScore
 from gain.genomic_resources.reference_genome import ReferenceGenome
@@ -61,8 +61,8 @@ def parse_fragment_entry(
 def bin_regions(
     job: BinningJob, regions: list[BedRegion], repo: GenomicResourceRepo,
 ) -> list[np.ndarray]:
-    binner = discover_binner_kinds()[job.binner]
-    with binner.bind(job, repo) as bound:
+    track_kind = discover_track_kinds()[job.kind]
+    with track_kind.bind(job, repo) as bound:
         return [bound.bin_region(region, BIN_SIZE) for region in regions]
 
 
@@ -616,7 +616,7 @@ def test_a_binding_opens_each_resource_once_and_drains_every_read(
         BedRegion("chr2", 1, 40)]
     after_each_region = []
 
-    with discover_binner_kinds()[job.binner].bind(job, repo) as bound:
+    with discover_track_kinds()[job.kind].bind(job, repo) as bound:
         for region in regions:
             bound.bin_region(region, BIN_SIZE)
             after_each_region.append(

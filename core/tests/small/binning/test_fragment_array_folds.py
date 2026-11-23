@@ -16,8 +16,7 @@ from typing import Any
 import numpy as np
 import pytest
 import pytest_mock
-from gain.binning import fragment_binner
-from gain.binning.binners import discover_binner_kinds
+from gain.binning import fragment_score_tracks
 from gain.binning.fragment_array_folds import (
     CoverageRead,
     LengthRead,
@@ -27,14 +26,15 @@ from gain.binning.fragment_array_folds import (
     fold_fragment_lengths,
     fold_fragment_starts,
 )
-from gain.binning.fragment_binner import FragmentScoreBinding
 from gain.binning.fragment_folds import (
     BinFragmentCoverageAggregator,
     BinFragmentLengthAggregator,
     BinFragmentStartAggregator,
     FragmentValue,
 )
+from gain.binning.fragment_score_tracks import FragmentScoreBinding
 from gain.binning.run_definition import parse_run_definition
+from gain.binning.tracks import discover_track_kinds
 from gain.genomic_resources.genomic_scores import FragmentScore
 from gain.genomic_resources.genomic_scores.aggregation import (
     EMPTY_BIN_VALUES,
@@ -59,8 +59,8 @@ def bound_block(
         "binners": [{KIND: entry}],
     }, repo, genome)
     (job,) = run.jobs
-    binner = discover_binner_kinds()[job.binner]
-    with binner.bind(job, repo) as bound:
+    track_kind = discover_track_kinds()[job.kind]
+    with track_kind.bind(job, repo) as bound:
         assert isinstance(bound, FragmentScoreBinding)
         block = bound.bin_region(region, BIN_SIZE)
         return block, bound.dropped
@@ -134,9 +134,9 @@ def array_block(
 def spy_array_folds(mocker: pytest_mock.MockerFixture) -> list[Any]:
     """Spy on the three array folds of the binner."""
     return [
-        mocker.spy(fragment_binner, "fold_fragment_starts"),
-        mocker.spy(fragment_binner, "fold_fragment_lengths"),
-        mocker.spy(fragment_binner, "fold_coverage_profiles")]
+        mocker.spy(fragment_score_tracks, "fold_fragment_starts"),
+        mocker.spy(fragment_score_tracks, "fold_fragment_lengths"),
+        mocker.spy(fragment_score_tracks, "fold_coverage_profiles")]
 
 
 def without_array_reads(mocker: pytest_mock.MockerFixture) -> Any:
@@ -950,7 +950,7 @@ def test_a_region_past_2_53_in_absolute_sum_takes_the_streaming_fold(
                            "uncovered_value": None}}
     region = BedRegion("chr1", 1, 20)
     expected, _ = streaming_block(entry, region, repo, genome, mocker)
-    coverage = mocker.spy(fragment_binner, "fold_coverage_profiles")
+    coverage = mocker.spy(fragment_score_tracks, "fold_coverage_profiles")
 
     block, _ = bound_block(entry, region, repo, genome)
 

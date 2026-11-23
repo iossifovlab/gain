@@ -29,11 +29,11 @@ from gain.binning import (
     fragment_tracks,
     read_tracks,
 )
-from gain.binning.fragment_binner import (
+from gain.binning.fragment_score_tracks import (
     FragmentBinningJob,
-    FragmentScoreBinner,
+    FragmentScoreTracks,
 )
-from gain.binning.run_definition import resolve_binners
+from gain.binning.run_definition import resolve_tracks
 from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.testing import build_filesystem_test_repository
@@ -160,7 +160,7 @@ def given_entry(case: str) -> Any:
 
 
 def test_the_hand_built_entry_reads_as_its_dict() -> None:
-    assert FragmentScoreBinner.entry_from_config(
+    assert FragmentScoreTracks.entry_from_config(
         "binners[0]", BY_CELL_CLASS) == BY_CELL_CLASS_ENTRY
 
 
@@ -185,9 +185,9 @@ def bound_groups(
     The rows come in the order of the resources, then of the keys.
     """
     rows: list[tuple[str, str, str]] = []
-    for job in resolve_binners([{KIND: config}], repo, base_dir=base_dir):
+    for job in resolve_tracks([{KIND: config}], repo, base_dir=base_dir):
         assert isinstance(job, FragmentBinningJob)
-        track_maps = FragmentScoreBinner.bind(job, repo).track_maps
+        track_maps = FragmentScoreTracks.bind(job, repo).track_maps
         if track_maps is None:
             continue
         for resource_id, track_map in zip(
@@ -292,7 +292,7 @@ def test_a_refusal_is_the_one_of_parse_entry_for_the_same_label(
     function, label = CALLS[call]
     config = REFUSALS[refusal]
     with pytest.raises(RunDefinitionError) as expected:
-        FragmentScoreBinner.parse_entry(label, config, repo)
+        FragmentScoreTracks.parse_entry(label, config, repo)
 
     with pytest.raises(RunDefinitionError) as refused:
         function(repo, config)

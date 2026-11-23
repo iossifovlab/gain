@@ -6,14 +6,14 @@ from dataclasses import dataclass, replace
 from itertools import combinations
 from typing import Any
 
-from gain.binning.binners import (
-    Binner,
+from gain.binning.tracks import (
     BinningJob,
     RunDefinitionError,
     Track,
+    TrackKind,
     aggregator_of,
     check_keys,
-    discover_binner_kinds,
+    discover_track_kinds,
 )
 from gain.genomic_resources.reference_genome import ReferenceGenome
 from gain.genomic_resources.repository import GenomicResourceRepo
@@ -26,7 +26,7 @@ __all__ = [
     "name_job_tracks",
     "parse_run_definition",
     "refuse_renamed_genome_key",
-    "resolve_binners",
+    "resolve_tracks",
 ]
 
 TOP_LEVEL_KEYS = frozenset({"reference_genome", "bins", "binners"})
@@ -87,7 +87,7 @@ def parse_run_definition(
         reference_genome=genome.resource_id,
         bin_size=_resolve_bin_size(bins.get("bin_size")),
         regions=_resolve_regions(bins.get("regions"), genome),
-        jobs=resolve_binners(
+        jobs=resolve_tracks(
             config.get("binners"), grr, base_dir=base_dir),
     )
 
@@ -182,7 +182,7 @@ def _refuse_overlapping_regions(
                     f"bins.regions[{later}] {notations[later]!r} overlap")
 
 
-def resolve_binners(
+def resolve_tracks(
     binners: Any, grr: GenomicResourceRepo, *, base_dir: str | None = None,
 ) -> list[BinningJob]:
     """Resolve a ``binners:`` list against ``grr`` into its jobs.
@@ -195,7 +195,7 @@ def resolve_binners(
     ----------
     binners
         The ``binners:`` list of a run definition: one one-key mapping
-        of binner kind to its configuration for each entry.
+        of track kind to its configuration for each entry.
     grr
         The repository that the queries of the entries search.
     base_dir
@@ -218,7 +218,7 @@ def resolve_binners(
     if not isinstance(binners, list) or not binners:
         raise RunDefinitionError(
             "binners must be a non-empty list of binner entries")
-    kinds = discover_binner_kinds()
+    kinds = discover_track_kinds()
     located = {} if base_dir is None else {"base_dir": base_dir}
     jobs: list[tuple[str, BinningJob]] = []
     for index, entry in enumerate(binners):
@@ -227,10 +227,10 @@ def resolve_binners(
 
 
 def _expand_entry(
-    index: int, entry: Any, kinds: dict[str, type[Binner]],
+    index: int, entry: Any, kinds: dict[str, type[TrackKind]],
     grr: GenomicResourceRepo, located: dict[str, str],
 ) -> list[tuple[str, BinningJob]]:
-    """Expand one binner entry into its jobs, each with the entry label."""
+    """Expand one entry into its jobs, each with the entry label."""
     label = f"binners[{index}]"
     if not isinstance(entry, dict) or len(entry) != 1:
         raise RunDefinitionError(
@@ -246,15 +246,15 @@ def _expand_entry(
             label, entry_config, grr, **located):
         # A task is named by its job's first track and writes one
         # chunk per track, so a job needs at least one; and the graph
-        # finds the binner by the kind the job names.
+        # finds the track kind by the kind the job names.
         if not job.tracks:
             raise RunDefinitionError(
                 f"{label}: {kind} resolved the entry into a job with "
                 f"no tracks; every job needs at least one")
-        if job.binner != kind:
+        if job.kind != kind:
             raise RunDefinitionError(
                 f"{label}: {kind} resolved the entry into a job bound "
-                f"by {job.binner!r}; a job is bound by the kind that "
+                f"by {job.kind!r}; a job is bound by the kind that "
                 f"produced it")
         jobs.append((label, job))
     return jobs
@@ -266,7 +266,7 @@ def name_job_tracks(
     """Name the tracks of all jobs together and give each job its own.
 
     Each label is ``binners[<index>]``, and the index becomes the
-    ``binner_index`` of each track of the job.  :func:`resolve_binners`
+    ``binner_index`` of each track of the job.  :func:`resolve_tracks`
     and :func:`gain.binning.fragment_api.fragment_tracks` both call this
     function, so a notebook frame names its tracks as a run does.
     """

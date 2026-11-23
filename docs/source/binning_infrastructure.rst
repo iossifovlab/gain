@@ -958,11 +958,11 @@ same scores, even though the HDF5 output uses ``float64``. A comparison
 of the two formats found agreement of roughly ``1e-8`` for a ``mean`` over 10 kb
 bins. These files should not be expected to be bit-identical.
 
-Binner kinds
-^^^^^^^^^^^^
+Track kinds
+^^^^^^^^^^^
 
-A plugin adds a binner kind with an entry point in the
-``gain.binning.binners`` group. The class of a kind provides ``kind``,
+A plugin adds a track kind with an entry point in the
+``gain.binning.track_kinds`` group. The class of a kind provides ``kind``,
 ``parse_entry`` and ``bind``. The signature of ``bind`` is
 ``bind(job, grr, *, quiet=False)``, and ``bind`` returns a context manager
 whose value bins one region at a time.

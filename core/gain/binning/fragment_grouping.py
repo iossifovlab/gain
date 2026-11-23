@@ -1,4 +1,4 @@
-"""The configuration side of the ``fragment_score_binner`` binner.
+"""The configuration side of the ``fragment_score_binner`` track kind.
 
 The GRR convention's constants for single-cell fragment resources, the
 spec classes of an entry (:class:`FragmentEntry` and its blocks), the
@@ -23,13 +23,13 @@ from zipfile import BadZipFile
 import numpy as np
 import pandas as pd
 
-from gain.binning.binners import (
+from gain.binning.fragment_array_folds import LENGTH_AGGREGATORS
+from gain.binning.tracks import (
     NUMERIC_VALUE_TYPES,
     RunDefinitionError,
     check_keys,
     entry_name,
 )
-from gain.binning.fragment_array_folds import LENGTH_AGGREGATORS
 from gain.genomic_resources.data_frame_resource import (
     load_data_frame_from_resource,
 )

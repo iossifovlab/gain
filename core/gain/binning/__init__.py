@@ -30,8 +30,8 @@ package.
 * gain#2119: the package exports ``cell_groups`` and ``fragment_tracks``
   of the new ``fragment_api`` module, and ``read_tracks``,
   ``read_bins``, ``read_values`` and ``track_labels`` of ``h5_reader``.
+* gain#2494: ``resolve_binners`` is now ``resolve_tracks``, see ADR 0044.
 """
-from gain.binning.binners import RunDefinitionError, tracks_frame
 from gain.binning.fragment_api import cell_groups, fragment_tracks
 from gain.binning.fragment_grouping import (
     Aggregate,
@@ -50,7 +50,8 @@ from gain.binning.h5_reader import (
     read_values,
     track_labels,
 )
-from gain.binning.run_definition import resolve_binners
+from gain.binning.run_definition import resolve_tracks
+from gain.binning.tracks import RunDefinitionError, tracks_frame
 
 __all__ = [
     "Aggregate",
@@ -68,7 +69,7 @@ __all__ = [
     "read_bins",
     "read_tracks",
     "read_values",
-    "resolve_binners",
+    "resolve_tracks",
     "track_labels",
     "tracks_frame",
 ]
