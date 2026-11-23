@@ -28,13 +28,14 @@ from __future__ import annotations
 
 from gain.genomic_resources.repository_ids import version_tuple_to_string
 from gain.templates import get_template
+from gain.templates.breadcrumb import index_page_breadcrumb
 from gain.utils.helpers import convert_size
 
 
 def _render_browse_page() -> str:
     return get_template("grr_index.jinja").render(
         data={},
-        has_about=False,
+        breadcrumb=index_page_breadcrumb(),
         sqlite3_hash="deadbeef",
     )
 

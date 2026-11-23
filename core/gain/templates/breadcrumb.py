@@ -70,3 +70,29 @@ def page_breadcrumb(resource_id: str, page: str) -> list[Crumb]:
     else:
         trail[-1] = Crumb(segments[-1], None)
     return trail
+
+
+#: The name of the about page's own crumb.
+ABOUT_CRUMB_NAME = "About"
+
+
+def index_page_breadcrumb() -> list[Crumb]:
+    """The trail the index page carries before its script runs.
+
+    The root alone, as text: it is the trail of the table view, which
+    lists the whole repository.  The tree module redraws the trail for
+    a folder of the hierarchical view (gain#2483).
+    """
+    return [Crumb(ROOT_CRUMB_NAME, None)]
+
+
+def about_page_breadcrumb() -> list[Crumb]:
+    """The trail of the about page: the root, then the page itself.
+
+    The root crumb goes to the tree's root, as on a resource page.  The
+    about page sits at the repository root, so no climb precedes it.
+    """
+    return [
+        Crumb(ROOT_CRUMB_NAME, f"index.html{_TREE_HASH}"),
+        Crumb(ABOUT_CRUMB_NAME, None),
+    ]

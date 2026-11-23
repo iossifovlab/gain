@@ -1,5 +1,6 @@
-{# The trail from the repository root to this page, in the page header,
-   where the "Back to main page" link used to be (gain#1477).
+{# The header bar of every info page: the trail from the repository
+   root to this page on the left, the About link on the right
+   (gain#1477, gain#2483).
 
    `breadcrumb` is a list of crumbs, outermost first, each with a `name`
    and an `href` -- `None` for the page itself, which is rendered as
@@ -25,4 +26,11 @@
         {%- endif -%}
         {%- endfor %}
       </div>
+      {#- Every repository publishes ``about.html`` (gain#2483), so the
+          link needs no fact about the repository.  The about page
+          itself turns it off.  ``static_root`` is the climb to the
+          repository root; the root pages render without one. #}
+      {%- if show_about_link | default(true) %}
+      <a id="nav-about" href="{{ static_root | default('') }}about.html">About</a>
+      {%- endif %}
     </nav>

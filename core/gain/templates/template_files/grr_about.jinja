@@ -62,18 +62,23 @@
         text-decoration: underline;
       }
 
-      #nav-about {
-        margin-left: auto;
-      }
+      {% include "breadcrumb_styles.jinja" %}
     </style>
  </head>
     <body>
-        <nav id="page-header">
-          <a href="./">← Back to main page</a>
-        </nav>
+        {#- The same header bar as every other info page (gain#2483):
+            the trail, and no About link, because this is the page it
+            leads to. -#}
+        {%- with show_about_link = false %}
+        {% include "breadcrumb.jinja" %}
+        {%- endwith %}
         <div id="section-about">
+        {%- if about_contents %}
         {# about.md, already rendered to HTML by markdown2. #}
         {{about_contents|safe}}
+        {%- else %}
+        <p>This repository has no description yet.</p>
+        {%- endif %}
         </div>
     </body>
 </html>

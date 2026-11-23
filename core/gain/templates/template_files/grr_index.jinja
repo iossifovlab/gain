@@ -1,6 +1,23 @@
 <html>
     <head>
      <meta charset="utf-8">
+     <script>
+       /* Mark an address that names a folder before the first paint
+          (gain#2484).  The tree module runs only after the whole page
+          is parsed, and on a large GRR the table would paint and grow
+          until then.  A classic inline script runs before the first
+          paint.  The test is the rule of `HIERARCHICAL_HASH` in
+          `parseHash`; the tree module removes the class after its first
+          `applyHash`. */
+       if (location.hash.startsWith("#/")) {
+         document.documentElement.classList.add("tree-address");
+         /* An uncaught error, for example in the tree module before it
+            removes the class, gives the table back as the fallback. */
+         window.addEventListener("error", function() {
+           document.documentElement.classList.remove("tree-address");
+         });
+       }
+     </script>
     <style>
       {# Both faces come from the repository itself, published beside
          this page (gain#1400).  Most of the icon glyphs are drawn from
@@ -197,10 +214,6 @@
 
       {% include "copy_button_styles.jinja" %}
 
-      #nav-about {
-        margin-left: auto;
-      }
-
       #id-col-header,
       #type-col-header,
       #version-col-header,
@@ -292,7 +305,10 @@
         border-left: 1px solid #85a2b9;
       }
 
-      .view-btn.active {
+      /* Under `tree-address` the toggle names the view that the class
+         shows (gain#2484). */
+      .view-btn.active,
+      html.tree-address #hierarchical-view-btn {
         background: #5b778c;
         color: white;
         cursor: default;
@@ -300,6 +316,26 @@
 
       #hierarchical-wrapper {
         margin: 10px 10%;
+        display: none;
+      }
+
+      /* An address that names a folder shows the tree from the first
+         paint (gain#2484).  `.loading` stays: the tree module removes
+         the class before the search loads, and a line that came back
+         then would push the tree down. */
+      html.tree-address #table-wrapper,
+      html.tree-address #status {
+        display: none;
+      }
+
+      html.tree-address #hierarchical-wrapper {
+        display: block;
+      }
+
+      html.tree-address #table-view-btn {
+        background: white;
+        color: #24699E;
+        cursor: pointer;
       }
 
       /* The tree's own status line reads like #status above -- it says
@@ -309,11 +345,6 @@
          inheriting it as well would step the line in twice. */
       #hv-status {
         margin-bottom: 8px;
-      }
-
-      #breadcrumb {
-        margin-bottom: 8px;
-        font-size: 15px;
       }
 
       {% include "breadcrumb_styles.jinja" %}
@@ -423,11 +454,71 @@
  </head>
 {% include "grr_scripts.jinja" %}
  <body>
-     {% if has_about %}
-     <nav id="page-header">
-       <a id="nav-about" href="about.html">About</a>
-     </nav>
-     {% endif %}
+     {#- The header bar of every info page (gain#2483).  The script
+         below draws the trail of an address that names a folder
+         before the first paint, and the tree module redraws it
+         (gain#2484); the table view keeps the root as text. #}
+     {% include "breadcrumb.jinja" %}
+     <script>
+       /* Draw the trail to the folder `segments` into `#breadcrumb`
+          (gain#2484).  `makeLink(name, path)` returns the link of each
+          crumb but the last, which is the folder showing and is text.
+          One copy of the drawing code: the call below draws the trail
+          before the first paint, and the tree module redraws it with
+          links that carry the search along. */
+       window.drawTrail = function(segments, makeLink) {
+         var trail = document.getElementById("breadcrumb");
+         trail.innerHTML = "";
+         var crumbs = [{ name: "All resources", path: [] }];
+         segments.forEach(function(segment, i) {
+           crumbs.push({ name: segment, path: segments.slice(0, i + 1) });
+         });
+         crumbs.forEach(function(crumb, i) {
+           if (i > 0) {
+             var sep = document.createElement("span");
+             sep.className = "breadcrumb-sep";
+             sep.textContent = "/";
+             trail.appendChild(sep);
+           }
+           var el;
+           if (i === crumbs.length - 1) {
+             el = document.createElement("span");
+             el.textContent = crumb.name;
+             el.className = "breadcrumb-item current";
+           } else {
+             el = makeLink(crumb.name, crumb.path);
+             el.className = "breadcrumb-item";
+           }
+           trail.appendChild(el);
+         });
+       };
+       (function() {
+         /* The segments of the address, decoded as `parsePath` decodes
+            them.  An address that names no folder draws the plain trail
+            of the table view. */
+         var hash = location.hash;
+         var cut = hash.indexOf("?");
+         var address = cut < 0 ? hash : hash.slice(0, cut);
+         var segments = [];
+         if (address.startsWith("#/")) {
+           var parts = address.slice(2).split("/");
+           for (var i = 0; i < parts.length; i++) {
+             if (parts[i] === "") continue;
+             try {
+               segments.push(decodeURIComponent(parts[i]));
+             } catch (e) {
+               break;
+             }
+           }
+         }
+         window.drawTrail(segments, function(name, path) {
+           var a = document.createElement("a");
+           a.textContent = name;
+           a.href = "#/" + path.map(encodeURIComponent).join("/");
+           return a;
+         });
+       })();
+     </script>
      <div id="section-resources">
         <p class="loading">Loading search</p>
         <div id="search-container" style="display: none;">
@@ -496,9 +587,8 @@
           </tbody>
         </table>
         </div>
-        <div id="hierarchical-wrapper" style="display: none;">
+        <div id="hierarchical-wrapper">
           <div id="hv-status" style="display: none;"></div>
-          <nav id="breadcrumb"></nav>
           <div id="hierarchical-list"></div>
         </div>
         <p class="searching" style="display: none;">Searching</p>

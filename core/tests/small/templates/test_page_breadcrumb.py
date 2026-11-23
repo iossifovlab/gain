@@ -27,7 +27,13 @@ from gain.genomic_resources.repository_ids import (
     GR_STATISTICS_INDEX_FILE_NAME,
 )
 from gain.genomic_resources.testing import build_inmemory_test_repository
-from gain.templates.breadcrumb import Crumb, page_breadcrumb
+from gain.templates import get_template
+from gain.templates.breadcrumb import (
+    Crumb,
+    about_page_breadcrumb,
+    index_page_breadcrumb,
+    page_breadcrumb,
+)
 
 from tests.small.templates.vendored_fonts import (
     ligatures_in,
@@ -177,17 +183,19 @@ def statistics_page(nested_resource: GenomicResource) -> str:
     return BasicResourceImplementation(nested_resource).get_statistics_info()
 
 
-def test_the_resource_page_header_is_the_trail(resource_page: str) -> None:
-    """The breadcrumb sits in the page header, and nothing else does.
+def test_the_resource_page_header_is_the_trail_and_about(
+    resource_page: str,
+) -> None:
+    """The header holds the breadcrumb, then the About link.
 
-    The "Back to main page" link it replaces addressed the table view;
-    the root crumb now addresses the tree, and that is the only link
-    left in the header, so a reader has one kind of way out.
+    The root crumb addresses the tree.  The About link climbs to the
+    repository root, because every repository publishes ``about.html``.
     """
     assert crumbs_on(resource_page) == page_breadcrumb(
         "summary/study/track", GR_INDEX_FILE_NAME)
     assert "Back to main page" not in resource_page
     assert header_links_on(resource_page) == [
+        "../../../about.html",
         "../../../index.html#/",
         "../../../index.html#/summary",
         "../../../index.html#/summary/study",
@@ -197,9 +205,32 @@ def test_the_resource_page_header_is_the_trail(resource_page: str) -> None:
 def test_the_statistics_page_carries_the_same_trail(
     statistics_page: str,
 ) -> None:
-    """The page that had no way out at all now climbs like its sibling."""
+    """The statistics page climbs like its sibling, to the same About."""
     assert crumbs_on(statistics_page) == page_breadcrumb(
         "summary/study/track", GR_STATISTICS_INDEX_FILE_NAME)
+    assert "../../../../about.html" in header_links_on(statistics_page)
+
+
+def test_the_index_page_header_is_the_root_crumb_and_about() -> None:
+    """The table view's trail is the root as text, then About."""
+    page = get_template("grr_index.jinja").render(
+        data={}, breadcrumb=index_page_breadcrumb(), sqlite3_hash="")
+
+    assert crumbs_on(page) == [Crumb("All resources", None)]
+    assert header_links_on(page) == ["about.html"]
+
+
+def test_the_about_page_header_is_the_trail_without_about() -> None:
+    """The about page names itself in the trail and offers no About."""
+    page = get_template("grr_about.jinja").render(
+        about_contents="", breadcrumb=about_page_breadcrumb())
+
+    assert crumbs_on(page) == [
+        Crumb("All resources", "index.html#/"),
+        Crumb("About", None),
+    ]
+    assert header_links_on(page) == ["index.html#/"]
+    assert 'id="nav-about"' not in page
 
 
 def test_the_id_cell_carries_a_copy_icon(resource_page: str) -> None:

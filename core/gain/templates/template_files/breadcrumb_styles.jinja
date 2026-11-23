@@ -1,13 +1,12 @@
-{# How a breadcrumb looks, wherever one is drawn: the index page's
-   hierarchical view renders its trail from script into `#breadcrumb`,
-   and a resource page and its statistics page render theirs from
-   `breadcrumb.jinja` into a `#breadcrumb` inside the page header
-   (gain#1477).  One set of rules, so the two trails cannot drift apart.
+{# How the header bar and its breadcrumb look on every info page.  Each
+   page renders `breadcrumb.jinja` into its page header, and the index
+   page's tree module redraws that `#breadcrumb` from script (gain#1477,
+   gain#2483).  One set of rules, so the trails cannot drift apart.
 
-   Every selector starts at `#breadcrumb` on purpose: in the header the
-   crumbs sit under `#page-header a`, which colours and sizes the one
-   link that used to live there, and an id-plus-class selector is what
-   outranks it without touching that rule. #}
+   Every crumb selector starts at `#breadcrumb` on purpose: the crumbs
+   sit under `#page-header a`, which colours and sizes the About link,
+   and an id-plus-class selector is what outranks it without touching
+   that rule. #}
       #breadcrumb .breadcrumb-item {
         color: #252e34;
       }
@@ -31,12 +30,15 @@
         margin: 0 2px;
       }
 
-      /* In a page header the trail takes the size and weight the
-         header's one link used to have, so the current crumb -- a span,
-         which `#page-header a` does not reach -- reads at the same size
-         as the links beside it.  The index page's trail has no header
-         around it and keeps its own size. */
+      /* The trail takes the size and weight of the header's links, so
+         the current crumb -- a span, which `#page-header a` does not
+         reach -- reads at the same size as the links beside it. */
       #page-header #breadcrumb {
         font-size: 18px;
         font-weight: 500;
+      }
+
+      /* About sits at the right edge of the bar on every page. */
+      #nav-about {
+        margin-left: auto;
       }

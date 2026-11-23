@@ -644,7 +644,6 @@
             // the tree (gain#564).
             const byName = (a, b) => a.name.localeCompare(b.name);
 
-            const breadcrumbEl = document.getElementById("breadcrumb");
             const listEl = document.getElementById("hierarchical-list");
             let currentPath = [];
 
@@ -852,35 +851,17 @@
                 return el;
             }
 
-            function renderBreadcrumb() {
-                breadcrumbEl.innerHTML = "";
-                const crumbs = [{ name: "All resources", path: [] }];
-                currentPath.forEach((seg, i) => {
-                    crumbs.push({ name: seg, path: currentPath.slice(0, i + 1) });
-                });
-                crumbs.forEach((crumb, i) => {
-                    if (i > 0) {
-                        const sep = document.createElement("span");
-                        sep.className = "breadcrumb-sep";
-                        sep.textContent = "/";
-                        breadcrumbEl.appendChild(sep);
-                    }
-                    // The folder showing is named but not linked: it is
-                    // where the reader already is, so a link on it would
-                    // offer a move that changes nothing.
-                    const isLast = i === crumbs.length - 1;
-                    let el;
-                    if (isLast) {
-                        el = document.createElement("span");
-                        el.textContent = crumb.name;
-                        el.className = "breadcrumb-item current";
-                    } else {
-                        el = navLink(
-                            crumb.name, "breadcrumb-item",
-                            { view: "hierarchical", path: crumb.path });
-                    }
-                    breadcrumbEl.appendChild(el);
-                });
+            /**
+             * Draw the trail to `path` into the header's `#breadcrumb`.
+             *
+             * The table view passes `[]`: the table lists the whole
+             * repository, so its trail is the root alone, as text, and a
+             * folder trail above it would name the wrong scope.
+             */
+            function renderBreadcrumb(path) {
+                window.drawTrail(path, (name, crumbPath) => navLink(
+                    name, "breadcrumb-item",
+                    { view: "hierarchical", path: crumbPath }));
             }
 
             /**
@@ -1066,7 +1047,7 @@
 
             function navigateTo(path) {
                 currentPath = path;
-                renderBreadcrumb();
+                renderBreadcrumb(currentPath);
                 renderList();
             }
 
@@ -1081,9 +1062,12 @@
                 const isHier = view === "hierarchical";
                 hierBtn.classList.toggle("active", isHier);
                 tableBtn.classList.toggle("active", !isHier);
-                tableWrapper.style.display = isHier ? "none" : "";
-                hierWrapper.style.display = isHier ? "" : "none";
-                if (statusEl) statusEl.style.display = isHier ? "none" : "";
+                // Explicit values for both views: the stylesheet hides
+                // the tree by default, so an empty value would hide it
+                // again.
+                tableWrapper.style.display = isHier ? "none" : "block";
+                hierWrapper.style.display = isHier ? "block" : "none";
+                if (statusEl) statusEl.style.display = isHier ? "none" : "block";
                 // The search controls are left alone. They used to be
                 // disabled and dimmed here, because the tree could not
                 // answer a search; now it prunes to one (#581), so both
@@ -1274,6 +1258,10 @@
                     // way out rather than the one arriving, and drop the
                     // query on every load that carries one.
                     canonicalise({ ...state, path: reached });
+                } else {
+                    // The table keeps `currentPath`, so the tree button
+                    // still returns to the folder the reader left.
+                    renderBreadcrumb([]);
                 }
                 // Last, and from here rather than from the two functions
                 // above, because this is the one place that knows a move
@@ -1502,13 +1490,17 @@
             // this feature exists to serve, so it is the one case worth
             // not doing twice.
             if (parseHash(location.hash).view !== "hierarchical") {
-                renderBreadcrumb();
                 renderList();
             }
 
             // Arriving is the same operation as moving: the address may
             // already name a view, and this is the only thing that reads it.
             applyHash();
+            // The class of the first paint goes now (gain#2484). From here
+            // on the inline styles of `setView` carry the view, and a
+            // class left behind would keep hiding the table under any
+            // view that does not set an inline value of its own.
+            document.documentElement.classList.remove("tree-address");
         })();
     </script>
     <script type="module">
