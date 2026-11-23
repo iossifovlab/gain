@@ -67,7 +67,7 @@ later (gain#1966). The SpliceAI annotator and the demo annotator never go to
 bioconda, but they go to PyPI, because the upload loop costs nothing more for
 them.
 
-*The SpliceAI annotator now goes to bioconda. See [Amendment — gain#2419](#amendment--gain2419-gain-docs-name-bioconda-only).*
+*The SpliceAI annotator is now to get a bioconda recipe (gain#2420). See [Amendment — gain#2419](#amendment--gain2419-gain-docs-name-bioconda-only).*
 
 ### Why the PyPI sdist
 
