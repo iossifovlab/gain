@@ -120,7 +120,7 @@ _state = _TemplateCache()
 def reset_caches() -> None:
     """Forget the environment, the provider templates and their digest.
 
-    Both are process-wide and built on first use, so a test that
+    All three are process-wide and built on first use, so a test that
     registers a template provider, or patches what one returns, needs
     the next call to build afresh -- this is the one way to ask for that
     without reaching into the cache itself.
