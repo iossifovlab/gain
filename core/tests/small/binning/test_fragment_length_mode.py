@@ -1,5 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
-"""``fragment_score_binner`` in ``fragment_length`` mode, at the binner.
+"""``fragment_score_tracks`` in ``fragment_length`` mode, at the binner.
 
 A fragment adds its value to every bin it overlaps, weighted by the base
 pairs of the overlap.  The toy fragments are the conftest's; bins are 10
@@ -233,9 +233,9 @@ def split_run(*aggregates: str) -> str:
         bins:
           bin_size: 10
           regions: ["chr1:1-20", "chr1:21-40", chr2]
-        binners:
+        tracks:
     """) + "".join(
-        f"- fragment_score_binner: {{resource_query: frags/s1, "
+        f"- fragment_score_tracks: {{resource_query: frags/s1, "
         f"pool: false, name: e{index}, aggregate: {aggregate}}}\n"
         for index, aggregate in enumerate(aggregates))
 
@@ -326,7 +326,7 @@ def test_dry_run_reports_a_length_entry_s_mode_and_uncovered_value(
         write_run_definition(output, split_run(LENGTH_SUM, LENGTH_MEAN_0)),
         grr_dir, output, "--dry-run")
 
-    entries = capsys.readouterr().out.split("binners[")[1:]
+    entries = capsys.readouterr().out.split("tracks[")[1:]
     assert len(entries) == 2
     assert (
         "    mode: fragment_length\n"

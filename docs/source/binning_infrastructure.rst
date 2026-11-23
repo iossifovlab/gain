@@ -29,16 +29,16 @@ Create a file named ``demo.yaml`` with the following contents:
       bin_size: 10000
       regions: ["chr21:20000001-20100000"]
 
-    binners:
-    - position_score_binner:
+    tracks:
+    - position_score_tracks:
         resource_query: hg38/scores/phyloP100way
         aggregator: mean
 
-    - position_score_binner:
+    - position_score_tracks:
         resource_query: hg38/scores/phyloP100way
         aggregator: max
 
-The ``reference_genome`` specifies the genome assembly, while ``bins`` defines the genomic region and bin size. The two ``position_score_binner`` entries select the same resource but use different aggregators, producing two tracks.
+The ``reference_genome`` specifies the genome assembly, while ``bins`` defines the genomic region and bin size. The two ``position_score_tracks`` entries select the same resource but use different aggregators, producing two tracks.
 
 **2. Run the binning tool**
 
@@ -101,7 +101,7 @@ A run definition consists of three components:
 
 - ``reference_genome``: The reference genome whose chromosomes define the genomic coordinates.
 - ``bins``: The bin size and genomic regions to analyze.
-- ``binners``: A list of binners specifying which resources to process and how to summarize them.
+- ``tracks``: A list of track entries specifying which resources to process and how to summarize them.
 
 **Reference genome**
 
@@ -120,12 +120,12 @@ Bin coordinates are 1-based and inclusive. Bins follow a fixed grid starting at 
 
 Invalid coordinates, unknown chromosomes, regions extending beyond chromosome boundaries, and overlapping regions produce errors.
 
-**Binners and resource selection**
+**Track entries and resource selection**
 
-The required ``binners`` field contains a list of entries of two types:
+The required ``tracks`` field contains a list of entries of two types:
 
-- ``position_score_binner``: Processes position-score resources.
-- ``fragment_score_binner``: Processes fragment-score resources.
+- ``position_score_tracks``: Processes position-score resources.
+- ``fragment_score_tracks``: Processes fragment-score resources.
 
 Each entry requires a ``resource_query`` to select resources from the GRR. Queries can specify an exact resource ID or use wildcards to match multiple resources. Optional label filters can further restrict the matches.
 
@@ -142,7 +142,7 @@ All configuration keys are validated, and unrecognized keys produce errors rathe
 Position-score binning
 ^^^^^^^^^^^^^^^^^^^^^^
 
-A ``position_score_binner`` summarizes numerical scores associated with genomic positions. Each matched resource produces one track in the output matrix, with one value per bin.
+A ``position_score_tracks`` summarizes numerical scores associated with genomic positions. Each matched resource produces one track in the output matrix, with one value per bin.
 
 **Aggregators**
 
@@ -161,7 +161,7 @@ For example, to calculate the median phyloP100way score within each bin:
 
 .. code-block:: yaml
 
-    - position_score_binner:
+    - position_score_tracks:
         resource_query: hg38/scores/phyloP100way
         aggregator: median
 
@@ -187,7 +187,7 @@ This is useful when missing observations represent an absence of signal, such as
 Fragment-score binning
 ^^^^^^^^^^^^^^^^^^^^^^
 
-A ``fragment_score_binner`` summarizes genomic intervals, such as ATAC-seq fragments or structural variants. Unlike position-score binning, a single fragment-score resource can produce multiple tracks by grouping fragments according to their attributes.
+A ``fragment_score_tracks`` summarizes genomic intervals, such as ATAC-seq fragments or structural variants. Unlike position-score binning, a single fragment-score resource can produce multiple tracks by grouping fragments according to their attributes.
 
 **Basic configuration**
 
@@ -197,7 +197,7 @@ A simple fragment-score binner can be defined as follows:
 
 .. code-block:: yaml
 
-    - fragment_score_binner:
+    - fragment_score_tracks:
         resource_query: hg38/cnv_collections/gnomAD.v4.1_Genome_SV
         value: {value: 1}
         aggregate:
@@ -259,7 +259,7 @@ Advanced fragment-score binning
 Pooling resources
 ^^^^^^^^^^^^^^^^^
 
-A ``fragment_score_binner`` can select multiple resources using a single ``resource_query``. The optional ``pool`` setting determines how these resources are processed. Pooling allows fragments from multiple resources to be combined into shared tracks, rather than processed separately. This is useful when combining measurements across samples, while keeping them separate allows comparisons between samples.
+A ``fragment_score_tracks`` can select multiple resources using a single ``resource_query``. The optional ``pool`` setting determines how these resources are processed. Pooling allows fragments from multiple resources to be combined into shared tracks, rather than processed separately. This is useful when combining measurements across samples, while keeping them separate allows comparisons between samples.
 
 - ``pool: true`` (default): Combines fragments from all matched resources into shared tracks.
 - ``pool: false``: Processes each matched resource separately, producing separate tracks.
@@ -268,7 +268,7 @@ For example, suppose two ATAC-seq samples are stored as resources named ``sc/ata
 
 .. code-block:: yaml
 
-    - fragment_score_binner:
+    - fragment_score_tracks:
         resource_query: "sc/atac_fragments/*"
         pool: true
 
@@ -370,7 +370,7 @@ For example, the conventional configuration can be written explicitly as:
 
 .. code-block:: yaml
 
-    - fragment_score_binner:
+    - fragment_score_tracks:
         resource_query: "sc/atac_fragments/*"
         group:
           cell_score_id: cell
@@ -549,7 +549,7 @@ Each track is identified by its source resource and, where applicable, its group
 - **Unpooled fragment-score tracks:** Named using the resource ID and group, such as ``sc/atac_fragments/donor1:ODC``.
 - **Pooled fragment-score tracks:** Named using the resource query and group, such as ``sc/atac_fragments/*:ODC``.
 
-Tracks appear in the order of the ``binners`` entries in the run definition. Within each entry, tracks are ordered first by resource ID and then by group name.
+Tracks appear in the order of the ``tracks`` entries in the run definition. Within each entry, tracks are ordered first by resource ID and then by group name.
 
 The optional ``name`` field allows users to customize track names. For position-score and unpooled fragment-score tracks, it prefixes the resource ID with ``<name>/``. For pooled fragment-score tracks, it replaces the resource query. For example, specifying ``name: depth`` produces ``depth/sc/atac_fragments/donor1:ODC`` for an unpooled track or ``depth:ODC`` for a pooled track.
 
@@ -603,8 +603,8 @@ Configuration reference
 ^^^^^^^^^^^^^^^^^^^^^^^
 
 A run definition contains a reference genome, a ``bins`` block, and a list of
-``binners`` entries. Every binner entry has exactly one type key:
-``position_score_binner`` or ``fragment_score_binner``.
+``tracks`` entries. Every entry has exactly one type key:
+``position_score_tracks`` or ``fragment_score_tracks``.
 
 **Shared settings**
 
@@ -625,9 +625,9 @@ A run definition contains a reference genome, a ``bins`` block, and a list of
      - All chromosomes
      - Chromosomes or intervals in GAIn's 1-based, inclusive notation. Their
        order determines the output row order.
-   * - ``binners``
+   * - ``tracks``
      - Required
-     - List of binner entries, processed in the specified order.
+     - List of track entries, processed in the specified order.
    * - ``resource_query``
      - Required per entry
      - Exact resource ID or glob over resource IDs, optionally followed by a
@@ -833,7 +833,7 @@ The ``/tracks`` dataset uses the following fields:
      - ``position_score`` or ``fragment_score``.
    * - ``binner_index``
      - ``int64``
-     - Zero-based index of the entry in the run definition's ``binners`` list.
+     - Zero-based index of the entry in the run definition's ``tracks`` list.
    * - ``track_index``
      - ``int64``
      - Zero-based index of the track within that entry. Together with
@@ -1030,7 +1030,7 @@ The same dry run summarizes the planned work:
     regions: 1
     bins: 196
     tasks: 10
-    binners[2]: fragment_score_binner
+    tracks[2]: fragment_score_tracks
         resources: hg38/cnv_collections/gnomAD.v4.1_Genome_SV
         tables: none
         groups: 2

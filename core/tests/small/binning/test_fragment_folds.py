@@ -1,5 +1,5 @@
 # pylint: disable=C0114,C0116
-"""The streaming bin folds of ``fragment_score_binner``, at their seam.
+"""The streaming bin folds of ``fragment_score_tracks``, at their seam.
 
 A fold is fed ``(start, end, value)`` fragments in start order and
 answers ``(bin start, bin end, value)`` bins of the global grid anchored

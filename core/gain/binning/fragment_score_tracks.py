@@ -1,4 +1,4 @@
-"""``fragment_score_binner``: fragments per bin, by group, pooled or not.
+"""``fragment_score_tracks``: fragments per bin, by group, pooled or not.
 
 An entry names a query over ``fragment_score`` resources and produces,
 per grid bin, an aggregate over the fragments that START in that bin --
@@ -573,7 +573,7 @@ def _fold_of(
 class FragmentScoreTracks:
     """Bins ``fragment_score`` resources matched by a ``resource_query``."""
 
-    kind: ClassVar[str] = "fragment_score_binner"
+    kind: ClassVar[str] = "fragment_score_tracks"
 
     @staticmethod
     def load_def(text: str) -> FragmentScoreDef:
@@ -595,15 +595,15 @@ class FragmentScoreTracks:
 
     @staticmethod
     def entry_from_config(label: str, config: Any) -> FragmentEntry:
-        """Read the inner config of a ``fragment_score_binner`` entry.
+        """Read the inner config of a ``fragment_score_tracks`` entry.
 
         Parameters
         ----------
         label
             The label of the entry in the run definition, for example
-            ``binners[0]``.  Each refusal starts with it.
+            ``tracks[0]``.  Each refusal starts with it.
         config
-            The mapping under the ``fragment_score_binner`` key.
+            The mapping under the ``fragment_score_tracks`` key.
 
         Returns
         -------

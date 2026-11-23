@@ -1,4 +1,4 @@
-"""``binning_tracks_annotator``: the tracks of a ``binners:`` list.
+"""``binning_tracks_annotator``: the tracks of a ``tracks:`` list.
 
 The annotator resolves the list with the code of ``binning_tool`` and
 answers one float attribute for each track, for each annotatable
@@ -25,7 +25,10 @@ from gain.annotation.annotation_pipeline import (
 )
 from gain.annotation.annotator_base import AnnotatedValues, AnnotatorBase
 from gain.binning.h5_reader import track_labels
-from gain.binning.run_definition import resolve_tracks
+from gain.binning.run_definition import (
+    refuse_renamed_tracks_key,
+    resolve_tracks,
+)
 from gain.binning.tracks import (
     TRACKS_COLUMNS,
     BinningJob,
@@ -103,7 +106,7 @@ def labeled_tracks_frame(jobs: list[BinningJob]) -> pd.DataFrame:
 
     ``tracks_frame`` refuses a definition with a NaN or an infinity, as
     ``binning_tool`` does.  This refusal names the annotator and the
-    ``binners`` entry, so the author finds the wrong entry.
+    ``tracks`` entry, so the author finds the wrong entry.
     """
     for job in jobs:
         try:
@@ -117,7 +120,7 @@ def labeled_tracks_frame(jobs: list[BinningJob]) -> pd.DataFrame:
 
 
 class LocalFilesError(ValueError):
-    """An entry of a ``binners:`` list that reads a local file.
+    """An entry of a ``tracks:`` list that reads a local file.
 
     ``binning_tool`` reads a relative local file from the directory of
     the run definition.  A pipeline has no such directory, so the
@@ -132,22 +135,22 @@ class LocalFilesError(ValueError):
             f"a resource_label")
 
 
-def refuse_local_file_names(binners: Any) -> None:
+def refuse_local_file_names(tracks: Any) -> None:
     """Refuse an entry whose ``meta`` names a ``file_name``, unread.
 
     An annotation pipeline can come from an untrusted user.  A kind
     reads the file when the list is resolved, and an error of that read
     can quote the file, so this refusal comes before the resolution.
     """
-    if not isinstance(binners, list):
+    if not isinstance(tracks, list):
         return
-    for index, entry in enumerate(binners):
+    for index, entry in enumerate(tracks):
         if not isinstance(entry, dict):
             continue
         for config in entry.values():
             meta = config.get("meta") if isinstance(config, dict) else None
             if isinstance(meta, dict) and "file_name" in meta:
-                raise LocalFilesError(f"binners[{index}]")
+                raise LocalFilesError(f"tracks[{index}]")
 
 
 def refuse_local_files(jobs: list[BinningJob]) -> None:
@@ -169,11 +172,11 @@ def refuse_too_many_tracks(tracks: list[Track]) -> None:
     if len(tracks) > MAX_TRACKS:
         raise ValueError(
             f"binning_tracks_annotator gives at most {MAX_TRACKS} "
-            f"tracks; the binners entries give {len(tracks)}")
+            f"tracks; the tracks entries give {len(tracks)}")
 
 
 class BinningTracksAnnotator(AnnotatorBase):
-    """Answers each track of a ``binners:`` list over an annotatable.
+    """Answers each track of a ``tracks:`` list over an annotatable.
 
     Each track is one attribute, named
     ``<prefix>_<binner_index>_<track_index>``, of type ``float``.  The
@@ -185,14 +188,15 @@ class BinningTracksAnnotator(AnnotatorBase):
         if info.attributes:
             raise ValueError(
                 "binning_tracks_annotator takes no attributes list, "
-                "because the binners entries define the attributes: one "
+                "because the tracks entries define the attributes: one "
                 "for each track")
         self._grr = pipeline.repository
         self._prefix = checked_prefix(
             info.parameters.get("prefix", DEFAULT_PREFIX))
-        binners = info.parameters.get("binners")
-        refuse_local_file_names(binners)
-        self._jobs = resolve_tracks(binners, self._grr)
+        refuse_renamed_tracks_key(info.parameters)
+        tracks = info.parameters.get("tracks")
+        refuse_local_file_names(tracks)
+        self._jobs = resolve_tracks(tracks, self._grr)
         refuse_local_files(self._jobs)
         # The pipeline caches these resources.  The locality guard of
         # ``annotate_utils.check_resource_locality`` also sees them: on a
@@ -221,7 +225,7 @@ class BinningTracksAnnotator(AnnotatorBase):
 
         info.documentation += textwrap.dedent(f"""
 
-Annotator that gives one float attribute for each track of a `binners:`
+Annotator that gives one float attribute for each track of a `tracks:`
 list of `binning_tool` entries.
 
 <a href="{self.BASE_DOC_URL}#binning-tracks-annotator" target="_blank">More info</a>

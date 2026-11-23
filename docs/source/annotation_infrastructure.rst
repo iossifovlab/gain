@@ -897,7 +897,7 @@ binning_tracks_annotator
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
 ``binning_tracks_annotator`` gives the values of ``binning_tool`` for each
-annotatable. It takes a ``binners:`` list with the spelling of a
+annotatable. It takes a ``tracks:`` list with the spelling of a
 ``binning_tool`` run definition. The :doc:`/cli/binning_tool` page and
 :ref:`binning-run-definition` give the keys of an entry.
 
@@ -911,12 +911,12 @@ example a mean over no fragments, gives an empty value.
 
     - binning_tracks_annotator:
         prefix: atac
-        binners:
-          - fragment_score_binner:
+        tracks:
+          - fragment_score_tracks:
               resource_query: atac/pbmc
               group: {}
               aggregate: {mode: fragment_start}
-          - fragment_score_binner:
+          - fragment_score_tracks:
               resource_query: atac/pbmc
               group: {group: all}
               aggregate: {mode: coverage_profile, aggregator: mean}

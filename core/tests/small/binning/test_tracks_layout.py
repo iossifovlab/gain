@@ -122,8 +122,8 @@ def test_a_binner_type_with_no_installed_kind_reads_as_a_plain_dict() -> None:
 
 def test_an_installed_kind_reads_its_binner_def_as_its_definition() -> None:
     kinds = cast(dict[str, type[TrackKind]], {
-        "position_score_binner": PositionScoreTracks,
-        "fragment_score_binner": FragmentScoreTracks})
+        "position_score_tracks": PositionScoreTracks,
+        "fragment_score_tracks": FragmentScoreTracks})
     position = PositionScoreDef(aggregator="max")
 
     assert load_track_def(
@@ -213,8 +213,8 @@ def test_binner_def_pins_every_field_of_a_fully_set_fragment_entry(
         bins:
           bin_size: 10
           regions: ["chr1:1-40"]
-        binners:
-        - fragment_score_binner:
+        tracks:
+        - fragment_score_tracks:
             name: kläss-é
             resource_query: frags/s1
             pool: true

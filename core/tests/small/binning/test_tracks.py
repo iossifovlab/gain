@@ -32,7 +32,7 @@ def scores_one(aggregator: str, replacement: float | None = None) -> Track:
 
 
 def a_job(track: Track) -> BinningJob:
-    return BinningJob(kind="position_score_binner", tracks=(track,))
+    return BinningJob(kind="position_score_tracks", tracks=(track,))
 
 
 def one_region(

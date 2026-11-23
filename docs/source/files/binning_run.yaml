@@ -4,14 +4,14 @@ bins:
   bin_size: 10240
   regions: ["chr21:20000000-22000000"]
 
-binners:
-- position_score_binner:
+tracks:
+- position_score_tracks:
     resource_query: "hg38/scores/*"
     search_term: conservation
-- position_score_binner:
+- position_score_tracks:
     resource_query: hg38/scores/phyloP100way
     aggregator: max
-- fragment_score_binner:
+- fragment_score_tracks:
     resource_query: hg38/cnv_collections/gnomAD.v4.1_Genome_SV
     pool: false
     group: {group_score_id: deletion_duplication}

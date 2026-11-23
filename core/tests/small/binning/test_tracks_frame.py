@@ -30,7 +30,7 @@ def test_tracks_frame_equals_the_tracks_table_of_the_file(
     binning_tool(
         write_run_definition(output, MIXED_RUN_DEFINITION), grr_dir, output)
     jobs = resolve_tracks(
-        yaml.safe_load(MIXED_RUN_DEFINITION)["binners"], repo)
+        yaml.safe_load(MIXED_RUN_DEFINITION)["tracks"], repo)
 
     frame = tracks_frame(jobs)
 

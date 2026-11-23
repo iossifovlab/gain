@@ -52,7 +52,7 @@ from tests.small.binning.conftest import (
 )
 from tests.small.binning.test_binning_tool_cli import binning_tool
 
-KIND = "fragment_score_binner"
+KIND = "fragment_score_tracks"
 CONVENTION: dict[str, Any] = {"cell_meta_resource_id": "meta/cells"}
 
 
@@ -106,7 +106,7 @@ def run_tool(
     run_definition.write_text(yaml.safe_dump({
         "reference_genome": "genome",
         "bins": {"bin_size": 10, "regions": ["chr1:1-40"]},
-        "binners": [{KIND: entry}],
+        "tracks": [{KIND: entry}],
     }))
     output = work / "bins.h5"
     binning_tool(run_definition, grr_dir, output)
@@ -161,7 +161,7 @@ def given_entry(case: str) -> Any:
 
 def test_the_hand_built_entry_reads_as_its_dict() -> None:
     assert FragmentScoreTracks.entry_from_config(
-        "binners[0]", BY_CELL_CLASS) == BY_CELL_CLASS_ENTRY
+        "tracks[0]", BY_CELL_CLASS) == BY_CELL_CLASS_ENTRY
 
 
 @pytest.mark.parametrize("case", list(PARITY_CASES))
@@ -251,7 +251,7 @@ def test_fragment_tracks_equals_its_rows_in_a_run_with_a_sibling_entry(
     run_definition.write_text(yaml.safe_dump({
         "reference_genome": "genome",
         "bins": {"bin_size": 10, "regions": ["chr1:1-40"]},
-        "binners": [
+        "tracks": [
             {KIND: {**by_max, "aggregate": {"aggregator": "sum"}}},
             {KIND: by_max}],
     }))
@@ -278,9 +278,9 @@ REFUSALS: dict[str, dict[str, Any]] = {
 #: Each function, called as a notebook user calls it, and the label of
 #: the entry that it passes on.
 CALLS: dict[str, tuple[Callable[..., Any], str]] = {
-    "cell_groups": (cell_groups, "binners[0]"),
+    "cell_groups": (cell_groups, "tracks[0]"),
     "fragment_tracks": (
-        functools.partial(fragment_tracks, binner_index=2), "binners[2]"),
+        functools.partial(fragment_tracks, binner_index=2), "tracks[2]"),
 }
 
 

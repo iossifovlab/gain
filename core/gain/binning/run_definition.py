@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from itertools import combinations
 from typing import Any
@@ -21,17 +22,24 @@ from gain.utils.regions import BedRegion, Region
 
 __all__ = [
     "RENAMED_GENOME_KEY_MESSAGE",
+    "RENAMED_TRACKS_KEY_MESSAGE",
     "RunDefinition",
     "RunDefinitionError",
     "name_job_tracks",
     "parse_run_definition",
     "refuse_renamed_genome_key",
+    "refuse_renamed_tracks_key",
     "resolve_tracks",
 ]
 
-TOP_LEVEL_KEYS = frozenset({"reference_genome", "bins", "binners"})
+TOP_LEVEL_KEYS = frozenset({"reference_genome", "bins", "tracks"})
 RENAMED_GENOME_KEY_MESSAGE = (
     "input_reference_genome was renamed reference_genome; rename the key")
+RENAMED_TRACKS_KEY_MESSAGE = "binners was renamed tracks; rename the key"
+RENAMED_KINDS = {
+    "position_score_binner": "position_score_tracks",
+    "fragment_score_binner": "fragment_score_tracks",
+}
 BINS_KEYS = frozenset({"bin_size", "regions"})
 
 
@@ -42,6 +50,16 @@ def refuse_renamed_genome_key(config: dict[str, Any]) -> None:
     """
     if "input_reference_genome" in config:
         raise RunDefinitionError(RENAMED_GENOME_KEY_MESSAGE)
+
+
+def refuse_renamed_tracks_key(config: Mapping[str, Any]) -> None:
+    """Refuse a run definition or an annotator config with ``binners``.
+
+    A config with both ``binners`` and ``tracks`` is refused too: the
+    old key is never read.
+    """
+    if "binners" in config:
+        raise RunDefinitionError(RENAMED_TRACKS_KEY_MESSAGE)
 
 
 @dataclass(frozen=True)
@@ -79,6 +97,7 @@ def parse_run_definition(
     """
     if isinstance(config, dict):
         refuse_renamed_genome_key(config)
+        refuse_renamed_tracks_key(config)
     check_keys("run definition", config, TOP_LEVEL_KEYS)
     bins = config.get("bins")
     check_keys("bins", bins, BINS_KEYS)
@@ -88,7 +107,7 @@ def parse_run_definition(
         bin_size=_resolve_bin_size(bins.get("bin_size")),
         regions=_resolve_regions(bins.get("regions"), genome),
         jobs=resolve_tracks(
-            config.get("binners"), grr, base_dir=base_dir),
+            config.get("tracks"), grr, base_dir=base_dir),
     )
 
 
@@ -183,18 +202,18 @@ def _refuse_overlapping_regions(
 
 
 def resolve_tracks(
-    binners: Any, grr: GenomicResourceRepo, *, base_dir: str | None = None,
+    tracks: Any, grr: GenomicResourceRepo, *, base_dir: str | None = None,
 ) -> list[BinningJob]:
-    """Resolve a ``binners:`` list against ``grr`` into its jobs.
+    """Resolve a ``tracks:`` list against ``grr`` into its jobs.
 
     Each track of a job carries its ``binner_index``, the position of
-    its entry in ``binners``, and its ``track_index``, its position
+    its entry in ``tracks``, and its ``track_index``, its position
     among the tracks of that entry.
 
     Parameters
     ----------
-    binners
-        The ``binners:`` list of a run definition: one one-key mapping
+    tracks
+        The ``tracks:`` list of a run definition: one one-key mapping
         of track kind to its configuration for each entry.
     grr
         The repository that the queries of the entries search.
@@ -212,16 +231,17 @@ def resolve_tracks(
     Raises
     ------
     RunDefinitionError
-        When ``binners`` is not a non-empty list, or an entry is
-        refused. The message names the offending entry.
+        When ``tracks`` is not a non-empty list, or an entry is
+        refused. The message names the offending entry. An entry of a
+        renamed kind is refused with a message that names the new kind.
     """
-    if not isinstance(binners, list) or not binners:
+    if not isinstance(tracks, list) or not tracks:
         raise RunDefinitionError(
-            "binners must be a non-empty list of binner entries")
+            "tracks must be a non-empty list of track entries")
     kinds = discover_track_kinds()
     located = {} if base_dir is None else {"base_dir": base_dir}
     jobs: list[tuple[str, BinningJob]] = []
-    for index, entry in enumerate(binners):
+    for index, entry in enumerate(tracks):
         jobs.extend(_expand_entry(index, entry, kinds, grr, located))
     return name_job_tracks(jobs)
 
@@ -231,15 +251,19 @@ def _expand_entry(
     grr: GenomicResourceRepo, located: dict[str, str],
 ) -> list[tuple[str, BinningJob]]:
     """Expand one entry into its jobs, each with the entry label."""
-    label = f"binners[{index}]"
+    label = f"tracks[{index}]"
     if not isinstance(entry, dict) or len(entry) != 1:
         raise RunDefinitionError(
-            f"{label}: an entry is a one-key mapping of binner kind to "
+            f"{label}: an entry is a one-key mapping of track kind to "
             f"its configuration")
     (kind, entry_config), = entry.items()
+    if kind in RENAMED_KINDS:
+        raise RunDefinitionError(
+            f"{label}: {kind} was renamed {RENAMED_KINDS[kind]}; "
+            f"rename the kind")
     if kind not in kinds:
         raise RunDefinitionError(
-            f"{label}: unknown binner kind {kind!r}; "
+            f"{label}: unknown track kind {kind!r}; "
             f"registered kinds: {', '.join(sorted(kinds))}")
     jobs: list[tuple[str, BinningJob]] = []
     for job in kinds[kind].parse_entry(
@@ -265,7 +289,7 @@ def name_job_tracks(
 ) -> list[BinningJob]:
     """Name the tracks of all jobs together and give each job its own.
 
-    Each label is ``binners[<index>]``, and the index becomes the
+    Each label is ``tracks[<index>]``, and the index becomes the
     ``binner_index`` of each track of the job.  :func:`resolve_tracks`
     and :func:`gain.binning.fragment_api.fragment_tracks` both call this
     function, so a notebook frame names its tracks as a run does.
@@ -281,7 +305,7 @@ def name_job_tracks(
         for _ in job.tracks:
             tracks.append(replace(
                 next(named),
-                binner_index=int(label.removeprefix("binners[")[:-1]),
+                binner_index=int(label.removeprefix("tracks[")[:-1]),
                 track_index=next_index[label]))
             next_index[label] += 1
         resolved.append(replace(job, tracks=tuple(tracks), entry=label))

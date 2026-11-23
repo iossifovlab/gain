@@ -60,7 +60,7 @@ histogram, and a caching GRR stores those files in its cache.
 It prints the list of tracks the run would produce — name, resource ids
 (comma-separated), score id (empty for a fragment count) and aggregator —
 together with the number of regions, bins and tasks. For every
-``fragment_score_binner`` entry it then reports the resources the entry
+``fragment_score_tracks`` entry it then reports the resources the entry
 matched, the metadata tables it reads (resource ids, or the absolute paths
 of local files), its group and track counts, every warning its
 resolution raised, and the mode and uncovered value of its tracks. For the
@@ -80,14 +80,14 @@ at 100 bp:
     regions: 2
     bins: 14
     tasks: 3
-    binners[0]: fragment_score_binner
+    tracks[0]: fragment_score_tracks
         resources: sc/atac_fragments/donor1, sc/atac_fragments/donor2
         tables: sc/cell_meta_data
         groups: 2
         tracks: 2
         mode: fragment_start
         uncovered_value: null
-    binners[1]: fragment_score_binner
+    tracks[1]: fragment_score_tracks
         resources: sc/atac_fragments/donor1, sc/atac_fragments/donor2
         tables: sc/cell_meta_data
         groups: 2
@@ -100,7 +100,7 @@ report carries the warning:
 
 .. code-block:: text
 
-    binners[0]: fragment_score_binner
+    tracks[0]: fragment_score_tracks
         resources: sc/atac_fragments/donor1, sc/atac_fragments/donor2
         tables: /tmp/binning-demo/cells.csv
         groups: 2

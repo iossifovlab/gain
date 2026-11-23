@@ -13,8 +13,8 @@ from gain.genomic_resources.repository import GenomicResourceRepo
 
 from tests.small.binning.conftest import kind_def
 
-FRAGMENT = "fragment_score_binner"
-POSITION = "position_score_binner"
+FRAGMENT = "fragment_score_tracks"
+POSITION = "position_score_tracks"
 
 
 def parse_entries(
@@ -23,7 +23,7 @@ def parse_entries(
 ) -> RunDefinition:
     return parse_run_definition({
         "bins": {"bin_size": 10},
-        "binners": entries,
+        "tracks": entries,
     }, repo, genome)
 
 
@@ -109,8 +109,8 @@ def test_one_track_from_two_entries_is_refused_suggesting_name(
         parse_entries([{FRAGMENT: entry}, {FRAGMENT: entry}], repo, genome)
 
     message = str(excinfo.value)
-    assert "binners[0]" in message
-    assert "binners[1]" in message
+    assert "tracks[0]" in message
+    assert "tracks[1]" in message
     assert "add name to one of them" in message
 
 
@@ -130,5 +130,5 @@ def test_a_name_that_is_not_a_non_empty_string_is_refused_naming_the_entry(
         parse_entries(entries, repo, genome)
 
     message = str(excinfo.value)
-    assert message.startswith("binners[1]")
+    assert message.startswith("tracks[1]")
     assert "name must be a non-empty string" in message

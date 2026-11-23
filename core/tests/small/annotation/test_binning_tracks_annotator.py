@@ -1,7 +1,7 @@
 # pylint: disable=redefined-outer-name,C0114,C0116
 """``binning_tracks_annotator``: one float attribute per track (ADR 0041).
 
-The annotator resolves a ``binners:`` list the way ``binning_tool`` does
+The annotator resolves a ``tracks:`` list the way ``binning_tool`` does
 and bins each annotatable as one bin of the grid whose bin size is the
 end of the annotatable.
 
@@ -115,16 +115,16 @@ def repo(grr_dir: pathlib.Path) -> GenomicResourceRepo:
 
 def fragment_entry(**entry: Any) -> dict[str, Any]:
     """A constant-group entry over ``frags``."""
-    return {"fragment_score_binner": {
+    return {"fragment_score_tracks": {
         "resource_query": "frags", "group": {"group": "all"}, **entry}}
 
 
 def tracks_pipeline(
-    repo: GenomicResourceRepo, binners: list[dict[str, Any]],
+    repo: GenomicResourceRepo, entries: list[dict[str, Any]],
     **parameters: Any,
 ) -> AnnotationPipeline:
     config = yaml.safe_dump([{"binning_tracks_annotator": {
-        **parameters, "binners": binners}}])
+        **parameters, "tracks": entries}}])
     return load_pipeline_from_yaml(config, repo)
 
 
@@ -180,7 +180,7 @@ def test_a_track_attribute_is_a_float_described_by_its_track_label(
         .with_resource("pair/b", fragments)
         .build_repo(tmp_path / "pair")
     )
-    pipeline = tracks_pipeline(repo, [{"fragment_score_binner": {
+    pipeline = tracks_pipeline(repo, [{"fragment_score_tracks": {
         "resource_query": "pair/*", "group": {"group": "all"}}}])
 
     (attribute,) = pipeline.get_attributes()
@@ -197,7 +197,7 @@ PAIR_FRAGMENTS = a_fragment_score().with_data("""
     chr1   10         19       1
 """)
 
-UNPOOLED_PAIR = {"fragment_score_binner": {
+UNPOOLED_PAIR = {"fragment_score_tracks": {
     "resource_query": "pair/*", "pool": False, "group": {"group": "all"},
     "aggregate": {"mode": "fragment_start", "aggregator": "mean"}}}
 
@@ -231,7 +231,7 @@ def test_annotate_vcf_writes_each_track_with_its_label(
     """))
     pipeline = tmp_path / "pipeline.yaml"
     pipeline.write_text(yaml.safe_dump([{"binning_tracks_annotator": {
-        "prefix": "atac", "binners": [UNPOOLED_PAIR]}}]))
+        "prefix": "atac", "tracks": [UNPOOLED_PAIR]}}]))
     output = tmp_path / "out.vcf"
 
     annotate_vcf([
@@ -270,7 +270,7 @@ def test_annotate_doc_shows_the_label_and_the_six_fields_of_a_track(
 ) -> None:
     pipeline = tmp_path / "pipeline.yaml"
     pipeline.write_text(yaml.safe_dump([{"binning_tracks_annotator": {
-        "prefix": "atac", "binners": [UNPOOLED_PAIR]}}]))
+        "prefix": "atac", "tracks": [UNPOOLED_PAIR]}}]))
     output = tmp_path / "doc.html"
 
     annotate_doc([
@@ -373,7 +373,7 @@ def test_a_position_entry_before_a_fragment_entry(
     repo: GenomicResourceRepo,
 ) -> None:
     pipeline = tracks_pipeline(repo, [
-        {"position_score_binner": {
+        {"position_score_tracks": {
             "resource_query": "pos", "aggregator": "mean"}},
         fragment_entry(),
     ])
@@ -392,8 +392,8 @@ def test_a_value_equals_the_binning_tool_value_of_the_same_window(
 ) -> None:
     # chr1:13-24 is the second bin of a grid of 12; the annotator bins it
     # as a part of the first bin of a grid of 24.
-    binners = [
-        {"position_score_binner": {
+    entries = [
+        {"position_score_tracks": {
             "resource_query": "pos", "aggregator": "mean"}},
         fragment_entry(aggregate={
             "mode": "fragment_length", "aggregator": "sum"}),
@@ -402,7 +402,7 @@ def test_a_value_equals_the_binning_tool_value_of_the_same_window(
     run_definition.write_text(yaml.safe_dump({
         "reference_genome": "genome",
         "bins": {"bin_size": 12, "regions": ["chr1:13-24"]},
-        "binners": binners,
+        "tracks": entries,
     }))
     output = tmp_path / "bins.h5"
     binning_tool([
@@ -410,7 +410,7 @@ def test_a_value_equals_the_binning_tool_value_of_the_same_window(
         "--grr-directory", str(grr_dir), "-j", "1"])
 
     result = annotate(
-        tracks_pipeline(repo, binners), Region("chr1", 13, 24))
+        tracks_pipeline(repo, entries), Region("chr1", 13, 24))
 
     assert read_values(output).tolist() == [
         [result["track_0_0"], result["track_1_0"]]]
@@ -424,15 +424,15 @@ def test_a_local_meta_file_is_refused_before_it_is_read(
 
     with pytest.raises(AnnotationConfigurationError) as excinfo:
         tracks_pipeline(repo, [
-            {"position_score_binner": {
+            {"position_score_tracks": {
                 "resource_query": "pos", "aggregator": "mean"}},
-            {"fragment_score_binner": {
+            {"fragment_score_tracks": {
                 "resource_query": "frags", "group": {},
                 "meta": {"file_name": str(server_file)}}},
         ])
 
     message = str(excinfo.value)
-    assert "binners[1]" in message
+    assert "tracks[1]" in message
     assert "file_name" in message
     assert "first line of a server file" not in message
 
@@ -459,14 +459,14 @@ def test_a_non_empty_attributes_list_is_refused(
     with pytest.raises(AnnotationConfigurationError) as excinfo:
         tracks_pipeline(repo, [fragment_entry()], attributes=attributes)
 
-    assert "the binners entries define the attributes" in str(excinfo.value)
+    assert "the tracks entries define the attributes" in str(excinfo.value)
 
 
 def test_an_empty_attributes_list_gives_every_track_attribute(
     repo: GenomicResourceRepo,
 ) -> None:
     pipeline = tracks_pipeline(repo, [
-        {"position_score_binner": {
+        {"position_score_tracks": {
             "resource_query": "pos", "aggregator": "mean"}},
         fragment_entry(),
     ], attributes=[])
@@ -475,23 +475,57 @@ def test_an_empty_attributes_list_gives_every_track_attribute(
         "track_0_0", "track_1_0"]
 
 
+@pytest.mark.parametrize("tracks", [
+    {},
+    {"tracks": [fragment_entry()]},
+], ids=["binners-alone", "binners-and-tracks"])
+def test_the_renamed_binners_parameter_is_refused(
+    repo: GenomicResourceRepo, tracks: dict[str, Any],
+) -> None:
+    config = yaml.safe_dump([{"binning_tracks_annotator": {
+        "binners": [fragment_entry()], **tracks}}])
+
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        load_pipeline_from_yaml(config, repo)
+
+    assert "binners was renamed tracks; rename the key" in str(
+        excinfo.value)
+
+
+@pytest.mark.parametrize("old_kind, new_kind", [
+    ("position_score_binner", "position_score_tracks"),
+    ("fragment_score_binner", "fragment_score_tracks"),
+])
+def test_a_renamed_kind_in_the_annotator_is_refused(
+    repo: GenomicResourceRepo, old_kind: str, new_kind: str,
+) -> None:
+    entries = [fragment_entry(), {old_kind: {"resource_query": "frags"}}]
+
+    with pytest.raises(AnnotationConfigurationError) as excinfo:
+        tracks_pipeline(repo, entries)
+
+    assert (
+        f"tracks[1]: {old_kind} was renamed {new_kind}; rename the kind"
+        in str(excinfo.value))
+
+
 def test_an_entry_error_has_the_words_of_parse_run_definition(
     repo: GenomicResourceRepo,
 ) -> None:
-    binners = [fragment_entry(), {"no_such_binner": {}}]
+    entries = [fragment_entry(), {"no_such_binner": {}}]
     with pytest.raises(RunDefinitionError) as run_error:
         parse_run_definition(
-            {"bins": {"bin_size": 10}, "binners": binners}, repo,
+            {"bins": {"bin_size": 10}, "tracks": entries}, repo,
             build_reference_genome_from_resource_id("genome", repo))
 
     with pytest.raises(AnnotationConfigurationError) as excinfo:
-        tracks_pipeline(repo, binners)
+        tracks_pipeline(repo, entries)
 
-    assert "binners[1]" in str(run_error.value)
+    assert "tracks[1]" in str(run_error.value)
     assert str(run_error.value) in str(excinfo.value)
 
 
-LOCAL_CELL_GROUPING = {"fragment_score_binner": {
+LOCAL_CELL_GROUPING = {"fragment_score_tracks": {
     "resource_query": "frags",
     "group": {
         "cell_score_id": "cell", "cell_meta_column": "barcode",
@@ -523,7 +557,7 @@ def test_a_job_that_reads_a_local_file_is_refused(
         tracks_pipeline(repo, [LOCAL_CELL_GROUPING])
 
     message = str(excinfo.value)
-    assert "binners[0]" in message
+    assert "tracks[0]" in message
     assert "a pipeline has no directory of a run definition" in message
     assert not isinstance(excinfo.value.other_error, RunDefinitionError)
 
@@ -539,13 +573,13 @@ def test_the_refusal_after_resolution_holds_without_the_one_before(
     # refusal.  If the first refusal moves, move the patch with it.
     monkeypatch.setattr(
         binning_tracks_annotator, "refuse_local_file_names",
-        lambda _binners: None)
+        lambda _entries: None)
 
     with pytest.raises(AnnotationConfigurationError) as excinfo:
         tracks_pipeline(repo, [LOCAL_CELL_GROUPING])
 
     assert isinstance(excinfo.value.other_error, LocalFilesError)
-    assert str(LocalFilesError("binners[0]")) in str(excinfo.value)
+    assert str(LocalFilesError("tracks[0]")) in str(excinfo.value)
 
 
 @pytest.mark.usefixtures("readable_cells_csv")
@@ -558,4 +592,4 @@ def test_a_resolved_job_with_local_files_is_refused(
         binning_tracks_annotator.refuse_local_files(jobs)
 
     assert jobs[0].local_files
-    assert str(excinfo.value) == str(LocalFilesError("binners[0]"))
+    assert str(excinfo.value) == str(LocalFilesError("tracks[0]"))

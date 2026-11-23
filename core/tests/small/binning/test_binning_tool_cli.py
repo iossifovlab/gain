@@ -62,8 +62,8 @@ RUN_DEFINITION = textwrap.dedent("""
     bins:
       bin_size: 10
       regions: ["chr1:1-40", chr2]
-    binners:
-    - position_score_binner:
+    tracks:
+    - position_score_tracks:
         resource_query: "scores/*"
 """)
 
@@ -200,10 +200,10 @@ TWO_KIND_RUN_DEFINITION = textwrap.dedent("""
     bins:
       bin_size: 10
       regions: ["chr1:1-40", chr2]
-    binners:
-    - position_score_binner:
+    tracks:
+    - position_score_tracks:
         resource_query: "scores/one"
-    - fragment_score_binner:
+    - fragment_score_tracks:
         resource_query: "frags/s1"
         pool: false
 """)
@@ -298,10 +298,10 @@ REPEATED_RUN_DEFINITION = textwrap.dedent("""
     bins:
       bin_size: 10
       regions: ["chr1:1-40"]
-    binners:
-    - position_score_binner:
+    tracks:
+    - position_score_tracks:
         resource_query: "scores/*"
-    - position_score_binner:
+    - position_score_tracks:
         resource_query: "scores/one"
         aggregator: min
 """)
@@ -345,11 +345,11 @@ NAMED_RUN_DEFINITION = textwrap.dedent("""
     bins:
       bin_size: 10
       regions: ["chr1:1-40"]
-    binners:
-    - position_score_binner:
+    tracks:
+    - position_score_tracks:
         resource_query: "scores/one"
         name: a
-    - position_score_binner:
+    - position_score_tracks:
         resource_query: "scores/one"
         name: b
 """)
@@ -386,8 +386,8 @@ def test_dry_run_reports_a_run_definition_error_and_writes_nothing(
         reference_genome: genome
         bins:
           bin_size: 10
-        binners:
-        - position_score_binner:
+        tracks:
+        - position_score_tracks:
             resource_query: "scores/*"
             search_term: one
     """))
@@ -398,7 +398,7 @@ def test_dry_run_reports_a_run_definition_error_and_writes_nothing(
     assert excinfo.value.code == 1
     err = capsys.readouterr().err
     assert str(run_definition) in err
-    assert "binners[0]" in err
+    assert "tracks[0]" in err
     assert "search_term" in err
     assert not output.exists()
     assert not (output.parent / "bins_work").exists()
@@ -459,8 +459,8 @@ def test_the_genome_named_in_the_run_definition_defines_the_grid(
         reference_genome: {CONTEXT_GENOME}
         bins:
           bin_size: 10
-        binners:
-        - position_score_binner:
+        tracks:
+        - position_score_tracks:
             resource_query: "scores/*"
     """))
 
@@ -477,8 +477,8 @@ def test_a_run_definition_without_a_genome_is_a_parse_error(
         bins:
           bin_size: 10
           regions: ["chr1:1-40"]
-        binners:
-        - position_score_binner:
+        tracks:
+        - position_score_tracks:
             resource_query: "scores/*"
     """))
 
@@ -567,8 +567,8 @@ def test_the_context_genome_is_not_a_fallback(
         bins:
           bin_size: 10
           regions: ["chr1:1-40"]
-        binners:
-        - position_score_binner:
+        tracks:
+        - position_score_tracks:
             resource_query: "scores/*"
     """))
 
@@ -1000,8 +1000,8 @@ def test_a_set_replacement_is_named_by_its_value(
         bins:
           bin_size: 10
           regions: ["chr1:1-40"]
-        binners:
-        - position_score_binner:
+        tracks:
+        - position_score_tracks:
             resource_query: "scores/one"
             none_value_replacement: 0.0
     """))
@@ -1029,8 +1029,8 @@ def test_a_bundle_of_many_regions_is_one_task_with_a_short_id(
         bins:
           bin_size: 10
           regions: [{windows}, chr2]
-        binners:
-        - position_score_binner:
+        tracks:
+        - position_score_tracks:
             resource_query: "scores/*"
     """))
 
@@ -1079,8 +1079,8 @@ def test_a_budget_of_zero_or_less_runs_one_task_per_track(
         bins:
           bin_size: 10
           regions: [{windows}, chr2]
-        binners:
-        - position_score_binner:
+        tracks:
+        - position_score_tracks:
             resource_query: "scores/*"
     """))
 
@@ -1168,8 +1168,8 @@ MIXED_RUN_DEFINITION = textwrap.dedent("""
     bins:
       bin_size: 10
       regions: ["chr1:1-40", chr2]
-    binners:
-    - fragment_score_binner:
+    tracks:
+    - fragment_score_tracks:
         resource_query: "frags/*"
         group:
           cell_score_id: cell
@@ -1181,11 +1181,11 @@ MIXED_RUN_DEFINITION = textwrap.dedent("""
           - column: sample_id
             label: sample_id
         value: {value: 1}
-    - fragment_score_binner:
+    - fragment_score_tracks:
         resource_query: frags/s1
         pool: false
         value: {value: 1}
-    - position_score_binner:
+    - position_score_tracks:
         resource_query: scores/one
 """)
 
@@ -1341,9 +1341,9 @@ def fragment_entries(*entries: str) -> str:
         bins:
           bin_size: 10
           regions: ["chr1:1-40", chr2]
-        binners:
+        tracks:
     """) + "".join(
-        f"- fragment_score_binner: {entry}\n" for entry in entries)
+        f"- fragment_score_tracks: {entry}\n" for entry in entries)
 
 
 @pytest.mark.parametrize("first, second", [
@@ -1423,8 +1423,8 @@ def test_the_old_genome_key_is_refused_with_the_rename(
         genome_keys + "\n" + textwrap.dedent("""
             bins:
               bin_size: 10
-            binners:
-            - position_score_binner:
+            tracks:
+            - position_score_tracks:
                 resource_query: "scores/*"
         """))
 

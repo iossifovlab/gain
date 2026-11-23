@@ -68,9 +68,9 @@ def run_definition(directory: pathlib.Path, *entries: str) -> pathlib.Path:
         bins:
           bin_size: 10
           regions: ["chr1:1-40", chr2]
-        binners:
+        tracks:
     """) + "".join(
-        f"- fragment_score_binner: {entry}\n" for entry in entries))
+        f"- fragment_score_tracks: {entry}\n" for entry in entries))
     return path
 
 
@@ -98,19 +98,19 @@ def test_dry_run_reports_each_fragment_entry_and_writes_nothing(
 
     out = capsys.readouterr().out
     assert (
-        "binners[0]: fragment_score_binner\n"
+        "tracks[0]: fragment_score_tracks\n"
         "    resources: frags/lab\n"
         "    tables: meta/cells\n"
         "    groups: 2\n"
         "    tracks: 2\n") in out
     assert (
-        "binners[1]: fragment_score_binner\n"
+        "tracks[1]: fragment_score_tracks\n"
         "    resources: frags/bare, frags/lab\n"
         "    tables: meta/cells\n"
         "    groups: 3\n"
         "    tracks: 3\n") in out
     assert (
-        "binners[2]: fragment_score_binner\n"
+        "tracks[2]: fragment_score_tracks\n"
         "    resources: frags/bare\n"
         "    tables: none\n"
         "    groups: 1\n"
@@ -135,7 +135,7 @@ def test_dry_run_reports_each_fragment_entry_s_mode_and_uncovered_value(
     binning_tool(definition, grr_dir, tmp_path / "bins.h5", "--dry-run")
 
     out = capsys.readouterr().out
-    entries = out.split("binners[")[1:]
+    entries = out.split("tracks[")[1:]
     assert len(entries) == 2
     for entry in entries:
         assert (

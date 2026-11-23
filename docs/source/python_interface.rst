@@ -28,7 +28,7 @@ The chapters build bottom-up, substrate before the things that consume it:
    graph of tasks, runs it with a task executor, and lets a task cache skip
    the tasks that are already done.
 5. :doc:`development/binning` — the binning API: the spec classes of a
-   ``fragment_score_binner`` entry, the groups and the tracks of an entry
+   ``fragment_score_tracks`` entry, the groups and the tracks of an entry
    without a run, and the readers of the file of a ``binning_tool`` run.
 6. :doc:`development/module_index` — the complete generated API tree, for when
    you already know the name you are looking for.

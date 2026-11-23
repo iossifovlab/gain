@@ -36,7 +36,7 @@ def grouped_job(
 ) -> BinningJob:
     (job,) = parse_run_definition({
         "bins": {"bin_size": BIN_SIZE},
-        "binners": [{"fragment_score_binner": BY_CLASS}],
+        "tracks": [{"fragment_score_tracks": BY_CLASS}],
     }, repo, genome).jobs
     return job
 

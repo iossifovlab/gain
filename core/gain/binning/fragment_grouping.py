@@ -1,4 +1,4 @@
-"""The configuration side of the ``fragment_score_binner`` track kind.
+"""The configuration side of the ``fragment_score_tracks`` track kind.
 
 The GRR convention's constants for single-cell fragment resources, the
 spec classes of an entry (:class:`FragmentEntry` and its blocks), the
@@ -840,7 +840,7 @@ CONSTANT_GROUP_META = (
 
 @dataclass(frozen=True)
 class FragmentEntry:
-    """A ``fragment_score_binner`` entry of a run definition.
+    """A ``fragment_score_tracks`` entry of a run definition.
 
     Attributes
     ----------
@@ -929,7 +929,7 @@ def _located[Made](
 
 
 def _entry_from_config(label: str, config: Any) -> FragmentEntry:
-    """Read the inner config of a ``fragment_score_binner`` entry."""
+    """Read the inner config of a ``fragment_score_tracks`` entry."""
     check_keys(label, config, ENTRY_KEYS)
     name = entry_name(label, config)
     return _located(

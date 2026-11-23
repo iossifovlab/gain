@@ -1,5 +1,5 @@
 # pylint: disable=C0114,C0116
-"""The spec classes of a ``fragment_score_binner`` entry.
+"""The spec classes of a ``fragment_score_tracks`` entry.
 
 A notebook user builds a :class:`FragmentEntry` by hand.  The run
 definition builds the same object with ``entry_from_config``.
@@ -23,7 +23,7 @@ from gain.binning import (
 )
 from gain.binning.fragment_score_tracks import FragmentScoreTracks
 
-LABEL = "binners[0]"
+LABEL = "tracks[0]"
 QUERY = "frags/*"
 
 FORMS: list[tuple[str, dict[str, Any], FragmentEntry]] = [
@@ -93,152 +93,152 @@ def entry(**keys: Any) -> dict[str, Any]:
 REFUSALS: list[tuple[str, dict[str, Any], str, Callable[[], object]]] = [
     # group
     ("constant group name",
-     entry(group={"group": ""}), "binners[0].group",
+     entry(group={"group": ""}), "tracks[0].group",
      lambda: ConstantGroup("")),
     ("value grouping score",
-     entry(group={"group_score_id": 3}), "binners[0].group",
+     entry(group={"group_score_id": 3}), "tracks[0].group",
      lambda: ValueGrouping(cast(Any, 3))),
     ("cell grouping score",
-     entry(group={"cell_score_id": ""}), "binners[0].group",
+     entry(group={"cell_score_id": ""}), "tracks[0].group",
      lambda: CellGrouping(cell_score_id="")),
     ("cell grouping barcode column",
-     entry(group={"cell_meta_column": None}), "binners[0].group",
+     entry(group={"cell_meta_column": None}), "tracks[0].group",
      lambda: CellGrouping(cell_meta_column=cast(Any, None))),
     ("cell grouping group column",
-     entry(group={"group_meta_column": ""}), "binners[0].group",
+     entry(group={"group_meta_column": ""}), "tracks[0].group",
      lambda: CellGrouping(group_meta_column="")),
     # aggregate
     ("unknown mode",
-     entry(aggregate={"mode": "fragment_end"}), "binners[0].aggregate",
+     entry(aggregate={"mode": "fragment_end"}), "tracks[0].aggregate",
      lambda: Aggregate("fragment_end")),
     ("aggregator not a string",
-     entry(aggregate={"aggregator": 1}), "binners[0].aggregate",
+     entry(aggregate={"aggregator": 1}), "tracks[0].aggregate",
      lambda: Aggregate(aggregator=cast(Any, 1))),
     ("aggregator not a number",
-     entry(aggregate={"aggregator": "join"}), "binners[0].aggregate",
+     entry(aggregate={"aggregator": "join"}), "tracks[0].aggregate",
      lambda: Aggregate(aggregator="join")),
     ("uncovered_value in fragment_start mode",
-     entry(aggregate={"uncovered_value": 0}), "binners[0].aggregate",
+     entry(aggregate={"uncovered_value": 0}), "tracks[0].aggregate",
      lambda: Aggregate(uncovered_value=0)),
     ("null uncovered_value in fragment_start mode",
-     entry(aggregate={"uncovered_value": None}), "binners[0].aggregate",
+     entry(aggregate={"uncovered_value": None}), "tracks[0].aggregate",
      lambda: Aggregate(uncovered_value=None)),
     ("count in a length mode",
      entry(aggregate={"mode": "fragment_length", "aggregator": "count"}),
-     "binners[0].aggregate",
+     "tracks[0].aggregate",
      lambda: Aggregate("fragment_length", "count")),
     ("power aggregator in a length mode",
      entry(aggregate={"mode": "coverage_profile", "aggregator": "product"}),
-     "binners[0].aggregate",
+     "tracks[0].aggregate",
      lambda: Aggregate("coverage_profile", "product")),
     ("NaN uncovered_value",
      entry(aggregate={"mode": "coverage_profile",
                       "uncovered_value": float("nan")}),
-     "binners[0].aggregate",
+     "tracks[0].aggregate",
      lambda: Aggregate("coverage_profile", uncovered_value=float("nan"))),
     ("boolean uncovered_value",
      entry(aggregate={"mode": "fragment_length", "uncovered_value": True}),
-     "binners[0].aggregate",
+     "tracks[0].aggregate",
      lambda: Aggregate("fragment_length", uncovered_value=True)),
     # meta
     ("no meta source",
-     entry(group={}, meta={"filter": []}), "binners[0].meta",
+     entry(group={}, meta={"filter": []}), "tracks[0].meta",
      MetaSource),
     ("two meta sources",
      entry(group={}, meta={"resource_id": "m", "file_name": "m.csv"}),
-     "binners[0].meta",
+     "tracks[0].meta",
      lambda: MetaSource(resource_id="m", file_name="m.csv")),
     ("file key with a resource",
      entry(group={}, meta={"resource_id": "m", "file_format": "csv"}),
-     "binners[0].meta",
+     "tracks[0].meta",
      lambda: MetaSource(resource_id="m", file_format="csv")),
     ("empty resource_id",
-     entry(group={}, meta={"resource_id": ""}), "binners[0].meta",
+     entry(group={}, meta={"resource_id": ""}), "tracks[0].meta",
      lambda: MetaSource(resource_id="")),
     ("resource_label not a string",
-     entry(group={}, meta={"resource_label": ["a"]}), "binners[0].meta",
+     entry(group={}, meta={"resource_label": ["a"]}), "tracks[0].meta",
      lambda: MetaSource(resource_label=cast(Any, ["a"]))),
     ("empty file_name",
-     entry(group={}, meta={"file_name": ""}), "binners[0].meta",
+     entry(group={}, meta={"file_name": ""}), "tracks[0].meta",
      lambda: MetaSource(file_name="")),
     ("empty file_format",
      entry(group={}, meta={"file_name": "m", "file_format": ""}),
-     "binners[0].meta",
+     "tracks[0].meta",
      lambda: MetaSource(file_name="m", file_format="")),
     ("unknown file_format",
      entry(group={}, meta={"file_name": "m", "file_format": "parquet"}),
-     "binners[0].meta",
+     "tracks[0].meta",
      lambda: MetaSource(file_name="m", file_format="parquet")),
     ("separator of an excel file",
      entry(group={}, meta={"file_name": "m.xlsx", "file_separator": ";"}),
-     "binners[0].meta",
+     "tracks[0].meta",
      lambda: MetaSource(file_name="m.xlsx", file_separator=";")),
     ("empty file_separator",
      entry(group={}, meta={"file_name": "m.csv", "file_separator": ""}),
-     "binners[0].meta",
+     "tracks[0].meta",
      lambda: MetaSource(file_name="m.csv", file_separator="")),
     # meta filter
     ("filter column",
      entry(group={}, meta={"resource_id": "m",
                            "filter": [{"column": "", "value": "a"}]}),
-     "binners[0].meta.filter[0]",
+     "tracks[0].meta.filter[0]",
      lambda: MetaFilter("", value="a")),
     ("filter value and label",
      entry(group={}, meta={"resource_id": "m", "filter": [
          {"column": "c", "value": "a", "label": "b"}]}),
-     "binners[0].meta.filter[0]",
+     "tracks[0].meta.filter[0]",
      lambda: MetaFilter("c", value="a", label="b")),
     ("filter label",
      entry(group={}, meta={"resource_id": "m",
                            "filter": [{"column": "c", "label": ""}]}),
-     "binners[0].meta.filter[0]",
+     "tracks[0].meta.filter[0]",
      lambda: MetaFilter("c", label="")),
     ("filter without an operand",
      entry(group={}, meta={"resource_id": "m",
                            "filter": [{"column": "c"}]}),
-     "binners[0].meta.filter[0]",
+     "tracks[0].meta.filter[0]",
      lambda: MetaFilter("c")),
     ("filter column with two operands",
      entry(group={}, meta={"resource_id": "m", "filter": [
          {"column": "", "value": "a", "label": "b"}]}),
-     "binners[0].meta.filter[0]",
+     "tracks[0].meta.filter[0]",
      lambda: MetaFilter("", value="a", label="b")),
     ("empty filter value",
      entry(group={}, meta={"resource_id": "m",
                            "filter": [{"column": "c", "value": ""}]}),
-     "binners[0].meta.filter[0]",
+     "tracks[0].meta.filter[0]",
      lambda: MetaFilter("c", value="")),
     # value
     ("constant not a number",
-     entry(value={"value": "1"}), "binners[0].value",
+     entry(value={"value": "1"}), "tracks[0].value",
      lambda: ConstantContribution(cast(Any, "1"))),
     ("boolean constant",
-     entry(value={"value": True}), "binners[0].value",
+     entry(value={"value": True}), "tracks[0].value",
      lambda: ConstantContribution(value=True)),
     ("contribution score",
-     entry(value={"score_id": ""}), "binners[0].value",
+     entry(value={"score_id": ""}), "tracks[0].value",
      lambda: ScoreContribution("")),
     # entry
     ("meta with a value grouping",
      entry(group={"group_score_id": "cell"}, meta={"resource_id": "m"}),
-     "binners[0]",
+     "tracks[0]",
      lambda: FragmentEntry(
          QUERY, group=ValueGrouping("cell"),
          meta=MetaSource(resource_id="m"))),
     ("meta with a constant group",
      entry(group={"group": "all"}, meta={"resource_id": "m"}),
-     "binners[0]",
+     "tracks[0]",
      lambda: FragmentEntry(
          QUERY, group=ConstantGroup("all"),
          meta=MetaSource(resource_id="m"))),
     ("pool not a boolean",
-     entry(pool="yes"), "binners[0]",
+     entry(pool="yes"), "tracks[0]",
      lambda: FragmentEntry(QUERY, pool=cast(Any, "yes"))),
     ("missing resource_query",
-     {"group": {}}, "binners[0]",
+     {"group": {}}, "tracks[0]",
      lambda: FragmentEntry(cast(Any, None))),
     ("search_term not a string",
-     entry(search_term=3), "binners[0]",
+     entry(search_term=3), "tracks[0]",
      lambda: FragmentEntry(QUERY, search_term=cast(Any, 3))),
 ]
 
@@ -384,7 +384,7 @@ def test_a_null_meta_source_is_refused_by_its_key(key: str) -> None:
             LABEL, entry(group={}, meta={key: None}))
 
     assert str(parsed.value) == (
-        f"binners[0].meta: {key} must be a non-empty string, not None")
+        f"tracks[0].meta: {key} must be a non-empty string, not None")
 
 
 def test_a_filter_without_an_operand_is_refused() -> None:
@@ -419,7 +419,7 @@ def test_a_null_filter_label_is_refused_by_its_key() -> None:
             "filter": [{"column": "sample", "label": None}]}))
 
     assert str(parsed.value) == (
-        "binners[0].meta.filter[0]: label must be a non-empty string, "
+        "tracks[0].meta.filter[0]: label must be a non-empty string, "
         "not None")
 
 

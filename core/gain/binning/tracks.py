@@ -88,13 +88,13 @@ class RunDefinitionError(ValueError):
     """A run definition that cannot be resolved into a run."""
 
 
-TRACK_KIND_SUFFIX = "_binner"
+TRACK_KIND_SUFFIX = "_tracks"
 
 
 def entry_type_of(kind: str) -> str:
     """The ``binner_type`` the file records for a registered ``kind``.
 
-    The kind without its ``_binner`` suffix: ``position_score_binner``
+    The kind without its ``_tracks`` suffix: ``position_score_tracks``
     is ``position_score``.  The one place the two names are mapped.
     """
     return kind.removesuffix(TRACK_KIND_SUFFIX)
@@ -163,7 +163,7 @@ class Track:
 
     ``binner_type`` names the kind that produces the column
     (:func:`entry_type_of`).  ``binner_index`` is the entry's position
-    in the run definition's ``binners`` list and ``track_index`` the
+    in the run definition's ``tracks`` list and ``track_index`` the
     track's position among all tracks of that entry, in output order.
     ``definition`` holds what is specific to the kind; it is written to
     the file as ``binner_def``.
@@ -198,7 +198,7 @@ class BinningJob:
     order; the block a binding returns for a region has one column per
     track.
     ``entry`` labels the run-definition entry the job was resolved from
-    (``binners[2]``), set when the run definition is parsed.
+    (``tracks[2]``), set when the run definition is parsed.
     """
 
     kind: str
@@ -231,7 +231,7 @@ def tracks_frame(jobs: Sequence[BinningJob]) -> pd.DataFrame:
     """Give the ``/tracks`` rows of ``jobs``: one row per track, in order.
 
     ``binner_type`` is the kind, ``binner_index`` the entry's position
-    in the ``binners`` list and ``track_index`` the track's position in
+    in the ``tracks`` list and ``track_index`` the track's position in
     that entry.  ``resource_ids`` is the comma-separated list of the
     resources a track is computed from, in resource-id order.  A
     resource id never holds a comma.  ``selector`` picks the track in
@@ -294,7 +294,7 @@ class TrackKind(Protocol):
         """Resolve one run-definition entry into jobs.
 
         The entry's tracks are the jobs' tracks, in order.
-        ``label`` names the entry in error messages (``binners[2]``).
+        ``label`` names the entry in error messages (``tracks[2]``).
         ``base_dir`` is the run definition's directory, passed only when
         the run definition was read from a file; a kind that reads a
         local file resolves a relative path against it.
@@ -589,7 +589,7 @@ class PositionScoreBinding:
 class PositionScoreTracks:
     """Bins ``position_score`` resources matched by a ``resource_query``."""
 
-    kind: ClassVar[str] = "position_score_binner"
+    kind: ClassVar[str] = "position_score_tracks"
 
     @staticmethod
     def load_def(text: str) -> PositionScoreDef:

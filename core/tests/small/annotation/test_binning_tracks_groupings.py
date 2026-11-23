@@ -105,7 +105,7 @@ def tracks_pipeline(
     repo: GenomicResourceRepo, *entries: dict[str, Any],
 ) -> AnnotationPipeline:
     config = yaml.safe_dump([{"binning_tracks_annotator": {
-        "binners": [{"fragment_score_binner": entry}
+        "tracks": [{"fragment_score_tracks": entry}
                     for entry in entries]}}])
     return load_pipeline_from_yaml(config, repo)
 

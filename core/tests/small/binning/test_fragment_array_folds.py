@@ -46,7 +46,7 @@ from gain.genomic_resources.testing.table_score_builder import a_fragment_score
 from gain.utils.regions import BedRegion
 
 BIN_SIZE = 10
-KIND = "fragment_score_binner"
+KIND = "fragment_score_tracks"
 AGGREGATORS = ["count", "sum", "mean", "max", "min", "median", "product"]
 
 
@@ -56,7 +56,7 @@ def bound_block(
 ) -> tuple[np.ndarray, dict[tuple[str, str], int]]:
     run = parse_run_definition({
         "bins": {"bin_size": BIN_SIZE},
-        "binners": [{KIND: entry}],
+        "tracks": [{KIND: entry}],
     }, repo, genome)
     (job,) = run.jobs
     track_kind = discover_track_kinds()[job.kind]

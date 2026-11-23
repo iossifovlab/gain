@@ -1,5 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
-"""``fragment_score_binner`` in ``coverage_profile`` mode, at the binner.
+"""``fragment_score_tracks`` in ``coverage_profile`` mode, at the binner.
 
 Each track's fragments, clipped to the region, make a coverage profile
 -- per position, the sum of the values of the fragments over it -- and
@@ -254,7 +254,7 @@ def test_a_coverage_aggregate_it_cannot_honour_is_refused(
         parse_fragment_entry(coverage(**aggregate), repo, genome)
 
     message = str(excinfo.value)
-    assert message.startswith("binners[0].aggregate")
+    assert message.startswith("tracks[0].aggregate")
     for fragment in fragments:
         assert fragment in message
 

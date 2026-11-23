@@ -7,8 +7,8 @@ bins x tracks matrix.
 ## Sub-features
 
 - Positional `run_definition`: a YAML file with `reference_genome`,
-  `bins` (here `bin_size: 5`) and a list of `binners` (here one
-  `position_score_binner` over `mini_positionscore_bw`).
+  `bins` (here `bin_size: 5`) and a list of `tracks` (here one
+  `position_score_tracks` over `mini_positionscore_bw`).
 - `-o OUTPUT`: the HDF5 file. Default: the run definition with an `.h5`
   suffix, beside it.
 - `-w WORK_DIR`: the per-chunk intermediate files. Default: a sibling of
@@ -30,8 +30,8 @@ A user writes `bin.yaml`:
 reference_genome: mini_genome
 bins:
   bin_size: 5
-binners:
-- position_score_binner:
+tracks:
+- position_score_tracks:
     resource_query: mini_positionscore_bw
 ```
 

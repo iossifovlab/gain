@@ -1,5 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
-"""``fragment_score_binner`` resolved through the GRR label convention.
+"""``fragment_score_tracks`` resolved through the GRR label convention.
 
 The convention (F7): a fragment resource labelled with
 ``CELL_META_RESOURCE_ID_LABEL`` names its cell-metadata ``data_frame``,
@@ -61,7 +61,7 @@ from tests.small.binning.conftest import (
 )
 
 BIN_SIZE = 10
-KIND = "fragment_score_binner"
+KIND = "fragment_score_tracks"
 CHR1 = BedRegion("chr1", 1, 40)
 S1_COUNT_BY_CLASS = [[1.0, 1.0], [0.0, 1.0], [0.0, 0.0], [0.0, 0.0]]
 #: Label keyword arguments of ``fragments``.  Typed ``Any`` so that mypy
@@ -126,7 +126,7 @@ def parse(
 ) -> RunDefinition:
     return parse_run_definition({
         "bins": {"bin_size": BIN_SIZE},
-        "binners": [{KIND: entry}],
+        "tracks": [{KIND: entry}],
     }, repo, genome, **kwargs)
 
 
@@ -325,7 +325,7 @@ def refusal(
     with pytest.raises(RunDefinitionError) as excinfo:
         parse(entry, repo, genome)
     message = str(excinfo.value)
-    assert message.startswith("binners[0]")
+    assert message.startswith("tracks[0]")
     return message
 
 
@@ -655,5 +655,5 @@ def test_a_file_format_that_is_not_text_is_refused_naming_the_entry(
             "filter": BY_SAMPLE}}, repo, genome, base_dir=str(tmp_path))
 
     message = str(excinfo.value)
-    assert message.startswith("binners[0]")
+    assert message.startswith("tracks[0]")
     assert "file_format" in message

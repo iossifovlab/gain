@@ -279,7 +279,7 @@ def test_a_region_product_agrees_with_the_binner_over_long_runs(
         definition=PositionScoreDef(
             aggregator="product",
             none_value_replacement=None))
-    job = BinningJob(kind="position_score_binner", tracks=(track,))
+    job = BinningJob(kind="position_score_tracks", tracks=(track,))
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - position_score:
             resource_id: long_runs

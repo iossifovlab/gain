@@ -1,4 +1,4 @@
-"""The groups and the tracks of a ``fragment_score_binner`` entry.
+"""The groups and the tracks of a ``fragment_score_tracks`` entry.
 
 A notebook user reads what ``binning_tool`` would bin for one entry,
 without a run: :func:`cell_groups` gives the group of each cell, and
@@ -64,14 +64,14 @@ def cell_groups(
     The key of a cell grouping is the barcode of a cell.  The key of a
     value grouping is a value of its score.  A fragment with a key that
     no row lists reaches no track.  Each refusal names the entry as
-    ``binners[0]``.
+    ``tracks[0]``.
 
     Parameters
     ----------
     repo
         The repository that the query of the entry searches.
     entry
-        The entry, or the mapping under the ``fragment_score_binner``
+        The entry, or the mapping under the ``fragment_score_tracks``
         key of an entry in a run definition.
     base_dir
         The directory that a relative local ``meta`` file is read from.
@@ -89,7 +89,7 @@ def cell_groups(
     RunDefinitionError
         When ``binning_tool`` refuses the entry.
     """
-    jobs = _entry_jobs("binners[0]", entry, repo, base_dir)
+    jobs = _entry_jobs("tracks[0]", entry, repo, base_dir)
     return pd.DataFrame(
         [row for job in jobs for row in _job_groups(job, repo)],
         columns=list(CELL_GROUPS_COLUMNS))
@@ -113,12 +113,12 @@ def fragment_tracks(
     repo
         The repository that the query of the entry searches.
     entry
-        The entry, or the mapping under the ``fragment_score_binner``
+        The entry, or the mapping under the ``fragment_score_tracks``
         key of an entry in a run definition.
     binner_index
-        The position of the entry in the ``binners`` list.  It is the
+        The position of the entry in the ``tracks`` list.  It is the
         ``binner_index`` of each row, and each refusal names the entry
-        as ``binners[<binner_index>]``.
+        as ``tracks[<binner_index>]``.
     base_dir
         The directory that a relative local ``meta`` file is read from.
         ``None`` is the current directory.
@@ -134,6 +134,6 @@ def fragment_tracks(
     RunDefinitionError
         When ``binning_tool`` refuses the entry.
     """
-    label = f"binners[{binner_index}]"
+    label = f"tracks[{binner_index}]"
     jobs = _entry_jobs(label, entry, repo, base_dir)
     return tracks_frame(name_job_tracks([(label, job) for job in jobs]))

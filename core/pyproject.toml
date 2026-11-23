@@ -73,8 +73,8 @@ binning_tool_view = "gain.binning.view_cli:cli"
 to_gpf_gene_models_format = "gain.genomic_resources.gene_models.to_gpf_gene_models_format:main"
 
 [project.entry-points."gain.binning.track_kinds"]
-position_score_binner = "gain.binning.tracks:PositionScoreTracks"
-fragment_score_binner = "gain.binning.fragment_score_tracks:FragmentScoreTracks"
+position_score_tracks = "gain.binning.tracks:PositionScoreTracks"
+fragment_score_tracks = "gain.binning.fragment_score_tracks:FragmentScoreTracks"
 
 [project.entry-points."gain.genomic_resources.plugins"]
 default_grr = "gain.genomic_resources.genomic_context:DefaultRepositoryContextProvider"

@@ -39,8 +39,8 @@ cat > "$scratch/view-bin.yaml" <<'YAML'
 reference_genome: mini_genome
 bins:
   bin_size: 5
-binners:
-- position_score_binner:
+tracks:
+- position_score_tracks:
     resource_query: mini_positionscore_bw
 YAML
 cp "$scratch/view-bin.yaml" "$evidence/bin.yaml"

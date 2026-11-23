@@ -1,6 +1,6 @@
 """Bin position scores into a fixed genome grid (``binning_tool``).
 
-A notebook user builds a ``fragment_score_binner`` entry from the spec
+A notebook user builds a ``fragment_score_tracks`` entry from the spec
 classes, :class:`FragmentEntry` and its blocks.  :func:`cell_groups`
 and :func:`fragment_tracks` give the groups and the tracks of an entry
 without a run, and the ``read_*`` functions read the file of a run.
@@ -31,6 +31,13 @@ package.
   of the new ``fragment_api`` module, and ``read_tracks``,
   ``read_bins``, ``read_values`` and ``track_labels`` of ``h5_reader``.
 * gain#2494: ``resolve_binners`` is now ``resolve_tracks``, see ADR 0044.
+* gain#2495: the track kinds ``position_score_binner`` and
+  ``fragment_score_binner`` are now ``position_score_tracks`` and
+  ``fragment_score_tracks``: the ``kind`` of ``PositionScoreTracks`` and
+  ``FragmentScoreTracks`` and the names in the ``gain.binning.track_kinds``
+  group.  ``TRACK_KIND_SUFFIX`` is ``"_tracks"``.  The ``binners`` key of
+  a run definition is now ``tracks``, and an entry label is
+  ``tracks[<i>]``.
 """
 from gain.binning.fragment_api import cell_groups, fragment_tracks
 from gain.binning.fragment_grouping import (

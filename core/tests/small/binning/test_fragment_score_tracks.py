@@ -1,5 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
-"""``fragment_score_binner``: entries, tracks and the blocks they bin to.
+"""``fragment_score_tracks``: entries, tracks and the blocks they bin to.
 
 The toy fragments and the cell table are the conftest's ``S1_FRAGMENTS``,
 ``S2_FRAGMENTS`` and ``CELL_META``; bins are 10 wide, so on chr1 the
@@ -45,7 +45,7 @@ from gain.utils.regions import BedRegion
 from tests.small.binning.conftest import CELL_META, S1_FRAGMENTS, kind_def
 
 BIN_SIZE = 10
-KIND = "fragment_score_binner"
+KIND = "fragment_score_tracks"
 
 
 def parse_fragment_entry(
@@ -54,7 +54,7 @@ def parse_fragment_entry(
 ) -> RunDefinition:
     return parse_run_definition({
         "bins": {"bin_size": BIN_SIZE},
-        "binners": [{KIND: entry}],
+        "tracks": [{KIND: entry}],
     }, repo, genome)
 
 
@@ -188,7 +188,7 @@ def test_a_value_given_in_aggregate_is_refused_naming_the_value_key(
             repo, genome)
 
     message = str(excinfo.value)
-    assert message.startswith("binners[0].aggregate")
+    assert message.startswith("tracks[0].aggregate")
     assert moved_to in message
 
 
@@ -203,7 +203,7 @@ def test_an_unknown_mode_is_refused_naming_the_modes(
             repo, genome)
 
     message = str(excinfo.value)
-    assert message.startswith("binners[0].aggregate")
+    assert message.startswith("tracks[0].aggregate")
     assert repr(mode) in message
     assert ("use one of fragment_start, fragment_length, "
             "coverage_profile") in message
@@ -243,7 +243,7 @@ def test_a_length_aggregate_it_cannot_honour_is_refused(
         parse_fragment_entry(length_entry(**aggregate), repo, genome)
 
     message = str(excinfo.value)
-    assert message.startswith("binners[0].aggregate")
+    assert message.startswith("tracks[0].aggregate")
     for fragment in fragments:
         assert fragment in message
 
@@ -262,7 +262,7 @@ def test_an_uncovered_value_in_fragment_start_mode_is_refused(
             repo, genome)
 
     message = str(excinfo.value)
-    assert message.startswith("binners[0].aggregate")
+    assert message.startswith("tracks[0].aggregate")
     assert "uncovered_value does not apply in fragment_start mode" in message
     assert "give mode: fragment_length or coverage_profile" in message
 
@@ -499,9 +499,9 @@ def test_a_pooled_mean_is_over_the_merged_fragments(
     ({"resource_query": "frags/s1", "pool": "no"}, ["pool"]),
     # /values is one float64 matrix (D11).
     ({"resource_query": "frags/s1", "value": {"score_id": "cell"}},
-     ["binners[0].value", "'cell'", "'str'"]),
+     ["tracks[0].value", "'cell'", "'str'"]),
     ({"resource_query": "frags/s1", "value": {"score_id": "reads"}},
-     ["binners[0].value", "'reads'"]),
+     ["tracks[0].value", "'reads'"]),
     ({"resource_query": "frags/s1", "value": {"score_id": "count"},
       "aggregate": {"aggregator": "mode"}},
      ["aggregator 'mode' does not produce a number", "sum"]),
@@ -509,32 +509,32 @@ def test_a_pooled_mean_is_over_the_merged_fragments(
       "aggregate": {"aggregator": "join(,)"}},
      ["aggregator 'join(,)' does not produce a number"]),
     ({"resource_query": "frags/s1", "value": {"value": "two"}},
-     ["binners[0].value", "value must be a number", "'two'"]),
+     ["tracks[0].value", "value must be a number", "'two'"]),
     ({"resource_query": "frags/s1", "value": {"value": True}},
-     ["binners[0].value", "value must be a number", "True"]),
+     ["tracks[0].value", "value must be a number", "True"]),
     # A YAML list where a name belongs is refused, not an unhashable crash.
     ({"resource_query": "frags/s1", "aggregate": {"aggregator": ["sum"]}},
-     ["binners[0].aggregate", "aggregator", "['sum']"]),
+     ["tracks[0].aggregate", "aggregator", "['sum']"]),
     ({"resource_query": "frags/s1", "value": {"score_id": ["count"]}},
-     ["binners[0].value", "score_id", "['count']"]),
+     ["tracks[0].value", "score_id", "['count']"]),
     ({"resource_query": "frags/s1", "value": {"scor": "count"}},
-     ["binners[0].value", "'scor'"]),
+     ["tracks[0].value", "'scor'"]),
     ({"resource_query": "frags/s1", "aggregate": {"modus": "sum"}},
-     ["binners[0].aggregate", "'modus'"]),
+     ["tracks[0].aggregate", "'modus'"]),
     ({"resource_query": "frags/s1",
       "value": {"score_id": "count", "value": 1}},
-     ["binners[0].value", "score_id", "value", "not both"]),
+     ["tracks[0].value", "score_id", "value", "not both"]),
     ({"resource_query": "frags/s1", "value": {}},
-     ["binners[0].value", "give one of score_id or value"]),
+     ["tracks[0].value", "give one of score_id or value"]),
     ({"resource_query": "frags/s1",
       "group": {"group": "bulk", **BY_CLASS}, "meta": BY_SAMPLE_LABEL},
-     ["binners[0].group", "not both"]),
+     ["tracks[0].group", "not both"]),
     ({"resource_query": "frags/s1", "group": {"group": ""}}, ["group"]),
     ({"resource_query": "frags/s1", "group": BY_CLASS}, ["meta"]),
     ({"resource_query": "frags/s1", "meta": BY_SAMPLE_LABEL}, ["meta"]),
     ({"resource_query": "frags/s1", "group": BY_CLASS,
       "meta": {"resource_id": "meta/cells", "where": []}},
-     ["binners[0].meta", "'where'"]),
+     ["tracks[0].meta", "'where'"]),
     ({"resource_query": "frags/s1", "group": BY_CLASS,
       "meta": {"resource_id": "scores/one"}}, ["'scores/one'"]),
     ({"resource_query": "frags/s1",
@@ -546,7 +546,7 @@ def test_a_pooled_mean_is_over_the_merged_fragments(
     ({"resource_query": "frags/s1", "group": BY_CLASS,
       "meta": {"resource_id": "meta/cells", "filter": [
           {"column": "sample_id", "value": "S1", "label": "sample_id"}]}},
-     ["binners[0].meta.filter[0]", "one of value or label"]),
+     ["tracks[0].meta.filter[0]", "one of value or label"]),
     ({"resource_query": "frags/s1", "group": BY_CLASS,
       "meta": {"resource_id": "meta/cells", "filter": [
           {"column": "sample_id", "label": "donor"}]}},
@@ -565,7 +565,7 @@ def test_a_malformed_fragment_entry_is_a_parse_error_naming_what_is_wrong(
         parse_fragment_entry(entry, repo, genome)
 
     message = str(excinfo.value)
-    assert message.startswith("binners[0]")
+    assert message.startswith("tracks[0]")
     for fragment in fragments:
         assert fragment in message
 
@@ -638,9 +638,9 @@ def test_one_track_under_two_aggregators_carries_each_aggregator(
     # position-score track beside them keeps its bare id.
     config = {
         "bins": {"bin_size": BIN_SIZE},
-        "binners": [
+        "tracks": [
             {KIND: grouped_s1()},
-            {"position_score_binner": {"resource_query": "scores/one"}},
+            {"position_score_tracks": {"resource_query": "scores/one"}},
             {KIND: grouped_s1(
                 value={"score_id": "count"},
                 aggregate={"aggregator": "mean"})},
@@ -661,7 +661,7 @@ def test_one_track_twice_under_one_aggregator_is_refused(
 ) -> None:
     config = {
         "bins": {"bin_size": BIN_SIZE},
-        "binners": [
+        "tracks": [
             {KIND: {"resource_query": "frags/s1", "pool": False}},
             {KIND: {"resource_query": "frags/s1", "pool": False,
                     "value": {"value": 2}}},
@@ -673,8 +673,8 @@ def test_one_track_twice_under_one_aggregator_is_refused(
 
     message = str(excinfo.value)
     assert "'frags/s1:all:sum'" in message
-    assert "binners[0]" in message
-    assert "binners[1]" in message
+    assert "tracks[0]" in message
+    assert "tracks[1]" in message
 
 
 @pytest.mark.parametrize("entry", [
