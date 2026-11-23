@@ -2,8 +2,10 @@
 
 - **Status:** accepted
 - **Date:** 2026-11-23
-- **Issues:** none yet. The extended search issues follow from the design
-  session of 2026-11-23, and this record gets their numbers when they are filed.
+- **Issues:** [gain#2501](https://github.com/iossifovlab/gain/issues/2501) (the
+  `search.yaml` config and the dialog), with
+  [gain#2502](https://github.com/iossifovlab/gain/issues/2502) to
+  [gain#2505](https://github.com/iossifovlab/gain/issues/2505)
 
 ## Context
 
