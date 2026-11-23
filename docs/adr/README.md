@@ -104,7 +104,7 @@ of one decision will drift.
 | [0040](0040-gain-core-is-distributed-through-pypi-and-bioconda.md) | `gain-core` is distributed through PyPI and bioconda | accepted |
 | [0041](0041-the-annotation-layer-may-call-the-binners.md) | The annotation layer may call the binners | accepted |
 | [0042](0042-onnx-runtime-is-the-default-spliceai-backend.md) | ONNX Runtime is the default SpliceAI backend, and TensorFlow is optional | accepted |
-| [0043](0043-the-search-index-carries-each-resources-labels-in-their-rendered-form.md) | The search index carries each resource's labels in their rendered form | proposed |
+| [0043](0043-the-search-index-carries-each-resources-labels-in-their-rendered-form.md) | The search index carries each resource's labels in their rendered form | accepted |
 | [0044](0044-a-track-kind-replaces-the-binner.md) | A track kind replaces the binner | accepted |
 
 > **Note:** `0003` was allocated twice, by two changes that landed the same day.

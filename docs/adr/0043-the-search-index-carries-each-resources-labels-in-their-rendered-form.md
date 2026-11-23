@@ -1,6 +1,6 @@
 # 43. The search index carries each resource's labels in their rendered form
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-11-23
 - **Issues:** [gain#2488](https://github.com/iossifovlab/gain/issues/2488) (the
   `resource_labels` table and the JSON download), with
