@@ -7,6 +7,7 @@ import {
   BROWSE_RESOURCE_COUNT,
   FIXTURE_BROWSE_GRR,
   FIXTURE_LABELLED_GRR,
+  FIXTURE_NESTED_GRR,
   LABELLED_LIST_LABEL,
   LABELLED_NUMBER_LABEL,
   LABELLED_ONE_ITEM_RESOURCE_ID,
@@ -101,6 +102,7 @@ test('Download -> JSON writes the rows the table shows, in its order', async ({
   expect(body.repository).toBe(GRR_ORIGIN);
   expect(body.search).toEqual({
     q: LABELLED_SEARCH_TERM, type: LABELLED_SCORE_TYPE, folder: '',
+    labels: {},
   });
   expect(body.generated).toMatch(ISO_8601_UTC);
   expect(body.resources.map((r: any) => [r.id, r.version])).toEqual([
@@ -133,7 +135,8 @@ test('Download -> JSON writes an empty list label as an empty array', async ({
   const { body } = await downloadJson(page);
 
   expect(body.resources).toHaveLength(LABELLED_RESOURCE_COUNT);
-  expect(body.search).toEqual({ q: '', type: '', folder: '' });
+  expect(body.search).toEqual(
+    { q: '', type: '', folder: '', labels: {} });
   const labelled = body.resources.filter(
     (r: any) => Array.isArray(r.labels[LABELLED_LIST_LABEL])
       && r.labels[LABELLED_LIST_LABEL].length === 0);
@@ -325,7 +328,7 @@ test('in the tree, Download -> JSON writes the matches under the folder', async 
   const { name, body } = await downloadJson(page);
 
   expect(body.search).toEqual({
-    q: SCATTERED_TERM, type: '', folder: SCORES_PATH,
+    q: SCATTERED_TERM, type: '', folder: SCORES_PATH, labels: {},
   });
   expect(body.resources.map((r: any) => r.id)).toEqual(
     CONSERVATION_RESOURCE_IDS);
@@ -348,7 +351,7 @@ test('in the tree with no search, the download holds the whole folder', async ({
   const sub = await downloadJson(page);
 
   expect(whole.body.search).toEqual(
-    { q: '', type: '', folder: SCORES_PATH });
+    { q: '', type: '', folder: SCORES_PATH, labels: {} });
   expect(whole.body.resources.map((r: any) => r.id)).toEqual([
     ...CONSERVATION_RESOURCE_IDS, 'hg38/scores/coverage',
   ]);
@@ -412,10 +415,105 @@ test('back in the table, the download holds every match again', async ({
 
   await expect(downloadButton(page)).toHaveText('Download 3 ▾');
   const { name, body } = await downloadJson(page);
-  expect(body.search).toEqual({ q: SCATTERED_TERM, type: '', folder: '' });
+  expect(body.search).toEqual(
+    { q: SCATTERED_TERM, type: '', folder: '', labels: {} });
   expect(body.resources).toHaveLength(3);
   expect(body.resources.map((r: any) => r.id)).toEqual(
     expect.arrayContaining(CONSERVATION_RESOURCE_IDS));
   expect(name).toBe(
     `all-${SCATTERED_TERM}-${body.generated.slice(0, 10)}.json`);
+});
+
+/* ---- The ticks of the extended search in the download (gain#2504) ---- */
+
+/** Tick values in the dialog of the extended search, then apply them. */
+async function applyTicks(
+  page: Page, ticks: [string, string][],
+): Promise<void> {
+  await page.locator('#extended-search-btn').click();
+  const dialog = page.locator('#extended-search-dialog');
+  await expect(dialog).toBeVisible();
+  for (const [label, value] of ticks) {
+    await dialog.locator(`.facet[data-label="${label}"]`)
+      .getByRole('checkbox', { name: value }).click();
+  }
+  await dialog.locator('.es-apply').click();
+  await expect(dialog).toBeHidden();
+}
+
+/* The ticks, in an order that is not the order of the address: the
+ * facet `tissue` comes before `modality`, and `basal ganglia` before
+ * `cortex`. */
+const UNORDERED_TICKS: [string, string][] = [
+  ['modality', 'RNA'], ['tissue', 'cortex'], ['tissue', 'basal ganglia'],
+];
+
+test('in the table with ticks, Download -> JSON writes the matches and the ticks', async ({
+  page,
+}) => {
+  await openLabelledIndex(page);
+
+  await applyTicks(page, UNORDERED_TICKS);
+  await expect(downloadButton(page)).toHaveText('Download 2 ▾');
+  const shownIds = await page
+    .locator('#resource-table tbody tr:visible td.id-cell a')
+    .allTextContents();
+  const { body } = await downloadJson(page);
+
+  expect(body.resources.map((r: any) => r.version === '0'
+    ? r.id : `${r.id}(${r.version})`)).toEqual(shownIds);
+  expect(shownIds).toHaveLength(2);
+  expect(body.search).toEqual({
+    q: '', type: '', folder: '',
+    labels: { tissue: ['basal ganglia', 'cortex'], modality: ['RNA'] },
+  });
+  expect(Object.keys(body.search.labels)).toEqual(['tissue', 'modality']);
+});
+
+test('with no ticks, the search of Download -> JSON has empty labels', async ({
+  page,
+}) => {
+  await openLabelledIndex(page);
+  await search(page, LABELLED_SEARCH_TERM);
+  await expect(downloadButton(page)).toHaveText('Download 3 ▾');
+
+  const { body } = await downloadJson(page);
+
+  expect(body.search.labels).toEqual({});
+  expect(body.resources).toHaveLength(3);
+});
+
+test('at a folder with a tick in the address, Download -> JSON writes the matches under the folder', async ({
+  page,
+}) => {
+  await serveGrr(page, FIXTURE_NESTED_GRR);
+  await page.goto(`${indexPageUrl()}#/brain?label.modality=RNA`);
+  await expect(downloadButton(page)).toHaveText('Download 2 ▾');
+
+  const { body } = await downloadJson(page);
+
+  expect(body.resources.map((r: any) => r.id)).toEqual([
+    'brain/cortex/layer1', 'brain/cortex/layer2',
+  ]);
+  expect(body.search).toEqual({
+    q: '', type: '', folder: 'brain', labels: { modality: ['RNA'] },
+  });
+});
+
+test('with ticks, Download -> CSV writes the records of the JSON download', async ({
+  page,
+}) => {
+  await openLabelledIndex(page);
+  await applyTicks(page, UNORDERED_TICKS);
+  await expect(downloadButton(page)).toHaveText('Download 2 ▾');
+  const { body } = await downloadJson(page);
+
+  const { text } = await downloadFile(page, 'CSV');
+
+  const records = parseCsv(text).slice(1);
+  expect(records).toHaveLength(2);
+  expect(records).toEqual(body.resources.map((r: any) => [
+    r.id, r.type, r.version, String(r.size_bytes), r.summary,
+    JSON.stringify(r.labels),
+  ]));
 });

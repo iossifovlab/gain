@@ -326,6 +326,17 @@
         }
 
         /*
+         * The ticks as an object from the facet key to its ticked values.
+         * `ticksByFacet` keeps the order of `canonicalLabels`, and so does
+         * the object, so the file lists the ticks in the order of the
+         * address (gain#2504).
+         */
+        function labelsObject(pairs) {
+            return Object.fromEntries(
+                [...ticksByFacet(pairs)].map(([key, values]) => [key, [...values]]));
+        }
+
+        /*
          * The search that the view shows. The table shows the whole
          * repository, and the tree shows its current folder.
          */
@@ -335,6 +346,7 @@
                 q: lastSearch.q,
                 type: lastSearch.type,
                 folder: tree ? tree.folder().join("/") : "",
+                labels: labelsObject(lastSearch.labels || []),
             };
         }
 
