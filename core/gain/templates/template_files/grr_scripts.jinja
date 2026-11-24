@@ -1,3 +1,38 @@
+    <script>
+      /* The facets of the extended search (ADR 0045), and the one order
+         of the ticks (gain#2501).  A classic script, so both modules
+         below can use it, also when one of them fails to load.
+
+         `grrFacets` is the facet list that `search.yaml` names, or an
+         empty list.  `canonicalLabels` takes ticks as `[key, value]`
+         pairs and returns them in facet order, then in the code-unit
+         order of the value.  It drops a pair whose key is no facet and
+         a pair that is there twice.  One search then has one address. */
+      (function() {
+        var source = document.getElementById("search-facets");
+        var facets = source ? JSON.parse(source.textContent) : [];
+        var rank = new Map();
+        facets.forEach(function(facet, i) { rank.set(facet.label, i); });
+        window.grrFacets = facets;
+        window.canonicalLabels = function(pairs) {
+          var seen = new Set();
+          var kept = [];
+          pairs.forEach(function(pair) {
+            var key = String(pair[0]);
+            var value = String(pair[1]);
+            var id = JSON.stringify([key, value]);
+            if (!rank.has(key) || seen.has(id)) return;
+            seen.add(id);
+            kept.push([key, value]);
+          });
+          return kept.sort(function(a, b) {
+            var byFacet = rank.get(a[0]) - rank.get(b[0]);
+            if (byFacet !== 0) return byFacet;
+            return a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0;
+          });
+        };
+      })();
+    </script>
     <script type="module">
         import sqlite3 from "./{{ sqlite_wasm_module }}";
 
@@ -13,8 +48,11 @@
           const rc = await sqlite3.capi.sqlite3_deserialize(db.pointer, 'main', p, arrayBuffer.byteLength, arrayBuffer.byteLength, deserialize_flags);
           await db.checkRc(rc);
           window.sqlite3 = db;
-          window.sqlite3.query = (sql) => {
-            const rows =  window.sqlite3.exec({sql: sql, returnValue: "resultRows"});
+          // `bind` is optional: the values of the `?` placeholders.
+          window.sqlite3.query = (sql, bind) => {
+            const options = {sql: sql, returnValue: "resultRows"};
+            if (bind && bind.length) options.bind = bind;
+            const rows =  window.sqlite3.exec(options);
             console.log(`Executed query: ${sql}, got ${rows.length} rows`);
             console.log(rows);
             return rows;
@@ -121,7 +159,8 @@
          * query, and a listener that renders from the hit set would
          * believe it.
          *
-         * Nullable rather than an empty `{q: "", type: ""}`, so that
+         * Nullable rather than an empty `{q: "", type: "", labels: []}`,
+         * so that
          * "is anything filtered?" is decided here, where `doSearch`
          * already decides it, instead of a second time by every listener
          * -- across a `window` seam, where the two spellings could drift
@@ -133,7 +172,7 @@
          */
         function applyRefreshData(ids, search) {
             lastIds = ids;
-            lastSearch = search || { q: "", type: "" };
+            lastSearch = search || { q: "", type: "", labels: [] };
             refreshData(sortedIds(ids));
             for (const listener of resultListeners) {
                 listener({ search, ids });
@@ -194,7 +233,7 @@
          * The labels come from the search index, so the button is made
          * only once the index has loaded.
          */
-        let lastSearch = { q: "", type: "" };
+        let lastSearch = { q: "", type: "", labels: [] };
         let downloadButton = null;
 
         const MAX_FILE_NAME_LENGTH = 80;
@@ -287,6 +326,17 @@
         }
 
         /*
+         * The ticks as an object from the facet key to its ticked values.
+         * `ticksByFacet` keeps the order of `canonicalLabels`, and so does
+         * the object, so the file lists the ticks in the order of the
+         * address (gain#2504).
+         */
+        function labelsObject(pairs) {
+            return Object.fromEntries(
+                [...ticksByFacet(pairs)].map(([key, values]) => [key, [...values]]));
+        }
+
+        /*
          * The search that the view shows. The table shows the whole
          * repository, and the tree shows its current folder.
          */
@@ -296,6 +346,7 @@
                 q: lastSearch.q,
                 type: lastSearch.type,
                 folder: tree ? tree.folder().join("/") : "",
+                labels: labelsObject(lastSearch.labels || []),
             };
         }
 
@@ -434,13 +485,68 @@
             return {
                 q: searchField.value.trim(),
                 type: type === "all" ? "" : type,
+                // The applied ticks of the extended search, as
+                // `canonicalLabels` orders them (gain#2501).
+                labels: appliedLabels.map((pair) => [...pair]),
             };
+        }
+
+        /*
+         * The applied ticks of the extended search: `[key, value]` pairs
+         * in the order of `canonicalLabels`. The ticks of the dialog are
+         * a draft until "Show N resources" applies them.
+         */
+        let appliedLabels = [];
+
+        /** The ticks as a map from the facet key to its ticked values. */
+        function ticksByFacet(labels) {
+            const ticks = new Map();
+            for (const [key, value] of labels) {
+                if (!ticks.has(key)) ticks.set(key, new Set());
+                ticks.get(key).add(value);
+            }
+            return ticks;
+        }
+
+        /*
+         * The SQL conditions and the bind values of the ticks: one
+         * condition for each facet. The values of one facet are
+         * alternatives, so a resource holds when one of its values is
+         * ticked; a list label holds when any element is. Every value
+         * and every key is a bound parameter: label values are curator
+         * text, and they can contain a quote.
+         */
+        function labelConditions(labels) {
+            const clauses = [];
+            const bind = [];
+            for (const [key, values] of ticksByFacet(labels)) {
+                const marks = [...values].map(() => "?").join(", ");
+                clauses.push(
+                    "full_id IN (SELECT r.full_id FROM resource_labels AS r,"
+                    + ` json_each(r.labels, ?) AS v WHERE v.value IN (${marks}))`);
+                bind.push("$." + JSON.stringify(key), ...values);
+            }
+            return { clauses, bind };
+        }
+
+        /** The full ids that match the term, the type and the ticks. */
+        function queryIds(q, type, labels) {
+            const where = [];
+            if (q !== "") where.push(`contents MATCH '${q}'`);
+            if (type !== "") where.push(`type = '${type}'`);
+            const ticks = labelConditions(labels);
+            where.push(...ticks.clauses);
+            if (where.length === 0) return Array.from(window.all_ids);
+            return window.sqlite3.query(
+                `SELECT full_id FROM contents WHERE ${where.join(" AND ")}`,
+                ticks.bind).map((row) => row[0]);
         }
 
         async function doSearch() {
             await window.dbLoaded;
-            const { q, type } = currentSearch();
-            if (q === "" && type === "") {
+            const search = currentSearch();
+            const { q, type, labels } = search;
+            if (q === "" && type === "" && labels.length === 0) {
                 window.last_error = null;
                 applyRefreshData(Array.from(window.all_ids), null)
                 return;
@@ -448,21 +554,9 @@
 
             searching.style.display = "";
 
-            let query = "";
-            if (q !== "" && type !== "") {
-                query = `SELECT full_id FROM contents WHERE contents MATCH '${q}' AND type = '${type}'`
-            }
-            else if (q !== "") {
-                query = `SELECT full_id FROM contents WHERE contents MATCH '${q}'`
-            }
-            else {
-                query = `SELECT full_id FROM contents WHERE type = '${type}'`
-            }
-
             window.last_error = null;
             try {
-                const displayIds = window.sqlite3.query(query).map((row) => row[0]);
-                applyRefreshData(displayIds, { q, type });
+                applyRefreshData(queryIds(q, type, labels), search);
             }
             catch (error) {
                 window.last_error = error;
@@ -470,8 +564,8 @@
                 // Still this search, and still what it came to: a query
                 // that could not be run falls back to the whole
                 // repository, and both views have to show that rather
-                // than an empty answer.
-                applyRefreshData(Array.from(window.all_ids), { q, type })
+                // than an empty answer. The ticks still apply.
+                applyRefreshData(queryIds("", "", labels), search)
             }
             finally {
                 searching.style.display = "none";
@@ -518,7 +612,7 @@
             current: currentSearch,
 
             /** Put a search into the controls and run it. */
-            async apply({ q, type }) {
+            async apply({ q, type, labels }) {
                 // The term goes in at once. It is a text input and needs
                 // nothing that is still loading, and putting it in now
                 // means the controls tell the truth about the search for
@@ -551,10 +645,18 @@
                     // that still exists.
                     typeControl.value = "all";
                 }
+                appliedLabels = window.canonicalLabels(labels || []);
+                renderTicks();
                 await doSearch();
             },
 
-            /** Be told when the reader changes either control. */
+            /**
+             * Be told when the reader changes a control.
+             *
+             * The listener gets `{ push }`. `push` is true for a change of
+             * the ticks, which is a step that Back undoes, and false for a
+             * keystroke or a change of the type.
+             */
             onChange(listener) {
                 searchChanged = listener;
             },
@@ -585,12 +687,12 @@
          * controls, so announcing the change back would be answering its
          * own question.
          */
-        function searchFromControls() {
+        function searchFromControls({ push = false } = {}) {
             doSearch();
-            searchChanged();
+            searchChanged({ push });
         }
 
-        typeControl.addEventListener("change", searchFromControls);
+        typeControl.addEventListener("change", () => searchFromControls());
 
         function debounce(func, wait, immediate) {
             var timeout;
@@ -631,6 +733,383 @@
             searchFromControls();
             searchField.focus();
         });
+
+        /*
+         * The extended search (ADR 0045, gain#2501): a dialog with every
+         * facet of `search.yaml` in a grid, in file order. Its ticks are
+         * a draft. "Show N resources" applies them, Cancel drops them,
+         * and "Clear all" empties the draft. The applied ticks show as a
+         * badge on the button and as chips above the results.
+         *
+         * A GRR without `search.yaml` has no button, and nothing here
+         * runs for it.
+         */
+        const FACET_VALUES_SHOWN = 10;
+        const extendedSearchButton =
+            document.getElementById("extended-search-btn");
+        const extendedSearchBadge =
+            document.getElementById("extended-search-badge");
+        const searchChips = document.getElementById("search-chips");
+        const facetTitles = new Map(
+            window.grrFacets.map((facet) => [facet.label, facet.title]));
+
+        /** The labels of each resource, read once from the index. */
+        let labelsById = null;
+        function resourceLabels() {
+            if (labelsById === null) {
+                labelsById = new Map(window.sqlite3.query(
+                    "SELECT full_id, labels FROM resource_labels",
+                ).map(([fullId, json]) => [fullId, JSON.parse(json)]));
+            }
+            return labelsById;
+        }
+
+        /** The values of the label `key` of a resource, as a list. */
+        function labelValues(fullId, key) {
+            const labels = resourceLabels().get(fullId);
+            if (!labels || !Object.hasOwn(labels, key)) return [];
+            const value = labels[key];
+            return Array.isArray(value) ? value : [value];
+        }
+
+        /*
+         * Whether a resource holds the ticks of every facet but `skip`.
+         * The same rule as `labelConditions`, for the counts.
+         */
+        function holdsTicks(fullId, ticks, skip) {
+            for (const [key, values] of ticks) {
+                if (key === skip) continue;
+                if (!labelValues(fullId, key).some((v) => values.has(v))) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /** The code-unit order of two strings. */
+        const byCodeUnits = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+
+        function renderBadge() {
+            if (!extendedSearchBadge) return;
+            const count = appliedLabels.length;
+            extendedSearchBadge.textContent = String(count);
+            extendedSearchBadge.hidden = count === 0;
+        }
+
+        /** One chip for each applied tick. A chip removes its tick. */
+        function renderChips() {
+            if (!searchChips) return;
+            searchChips.replaceChildren();
+            for (const [key, value] of appliedLabels) {
+                const title = facetTitles.get(key) || key;
+                const chip = document.createElement("span");
+                chip.className = "search-chip";
+                const name = document.createElement("b");
+                name.textContent = `${title}:`;
+                const remove = document.createElement("button");
+                remove.type = "button";
+                remove.className = "search-chip-remove";
+                remove.setAttribute("aria-label", `Remove ${title}: ${value}`);
+                remove.textContent = "×";
+                remove.addEventListener("click", () => {
+                    appliedLabels = appliedLabels.filter(
+                        ([k, v]) => k !== key || v !== value);
+                    renderTicks();
+                    searchFromControls({ push: true });
+                });
+                chip.append(name, " ", value, remove);
+                searchChips.append(chip);
+            }
+            searchChips.hidden = appliedLabels.length === 0;
+        }
+
+        function renderTicks() {
+            renderBadge();
+            renderChips();
+        }
+
+        /*
+         * The open dialog: the draft ticks and the resources that match
+         * the term and the type, without the ticks.
+         */
+        let dialog = null;
+        let draft = new Map();
+        let baseIds = [];
+
+        function draftLabels() {
+            const pairs = [];
+            for (const [key, values] of draft) {
+                for (const value of values) pairs.push([key, value]);
+            }
+            return window.canonicalLabels(pairs);
+        }
+
+        /*
+         * The values of a facet that the dialog can show, with their
+         * counts. A count is what ticking the value would give: the
+         * resources that match the term, the type and the ticks of the
+         * other facets. A value with count 0 is left out unless it is
+         * ticked.
+         */
+        function facetCounts(key) {
+            const ticked = draft.get(key) || new Set();
+            const counts = new Map();
+            for (const fullId of baseIds) {
+                if (!holdsTicks(fullId, draft, key)) continue;
+                for (const value of new Set(labelValues(fullId, key))) {
+                    counts.set(value, (counts.get(value) || 0) + 1);
+                }
+            }
+            for (const value of ticked) {
+                if (!counts.has(value)) counts.set(value, 0);
+            }
+            return [...counts]
+                .sort((a, b) => b[1] - a[1] || byCodeUnits(a[0], b[0]));
+        }
+
+        /*
+         * A facet with more values than FACET_VALUES_SHOWN gets a "Show
+         * all N" link and a filter box (gain#2502). The link and the
+         * filter change only what the facet shows, never the draft.
+         */
+        let expandedFacets = new Set();
+        let facetFilters = new Map();
+
+        /*
+         * The values of a facet to show. A filter narrows all the values
+         * to those that hold its text, ignoring case. Without a filter,
+         * a facet that is not expanded shows its first values and every
+         * ticked value.
+         */
+        function shownValues(key, counts) {
+            if (counts.length <= FACET_VALUES_SHOWN) return counts;
+            const text = (facetFilters.get(key) || "").toLowerCase();
+            if (text) {
+                return counts.filter(
+                    ([value]) => value.toLowerCase().includes(text));
+            }
+            if (expandedFacets.has(key)) return counts;
+            const ticked = draft.get(key) || new Set();
+            return counts.filter(
+                ([value], i) => i < FACET_VALUES_SHOWN || ticked.has(value));
+        }
+
+        function facetValueRow(key, value, count, ticked) {
+            const row = document.createElement("label");
+            row.className = "facet-value";
+            const box = document.createElement("input");
+            box.type = "checkbox";
+            box.value = value;
+            box.dataset.label = key;
+            box.checked = ticked.has(value);
+            box.addEventListener("change", () => {
+                toggleDraft(key, value);
+            });
+            const name = document.createElement("span");
+            name.className = "facet-value-name";
+            name.textContent = value;
+            name.title = value;
+            const tally = document.createElement("span");
+            tally.className = "facet-value-count";
+            tally.textContent = String(count);
+            row.append(box, name, tally);
+            return row;
+        }
+
+        /** Fill the value list of one facet. */
+        function renderFacetValues(list, key, counts) {
+            const ticked = draft.get(key) || new Set();
+            list.replaceChildren(...shownValues(key, counts).map(
+                ([value, count]) => facetValueRow(key, value, count, ticked)));
+        }
+
+        /** The filter box and the "Show all N" link of a facet. */
+        function facetControls(facet, list, counts) {
+            const controls = document.createElement("div");
+            controls.className = "facet-controls";
+            const filter = document.createElement("input");
+            filter.type = "search";
+            filter.className = "facet-filter";
+            filter.placeholder = "Filter values";
+            filter.setAttribute("aria-label", `Filter ${facet.title}`);
+            filter.dataset.label = facet.label;
+            filter.value = facetFilters.get(facet.label) || "";
+            filter.addEventListener("input", () => {
+                facetFilters.set(facet.label, filter.value);
+                renderFacetValues(list, facet.label, counts);
+            });
+            controls.append(filter);
+            if (!expandedFacets.has(facet.label)) {
+                const showAll = document.createElement("button");
+                showAll.type = "button";
+                showAll.className = "facet-show-all";
+                showAll.textContent = `Show all ${counts.length}`;
+                showAll.addEventListener("click", () => {
+                    expandedFacets.add(facet.label);
+                    // The link has the focus: give it to the filter box
+                    // before the link goes, not to the document body.
+                    filter.focus();
+                    showAll.remove();
+                    renderFacetValues(list, facet.label, counts);
+                });
+                controls.append(showAll);
+            }
+            return controls;
+        }
+
+        function facetSection(facet) {
+            const section = document.createElement("section");
+            section.className = "facet";
+            section.dataset.label = facet.label;
+            const heading = document.createElement("h4");
+            heading.textContent = facet.title;
+            const list = document.createElement("div");
+            list.className = "facet-values";
+            const counts = facetCounts(facet.label);
+            section.append(heading);
+            if (counts.length > FACET_VALUES_SHOWN) {
+                section.append(facetControls(facet, list, counts));
+            }
+            renderFacetValues(list, facet.label, counts);
+            section.append(list);
+            return section;
+        }
+
+        /*
+         * The element to focus again after a render: the box of a value
+         * or the filter box of a facet.
+         */
+        function refocusSelector(focused) {
+            if (!focused || !focused.dataset || !focused.dataset.label) {
+                return null;
+            }
+            const label = CSS.escape(focused.dataset.label);
+            if (focused.classList.contains("facet-filter")) {
+                return `.facet-filter[data-label="${label}"]`;
+            }
+            if (!focused.closest(".facet-value")) return null;
+            return `.facet-value input[data-label="${label}"]`
+                + `[value="${CSS.escape(focused.value)}"]`;
+        }
+
+        function renderDialog() {
+            const body = dialog.querySelector(".es-body");
+            const refocus = refocusSelector(document.activeElement);
+            body.replaceChildren(...window.grrFacets.map(facetSection));
+            if (refocus) {
+                const target = body.querySelector(refocus);
+                if (target) queueMicrotask(() => target.focus());
+            }
+            const matching = baseIds.filter(
+                (fullId) => holdsTicks(fullId, draft, null)).length;
+            dialog.querySelector(".es-apply").textContent =
+                `Show ${matching} resources`;
+        }
+
+        function toggleDraft(key, value) {
+            if (!draft.has(key)) draft.set(key, new Set());
+            const values = draft.get(key);
+            if (values.has(value)) values.delete(value);
+            else values.add(value);
+            if (values.size === 0) draft.delete(key);
+            renderDialog();
+        }
+
+        function dialogButton(text, className, onClick) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = className;
+            button.textContent = text;
+            button.addEventListener("click", onClick);
+            return button;
+        }
+
+        function createDialog() {
+            const element = document.createElement("dialog");
+            element.id = "extended-search-dialog";
+            element.setAttribute("aria-labelledby", "extended-search-title");
+            const head = document.createElement("div");
+            head.className = "es-head";
+            const title = document.createElement("strong");
+            title.id = "extended-search-title";
+            title.textContent = "Extended search";
+            head.append(
+                title,
+                dialogButton("Clear all", "es-clear", () => {
+                    draft = new Map();
+                    renderDialog();
+                }),
+                dialogButton("Cancel", "es-cancel", () => element.close()));
+            const body = document.createElement("div");
+            body.className = "es-body";
+            const foot = document.createElement("div");
+            foot.className = "es-foot";
+            foot.append(dialogButton("", "es-apply", () => {
+                appliedLabels = draftLabels();
+                element.close();
+                renderTicks();
+                searchFromControls({ push: true });
+            }));
+            element.append(head, body, foot);
+            document.body.append(element);
+            // A folder move, Back included, while the dialog is open
+            // moves its counts to the new folder.
+            if (window.grrTree) window.grrTree.onChange(refreshOpenDialog);
+            return element;
+        }
+
+        /*
+         * The resources that match the term and the type, without the
+         * ticks. In the tree view only those under the current folder,
+         * sub-folders included, so that a count says what the tree
+         * would list after the tick (gain#2503).
+         */
+        function folderIds(ids) {
+            const tree = shownTree();
+            const folder = tree ? tree.folder() : [];
+            if (folder.length === 0) return ids;
+            const prefix = `${folder.join("/")}/`;
+            return ids.filter((fullId) => fullId.startsWith(prefix));
+        }
+
+        /*
+         * Count from the term and the type that the controls hold now.
+         * Back and Forward restore the term of their entry, so a move
+         * can change the search as well as the folder.
+         */
+        function countCurrentSearch() {
+            const { q, type } = currentSearch();
+            let searchIds;
+            try {
+                searchIds = queryIds(q, type, []);
+            } catch {
+                // A term that FTS rejects: the search falls back to every
+                // resource, and so do the counts.
+                searchIds = Array.from(window.all_ids);
+            }
+            baseIds = folderIds(searchIds);
+        }
+
+        function refreshOpenDialog() {
+            if (!dialog.open) return;
+            countCurrentSearch();
+            renderDialog();
+        }
+
+        async function openExtendedSearch() {
+            await window.dbLoaded;
+            if (dialog === null) dialog = createDialog();
+            countCurrentSearch();
+            draft = ticksByFacet(appliedLabels);
+            expandedFacets = new Set();
+            facetFilters = new Map();
+            renderDialog();
+            dialog.showModal();
+        }
+
+        if (extendedSearchButton) {
+            extendedSearchButton.addEventListener("click", openExtendedSearch);
+        }
         
 {% include "copy_button.jinja" %}
 
@@ -689,7 +1168,7 @@
              * the whole address machinery down with the import.
              */
             const searchControls = window.grrSearch || {
-                current: () => ({ q: "", type: "" }),
+                current: () => ({ q: "", type: "", labels: [] }),
                 apply() {},
                 onChange() {},
                 // Never calls back, so the tree never prunes -- which is
@@ -1333,6 +1812,9 @@
 
             const HIERARCHICAL_HASH = "#/";
 
+            /** The name prefix of a tick in the query part. */
+            const LABEL_PREFIX = "label.";
+
             /** The browse state a fragment addresses. */
             function parseHash(hash) {
                 // The search is split off before anything else looks at
@@ -1345,20 +1827,21 @@
                 const cut = hash.indexOf("?");
                 const address = cut < 0 ? hash : hash.slice(0, cut);
                 const search = cut < 0 ? "" : hash.slice(cut + 1);
-                const { q, type } = parseSearch(search);
+                const { q, type, labels } = parseSearch(search);
                 // Anything unrecognised reads as the default rather than
                 // raising: a hand-edited or stale link must still open the
                 // page, and a fragment is also how something with no
                 // interest in this page at all -- a link into the docs, a
                 // tracker's leftovers -- ends up in the address.
                 if (!address.startsWith(HIERARCHICAL_HASH)) {
-                    return { view: "table", path: [], q, type };
+                    return { view: "table", path: [], q, type, labels };
                 }
                 return {
                     view: "hierarchical",
                     path: parsePath(address.slice(HIERARCHICAL_HASH.length)),
                     q,
                     type,
+                    labels,
                 };
             }
 
@@ -1378,9 +1861,18 @@
                 // repeated key, a malformed escape. None of them can
                 // reach the record below.
                 const params = new URLSearchParams(encodedSearch);
+                // The ticks of the extended search: one `label.<key>`
+                // pair for each (gain#2501), put in the one order.
+                const labels = [];
+                for (const [name, value] of params) {
+                    if (name.startsWith(LABEL_PREFIX)) {
+                        labels.push([name.slice(LABEL_PREFIX.length), value]);
+                    }
+                }
                 return {
                     q: params.get("q") || "",
                     type: params.get("type") || "",
+                    labels: window.canonicalLabels(labels),
                 };
             }
 
@@ -1424,7 +1916,8 @@
              * controls and put the answer in the state.
              */
             function buildHash(state) {
-                const search = buildSearch(state.q, state.type);
+                const search = buildSearch(
+                    state.q, state.type, state.labels || []);
                 const query = search === "" ? "" : "?" + search;
                 if (state.view !== "hierarchical") {
                     // The table's address is the query alone, so with no
@@ -1436,13 +1929,18 @@
             }
 
             /** The query part addressing a search; "" when unset. */
-            function buildSearch(q, type) {
+            function buildSearch(q, type, labels) {
                 const pairs = [];
                 // A fixed order, so that one search has one address: the
                 // round trip above compares strings, and two spellings of
-                // the same state would make the guard miss.
+                // the same state would make the guard miss. The ticks
+                // come last, in the order of `canonicalLabels`.
                 if (q) pairs.push("q=" + encodeURIComponent(q));
                 if (type) pairs.push("type=" + encodeURIComponent(type));
+                for (const [key, value] of labels) {
+                    pairs.push(LABEL_PREFIX + encodeURIComponent(key)
+                        + "=" + encodeURIComponent(value));
+                }
                 return pairs.join("&");
             }
 
@@ -1533,7 +2031,11 @@
 
             /** Whether two states ask for the same search. */
             function sameSearch(one, other) {
-                return one.q === other.q && one.type === other.type;
+                // Both lists of ticks are in the order of
+                // `canonicalLabels`, so the comparison goes pair by pair.
+                const ticks = (labels) => JSON.stringify(labels || []);
+                return one.q === other.q && one.type === other.type
+                    && ticks(one.labels) === ticks(other.labels);
             }
 
             /**
@@ -1654,14 +2156,19 @@
             // The rest of the state is read back out of the address, so
             // that a search typed while the tree is showing keeps the
             // folder it was typed in.
-            searchControls.onChange(() => {
+            //
+            // A change of the ticks is the exception: it pushes, so that
+            // Back returns to the ticks before it (gain#2501). Like
+            // `replaceState`, `pushState` fires no `hashchange`.
+            searchControls.onChange(({ push } = {}) => {
                 const hash = buildHash({
                     ...parseHash(location.hash),
                     ...searchControls.current(),
                 });
                 if (hash === location.hash) return;
-                history.replaceState(
-                    null, "", hash || location.pathname + location.search);
+                const write = push ? history.pushState : history.replaceState;
+                write.call(
+                    history, null, "", hash || location.pathname + location.search);
             });
 
             // What the tree lists is decided here, and only here.

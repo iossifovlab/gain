@@ -1,11 +1,13 @@
 """The fixtures the info pages' browser tests are built on.
 
-Three of them.  ``a_coverage_repo`` is a single resource whose statistics
+Four of them.  ``a_coverage_repo`` is a single resource whose statistics
 table both sortable-table suites sort; ``a_browse_repo`` is a repository
 shaped to be *navigated* -- folders to descend through and terms to
 search for -- which is what the index page's own tests need;
 ``a_labelled_repo`` carries the labels that a download of the index page
-writes out (gain#2488).
+writes out (gain#2488); ``a_nested_labelled_repo`` puts labelled
+resources in nested folders, for the folder counts of the extended
+search (gain#2503).
 
 Two rather than one because the coverage fixture's traps are tuned to a
 sorter and nothing else should perturb them: adding folders to it would
@@ -36,6 +38,7 @@ from __future__ import annotations
 import pathlib
 
 from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.search_config import SEARCH_CONFIG_FILE_NAME
 from gain.genomic_resources.testing.builders import a_grr
 from gain.genomic_resources.testing.reference_genome_builder import (
     a_reference_genome,
@@ -283,6 +286,35 @@ LABELLED_LIST_LABEL = "modality"
 LABELLED_SCALAR_LABEL = "tissue"
 LABELLED_NUMBER_LABEL = "donors"
 
+#: The ``tissue`` of the liver score.  It holds a ``'``, the quote of a
+#: SQL string literal, so the extended search must bind the value
+#: (gain#2501).
+LABELLED_QUOTED_TISSUE = "liver's lobe"
+
+#: The list label of the liver score with more values than a facet of the
+#: extended search shows at first, so the facet gets a "Show all" link
+#: and a filter box (gain#2502).  No value holds the search term.
+LABELLED_MANY_VALUES_LABEL = "cell_type"
+LABELLED_CELL_TYPES = [
+    "B cell", "CD4+ T cell", "CD8+ T cell", "Kupffer cell", "NK cell",
+    "cholangiocyte", "endothelial cell", "hepatic stellate cell",
+    "hepatocyte", "monocyte", "neutrophil", "plasma cell",
+]
+
+#: The ``search.yaml`` of the labelled fixture: the facets of its extended
+#: search (ADR 0045).  The file order is not the alphabetical order, and
+#: the last facet has no title.
+LABELLED_SEARCH_YAML = f"""\
+facets:
+  - label: {LABELLED_SCALAR_LABEL}
+    title: Tissue
+  - label: {LABELLED_LIST_LABEL}
+    title: Modality
+  - label: {LABELLED_NUMBER_LABEL}
+  - label: {LABELLED_MANY_VALUES_LABEL}
+    title: Cell type
+"""
+
 #: The summary of the versioned resource.  It holds a comma and a double
 #: quote, the two characters that a CSV field must quote (gain#2489).
 LABELLED_QUOTED_SUMMARY = 'Expression atlas, with the "basal" set.'
@@ -293,10 +325,14 @@ def a_labelled_repo(where: pathlib.Path) -> GenomicResourceRepo:
 
     The versioned resource carries a list of two, a scalar with a space
     and a number.  The other scores carry a list of one item and an
-    empty list.  The genome carries no labels, and its type is the
+    empty list, and the liver score also carries a list of twelve
+    cell types.  The genome carries no labels, and its type is the
     second one, for the type filter.
+
+    The repository also gets the ``search.yaml`` of
+    ``LABELLED_SEARCH_YAML``, so its root page has an extended search.
     """
-    return (
+    repo = (
         a_grr()
         .with_resource(
             f"{LABELLED_VERSIONED_RESOURCE_ID}"
@@ -320,8 +356,9 @@ def a_labelled_repo(where: pathlib.Path) -> GenomicResourceRepo:
             _a_browse_score("Methylation of the liver.")
             .with_labels(**{
                 LABELLED_LIST_LABEL: [],
-                LABELLED_SCALAR_LABEL: "liver",
+                LABELLED_SCALAR_LABEL: LABELLED_QUOTED_TISSUE,
                 LABELLED_NUMBER_LABEL: 0,
+                LABELLED_MANY_VALUES_LABEL: LABELLED_CELL_TYPES,
             }))
         .with_resource(
             LABELLED_GENOME_RESOURCE_ID,
@@ -330,3 +367,47 @@ def a_labelled_repo(where: pathlib.Path) -> GenomicResourceRepo:
             .with_meta(summary="Reference genome of the expression atlas."))
         .build_repo(where)
     )
+    (where / SEARCH_CONFIG_FILE_NAME).write_text(
+        LABELLED_SEARCH_YAML, encoding="utf8")
+    return repo
+
+
+#: The resources of the nested fixture, with their tissue and their
+#: modalities.  The folder ``brain`` holds a sub-folder and a resource,
+#: so the counts of the extended search change with each move between
+#: the root, ``brain`` and ``brain/cortex`` (gain#2503).  The folder
+#: ``brainstem`` starts with the name ``brain`` but is not under it.
+NESTED_RESOURCES = {
+    "brain/cortex/layer1": ("cortex", ["RNA"]),
+    "brain/cortex/layer2": ("cortex", ["RNA", "ATAC"]),
+    "brain/hippocampus": ("hippocampus", ["ATAC"]),
+    "brainstem/medulla": ("medulla", ["ATAC"]),
+    "liver/hepatocytes": ("liver", ["RNA"]),
+}
+
+#: The ``search.yaml`` of the nested fixture.
+NESTED_SEARCH_YAML = """\
+facets:
+  - label: tissue
+    title: Tissue
+  - label: modality
+    title: Modality
+"""
+
+
+def a_nested_labelled_repo(where: pathlib.Path) -> GenomicResourceRepo:
+    """A labelled repository with nested folders and an extended search.
+
+    Each resource of ``NESTED_RESOURCES`` carries its ``tissue`` and its
+    ``modality``.  The repository gets ``NESTED_SEARCH_YAML``.
+    """
+    grr = a_grr()
+    for resource_id, (tissue, modality) in NESTED_RESOURCES.items():
+        grr = grr.with_resource(
+            resource_id,
+            _a_browse_score(f"Expression of the {tissue}.")
+            .with_labels(tissue=tissue, modality=modality))
+    repo = grr.build_repo(where)
+    (where / SEARCH_CONFIG_FILE_NAME).write_text(
+        NESTED_SEARCH_YAML, encoding="utf8")
+    return repo

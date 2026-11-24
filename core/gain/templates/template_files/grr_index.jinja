@@ -498,8 +498,187 @@
       .hv-widen:hover {
         text-decoration: underline;
       }
+
+      {%- if facets %}
+
+      /* ---- Extended search (ADR 0045) ---- */
+      #extended-search-btn,
+      #extended-search-dialog button {
+        background: white;
+        color: #24699E;
+        border: 1px solid #85a2b9;
+        border-radius: 6px;
+        font-size: 15px;
+        font-family: inherit;
+        padding: 8px 16px;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+
+      #extended-search-badge {
+        display: inline-block;
+        min-width: 18px;
+        margin-left: 6px;
+        padding: 0 5px;
+        border-radius: 9px;
+        background: #24699E;
+        color: white;
+        font-size: 12px;
+        text-align: center;
+      }
+
+      #extended-search-badge[hidden],
+      #search-chips[hidden] {
+        display: none;
+      }
+
+      #search-chips {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 6px;
+        margin: 8px 10% 0;
+      }
+
+      .search-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 3px 4px 3px 10px;
+        border-radius: 14px;
+        background: #e6f0f7;
+        font-size: 13px;
+      }
+
+      .search-chip b {
+        font-weight: 500;
+        color: #5b778c;
+      }
+
+      .search-chip-remove {
+        border: none;
+        background: none;
+        color: #5b778c;
+        font-size: 15px;
+        line-height: 1;
+        padding: 0 4px;
+        cursor: pointer;
+      }
+
+      #extended-search-dialog {
+        border: none;
+        border-radius: 10px;
+        padding: 0;
+        width: min(1100px, 94vw);
+        max-height: 88vh;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+      }
+
+      #extended-search-dialog::backdrop {
+        background: rgba(20, 30, 40, 0.45);
+      }
+
+      .es-head,
+      .es-foot {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 18px;
+      }
+
+      .es-head {
+        border-bottom: 1px solid #e4edf2;
+      }
+
+      .es-head strong {
+        font-size: 17px;
+        margin-right: auto;
+      }
+
+      .es-foot {
+        border-top: 1px solid #e4edf2;
+        justify-content: flex-end;
+      }
+
+      #extended-search-dialog .es-clear {
+        border: none;
+      }
+
+      #extended-search-dialog .es-apply {
+        background: #24699E;
+        color: white;
+      }
+
+      .es-body {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+        gap: 0 22px;
+        padding: 8px 18px;
+        overflow: auto;
+        max-height: calc(88vh - 130px);
+      }
+
+      .facet {
+        padding: 8px 0;
+        border-bottom: 1px solid #e4edf2;
+      }
+
+      .facet h4 {
+        margin: 0 0 6px;
+        font-size: 14px;
+      }
+
+      .facet-controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+
+      .facet-filter {
+        flex: 1;
+        min-width: 0;
+        padding: 3px 6px;
+        font-size: 13px;
+      }
+
+      #extended-search-dialog .facet-show-all {
+        border: none;
+        background: none;
+        padding: 0;
+        color: #24699E;
+        font-size: 13px;
+        text-decoration: underline;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+
+      .facet-value {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 2px 0;
+        font-size: 13px;
+        cursor: pointer;
+      }
+
+      .facet-value-name {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .facet-value-count {
+        color: #5b778c;
+        font-variant-numeric: tabular-nums;
+      }
+      {%- endif %}
     </style>
  </head>
+{%- if facets %}
+<script type="application/json" id="search-facets">{{ facets|tojson }}</script>
+{%- endif %}
 {% include "grr_scripts.jinja" %}
  <body>
      {#- The header bar of every info page (gain#2483).  The script
@@ -580,6 +759,12 @@
             <input type="text" id="search-field" placeholder="Search">
             <button type="button" id="clear-search" title="Clear search" aria-label="Clear search"><span class="material-symbols-outlined">close</span></button>
           </div>
+          {#- The extended search (ADR 0045): only on a GRR whose
+              `search.yaml` names a facet.  The script builds the dialog
+              from the facet list below. -#}
+          {%- if facets %}
+          <button type="button" id="extended-search-btn">Extended search…<span id="extended-search-badge" hidden></span></button>
+          {%- endif %}
         </div>
         <div class="search-info">
           <div>
@@ -594,6 +779,9 @@
             target="_blank">
             SQLite's FTS syntax.</a>
         </div>
+        {%- if facets %}
+        <div id="search-chips" hidden></div>
+        {%- endif %}
         <p id="status-error"></p>
         <div id="view-toggle-row">
           <div id="view-toggle">

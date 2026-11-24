@@ -33,6 +33,13 @@ export const FIXTURE_BROWSE_GRR = path.join(FIXTURE_ROOT, 'browse');
  */
 export const FIXTURE_LABELLED_GRR = path.join(FIXTURE_ROOT, 'labelled');
 
+/**
+ * The nested GRR: labelled resources in folders and sub-folders, for the
+ * folder counts of the extended search. Its shape is
+ * `NESTED_RESOURCES` of `info_page_fixtures.py`.
+ */
+export const FIXTURE_NESTED_GRR = path.join(FIXTURE_ROOT, 'nested');
+
 /** The resource whose Coverage table this suite drives. */
 export const COVERAGE_RESOURCE = 'scores/coverage';
 
@@ -133,6 +140,40 @@ export const LABELLED_LIST_LABEL = 'modality';
 export const LABELLED_SCALAR_LABEL = 'tissue';
 export const LABELLED_NUMBER_LABEL = 'donors';
 
+/** The score whose list label is empty. */
+export const LABELLED_EMPTY_LIST_RESOURCE_ID = 'atlas/liver';
+
+/** The genome, which carries no labels. */
+export const LABELLED_GENOME_RESOURCE_ID = 'genomes/reference';
+
+/** The type of the genome: no labelled resource carries it. */
+export const LABELLED_GENOME_TYPE = 'genome';
+
+/** The `tissue` of the liver score: it holds a `'`. */
+export const LABELLED_QUOTED_TISSUE = "liver's lobe";
+
+/**
+ * The facets of the `search.yaml` of the labelled GRR, in file order,
+ * with the title that each one shows.
+ */
+export const LABELLED_FACETS = [
+  { label: 'tissue', title: 'Tissue' },
+  { label: 'modality', title: 'Modality' },
+  { label: 'donors', title: 'donors' },
+  { label: 'cell_type', title: 'Cell type' },
+];
+
+/**
+ * The list label of the liver score with more values than a facet shows
+ * at first: twelve cell types, in the code-unit order of the dialog.
+ */
+export const LABELLED_MANY_VALUES_LABEL = 'cell_type';
+export const LABELLED_CELL_TYPES = [
+  'B cell', 'CD4+ T cell', 'CD8+ T cell', 'Kupffer cell', 'NK cell',
+  'cholangiocyte', 'endothelial cell', 'hepatic stellate cell',
+  'hepatocyte', 'monocyte', 'neutrophil', 'plasma cell',
+];
+
 /** The summary that holds a comma and a double quote. */
 export const LABELLED_QUOTED_SUMMARY =
   'Expression atlas, with the "basal" set.';
@@ -168,5 +209,6 @@ export function fixturesArePresent(): boolean {
     && fs.existsSync(path.join(FIXTURE_LABELLED_GRR, 'index.html'))
     && fs.existsSync(
       path.join(FIXTURE_LABELLED_GRR, '.CONTENTS.sqlite3.gz'))
+    && fs.existsSync(path.join(FIXTURE_NESTED_GRR, 'index.html'))
   );
 }
