@@ -1,9 +1,11 @@
 """The fixtures the info pages' browser tests are built on.
 
-Two of them.  ``a_coverage_repo`` is a single resource whose statistics
+Three of them.  ``a_coverage_repo`` is a single resource whose statistics
 table both sortable-table suites sort; ``a_browse_repo`` is a repository
 shaped to be *navigated* -- folders to descend through and terms to
-search for -- which is what the index page's own tests need.
+search for -- which is what the index page's own tests need;
+``a_labelled_repo`` carries the labels that a download of the index page
+writes out (gain#2488).
 
 Two rather than one because the coverage fixture's traps are tuned to a
 sorter and nothing else should perturb them: adding folders to it would
@@ -257,5 +259,74 @@ def a_browse_repo(where: pathlib.Path) -> GenomicResourceRepo:
             _a_browse_score(
                 "The other of that pair, capitalised, so the two orders "
                 "disagree."))
+        .build_repo(where)
+    )
+
+
+#: The labelled fixture: the resources that a download of the index page
+#: writes out, with each form a label can take (gain#2488).  A separate
+#: repository, so the browse fixture stays free of labels and its search
+#: terms stay off these resources.
+#:
+#: The term matches the versioned score, the cortex score and the genome,
+#: and not the liver score: no label holds it.  The type filter then
+#: leaves the two position scores.
+LABELLED_SEARCH_TERM = "expression"
+LABELLED_VERSIONED_RESOURCE_ID = "atlas/expression"
+LABELLED_VERSIONED_RESOURCE_VERSION = "1.1"
+LABELLED_ONE_ITEM_RESOURCE_ID = "atlas/cortex"
+LABELLED_EMPTY_LIST_RESOURCE_ID = "atlas/liver"
+LABELLED_GENOME_RESOURCE_ID = "genomes/reference"
+
+#: The three label keys: a list, a scalar and a number.
+LABELLED_LIST_LABEL = "modality"
+LABELLED_SCALAR_LABEL = "tissue"
+LABELLED_NUMBER_LABEL = "donors"
+
+#: The summary of the versioned resource.  It holds a comma and a double
+#: quote, the two characters that a CSV field must quote (gain#2489).
+LABELLED_QUOTED_SUMMARY = 'Expression atlas, with the "basal" set.'
+
+
+def a_labelled_repo(where: pathlib.Path) -> GenomicResourceRepo:
+    """A repository whose resources carry each form of label.
+
+    The versioned resource carries a list of two, a scalar with a space
+    and a number.  The other scores carry a list of one item and an
+    empty list.  The genome carries no labels, and its type is the
+    second one, for the type filter.
+    """
+    return (
+        a_grr()
+        .with_resource(
+            f"{LABELLED_VERSIONED_RESOURCE_ID}"
+            f"({LABELLED_VERSIONED_RESOURCE_VERSION})",
+            _a_browse_score(LABELLED_QUOTED_SUMMARY)
+            .with_labels(**{
+                LABELLED_LIST_LABEL: ["RNA", "ATAC"],
+                LABELLED_SCALAR_LABEL: "basal ganglia",
+                LABELLED_NUMBER_LABEL: 12,
+            }))
+        .with_resource(
+            LABELLED_ONE_ITEM_RESOURCE_ID,
+            _a_browse_score("Single-cell expression in the cortex.")
+            .with_labels(**{
+                LABELLED_LIST_LABEL: ["RNA"],
+                LABELLED_SCALAR_LABEL: "cortex",
+                LABELLED_NUMBER_LABEL: 3,
+            }))
+        .with_resource(
+            LABELLED_EMPTY_LIST_RESOURCE_ID,
+            _a_browse_score("Methylation of the liver.")
+            .with_labels(**{
+                LABELLED_LIST_LABEL: [],
+                LABELLED_SCALAR_LABEL: "liver",
+                LABELLED_NUMBER_LABEL: 0,
+            }))
+        .with_resource(
+            LABELLED_GENOME_RESOURCE_ID,
+            a_reference_genome()
+            .with_chromosome("chr1", "A" * 100)
+            .with_meta(summary="Reference genome of the expression atlas."))
         .build_repo(where)
     )

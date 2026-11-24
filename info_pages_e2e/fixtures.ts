@@ -25,6 +25,14 @@ export const FIXTURE_GRR = path.join(FIXTURE_ROOT, 'grr');
  */
 export const FIXTURE_BROWSE_GRR = path.join(FIXTURE_ROOT, 'browse');
 
+/**
+ * The labelled GRR: resources whose labels a download writes out.
+ *
+ * Separate from the browse GRR, which must stay free of labels: a label
+ * is an index column that the browse search terms could leak into.
+ */
+export const FIXTURE_LABELLED_GRR = path.join(FIXTURE_ROOT, 'labelled');
+
 /** The resource whose Coverage table this suite drives. */
 export const COVERAGE_RESOURCE = 'scores/coverage';
 
@@ -99,13 +107,43 @@ export const BROWSE_GENOME_RESOURCE_ID = 'genomes/g984';
 export const BROWSE_GENOME_TYPE = 'genome';
 export const BROWSE_SCORE_TYPE = 'position_score';
 
+/*
+ * What the labelled GRR carries.
+ *
+ * Mirrors `gain.genomic_resources.testing.info_page_fixtures`, where the
+ * fixture is built. `test_info_page_labelled_fixture.py` pins what the
+ * search term matches against the real index.
+ */
+
+/** The term the download tests search for. */
+export const LABELLED_SEARCH_TERM = 'expression';
+
+/** The type that the term and the type filter leave. */
+export const LABELLED_SCORE_TYPE = 'position_score';
+
+/** The versioned score: a list of two, a scalar and a number. */
+export const LABELLED_VERSIONED_RESOURCE_ID = 'atlas/expression';
+export const LABELLED_VERSIONED_RESOURCE_VERSION = '1.1';
+
+/** The score whose list label has one item. */
+export const LABELLED_ONE_ITEM_RESOURCE_ID = 'atlas/cortex';
+
+/** The three label keys. */
+export const LABELLED_LIST_LABEL = 'modality';
+export const LABELLED_SCALAR_LABEL = 'tissue';
+export const LABELLED_NUMBER_LABEL = 'donors';
+
+/** The summary that holds a comma and a double quote. */
+export const LABELLED_QUOTED_SUMMARY =
+  'Expression atlas, with the "basal" set.';
+
 /** Where a generated resource's info page lands on disk. */
 function infoPagePath(grrDir: string, resourceId: string): string {
   return path.join(grrDir, ...resourceId.split('/'), 'index.html');
 }
 
 /**
- * Whether both fixture GRRs have been generated.
+ * Whether every fixture GRR has been generated.
  *
  * Read through generated pages rather than through the directories: an
  * interrupted generation leaves the resource directories behind, and a
@@ -118,7 +156,8 @@ function infoPagePath(grrDir: string, resourceId: string): string {
  * built by different commands: the Coverage GRR gets the full statistics
  * pass and so has a page inside each resource, while the browse GRR is
  * published by `repo-index`, which writes the repository's own pages and
- * nothing inside any resource directory.
+ * nothing inside any resource directory. The labelled GRR is published
+ * the same way as the browse GRR.
  */
 export function fixturesArePresent(): boolean {
   return (
@@ -126,5 +165,8 @@ export function fixturesArePresent(): boolean {
     && fs.existsSync(path.join(FIXTURE_GRR, '.CONTENTS.sqlite3.gz'))
     && fs.existsSync(path.join(FIXTURE_BROWSE_GRR, 'index.html'))
     && fs.existsSync(path.join(FIXTURE_BROWSE_GRR, '.CONTENTS.sqlite3.gz'))
+    && fs.existsSync(path.join(FIXTURE_LABELLED_GRR, 'index.html'))
+    && fs.existsSync(
+      path.join(FIXTURE_LABELLED_GRR, '.CONTENTS.sqlite3.gz'))
   );
 }

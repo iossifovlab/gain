@@ -1,8 +1,9 @@
 """Build the GRRs whose generated pages this suite drives.
 
-Two of them: a Coverage GRR whose statistics table the sorter tests
-sort, and a browse GRR laid out to be navigated and searched.  Both are
-written under the directory named on the command line.
+Three of them: a Coverage GRR whose statistics table the sorter tests
+sort, a browse GRR laid out to be navigated and searched, and a labelled
+GRR whose resources the download tests write out.  All are written under
+the directory named on the command line.
 
 Run from the repository root, before ``npx playwright test``::
 
@@ -43,11 +44,13 @@ from gain.genomic_resources.cli import cli_manage
 from gain.genomic_resources.testing.info_page_fixtures import (
     a_browse_repo,
     a_coverage_repo,
+    a_labelled_repo,
 )
 
 #: The generated GRRs, under the directory this script is pointed at.
 COVERAGE_GRR_DIRNAME = "grr"
 BROWSE_GRR_DIRNAME = "browse"
+LABELLED_GRR_DIRNAME = "labelled"
 
 
 def build_coverage_grr(repo_dir: pathlib.Path) -> None:
@@ -77,6 +80,17 @@ def build_browse_grr(repo_dir: pathlib.Path) -> None:
     cli_manage(["repo-index", "-R", str(repo_dir)])
 
 
+def build_labelled_grr(repo_dir: pathlib.Path) -> None:
+    """Realize the labelled GRR into ``repo_dir`` and generate its pages.
+
+    ``repo-index`` alone, as for the browse GRR: a download reads the
+    index page and the search index, and nothing else.
+    """
+    a_labelled_repo(repo_dir)
+
+    cli_manage(["repo-index", "-R", str(repo_dir)])
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -93,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
     # -- and a fixture that is only correct on a clean checkout is worse
     # than one that is rebuilt.
     #
-    # Only the two directories this script creates, never the directory
+    # Only the directories this script creates, never the directory
     # it was handed.  What gets deleted here is deleted without asking,
     # and the argument names the fixtures *root* -- one tab-completion
     # away from `info_pages_e2e` itself, whose contents are this suite.
@@ -102,6 +116,7 @@ def main(argv: list[str] | None = None) -> int:
     for dirname, build in (
         (COVERAGE_GRR_DIRNAME, build_coverage_grr),
         (BROWSE_GRR_DIRNAME, build_browse_grr),
+        (LABELLED_GRR_DIRNAME, build_labelled_grr),
     ):
         repo_dir = fixtures_dir / dirname
         shutil.rmtree(repo_dir, ignore_errors=True)

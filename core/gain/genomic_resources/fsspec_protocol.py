@@ -2786,9 +2786,11 @@ class FsspecReadWriteProtocol(
             manifest = self._manifest_for_repository_index(res, failed)
             if manifest is None:
                 continue
-            res_size = convert_size(
-                sum(f for _, f in manifest.get_files()),
-            )
+            # The exact count goes on the row as `data-bytes`, beside
+            # the rounded text: a download reports the real size, and
+            # the Size column sorts on it (gain#2488).
+            res_bytes = sum(f for _, f in manifest.get_files())
+            res_size = convert_size(res_bytes)
             assert res.config is not None
             result[res.get_full_id()] = {
                 "res_full_id": res.get_full_id(),
@@ -2797,6 +2799,7 @@ class FsspecReadWriteProtocol(
                 "res_version": res.get_version_str(),
                 "res_files": len(list(manifest.get_files())),
                 "res_size": res_size,
+                "res_bytes": res_bytes,
                 "res_summary": res.get_summary(),
             }
 

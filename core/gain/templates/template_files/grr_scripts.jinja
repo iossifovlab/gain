@@ -36,21 +36,6 @@
         };
 
 
-        function parseSizeToBytes(sizeStr) {
-            const units = {
-                'B': 1,
-                'KB': 1024,
-                'MB': 1024 * 1024,
-                'GB': 1024 * 1024 * 1024,
-                'TB': 1024 * 1024 * 1024 * 1024,
-            };
-            const match = sizeStr.match(/^([\d.]+)\s*([A-Z]+)$/);
-            if (!match) return 0;
-            const [, value, unit] = match;
-            const multiplier = units[unit] || 1;
-            return parseFloat(value) * multiplier;
-        }
-
         // The table's rows, looked up once: a search hides and rewrites
         // them, it never adds or removes one.
         const tableRows = document.querySelectorAll(".contents > tbody > tr");
@@ -68,7 +53,9 @@
                 "id": id,
                 "version": cells[2].textContent.trim(),
                 "size": sizeStr,
-                "sizeInBytes": parseSizeToBytes(sizeStr),
+                // The exact count, which the row carries beside the
+                // rounded text (gain#2488).
+                "sizeInBytes": Number(row.dataset.bytes),
                 "summary": cells[4].textContent.trim(),
                 "url": link.getAttribute("href").trim(),
             };
@@ -140,14 +127,17 @@
          * -- across a `window` seam, where the two spellings could drift
          * with nothing to catch them.
          *
-         * `ids` unsorted, because the one listener sorts by name and this
+         * `ids` unsorted, because the tree sorts by name and this
          * order is the table's column sort -- passing it on would be
          * handing over a detail of a view the listener is not.
          */
         function applyRefreshData(ids, search) {
             lastIds = ids;
+            lastSearch = search || { q: "", type: "" };
             refreshData(sortedIds(ids));
-            searchResults({ search, ids });
+            for (const listener of resultListeners) {
+                listener({ search, ids });
+            }
         }
 
         function UpdateStatus() {
@@ -162,6 +152,7 @@
                 statusError.style.display = "none";
             }
             status.textContent = `${window.currentIds.length} resources`;
+            updateDownloadCount();
         }
 
         function refreshData(ids) {
@@ -184,6 +175,7 @@
                 link.textContent = rowData.id;
                 cells[2].textContent = rowData.version;
                 cells[3].textContent = rowData.size;
+                row.dataset.bytes = rowData.sizeInBytes;
                 cells[4].textContent = rowData.summary;
                 window.titleRow(
                     cells, rowData.type, rowData.id, rowData.summary);
@@ -191,6 +183,209 @@
             }
 
             UpdateStatus();
+        }
+
+        /*
+         * The download of what the table lists (gain#2488).
+         *
+         * The records are the rows of `window.currentIds`, in its order,
+         * so the file matches what the reader sees, a column sort
+         * included. The count on the button follows the same refresh.
+         * The labels come from the search index, so the button is made
+         * only once the index has loaded.
+         */
+        let lastSearch = { q: "", type: "" };
+        let downloadButton = null;
+
+        const MAX_FILE_NAME_LENGTH = 80;
+
+        /*
+         * The tree, when it is the view showing, or null (gain#2490).
+         *
+         * In the tree the download holds every match under the current
+         * folder, sub-folders included. The tree publishes that folder
+         * and its matches through `window.grrTree`, because a folder
+         * move uses `pushState` and so fires no `hashchange` that this
+         * module could follow.
+         */
+        function shownTree() {
+            const tree = window.grrTree;
+            return tree && tree.isShowing() ? tree : null;
+        }
+
+        /*
+         * The full ids that a download writes, in its order. The tree
+         * lists one level at a time, so its records take the default ID
+         * order of the table.
+         */
+        function downloadIds() {
+            const tree = shownTree();
+            return tree
+                ? [...tree.ids()].sort(compareById) : window.currentIds;
+        }
+
+        function updateDownloadCount() {
+            if (downloadButton === null) return;
+            downloadButton.textContent =
+                `Download ${downloadIds().length} \u25BE`;
+        }
+
+        /** The resource id, without the version that `version` holds. */
+        function resourceIdOf(fullId, version) {
+            const suffix = `(${version})`;
+            return fullId.endsWith(suffix)
+                ? fullId.slice(0, -suffix.length) : fullId;
+        }
+
+        function downloadRecords() {
+            const labels = new Map(window.sqlite3.exec({
+                sql: "SELECT full_id, labels FROM resource_labels",
+                returnValue: "resultRows",
+            }).map(([fullId, json]) => [fullId, JSON.parse(json)]));
+            return downloadIds().map((fullId) => {
+                const row = window.rowData[fullId];
+                return {
+                    id: resourceIdOf(fullId, row.version),
+                    type: row.type,
+                    version: row.version,
+                    size_bytes: row.sizeInBytes,
+                    summary: row.summary,
+                    labels: labels.get(fullId) || {},
+                };
+            });
+        }
+
+        /** `text` with each run of unsafe characters made one "-". */
+        function safeFileNamePart(text) {
+            return text.replace(/[^A-Za-z0-9._]+/g, "-")
+                .replace(/^[-.]+|[-.]+$/g, "");
+        }
+
+        function downloadFileName(search, generated, extension) {
+            const folder = search.folder.split("/")
+                .map(safeFileNamePart).filter(Boolean).join("-");
+            const parts = [folder || "all"];
+            const term = safeFileNamePart(search.q);
+            if (term) parts.push(term);
+            const suffix = `-${generated.slice(0, 10)}.${extension}`;
+            const stem = parts.join("-")
+                .slice(0, MAX_FILE_NAME_LENGTH - suffix.length)
+                .replace(/[-.]+$/, "");
+            return stem + suffix;
+        }
+
+        function saveFile(name, text, mimeType) {
+            const url = URL.createObjectURL(
+                new Blob([text], { type: mimeType }));
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = name;
+            document.body.append(link);
+            link.click();
+            link.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 10000);
+        }
+
+        /*
+         * The search that the view shows. The table shows the whole
+         * repository, and the tree shows its current folder.
+         */
+        function downloadSearch() {
+            const tree = shownTree();
+            return {
+                q: lastSearch.q,
+                type: lastSearch.type,
+                folder: tree ? tree.folder().join("/") : "",
+            };
+        }
+
+        function downloadJson() {
+            const generated = new Date().toISOString();
+            const search = downloadSearch();
+            const file = {
+                repository: new URL(".", document.baseURI).href,
+                search,
+                generated,
+                resources: downloadRecords(),
+            };
+            saveFile(
+                downloadFileName(search, generated, "json"),
+                JSON.stringify(file, null, 2), "application/json");
+        }
+
+        const CSV_COLUMNS = [
+            "id", "type", "version", "size_bytes", "summary", "labels",
+        ];
+
+        /** One RFC 4180 cell: quoted when it holds , " CR or LF. */
+        function csvCell(value) {
+            const text = String(value);
+            return /[",\r\n]/.test(text)
+                ? `"${text.replace(/"/g, '""')}"` : text;
+        }
+
+        /*
+         * The records of the JSON download as RFC 4180 text (gain#2489):
+         * one header line, CRLF after each record, and the labels as one
+         * cell that holds their JSON object.
+         */
+        function downloadCsv() {
+            const generated = new Date().toISOString();
+            const lines = [CSV_COLUMNS].concat(
+                downloadRecords().map((record) => CSV_COLUMNS.map(
+                    (column) => column === "labels"
+                        ? JSON.stringify(record.labels) : record[column])));
+            const text = lines
+                .map((line) => line.map(csvCell).join(",") + "\r\n")
+                .join("");
+            saveFile(
+                downloadFileName(downloadSearch(), generated, "csv"),
+                text, "text/csv;charset=utf-8");
+        }
+
+        function createDownloadControl() {
+            const control = document.createElement("div");
+            control.id = "download";
+            const button = document.createElement("button");
+            button.type = "button";
+            button.id = "download-btn";
+            button.setAttribute("aria-haspopup", "menu");
+            button.setAttribute("aria-expanded", "false");
+            const menu = document.createElement("div");
+            menu.id = "download-menu";
+            menu.setAttribute("role", "menu");
+            menu.hidden = true;
+            control.append(button, menu);
+            document.getElementById("view-toggle-row").append(control);
+
+            const setOpen = (open) => {
+                menu.hidden = !open;
+                button.setAttribute("aria-expanded", String(open));
+            };
+            button.addEventListener("click", () => setOpen(menu.hidden));
+            document.addEventListener("click", (e) => {
+                if (!control.contains(e.target)) setOpen(false);
+            });
+            document.addEventListener("keydown", (e) => {
+                if (e.key === "Escape") setOpen(false);
+            });
+            for (const [label, download] of [
+                ["JSON", downloadJson], ["CSV", downloadCsv],
+            ]) {
+                const item = document.createElement("button");
+                item.type = "button";
+                item.setAttribute("role", "menuitem");
+                item.textContent = label;
+                item.addEventListener("click", () => {
+                    setOpen(false);
+                    download();
+                });
+                menu.append(item);
+            }
+
+            downloadButton = button;
+            if (window.grrTree) window.grrTree.onChange(updateDownloadCount);
+            updateDownloadCount();
         }
 
         // Looked up once. All three are static markup that nothing
@@ -216,6 +411,7 @@
             // The unfiltered repository, and announced as exactly that --
             // no search has run yet, whatever the box may already hold.
             applyRefreshData(Array.from(window.all_ids), null)
+            createDownloadControl();
 
             resolve(window.sqlite3)
         });
@@ -316,7 +512,7 @@
          * search that restores the whole repository and the malformed one
          * that degrades to it.
          */
-        let searchResults = () => {};
+        const resultListeners = [];
 
         window.grrSearch = {
             current: currentSearch,
@@ -371,9 +567,13 @@
              * by the time it runs, the controls are only the current state
              * of the box, which a reader mid-word has already moved on
              * from. What arrives here is a matched pair.
+             *
+             * Each listener is kept, in the order it was added: the tree
+             * prunes to the matches, and the download follows the tree
+             * (gain#2490).
              */
             onResults(listener) {
-                searchResults = listener;
+                resultListeners.push(listener);
             },
         };
 
@@ -1045,6 +1245,37 @@
                 renderStatus(node);
             }
 
+            /** Every full id under `node`, at any depth. */
+            function idsUnder(node) {
+                const ids = node.resources.map((res) => res.fullId);
+                for (const child of Object.values(node.children)) {
+                    ids.push(...idsUnder(child));
+                }
+                return ids;
+            }
+
+            /*
+             * The seam that the download reads (gain#2490): whether the
+             * tree is showing, its current folder, and the matches under
+             * that folder at any depth. The listeners are told after each
+             * folder move, each change of view and each search.
+             */
+            let treeShowing = false;
+            const treeListeners = [];
+
+            function announceTree() {
+                for (const listener of treeListeners) listener();
+            }
+
+            window.grrTree = {
+                isShowing: () => treeShowing,
+                folder: () => [...currentPath],
+                ids: () => idsUnder(listedFolder(currentPath)),
+                onChange(listener) {
+                    treeListeners.push(listener);
+                },
+            };
+
             function navigateTo(path) {
                 currentPath = path;
                 renderBreadcrumb(currentPath);
@@ -1240,6 +1471,7 @@
             function applyHash() {
                 const state = parseHash(location.hash);
                 const isHier = state.view === "hierarchical";
+                treeShowing = isHier;
                 setView(state.view);
                 applySearch(state);
                 // The table has no folder to resolve and no address of its
@@ -1275,6 +1507,7 @@
                 // anyone, so the scope it would recompute is the one
                 // already showing.
                 renderPlaceholder(isHier);
+                announceTree();
             }
 
             /**
@@ -1469,12 +1702,14 @@
                 // was rendered on the way in, or pre-rendered for the view
                 // toggle. Re-rendering it would rebuild the whole listing
                 // to arrive back where it started.
-                if (next === listing) return;
-                listing = next;
-                // The breadcrumb is untouched: the reader has not moved,
-                // and a search that redrew the trail would be saying they
-                // had.
-                renderList();
+                if (next !== listing) {
+                    listing = next;
+                    // The breadcrumb is untouched: the reader has not
+                    // moved, and a search that redrew the trail would be
+                    // saying they had.
+                    renderList();
+                }
+                announceTree();
             });
 
             // `hashchange` only. A same-document fragment move fires
