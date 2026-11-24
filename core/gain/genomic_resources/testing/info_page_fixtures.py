@@ -36,6 +36,7 @@ from __future__ import annotations
 import pathlib
 
 from gain.genomic_resources.repository import GenomicResourceRepo
+from gain.genomic_resources.search_config import SEARCH_CONFIG_FILE_NAME
 from gain.genomic_resources.testing.builders import a_grr
 from gain.genomic_resources.testing.reference_genome_builder import (
     a_reference_genome,
@@ -283,6 +284,23 @@ LABELLED_LIST_LABEL = "modality"
 LABELLED_SCALAR_LABEL = "tissue"
 LABELLED_NUMBER_LABEL = "donors"
 
+#: The ``tissue`` of the liver score.  It holds a ``'``, the quote of a
+#: SQL string literal, so the extended search must bind the value
+#: (gain#2501).
+LABELLED_QUOTED_TISSUE = "liver's lobe"
+
+#: The ``search.yaml`` of the labelled fixture: the facets of its extended
+#: search (ADR 0045).  The file order is not the alphabetical order, and
+#: the last facet has no title.
+LABELLED_SEARCH_YAML = f"""\
+facets:
+  - label: {LABELLED_SCALAR_LABEL}
+    title: Tissue
+  - label: {LABELLED_LIST_LABEL}
+    title: Modality
+  - label: {LABELLED_NUMBER_LABEL}
+"""
+
 #: The summary of the versioned resource.  It holds a comma and a double
 #: quote, the two characters that a CSV field must quote (gain#2489).
 LABELLED_QUOTED_SUMMARY = 'Expression atlas, with the "basal" set.'
@@ -295,8 +313,11 @@ def a_labelled_repo(where: pathlib.Path) -> GenomicResourceRepo:
     and a number.  The other scores carry a list of one item and an
     empty list.  The genome carries no labels, and its type is the
     second one, for the type filter.
+
+    The repository also gets the ``search.yaml`` of
+    ``LABELLED_SEARCH_YAML``, so its root page has an extended search.
     """
-    return (
+    repo = (
         a_grr()
         .with_resource(
             f"{LABELLED_VERSIONED_RESOURCE_ID}"
@@ -320,7 +341,7 @@ def a_labelled_repo(where: pathlib.Path) -> GenomicResourceRepo:
             _a_browse_score("Methylation of the liver.")
             .with_labels(**{
                 LABELLED_LIST_LABEL: [],
-                LABELLED_SCALAR_LABEL: "liver",
+                LABELLED_SCALAR_LABEL: LABELLED_QUOTED_TISSUE,
                 LABELLED_NUMBER_LABEL: 0,
             }))
         .with_resource(
@@ -330,3 +351,6 @@ def a_labelled_repo(where: pathlib.Path) -> GenomicResourceRepo:
             .with_meta(summary="Reference genome of the expression atlas."))
         .build_repo(where)
     )
+    (where / SEARCH_CONFIG_FILE_NAME).write_text(
+        LABELLED_SEARCH_YAML, encoding="utf8")
+    return repo

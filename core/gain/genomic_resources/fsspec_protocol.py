@@ -100,6 +100,12 @@ from gain.genomic_resources.repository_manifest import (
 from gain.genomic_resources.repository_search import (
     SearchIndexUnavailableError,
 )
+from gain.genomic_resources.search_config import (
+    SEARCH_CONFIG_FILE_NAME,
+    Facet,
+    carried_facets,
+    parse_search_config,
+)
 from gain.templates import get_template
 from gain.templates.breadcrumb import (
     about_page_breadcrumb,
@@ -2776,6 +2782,7 @@ class FsspecReadWriteProtocol(
         build-from-scratch of a failed resource's manifest (#373).
         """
         result = {}
+        label_keys: set[str] = set()
         # In the order the page keeps its rows in -- its own ID sorter's
         # -- because until the search index loads, and for good if it
         # never does, the published order is all a reader has
@@ -2792,6 +2799,7 @@ class FsspecReadWriteProtocol(
             res_bytes = sum(f for _, f in manifest.get_files())
             res_size = convert_size(res_bytes)
             assert res.config is not None
+            label_keys.update(str(key) for key in res.get_labels())
             result[res.get_full_id()] = {
                 "res_full_id": res.get_full_id(),
                 "res_id": res.resource_id,
@@ -2851,9 +2859,27 @@ class FsspecReadWriteProtocol(
                 data=result,
                 breadcrumb=index_page_breadcrumb(),
                 sqlite3_hash=sqlite3_hash,
+                facets=[
+                    {"label": facet.label, "title": facet.title}
+                    for facet in self._search_facets(label_keys)],
             ))
 
         return result
+
+    def _search_facets(self, label_keys: set[str]) -> list[Facet]:
+        """Return the facets of the extended search, from ``search.yaml``.
+
+        The list is empty when the repository has no ``search.yaml``. A
+        facet on a key that no resource in ``label_keys`` carries is
+        skipped with a warning (ADR 0045).
+        """
+        path = os.path.join(self.url, SEARCH_CONFIG_FILE_NAME)
+        if not self.filesystem.exists(path):
+            return []
+        with self.filesystem.open(path, "rt", encoding="utf8") as infile:
+            text = infile.read()
+        return carried_facets(
+            parse_search_config(text, path), label_keys, path)
 
     def _publish_page_if_changed(self, filename: str, page: str) -> None:
         """Publish a root page of the repository, unless it is unchanged.

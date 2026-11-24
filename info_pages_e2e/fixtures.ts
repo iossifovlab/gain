@@ -133,6 +133,28 @@ export const LABELLED_LIST_LABEL = 'modality';
 export const LABELLED_SCALAR_LABEL = 'tissue';
 export const LABELLED_NUMBER_LABEL = 'donors';
 
+/** The score whose list label is empty. */
+export const LABELLED_EMPTY_LIST_RESOURCE_ID = 'atlas/liver';
+
+/** The genome, which carries no labels. */
+export const LABELLED_GENOME_RESOURCE_ID = 'genomes/reference';
+
+/** The type of the genome: no labelled resource carries it. */
+export const LABELLED_GENOME_TYPE = 'genome';
+
+/** The `tissue` of the liver score: it holds a `'`. */
+export const LABELLED_QUOTED_TISSUE = "liver's lobe";
+
+/**
+ * The facets of the `search.yaml` of the labelled GRR, in file order,
+ * with the title that each one shows.
+ */
+export const LABELLED_FACETS = [
+  { label: 'tissue', title: 'Tissue' },
+  { label: 'modality', title: 'Modality' },
+  { label: 'donors', title: 'donors' },
+];
+
 /** The summary that holds a comma and a double quote. */
 export const LABELLED_QUOTED_SUMMARY =
   'Expression atlas, with the "basal" set.';
