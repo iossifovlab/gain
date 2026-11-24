@@ -833,12 +833,13 @@
         }
 
         /*
-         * The values of a facet to show, with their counts. A count is
-         * what ticking the value would give: the resources that match
-         * the term, the type and the ticks of the other facets. A value
-         * with count 0 is hidden unless it is ticked.
+         * The values of a facet that the dialog can show, with their
+         * counts. A count is what ticking the value would give: the
+         * resources that match the term, the type and the ticks of the
+         * other facets. A value with count 0 is left out unless it is
+         * ticked.
          */
-        function facetValues(key) {
+        function facetCounts(key) {
             const ticked = draft.get(key) || new Set();
             const counts = new Map();
             for (const fullId of baseIds) {
@@ -851,51 +852,141 @@
                 if (!counts.has(value)) counts.set(value, 0);
             }
             return [...counts]
-                .sort((a, b) => b[1] - a[1] || byCodeUnits(a[0], b[0]))
-                .filter(([value], i) =>
-                    i < FACET_VALUES_SHOWN || ticked.has(value));
+                .sort((a, b) => b[1] - a[1] || byCodeUnits(a[0], b[0]));
+        }
+
+        /*
+         * A facet with more values than FACET_VALUES_SHOWN gets a "Show
+         * all N" link and a filter box (gain#2502). The link and the
+         * filter change only what the facet shows, never the draft.
+         */
+        let expandedFacets = new Set();
+        let facetFilters = new Map();
+
+        /*
+         * The values of a facet to show. A filter narrows all the values
+         * to those that hold its text, ignoring case. Without a filter,
+         * a facet that is not expanded shows its first values and every
+         * ticked value.
+         */
+        function shownValues(key, counts) {
+            if (counts.length <= FACET_VALUES_SHOWN) return counts;
+            const text = (facetFilters.get(key) || "").toLowerCase();
+            if (text) {
+                return counts.filter(
+                    ([value]) => value.toLowerCase().includes(text));
+            }
+            if (expandedFacets.has(key)) return counts;
+            const ticked = draft.get(key) || new Set();
+            return counts.filter(
+                ([value], i) => i < FACET_VALUES_SHOWN || ticked.has(value));
+        }
+
+        function facetValueRow(key, value, count, ticked) {
+            const row = document.createElement("label");
+            row.className = "facet-value";
+            const box = document.createElement("input");
+            box.type = "checkbox";
+            box.value = value;
+            box.dataset.label = key;
+            box.checked = ticked.has(value);
+            box.addEventListener("change", () => {
+                toggleDraft(key, value);
+            });
+            const name = document.createElement("span");
+            name.className = "facet-value-name";
+            name.textContent = value;
+            name.title = value;
+            const tally = document.createElement("span");
+            tally.className = "facet-value-count";
+            tally.textContent = String(count);
+            row.append(box, name, tally);
+            return row;
+        }
+
+        /** Fill the value list of one facet. */
+        function renderFacetValues(list, key, counts) {
+            const ticked = draft.get(key) || new Set();
+            list.replaceChildren(...shownValues(key, counts).map(
+                ([value, count]) => facetValueRow(key, value, count, ticked)));
+        }
+
+        /** The filter box and the "Show all N" link of a facet. */
+        function facetControls(facet, list, counts) {
+            const controls = document.createElement("div");
+            controls.className = "facet-controls";
+            const filter = document.createElement("input");
+            filter.type = "search";
+            filter.className = "facet-filter";
+            filter.placeholder = "Filter values";
+            filter.setAttribute("aria-label", `Filter ${facet.title}`);
+            filter.dataset.label = facet.label;
+            filter.value = facetFilters.get(facet.label) || "";
+            filter.addEventListener("input", () => {
+                facetFilters.set(facet.label, filter.value);
+                renderFacetValues(list, facet.label, counts);
+            });
+            controls.append(filter);
+            if (!expandedFacets.has(facet.label)) {
+                const showAll = document.createElement("button");
+                showAll.type = "button";
+                showAll.className = "facet-show-all";
+                showAll.textContent = `Show all ${counts.length}`;
+                showAll.addEventListener("click", () => {
+                    expandedFacets.add(facet.label);
+                    // The link has the focus: give it to the filter box
+                    // before the link goes, not to the document body.
+                    filter.focus();
+                    showAll.remove();
+                    renderFacetValues(list, facet.label, counts);
+                });
+                controls.append(showAll);
+            }
+            return controls;
+        }
+
+        function facetSection(facet) {
+            const section = document.createElement("section");
+            section.className = "facet";
+            section.dataset.label = facet.label;
+            const heading = document.createElement("h4");
+            heading.textContent = facet.title;
+            const list = document.createElement("div");
+            list.className = "facet-values";
+            const counts = facetCounts(facet.label);
+            section.append(heading);
+            if (counts.length > FACET_VALUES_SHOWN) {
+                section.append(facetControls(facet, list, counts));
+            }
+            renderFacetValues(list, facet.label, counts);
+            section.append(list);
+            return section;
+        }
+
+        /*
+         * The element to focus again after a render: the box of a value
+         * or the filter box of a facet.
+         */
+        function refocusSelector(focused) {
+            if (!focused || !focused.dataset || !focused.dataset.label) {
+                return null;
+            }
+            const label = CSS.escape(focused.dataset.label);
+            if (focused.classList.contains("facet-filter")) {
+                return `.facet-filter[data-label="${label}"]`;
+            }
+            if (!focused.closest(".facet-value")) return null;
+            return `.facet-value input[data-label="${label}"]`
+                + `[value="${CSS.escape(focused.value)}"]`;
         }
 
         function renderDialog() {
             const body = dialog.querySelector(".es-body");
-            const focused = document.activeElement;
-            const refocus = focused && focused.closest(".facet-value")
-                ? [focused.dataset.label, focused.value] : null;
-            body.replaceChildren();
-            for (const facet of window.grrFacets) {
-                const section = document.createElement("section");
-                section.className = "facet";
-                section.dataset.label = facet.label;
-                const heading = document.createElement("h4");
-                heading.textContent = facet.title;
-                section.append(heading);
-                const ticked = draft.get(facet.label) || new Set();
-                for (const [value, count] of facetValues(facet.label)) {
-                    const row = document.createElement("label");
-                    row.className = "facet-value";
-                    const box = document.createElement("input");
-                    box.type = "checkbox";
-                    box.value = value;
-                    box.dataset.label = facet.label;
-                    box.checked = ticked.has(value);
-                    box.addEventListener("change", () => {
-                        toggleDraft(facet.label, value);
-                    });
-                    const name = document.createElement("span");
-                    name.className = "facet-value-name";
-                    name.textContent = value;
-                    name.title = value;
-                    const tally = document.createElement("span");
-                    tally.className = "facet-value-count";
-                    tally.textContent = String(count);
-                    row.append(box, name, tally);
-                    section.append(row);
-                    if (refocus && refocus[0] === facet.label
-                            && refocus[1] === value) {
-                        queueMicrotask(() => box.focus());
-                    }
-                }
-                body.append(section);
+            const refocus = refocusSelector(document.activeElement);
+            body.replaceChildren(...window.grrFacets.map(facetSection));
+            if (refocus) {
+                const target = body.querySelector(refocus);
+                if (target) queueMicrotask(() => target.focus());
             }
             const matching = baseIds.filter(
                 (fullId) => holdsTicks(fullId, draft, null)).length;
@@ -964,6 +1055,8 @@
                 baseIds = Array.from(window.all_ids);
             }
             draft = ticksByFacet(appliedLabels);
+            expandedFacets = new Set();
+            facetFilters = new Map();
             renderDialog();
             dialog.showModal();
         }

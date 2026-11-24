@@ -5,9 +5,11 @@ import { expect, test, type Page } from '@playwright/test';
 import {
   FIXTURE_GRR,
   FIXTURE_LABELLED_GRR,
+  LABELLED_CELL_TYPES,
   LABELLED_EMPTY_LIST_RESOURCE_ID,
   LABELLED_FACETS,
   LABELLED_GENOME_TYPE,
+  LABELLED_MANY_VALUES_LABEL,
   LABELLED_ONE_ITEM_RESOURCE_ID,
   LABELLED_QUOTED_TISSUE,
   LABELLED_SEARCH_TERM,
@@ -22,7 +24,8 @@ import { indexPageUrl, serveGrr } from '../serving';
  *
  *   atlas/expression  tissue "basal ganglia", modality [RNA, ATAC], donors 12
  *   atlas/cortex      tissue "cortex",        modality [RNA],       donors 3
- *   atlas/liver       tissue "liver's lobe",  modality [],          donors 0
+ *   atlas/liver       tissue "liver's lobe",  modality [],          donors 0,
+ *                     cell_type: twelve values
  *   genomes/reference no labels
  */
 
@@ -356,6 +359,170 @@ test('a ticked value that contains a quote filters correctly', async ({
     [LABELLED_EMPTY_LIST_RESOURCE_ID]);
   await expect(page.locator('#status-error')).toBeEmpty();
   expect(addressQuery(page)).toBe(`label.tissue=${LABELLED_QUOTED_TISSUE}`);
+});
+
+/** The names of the values that a facet shows, in their order. */
+function facetValueNames(page: Page, label: string) {
+  return facet(page, label).locator('.facet-value-name');
+}
+
+function showAllLink(page: Page, label: string) {
+  return facet(page, label).getByRole('button', { name: /^Show all/ });
+}
+
+function filterBox(page: Page, label: string) {
+  return facet(page, label).getByRole('searchbox');
+}
+
+test('a facet with more than 10 values shows 10, and Show all shows every value', async ({
+  page,
+}) => {
+  await openLabelledIndex(page);
+  await openDialog(page);
+  await expect(facetValueNames(page, LABELLED_MANY_VALUES_LABEL))
+    .toHaveText(LABELLED_CELL_TYPES.slice(0, 10));
+
+  await showAllLink(page, LABELLED_MANY_VALUES_LABEL).click();
+
+  await expect(facetValueNames(page, LABELLED_MANY_VALUES_LABEL))
+    .toHaveText(LABELLED_CELL_TYPES);
+});
+
+test('the filter box of a facet narrows its values by substring, ignoring case', async ({
+  page,
+}) => {
+  await openLabelledIndex(page);
+  await openDialog(page);
+
+  await filterBox(page, LABELLED_MANY_VALUES_LABEL).fill('t CELL');
+
+  await expect(facetValueNames(page, LABELLED_MANY_VALUES_LABEL))
+    .toHaveText(['CD4+ T cell', 'CD8+ T cell']);
+});
+
+test('the filter box finds a value past the first 10', async ({ page }) => {
+  await openLabelledIndex(page);
+  await openDialog(page);
+
+  await filterBox(page, LABELLED_MANY_VALUES_LABEL).fill('PLASMA');
+
+  await expect(facetValueNames(page, LABELLED_MANY_VALUES_LABEL))
+    .toHaveText(['plasma cell']);
+});
+
+test('a collapsed facet also shows a ticked value past the first 10', async ({
+  page,
+}) => {
+  await openLabelledIndex(page, '#?label.cell_type=plasma%20cell', 1);
+
+  await openDialog(page);
+
+  await expect(facetValueNames(page, LABELLED_MANY_VALUES_LABEL))
+    .toHaveText([...LABELLED_CELL_TYPES.slice(0, 10), 'plasma cell']);
+  await expect(
+    facet(page, LABELLED_MANY_VALUES_LABEL)
+      .getByRole('checkbox', { name: 'plasma cell' }),
+  ).toBeChecked();
+  await expect(showAllLink(page, LABELLED_MANY_VALUES_LABEL))
+    .toHaveText('Show all 12');
+});
+
+test('Show all moves the focus to the filter box of its facet', async ({
+  page,
+}) => {
+  await openLabelledIndex(page);
+  await openDialog(page);
+
+  await showAllLink(page, LABELLED_MANY_VALUES_LABEL).focus();
+  await page.keyboard.press('Enter');
+
+  await expect(filterBox(page, LABELLED_MANY_VALUES_LABEL)).toBeFocused();
+});
+
+test('a ticked value stays ticked while the filter hides it', async ({
+  page,
+}) => {
+  await openLabelledIndex(page);
+  await openDialog(page);
+  const box = filterBox(page, LABELLED_MANY_VALUES_LABEL);
+  await box.fill('t cell');
+  await tick(page, LABELLED_MANY_VALUES_LABEL, 'CD4+ T cell');
+  await expect(box).toHaveValue('t cell');
+  await expect(facetValueNames(page, LABELLED_MANY_VALUES_LABEL))
+    .toHaveText(['CD4+ T cell', 'CD8+ T cell']);
+
+  await box.fill('hepato');
+  await expect(facetValueNames(page, LABELLED_MANY_VALUES_LABEL))
+    .toHaveText(['hepatocyte']);
+  await expect(applyButton(page)).toHaveText('Show 1 resources');
+  await box.fill('');
+
+  await expect(
+    facet(page, LABELLED_MANY_VALUES_LABEL)
+      .getByRole('checkbox', { name: 'CD4+ T cell' }),
+  ).toBeChecked();
+  await expect(applyButton(page)).toHaveText('Show 1 resources');
+});
+
+test('a tick after Show all keeps every value of the facet', async ({
+  page,
+}) => {
+  await openLabelledIndex(page);
+  await openDialog(page);
+  await showAllLink(page, LABELLED_MANY_VALUES_LABEL).click();
+
+  await tick(page, LABELLED_MANY_VALUES_LABEL, 'neutrophil');
+
+  await expect(facetValueNames(page, LABELLED_MANY_VALUES_LABEL))
+    .toHaveText(LABELLED_CELL_TYPES);
+});
+
+test('a facet with 10 values or fewer has no filter box and no Show all link', async ({
+  page,
+}) => {
+  await openLabelledIndex(page);
+
+  await openDialog(page);
+
+  await expect(filterBox(page, 'tissue')).toHaveCount(0);
+  await expect(dialog(page).getByRole('searchbox')).toHaveCount(1);
+  await expect(dialog(page).getByRole('button', { name: /^Show all/ }))
+    .toHaveText(['Show all 12']);
+});
+
+/*
+ * The address ticks modality RNA, which the liver score lacks, so every
+ * cell type counts 0. The facet then shows only its ticked values.
+ */
+function tickedCellTypesHash(count: number): string {
+  return '#?label.modality=RNA' + LABELLED_CELL_TYPES.slice(0, count)
+    .map((value) => `&label.cell_type=${encodeURIComponent(value)}`)
+    .join('');
+}
+
+test('a facet with exactly 10 values has no filter box and no Show all link', async ({
+  page,
+}) => {
+  await openLabelledIndex(page, tickedCellTypesHash(10), 0);
+
+  await openDialog(page);
+
+  await expect(facetValueNames(page, LABELLED_MANY_VALUES_LABEL))
+    .toHaveCount(10);
+  await expect(filterBox(page, LABELLED_MANY_VALUES_LABEL)).toHaveCount(0);
+  await expect(showAllLink(page, LABELLED_MANY_VALUES_LABEL)).toHaveCount(0);
+});
+
+test('a facet with 11 values has a filter box and a Show all link', async ({
+  page,
+}) => {
+  await openLabelledIndex(page, tickedCellTypesHash(11), 0);
+
+  await openDialog(page);
+
+  await expect(filterBox(page, LABELLED_MANY_VALUES_LABEL)).toHaveCount(1);
+  await expect(showAllLink(page, LABELLED_MANY_VALUES_LABEL))
+    .toHaveText('Show all 11');
 });
 
 test('a GRR without search.yaml shows no Extended search button', async ({

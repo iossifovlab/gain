@@ -153,6 +153,18 @@ export const LABELLED_FACETS = [
   { label: 'tissue', title: 'Tissue' },
   { label: 'modality', title: 'Modality' },
   { label: 'donors', title: 'donors' },
+  { label: 'cell_type', title: 'Cell type' },
+];
+
+/**
+ * The list label of the liver score with more values than a facet shows
+ * at first: twelve cell types, in the code-unit order of the dialog.
+ */
+export const LABELLED_MANY_VALUES_LABEL = 'cell_type';
+export const LABELLED_CELL_TYPES = [
+  'B cell', 'CD4+ T cell', 'CD8+ T cell', 'Kupffer cell', 'NK cell',
+  'cholangiocyte', 'endothelial cell', 'hepatic stellate cell',
+  'hepatocyte', 'monocyte', 'neutrophil', 'plasma cell',
 ];
 
 /** The summary that holds a comma and a double quote. */

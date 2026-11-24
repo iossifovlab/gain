@@ -289,6 +289,16 @@ LABELLED_NUMBER_LABEL = "donors"
 #: (gain#2501).
 LABELLED_QUOTED_TISSUE = "liver's lobe"
 
+#: The list label of the liver score with more values than a facet of the
+#: extended search shows at first, so the facet gets a "Show all" link
+#: and a filter box (gain#2502).  No value holds the search term.
+LABELLED_MANY_VALUES_LABEL = "cell_type"
+LABELLED_CELL_TYPES = [
+    "B cell", "CD4+ T cell", "CD8+ T cell", "Kupffer cell", "NK cell",
+    "cholangiocyte", "endothelial cell", "hepatic stellate cell",
+    "hepatocyte", "monocyte", "neutrophil", "plasma cell",
+]
+
 #: The ``search.yaml`` of the labelled fixture: the facets of its extended
 #: search (ADR 0045).  The file order is not the alphabetical order, and
 #: the last facet has no title.
@@ -299,6 +309,8 @@ facets:
   - label: {LABELLED_LIST_LABEL}
     title: Modality
   - label: {LABELLED_NUMBER_LABEL}
+  - label: {LABELLED_MANY_VALUES_LABEL}
+    title: Cell type
 """
 
 #: The summary of the versioned resource.  It holds a comma and a double
@@ -311,7 +323,8 @@ def a_labelled_repo(where: pathlib.Path) -> GenomicResourceRepo:
 
     The versioned resource carries a list of two, a scalar with a space
     and a number.  The other scores carry a list of one item and an
-    empty list.  The genome carries no labels, and its type is the
+    empty list, and the liver score also carries a list of twelve
+    cell types.  The genome carries no labels, and its type is the
     second one, for the type filter.
 
     The repository also gets the ``search.yaml`` of
@@ -343,6 +356,7 @@ def a_labelled_repo(where: pathlib.Path) -> GenomicResourceRepo:
                 LABELLED_LIST_LABEL: [],
                 LABELLED_SCALAR_LABEL: LABELLED_QUOTED_TISSUE,
                 LABELLED_NUMBER_LABEL: 0,
+                LABELLED_MANY_VALUES_LABEL: LABELLED_CELL_TYPES,
             }))
         .with_resource(
             LABELLED_GENOME_RESOURCE_ID,

@@ -16,6 +16,7 @@ from gain.genomic_resources.testing import build_filesystem_test_protocol
 from gain.genomic_resources.testing.info_page_fixtures import (
     LABELLED_GENOME_RESOURCE_ID,
     LABELLED_LIST_LABEL,
+    LABELLED_MANY_VALUES_LABEL,
     LABELLED_NUMBER_LABEL,
     LABELLED_ONE_ITEM_RESOURCE_ID,
     LABELLED_SCALAR_LABEL,
@@ -43,7 +44,7 @@ def test_the_search_term_matches_two_scores_and_the_genome(
     }
 
 
-def test_the_root_page_of_the_fixture_carries_its_three_facets(
+def test_the_root_page_of_the_fixture_carries_its_four_facets(
     tmp_path: pathlib.Path,
 ) -> None:
     a_labelled_repo(tmp_path)
@@ -59,4 +60,5 @@ def test_the_root_page_of_the_fixture_carries_its_three_facets(
         {"label": LABELLED_SCALAR_LABEL, "title": "Tissue"},
         {"label": LABELLED_LIST_LABEL, "title": "Modality"},
         {"label": LABELLED_NUMBER_LABEL, "title": LABELLED_NUMBER_LABEL},
+        {"label": LABELLED_MANY_VALUES_LABEL, "title": "Cell type"},
     ]
