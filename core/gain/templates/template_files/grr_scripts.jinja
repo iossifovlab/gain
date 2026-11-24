@@ -1040,20 +1040,54 @@
             }));
             element.append(head, body, foot);
             document.body.append(element);
+            // A folder move, Back included, while the dialog is open
+            // moves its counts to the new folder.
+            if (window.grrTree) window.grrTree.onChange(refreshOpenDialog);
             return element;
+        }
+
+        /*
+         * The resources that match the term and the type, without the
+         * ticks. In the tree view only those under the current folder,
+         * sub-folders included, so that a count says what the tree
+         * would list after the tick (gain#2503).
+         */
+        function folderIds(ids) {
+            const tree = shownTree();
+            const folder = tree ? tree.folder() : [];
+            if (folder.length === 0) return ids;
+            const prefix = `${folder.join("/")}/`;
+            return ids.filter((fullId) => fullId.startsWith(prefix));
+        }
+
+        /*
+         * Count from the term and the type that the controls hold now.
+         * Back and Forward restore the term of their entry, so a move
+         * can change the search as well as the folder.
+         */
+        function countCurrentSearch() {
+            const { q, type } = currentSearch();
+            let searchIds;
+            try {
+                searchIds = queryIds(q, type, []);
+            } catch {
+                // A term that FTS rejects: the search falls back to every
+                // resource, and so do the counts.
+                searchIds = Array.from(window.all_ids);
+            }
+            baseIds = folderIds(searchIds);
+        }
+
+        function refreshOpenDialog() {
+            if (!dialog.open) return;
+            countCurrentSearch();
+            renderDialog();
         }
 
         async function openExtendedSearch() {
             await window.dbLoaded;
             if (dialog === null) dialog = createDialog();
-            const { q, type } = currentSearch();
-            try {
-                baseIds = queryIds(q, type, []);
-            } catch {
-                // A term that FTS rejects: the search falls back to every
-                // resource, and so do the counts.
-                baseIds = Array.from(window.all_ids);
-            }
+            countCurrentSearch();
             draft = ticksByFacet(appliedLabels);
             expandedFacets = new Set();
             facetFilters = new Map();

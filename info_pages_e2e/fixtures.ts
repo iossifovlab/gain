@@ -33,6 +33,13 @@ export const FIXTURE_BROWSE_GRR = path.join(FIXTURE_ROOT, 'browse');
  */
 export const FIXTURE_LABELLED_GRR = path.join(FIXTURE_ROOT, 'labelled');
 
+/**
+ * The nested GRR: labelled resources in folders and sub-folders, for the
+ * folder counts of the extended search. Its shape is
+ * `NESTED_RESOURCES` of `info_page_fixtures.py`.
+ */
+export const FIXTURE_NESTED_GRR = path.join(FIXTURE_ROOT, 'nested');
+
 /** The resource whose Coverage table this suite drives. */
 export const COVERAGE_RESOURCE = 'scores/coverage';
 
@@ -202,5 +209,6 @@ export function fixturesArePresent(): boolean {
     && fs.existsSync(path.join(FIXTURE_LABELLED_GRR, 'index.html'))
     && fs.existsSync(
       path.join(FIXTURE_LABELLED_GRR, '.CONTENTS.sqlite3.gz'))
+    && fs.existsSync(path.join(FIXTURE_NESTED_GRR, 'index.html'))
   );
 }

@@ -45,12 +45,14 @@ from gain.genomic_resources.testing.info_page_fixtures import (
     a_browse_repo,
     a_coverage_repo,
     a_labelled_repo,
+    a_nested_labelled_repo,
 )
 
 #: The generated GRRs, under the directory this script is pointed at.
 COVERAGE_GRR_DIRNAME = "grr"
 BROWSE_GRR_DIRNAME = "browse"
 LABELLED_GRR_DIRNAME = "labelled"
+NESTED_GRR_DIRNAME = "nested"
 
 
 def build_coverage_grr(repo_dir: pathlib.Path) -> None:
@@ -91,6 +93,13 @@ def build_labelled_grr(repo_dir: pathlib.Path) -> None:
     cli_manage(["repo-index", "-R", str(repo_dir)])
 
 
+def build_nested_grr(repo_dir: pathlib.Path) -> None:
+    """Realize the nested GRR into ``repo_dir`` and generate its pages."""
+    a_nested_labelled_repo(repo_dir)
+
+    cli_manage(["repo-index", "-R", str(repo_dir)])
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -117,6 +126,7 @@ def main(argv: list[str] | None = None) -> int:
         (COVERAGE_GRR_DIRNAME, build_coverage_grr),
         (BROWSE_GRR_DIRNAME, build_browse_grr),
         (LABELLED_GRR_DIRNAME, build_labelled_grr),
+        (NESTED_GRR_DIRNAME, build_nested_grr),
     ):
         repo_dir = fixtures_dir / dirname
         shutil.rmtree(repo_dir, ignore_errors=True)

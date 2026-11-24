@@ -1,11 +1,13 @@
 """The fixtures the info pages' browser tests are built on.
 
-Three of them.  ``a_coverage_repo`` is a single resource whose statistics
+Four of them.  ``a_coverage_repo`` is a single resource whose statistics
 table both sortable-table suites sort; ``a_browse_repo`` is a repository
 shaped to be *navigated* -- folders to descend through and terms to
 search for -- which is what the index page's own tests need;
 ``a_labelled_repo`` carries the labels that a download of the index page
-writes out (gain#2488).
+writes out (gain#2488); ``a_nested_labelled_repo`` puts labelled
+resources in nested folders, for the folder counts of the extended
+search (gain#2503).
 
 Two rather than one because the coverage fixture's traps are tuned to a
 sorter and nothing else should perturb them: adding folders to it would
@@ -367,4 +369,45 @@ def a_labelled_repo(where: pathlib.Path) -> GenomicResourceRepo:
     )
     (where / SEARCH_CONFIG_FILE_NAME).write_text(
         LABELLED_SEARCH_YAML, encoding="utf8")
+    return repo
+
+
+#: The resources of the nested fixture, with their tissue and their
+#: modalities.  The folder ``brain`` holds a sub-folder and a resource,
+#: so the counts of the extended search change with each move between
+#: the root, ``brain`` and ``brain/cortex`` (gain#2503).  The folder
+#: ``brainstem`` starts with the name ``brain`` but is not under it.
+NESTED_RESOURCES = {
+    "brain/cortex/layer1": ("cortex", ["RNA"]),
+    "brain/cortex/layer2": ("cortex", ["RNA", "ATAC"]),
+    "brain/hippocampus": ("hippocampus", ["ATAC"]),
+    "brainstem/medulla": ("medulla", ["ATAC"]),
+    "liver/hepatocytes": ("liver", ["RNA"]),
+}
+
+#: The ``search.yaml`` of the nested fixture.
+NESTED_SEARCH_YAML = """\
+facets:
+  - label: tissue
+    title: Tissue
+  - label: modality
+    title: Modality
+"""
+
+
+def a_nested_labelled_repo(where: pathlib.Path) -> GenomicResourceRepo:
+    """A labelled repository with nested folders and an extended search.
+
+    Each resource of ``NESTED_RESOURCES`` carries its ``tissue`` and its
+    ``modality``.  The repository gets ``NESTED_SEARCH_YAML``.
+    """
+    grr = a_grr()
+    for resource_id, (tissue, modality) in NESTED_RESOURCES.items():
+        grr = grr.with_resource(
+            resource_id,
+            _a_browse_score(f"Expression of the {tissue}.")
+            .with_labels(tissue=tissue, modality=modality))
+    repo = grr.build_repo(where)
+    (where / SEARCH_CONFIG_FILE_NAME).write_text(
+        NESTED_SEARCH_YAML, encoding="utf8")
     return repo
