@@ -456,6 +456,13 @@ pipeline {
         // attempted too early can find a build that is still running with
         // nothing archived yet. Everything above (checkout, pre-flight, the
         // image build) is margin for the parent to finish.
+        //
+        // The margin alone is not enough: with every image layer cached the
+        // stages above take seconds, and the copy ran before the parent's
+        // `post` (gain#2544). So a copy from a specific upstream build
+        // polls, with `optional: true`, until the .conda is there, for at
+        // most 10 minutes. lastSuccessful() selects a finished build only,
+        // so it needs no wait and copies one time.
         stage('Copy conda artefact') {
             when { expression { env.SUPERSEDED != 'true' } }
             steps {
@@ -463,18 +470,39 @@ pipeline {
                     String project = params.UPSTREAM_PROJECT?.trim() ?:
                         'iossifovlab/gain/' +
                         params.BRANCH_NAME.replace('/', '%2F')
-                    def selector = params.UPSTREAM_BUILD?.trim()
+                    boolean fromSpecificBuild =
+                        params.UPSTREAM_BUILD?.trim() ? true : false
+                    def selector = fromSpecificBuild
                         ? specific(params.UPSTREAM_BUILD)
                         : lastSuccessful()
                     echo "Copying dist/conda/gain-core-*.conda from " +
                          "${project} " +
                          "(build ${params.UPSTREAM_BUILD ?: 'lastSuccessful'})"
-                    copyArtifacts(
-                        filter: 'dist/conda/gain-core-*.conda',
-                        fingerprintArtifacts: true,
-                        projectName: project,
-                        selector: selector,
-                    )
+                    if (fromSpecificBuild) {
+                        timeout(time: 10, unit: 'MINUTES') {
+                            waitUntil(quiet: true) {
+                                copyArtifacts(
+                                    filter: 'dist/conda/gain-core-*.conda',
+                                    fingerprintArtifacts: true,
+                                    projectName: project,
+                                    selector: selector,
+                                    optional: true,
+                                )
+                                return sh(
+                                    returnStatus: true,
+                                    script: 'ls dist/conda/gain-core-*.conda' +
+                                            ' >/dev/null 2>&1',
+                                ) == 0
+                            }
+                        }
+                    } else {
+                        copyArtifacts(
+                            filter: 'dist/conda/gain-core-*.conda',
+                            fingerprintArtifacts: true,
+                            projectName: project,
+                            selector: selector,
+                        )
+                    }
                 }
                 // Fail loud here rather than as an opaque "nothing provides
                 // gain-core" mid-solve. Exactly one: the run script reads
