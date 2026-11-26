@@ -37,10 +37,11 @@
 // uploaded nothing.
 //
 // Output: the sdists and wheels of gain-core and the three annotator
-// plugins published to PyPI (gain-web-api stays off PyPI), wheels
-// published to nemo:/data/wheels/gain, conda packages to
-// anaconda.org/iossifovlab, and Docker images to
-// registry.seqpipe.org tagged :${TAG_NAME} + :stable. After the
+// plugins published to PyPI (gain-web-api stays off PyPI), conda
+// packages to anaconda.org/iossifovlab, Docker images to
+// registry.seqpipe.org tagged :${TAG_NAME} + :stable, and last the
+// wheels to nemo:/data/wheels/gain. The gain_core wheel on that
+// wheel index marks a finished release. After the
 // upload, `Post-publish: install smoke` installs gain-core==TAG_NAME
 // from anaconda.org the way the docs say and walks its entry points
 // (#1432) — advisory: a red is UNSTABLE plus a Zulip line, never a
@@ -321,14 +322,17 @@ pipeline {
             // curl, so the probe runs before `Setup` builds the
             // conda-builder image.
             //
-            // The script exits 1 for exactly one reason: gain-core
+            // The wheel index is the last destination of `Publish`,
+            // and its gain_core wheel marks a finished release. The
+            // script exits 1 for exactly one reason: gain-core
             // ${TAG_NAME} is both on PyPI and on the wheel index. On
-            // PyPI only, an earlier run failed after step 0 of
-            // `Publish`, and this run resumes it. A PyPI failure is
-            // "not there yet", as in `Pre-flight: tag freshness`. A
-            // dry run gets exit 0 and a `DRY RUN:` line instead of
-            // exit 1. Any other non-zero exit, for example 2 for a
-            // missing input, is a probe failure and aborts as one.
+            // PyPI only, an earlier run failed in a step of `Publish`
+            // before the wheel index, and this run resumes it. A PyPI
+            // failure is "not there yet", as in `Pre-flight: tag
+            // freshness`. A dry run gets exit 0 and a `DRY RUN:` line
+            // instead of exit 1. Any other non-zero exit, for example
+            // 2 for a missing input, is a probe failure and aborts as
+            // one.
             //
             // This file comes from master, but the workspace is the
             // tag checkout. A tag cut before #1960 has no
@@ -607,8 +611,13 @@ pipeline {
         }
 
         stage('Pre-flight: tag freshness') {
-            // Reject tag mutation: if any destination already has
-            // an artefact for ${TAG_NAME}, abort. D14.
+            // Reject tag mutation: abort if the wheel index already
+            // has gain_core-${TAG_NAME}-py3-none-any.whl. The wheel
+            // index is the last destination of `Publish`, and its
+            // gain_core wheel marks a finished release. A failure in
+            // an earlier step of `Publish` leaves the wheel off the
+            // index, so a rerun with the same tag resumes the
+            // release. D14.
             //
             // A dry run reports the finding instead of aborting on
             // it. A fresh tag fires the real release on its own, so
@@ -617,9 +626,9 @@ pipeline {
             // not a defect in the tag — the point of the dry run is
             // the gates before this one and the credentials after.
             //
-            // The probe script exits non-zero for exactly one
-            // reason, an artefact already published: network and
-            // index failures are treated as "not there yet" inside
+            // The script exits non-zero for exactly one reason, the
+            // gain_core wheel already on the wheel index: network
+            // and index failures count as "not there yet" inside
             // it, so returnStatus loses nothing.
             steps {
                 script {
@@ -638,20 +647,6 @@ pipeline {
                             if [ "$code" = "200" ]; then
                                 echo "gain-core ${TAG_NAME} is already" \
                                      "at https://${WHEELS_HOST}/gain/"
-                                exit 1
-                            fi
-
-                            # Anaconda check: exit 0 means the
-                            # package exists; non-zero (1, 2,
-                            # network) is treated as "not there
-                            # yet". Output discarded to keep the
-                            # build log readable.
-                            if docker run --rm "${CONDA_BUILDER}" \
-                                anaconda show \
-                                    "${ANACONDA_USER}/gain-core/${TAG_NAME}" \
-                                    >/dev/null 2>&1; then
-                                echo "gain-core ${TAG_NAME} is already" \
-                                     "on Anaconda.org/${ANACONDA_USER}"
                                 exit 1
                             fi
                         ''',
@@ -910,10 +905,14 @@ pipeline {
                 // already has, so a re-run after a partial upload
                 // completes it. gain_core goes last. A PyPI 200 alone
                 // does not mean that this step completed: PyPI answers
-                // 200 once any file of the release is there. The wheel
-                // index gets the wheels only after this step, so the
-                // PyPI 200 together with the wheel-index 200 in
-                // `Pre-flight: PyPI` means this step completed.
+                // 200 once any file of the release is there. PyPI
+                // goes first, because a PyPI file name is permanent:
+                // PyPI must fail before any other destination changes.
+                // The wheel index is the last destination of
+                // `Publish` (step 3), and its gain_core wheel marks a
+                // finished release. A PyPI 200 without the wheel-index
+                // 200 in `Pre-flight: PyPI` is a release that did not
+                // finish, and this run resumes it.
                 //
                 // A resume rebuilds every file, and the build
                 // backends are not pinned. A new hatchling or
@@ -953,7 +952,93 @@ pipeline {
                     '''
                 }
 
-                // 1) Wheels + sdists → wheels.seqpipe.org
+                // 1) Conda → Anaconda.org/iossifovlab.
+                //
+                // Uploaded with rattler-build's own `upload
+                // anaconda` subcommand instead of `anaconda-client`
+                // because the latter (via conda-package-handling
+                // 2.4.0) failed to extract metadata from the
+                // .conda files produced by rattler-build 0.63.1
+                // ("Trouble reading metadata"). Using the same
+                // binary that built the package avoids that
+                // parser-version mismatch.
+                //
+                // --force replaces a package that is already on the
+                // channel, so this step is safe to run again.
+                // rattler-build has no skip-existing flag. A resumed
+                // release rebuilds the packages from the same tag
+                // commit and the same pinned base images, and
+                // --force replaces the packages of the failed run.
+                // The bytes can differ. Only a release that never
+                // finished is affected, and `Notify` announces a
+                // release only after success. D10.
+                //
+                // Wrapped in `sh -c '…'` so /dist/conda/*.conda
+                // glob-expands inside the container, where the
+                // path actually exists. Without the wrapper the
+                // agent's shell expanded the glob against its own
+                // root (no /dist/conda there), found no match, and
+                // passed the literal pattern through. ANACONDA_TOKEN
+                // + ANACONDA_USER come in via -e so the inner
+                // single-quoted script can reference them without
+                // agent-side interpolation.
+                //
+                // --user runs the container as the Jenkins user
+                // (matches the build stage). Without it the
+                // container default is mambauser, which has no
+                // permission to read the .conda files owned by
+                // the Jenkins user — produces an opaque
+                // "io error occurred: Permission denied". HOME=/tmp
+                // gives the random UID a writable home for any
+                // rattler-build cache lookups.
+                sh '''
+                    DOCKER_USER="$(id -u):$(id -g)"
+                    docker run --rm \
+                        --user "$DOCKER_USER" \
+                        -e HOME=/tmp \
+                        -e ANACONDA_TOKEN \
+                        -e ANACONDA_USER \
+                        -v "$PWD/dist/conda:/dist/conda:ro" \
+                        "${CONDA_BUILDER}" \
+                        sh -c 'rattler-build upload anaconda --owner "$ANACONDA_USER" --api-key "$ANACONDA_TOKEN" --force /dist/conda/*.conda'
+                '''
+
+                // 2) Docker → registry.seqpipe.org: :${TAG_NAME}
+                // and :stable. A resumed release rebuilds the images
+                // from the same tag commit and the same pinned base
+                // images. The rebuilt image can have a new digest,
+                // and `docker push` then re-points :${TAG_NAME} and
+                // :stable to it. Only a release that never finished
+                // is affected. D10.
+                sh '''
+                    # #10: per-build DOCKER_CONFIG so a concurrent
+                    # job's `docker logout` can't drop our auth
+                    # between pushes (auth instance of the tb-w8d /
+                    # build #137 shared-daemon race; cf. iossifovlab/
+                    # gpf#856).
+                    export DOCKER_CONFIG="$WORKSPACE/.docker-cfg-$BUILD_NUMBER-push"
+                    mkdir -p "$DOCKER_CONFIG"
+                    printf '%s' "$REGISTRY_PASS" | docker login \
+                        -u "$REGISTRY_USER" \
+                        --password-stdin "$REGISTRY"
+                    trap 'docker logout "$REGISTRY" || true; rm -rf "$DOCKER_CONFIG"' EXIT
+
+                    for repo in "$BACKEND_REPO" "$FRONTEND_REPO"; do
+                        docker tag "$repo:$TAG_NAME" \
+                                   "$repo:stable"
+                        docker push "$repo:$TAG_NAME"
+                        docker push "$repo:stable"
+                    done
+                '''
+
+                // 3) Wheels + sdists → wheels.seqpipe.org. The wheel
+                // index is the last destination of `Publish`, and its
+                // gain_core wheel is the only sign that a release
+                // finished. `Pre-flight: PyPI` and `Pre-flight: tag
+                // freshness` reject a rerun only when that wheel is
+                // there. A failure in step 1 or 2 leaves the tag off
+                // the wheel index, and a rerun with the same TAG_NAME
+                // resumes the release.
                 sshagent(credentials: ['wheels-seqpipe-ssh-key']) {
                     sh '''
                         files=$(ls \
@@ -1010,79 +1095,6 @@ docker run --rm \\
 EOF
                     '''
                 }
-
-                // 2) Conda → Anaconda.org/iossifovlab.
-                //
-                // Uploaded with rattler-build's own `upload
-                // anaconda` subcommand instead of `anaconda-client`
-                // because the latter (via conda-package-handling
-                // 2.4.0) failed to extract metadata from the
-                // .conda files produced by rattler-build 0.63.1
-                // ("Trouble reading metadata"). Using the same
-                // binary that built the package avoids that
-                // parser-version mismatch.
-                //
-                // --force replaces on conflict, giving us the same
-                // idempotent re-run semantics that anaconda-client
-                // had with --skip-existing (rattler-build doesn't
-                // ship a skip-existing flag, but our builds are
-                // deterministic so overwriting with the same
-                // content is harmless). D10.
-                //
-                // Wrapped in `sh -c '…'` so /dist/conda/*.conda
-                // glob-expands inside the container, where the
-                // path actually exists. Without the wrapper the
-                // agent's shell expanded the glob against its own
-                // root (no /dist/conda there), found no match, and
-                // passed the literal pattern through. ANACONDA_TOKEN
-                // + ANACONDA_USER come in via -e so the inner
-                // single-quoted script can reference them without
-                // agent-side interpolation.
-                //
-                // --user runs the container as the Jenkins user
-                // (matches the build stage). Without it the
-                // container default is mambauser, which has no
-                // permission to read the .conda files owned by
-                // the Jenkins user — produces an opaque
-                // "io error occurred: Permission denied". HOME=/tmp
-                // gives the random UID a writable home for any
-                // rattler-build cache lookups.
-                sh '''
-                    DOCKER_USER="$(id -u):$(id -g)"
-                    docker run --rm \
-                        --user "$DOCKER_USER" \
-                        -e HOME=/tmp \
-                        -e ANACONDA_TOKEN \
-                        -e ANACONDA_USER \
-                        -v "$PWD/dist/conda:/dist/conda:ro" \
-                        "${CONDA_BUILDER}" \
-                        sh -c 'rattler-build upload anaconda --owner "$ANACONDA_USER" --api-key "$ANACONDA_TOKEN" --force /dist/conda/*.conda'
-                '''
-
-                // 3) Docker → registry.seqpipe.org with
-                // :${TAG_NAME} immutable + :stable moving.
-                // Re-pushing same digest is a registry no-op
-                // (D10).
-                sh '''
-                    # #10: per-build DOCKER_CONFIG so a concurrent
-                    # job's `docker logout` can't drop our auth
-                    # between pushes (auth instance of the tb-w8d /
-                    # build #137 shared-daemon race; cf. iossifovlab/
-                    # gpf#856).
-                    export DOCKER_CONFIG="$WORKSPACE/.docker-cfg-$BUILD_NUMBER-push"
-                    mkdir -p "$DOCKER_CONFIG"
-                    printf '%s' "$REGISTRY_PASS" | docker login \
-                        -u "$REGISTRY_USER" \
-                        --password-stdin "$REGISTRY"
-                    trap 'docker logout "$REGISTRY" || true; rm -rf "$DOCKER_CONFIG"' EXIT
-
-                    for repo in "$BACKEND_REPO" "$FRONTEND_REPO"; do
-                        docker tag "$repo:$TAG_NAME" \
-                                   "$repo:stable"
-                        docker push "$repo:$TAG_NAME"
-                        docker push "$repo:stable"
-                    done
-                '''
             }
         }
 
