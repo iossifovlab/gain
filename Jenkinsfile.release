@@ -37,10 +37,11 @@
 // uploaded nothing.
 //
 // Output: the sdists and wheels of gain-core and the three annotator
-// plugins published to PyPI (gain-web-api stays off PyPI), wheels
-// published to nemo:/data/wheels/gain, conda packages to
-// anaconda.org/iossifovlab, and Docker images to
-// registry.seqpipe.org tagged :${TAG_NAME} + :stable. After the
+// plugins published to PyPI (gain-web-api stays off PyPI), conda
+// packages to anaconda.org/iossifovlab, Docker images to
+// registry.seqpipe.org tagged :${TAG_NAME} + :stable, and last the
+// wheels to nemo:/data/wheels/gain. The gain_core wheel on that
+// wheel index marks a finished release. After the
 // upload, `Post-publish: install smoke` installs gain-core==TAG_NAME
 // from anaconda.org the way the docs say and walks its entry points
 // (#1432) — advisory: a red is UNSTABLE plus a Zulip line, never a
