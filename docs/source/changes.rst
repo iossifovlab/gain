@@ -1,6 +1,61 @@
 Release Notes
 =============
 
+* 2026.11.2
+    * ``binning_tool``: a binner is now a track kind. A run definition
+      and ``tracks_annotator`` take a ``tracks:`` list of
+      ``position_score_tracks`` and ``fragment_score_tracks`` entries,
+      the ``gain.binning`` names follow (``TrackKind``,
+      ``PositionScoreTracks``, ``FragmentScoreTracks``), and the
+      ``/tracks`` table has ``entry_type``, ``entry_index`` and
+      ``entry_def`` columns under ``tracks_layout`` 3. The old spellings
+      are refused with a message that names the new one, and a file
+      written before this must be binned again.
+    * Annotation: ``binning_tracks_annotator`` is renamed
+      ``tracks_annotator``. An aggregator on the ``allele`` attribute of
+      ``allele_score_annotator`` reduces the allele keys, so ``count``
+      answers a number, and a ``str`` fragment score folds to ``list``
+      by default instead of ``join(,)``.
+    * SpliceAI: ONNX Runtime is the default backend and TensorFlow is
+      the optional ``gain-spliceai-annotator[tensorflow]`` install.
+      ``SPLICEAI_BACKEND=onnx-fused`` is an opt-in backend that runs the
+      five models as one graph.
+    * ``grr_manage``: ``repair`` skips the info pages of a resource
+      whose page fingerprint is unchanged; the fingerprint hashes the
+      page templates and static files and, for a score, its labelled
+      reference genome. The root ``index.html`` and ``about.html`` are
+      written only when their bytes change.
+    * GRR pages: the index page downloads the resources of the table
+      view as JSON or CSV, and the tree view downloads the matches
+      under a folder. Every info page has one header bar with the trail
+      and the About link, a folder address no longer flashes the
+      resource table, and the resource page labels no longer wrap.
+    * Statistics: a ``data_frame`` describe statistic and the
+      ``ann_data`` ``describe_obs`` and ``describe_var`` are the same on
+      every machine. ``fragments.json``, ``coverage.json`` and
+      ``alleles.json`` store each length record once, under ``global``;
+      a file of the old shape still reads, but gain before this shows
+      the lengths of a new file as not computed. ``intersection`` and
+      ``difference`` handle open region bounds and regions on the next
+      chromosome, and ``maximally_extend_variant`` returns a no-variant
+      unchanged.
+    * gainweb: emails say GAIn instead of GPFWA. ``httpd.conf``
+      revalidates the unhashed ``/assets/`` and ``/static/`` files
+      instead of caching them for a year, so the pipeline editor is no
+      longer empty after an upgrade, and a missing asset answers 404.
+      The pipeline page gives absolute links to a sibling GRR whose
+      path starts with the managed GRR's path.
+    * Build and docs: the CI and production images run Python 3.13.
+      The docs install ``gain-vep-annotator`` from bioconda, and the
+      binning infrastructure guide is rewritten.
+    * **Issues closed in this release:** `all issues
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+is%3Aclos
+      ed+reason%3Acompleted+closed%3A2026-11-10T14%3A53%3A04Z..2026-11-2
+      4T11%3A33%3A18Z>`__, `bug issues
+      <https://github.com/iossifovlab/gain/issues?q=is%3Aissue+label%3Ab
+      ug+is%3Aclosed+reason%3Acompleted+closed%3A2026-11-10T14%3A53%3A04
+      Z..2026-11-24T11%3A33%3A18Z>`__.
+
 * 2026.11.1
     * Annotation: the new ``binning_tracks_annotator`` takes a
       ``binners:`` list spelled as a ``binning_tool`` run definition and
