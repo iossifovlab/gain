@@ -79,7 +79,10 @@ def test_rejected_token_names_the_jenkins_credential(
     result = run_probe(stub_bin, code)
 
     assert result.returncode == 1
-    assert "anaconda-token-iossifovlab" in result.stdout + result.stderr
+    assert f"Anaconda token probe: HTTP {code}" in result.stdout
+    output = result.stdout + result.stderr
+    assert "anaconda-token-iossifovlab" in output
+    assert "Anaconda.org rejects" in output
 
 
 @pytest.mark.parametrize(
