@@ -21,7 +21,9 @@ local-file root attributes; the kind's own semantics are
 [#1792](https://github.com/iossifovlab/gain/issues/1792) (the D10 amendment: the
 `name` key; both amendments are recorded by
 [#1798](https://github.com/iossifovlab/gain/issues/1798), and the modes are
-[ADR 0037](0037-a-fragment-can-be-binned-by-its-overlap-or-its-coverage.md))
+[ADR 0037](0037-a-fragment-can-be-binned-by-its-overlap-or-its-coverage.md)),
+[#2532](https://github.com/iossifovlab/gain/issues/2532) (the D13 amendment: a
+stem over 150 characters is shortened with a digest)
 
 Design doc of record: `seqpipe/genomics-toolbox`
 `docs/2026-09-04-gain-score-binning-design.md`, whose decisions are numbered
@@ -398,6 +400,29 @@ tracks from one resource open (the planned `fragment_score_binner`,
 saves a multi-column block without assuming one track per job.
 `.out-of-scope/binner-lifetime-protocol.md`, which recorded the earlier
 decline of this change pending a second binner kind, is removed with it.
+
+**Amended by #2532 (2026-11-26): a stem over 150 characters is shortened
+with a digest.** The stem of a track is the part of its chunk names and
+its task ids that comes before the region: the resource, the score, the
+aggregator, the replacement, the group, the digest of the parameters and
+the bin size. The stem had no length limit. The task graph clips a task id
+to 200 characters, so a long stem lost the region tail of the id. Two
+bundles of one track then got the same id, and the graph refused the
+second one. A long enough stem also made a chunk name longer than the
+255-byte limit of a file name.
+
+A stem of 150 characters or less is unchanged, so its chunk names and task
+ids are the same as before. A longer stem becomes its first 133 characters,
+then `_`, then the 16-hex-digit `_digest` of the full stem: 150 characters
+in all. The prefix tells a person which track it is. The digest of the
+full stem keeps two tracks apart when they differ only past the prefix,
+for example in the group or the parameters. `bin_`, a stem of 150
+characters and a first region with a 25-character contig and a 9-digit
+start fit in 190 characters, so the clip never cuts the part that tells
+two bundles apart. The fix is in the stem, not in the clip of the task
+graph: every caller of the task graph shares the clip, and the clip does
+not touch the chunk names. A work directory with chunks of a long-stem
+track from an older run computes that track again one time.
 
 ### The read path is `get_scores_in_bins`, unchanged — decided by measurement (D14)
 

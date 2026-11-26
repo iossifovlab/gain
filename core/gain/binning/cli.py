@@ -368,7 +368,26 @@ def _track_stem(track: Track, bin_size: int) -> str:
         stem += f"_g{urllib.parse.quote(track.group, safe='')}"
     if track.parameters:
         stem += f"_p{_digest(track.parameters)}"
-    return f"{stem}_bs{bin_size}"
+    return _shortened(f"{stem}_bs{bin_size}")
+
+
+# A stem this long or shorter is kept as it is.  ``bin_``, the stem and
+# a first region of a 25-character contig and a 9-digit start then stay
+# within the task graph's 200-character id, so its clip never cuts what
+# tells two bundles apart; and a chunk name stays a valid file name.
+_MAX_STEM = 150
+
+
+def _shortened(stem: str) -> str:
+    """Keep a short stem; cut a long one and append its full digest.
+
+    The kept prefix tells a person which track it is; the digest of the
+    whole stem keeps two tracks apart that differ only past the prefix.
+    """
+    if len(stem) <= _MAX_STEM:
+        return stem
+    digest = _digest(stem)
+    return f"{stem[:_MAX_STEM - len(digest) - 1]}_{digest}"
 
 
 def _chunk_path(

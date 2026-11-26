@@ -1437,3 +1437,155 @@ def test_the_old_genome_key_is_refused_with_the_rename(
     assert "unknown key" not in err
     assert "is required" not in err
     assert not output.exists()
+
+
+# A track whose stem, ``summary_<219 x>_bigwig_s_max_none_bs10``, is 250
+# characters: past the 150 a stem keeps unchanged (#2532).
+LONG_TRACK = replace(
+    TRACK, name="long", resource_ids=(f"summary/{'x' * 219}/bigwig",))
+TWO_BUNDLES = [BedRegion("chr1", 1, 10), BedRegion("chr1", 11, 20)]
+
+
+def task_ids_of(
+    tracks: list[Track], grr_dir: pathlib.Path, tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch, regions: list[BedRegion] | None = None,
+) -> list[str]:
+    """The chunk tasks of one job per track, one task per region."""
+    run = RunDefinition(
+        reference_genome="genome", bin_size=10,
+        regions=regions or TWO_BUNDLES,
+        jobs=[BinningJob(kind="stub_tracks", tracks=(t,)) for t in tracks])
+    monkeypatch.setattr(
+        "gain.binning.cli.discover_track_kinds",
+        lambda: {
+            "stub_tracks": a_stub_track_kind(StubBinding(one_bin_of(1.0)))})
+    grr = build_genomic_resource_repository({
+        "id": "local", "type": "directory", "directory": str(grr_dir)})
+    graph = _build_task_graph(run, {
+        "run_definition": str(tmp_path / "run.yaml"),
+        "work_dir": str(tmp_path / "work"),
+        "output": str(tmp_path / "out.h5"),
+        "task_budget": 1,
+    }, grr)
+    return [t.task_id for t in graph.tasks if t.task_id != "write_hdf5"]
+
+
+def test_a_long_stem_track_gets_short_distinct_task_ids(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path,
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ids = task_ids_of([LONG_TRACK], grr_dir, tmp_path, monkeypatch)
+
+    assert len(ids) == 2
+    assert len(set(ids)) == 2
+    assert all(len(task_id) < 200 for task_id in ids)
+
+
+def test_a_long_stem_track_logs_no_task_id_clip_warning(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path,
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level("WARNING", logger="gain.task_graph.graph"):
+        task_ids_of([LONG_TRACK], grr_dir, tmp_path, monkeypatch)
+
+    assert "task id is too long" not in caplog.text
+
+
+def test_a_long_stem_chunk_name_fits_a_file_name(
+    tmp_path: pathlib.Path,
+) -> None:
+    region = BedRegion("chr1", 100_000_000, 200_000_000)
+
+    name = pathlib.Path(
+        _chunk_path(str(tmp_path), LONG_TRACK, region, 10)).name
+
+    assert len(name.encode()) <= 255
+
+
+def test_a_long_stem_names_its_tasks_and_chunks_the_same_every_time(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path,
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    region = TWO_BUNDLES[0]
+
+    first = task_ids_of([LONG_TRACK], grr_dir, tmp_path, monkeypatch)
+    second = task_ids_of([LONG_TRACK], grr_dir, tmp_path, monkeypatch)
+
+    assert first == second
+    assert _chunk_path("c", LONG_TRACK, region, 10) == _chunk_path(
+        "c", LONG_TRACK, region, 10)
+
+
+@pytest.mark.parametrize("one, two", [
+    (replace(LONG_TRACK, name="neuron", group="neuron"),
+     replace(LONG_TRACK, name="glia", group="glia")),
+    (replace(LONG_TRACK, name="q10", parameters="min_quality: 10"),
+     replace(LONG_TRACK, name="q20", parameters="min_quality: 20")),
+], ids=["group", "parameters"])
+def test_long_stem_tracks_apart_only_past_the_prefix_stay_apart(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path,
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+    one: Track, two: Track,
+) -> None:
+    # The group and the digest of the parameters follow the resource id,
+    # so in a long stem they fall past the kept prefix: only the digest
+    # of the whole stem tells the two tracks apart.
+    region = TWO_BUNDLES[0]
+
+    ids = task_ids_of(
+        [one, two], grr_dir, tmp_path, monkeypatch, regions=[region])
+
+    assert len(set(ids)) == 2
+    assert _chunk_path("c", one, region, 10) != _chunk_path(
+        "c", two, region, 10)
+
+
+LONG_STEM = f"summary_{'x' * 125}_02dbc8a6c3a81ad3"
+
+
+def test_a_long_stem_is_its_first_133_characters_and_its_digest(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path,
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The form is pinned: a change of it renames every chunk of a
+    # long-stem track, and the next run computes the track again.
+    region = TWO_BUNDLES[0]
+
+    ids = task_ids_of(
+        [LONG_TRACK], grr_dir, tmp_path, monkeypatch, regions=[region])
+
+    assert ids == [f"bin_{LONG_STEM}_chr1_1_chr1_10"]
+    assert _chunk_path("c", LONG_TRACK, region, 10) == (
+        f"c/{LONG_STEM}_chr1_1_10.npy")
+
+
+def test_a_stem_of_150_characters_is_kept_as_it_is(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path,
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # ``summary_<119 x>_bigwig_s_max_none_bs10`` is 150 characters, the
+    # longest stem that an older work directory keeps its names under.
+    track = replace(
+        TRACK, name="edge", resource_ids=(f"summary/{'x' * 119}/bigwig",))
+    stem = f"summary_{'x' * 119}_bigwig_s_max_none_bs10"
+    region = TWO_BUNDLES[0]
+
+    ids = task_ids_of([track], grr_dir, tmp_path, monkeypatch, regions=[region])
+
+    assert len(stem) == 150
+    assert ids == [f"bin_{stem}_chr1_1_chr1_10"]
+    assert _chunk_path("c", track, region, 10) == f"c/{stem}_chr1_1_10.npy"
+
+
+def test_a_short_stem_keeps_its_task_id_and_chunk_name(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path,
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    region = TWO_BUNDLES[0]
+
+    ids = task_ids_of([TRACK], grr_dir, tmp_path, monkeypatch, regions=[region])
+
+    assert ids == ["bin_scores_one_s_max_none_bs10_chr1_1_chr1_10"]
+    assert _chunk_path("c", TRACK, region, 10) == (
+        "c/scores_one_s_max_none_bs10_chr1_1_10.npy")
