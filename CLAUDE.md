@@ -173,8 +173,8 @@ uv run --directory gain habit-hooks --all # from the directory that contains the
   - **Exception: a PR that changes only `.md` files.** Run `gh pr diff <n> --name-only`. If each changed file ends in `.md`, merge the PR when it is `BEHIND`. The PR needs no update of the branch and no green build, neither of its head nor of a rebuild: no Jenkins stage checks a Markdown file outside `docs/source/`. The exception does not cover these files:
     - `web_api/web_annotation/about.md`. The web API reads it at runtime, in `web_api/web_annotation/views.py`.
     - `core/README.md`. `core/pyproject.toml` names it as the package readme, and the Dockerfiles copy it.
-    - Each `.md` file under `core/gain/`. The wheel ships the whole `gain` package.
-    - Each `.md` file under `docs/source/`. `myst_parser` makes `sphinx-build -W` read Markdown there, the same as a `.rst` file.
+    - Each `.md` file under a wheel package directory: `core/gain/`, `web_api/web_annotation/`, `spliceai_annotator/spliceai_annotator/`, `vep_annotator/vep_annotator/` and `demo_annotator/demo_annotator/`. Each wheel ships its whole package directory (`packages = ` in the `pyproject.toml` of the project).
+    - Each `.md` file under `docs/source/`, and each `.md` file that a page under `docs/source/` includes. `myst_parser` makes `sphinx-build -W` read that Markdown, the same as a `.rst` file.
     - Each `.rst` file. One docutils warning fails `sphinx-build -W` in the `Build docs` stage, so a PR with one or more `.rst` files follows the full merge rule.
 
     A PR that changes one of these files follows the full merge rule.
