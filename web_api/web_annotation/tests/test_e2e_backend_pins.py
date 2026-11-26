@@ -25,8 +25,17 @@ on the day a pin and its producer part ways.
    fragment of it: a pin that merely *contains* a registered key
    (``Invalid configuration, reason: <reworded tail>``) is not accounted
    for by that key.
-3. Every key in both tables is still pinned by some spec, so the tables
+3. Every key in the tables is still pinned by some spec, so the tables
    cannot silently accumulate dead entries.
+
+**Mail subjects.**  The specs find a mail in MailPit by its subject: the
+third argument of ``getLinkInEmail`` (:data:`SUBJECT_HELPER`), given by a
+spec and by ``registerUser`` in ``web_e2e/utils.ts``.  Those subject pins
+have their own table, :data:`SUBJECTS`, checked the same way: each key is a
+substring of the ``"subject"`` that ``_create_confirmation_email`` or
+``_create_reset_mail`` returns now, as a MailPit ``subject:`` search
+matches; every subject a spec gives has a registered producer, whatever
+its shape; and no key is dead.
 
 Both sides are compared with whitespace :func:`collapsed`, as every
 Playwright text matcher compares, so where core wraps a sentence is
@@ -54,9 +63,10 @@ registered voluntarily (``not found`` is), but direction 2 does not demand
 it.
 
 **Where it runs.**  In a source tree (a checkout, or ``/workspace`` in the
-``web_api`` CI image, whose Dockerfile copies ``web_e2e/tests`` and
-``web_e2e/pages``) the spec tree must be present and its absence fails; an
-install without the source tree around it skips with the reason.
+``web_api`` CI image, whose Dockerfile copies ``web_e2e/tests``,
+``web_e2e/pages`` and ``web_e2e/utils.ts``) every one of
+:data:`SPEC_PATHS` must be present and its absence fails; an install
+without the source tree around it skips with the reason.
 
 **Adding a pin.**  Register it here with a producer that renders the
 message through the backend's public seam.  If the text is not the
@@ -66,6 +76,10 @@ page renders the backend's Markdown, the producer returns its
 :func:`markdown_text`, built from a pipeline in the shape the spec's
 instance has -- the decorators that shape adds write into the
 documentation too -- as the annotator modal's entry does.
+
+**Adding a mail subject.**  Register it in :data:`SUBJECTS` with the
+backend function that builds the mail; the producer returns that
+function's ``"subject"``.
 """
 from __future__ import annotations
 
@@ -81,6 +95,12 @@ from gain.templates.markdown_support import render_markdown
 
 from web_annotation import messages
 from web_annotation.annotation_base_view import GRR, format_config_error
+from web_annotation.utils import (
+    EMAIL_ACCOUNT_CONFIRMATION_PATH,
+    EMAIL_VERIFICATION_RESET_PATH,
+    _create_confirmation_email,
+    _create_reset_mail,
+)
 
 #: The repository root, three levels above this module both in a checkout
 #: and in the CI image (``/workspace/web_api/web_annotation/tests``).
@@ -88,10 +108,12 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 
 E2E_ROOT = REPO_ROOT / "web_e2e"
 
-#: The directories under ``web_e2e/`` that assert text -- the ones the
-#: ``web_api`` Dockerfile copies.  ``utils.ts`` asserts no backend text;
-#: ``node_modules`` and ``reports`` are neither copied nor scanned.
-SPEC_DIRS = ("tests", "pages")
+#: The directories and files under ``web_e2e/`` that the guard scans --
+#: the ones the ``web_api`` Dockerfile copies.  ``utils.ts`` asserts no
+#: backend text, but its ``registerUser`` gives :data:`SUBJECT_HELPER` a
+#: mail subject; ``node_modules`` and ``reports`` are neither copied nor
+#: scanned.
+SPEC_PATHS = ("tests", "pages", "utils.ts")
 
 #: Playwright matchers whose string argument is a pin on rendered text.
 #: Deliberately outside the set: ``toContain`` / ``toMatch`` on downloaded
@@ -191,6 +213,63 @@ def extract_pins(source: str, spec: str = "<source>") -> list[Pin]:
             continue
         line = source.count("\n", 0, call.start()) + 1
         pins.append(Pin(spec, line, call.group("matcher"), text))
+    return pins
+
+
+#: The e2e helper that finds a mail in MailPit by its subject, and the
+#: position of the subject among its arguments.
+SUBJECT_HELPER = "getLinkInEmail"
+_SUBJECT_ARGUMENT = 2
+
+#: A call of the helper, bare (inside ``utils.ts``) or qualified
+#: (``utils.getLinkInEmail(`` in a spec); not a longer identifier.
+_SUBJECT_CALL = re.compile(r"(?<![\w$])" + SUBJECT_HELPER + r"\(")
+
+_OPENERS = {"(": ")", "[": "]", "{": "}"}
+
+
+def _argument_start(source: str, pos: int, index: int) -> int | None:
+    """Where argument ``index`` of the call opened before ``pos`` starts.
+
+    Commas count only outside brackets and string literals.  ``None`` when
+    the call has fewer arguments.
+    """
+    closers: list[str] = []
+    seen = 0
+    while pos < len(source):
+        if seen == index and not closers:
+            return _skip_blanks(source, pos)
+        ch = source[pos]
+        literal = _read_literal(source, pos) if ch in "'\"`" else None
+        if literal is not None:
+            pos = literal[1]
+            continue
+        if ch in _OPENERS:
+            closers.append(_OPENERS[ch])
+        elif closers and ch == closers[-1]:
+            closers.pop()
+        elif ch == ")":
+            return None
+        elif ch == "," and not closers:
+            seen += 1
+        pos += 1
+    return None
+
+
+def extract_subject_pins(source: str, spec: str = "<source>") -> list[Pin]:
+    """Every subject literal given to :data:`SUBJECT_HELPER`, in file order.
+
+    A call whose subject is not a literal (the helper's own definition)
+    gives no pin.
+    """
+    pins: list[Pin] = []
+    for call in _SUBJECT_CALL.finditer(source):
+        start = _argument_start(source, call.end(), _SUBJECT_ARGUMENT)
+        text = None if start is None else _read_concatenation(source, start)
+        if text is None:
+            continue
+        line = source.count("\n", 0, call.start()) + 1
+        pins.append(Pin(spec, line, SUBJECT_HELPER, text))
     return pins
 
 
@@ -380,31 +459,76 @@ NOT_BACKEND: dict[str, str] = {
 }
 
 
-def _spec_files() -> Iterator[pathlib.Path]:
-    for sub in SPEC_DIRS:
-        yield from sorted((E2E_ROOT / sub).rglob("*.ts"))
+def _subject(create: Callable[[str, str, str], dict[str, str]],
+             path: str) -> Callable[[], str]:
+    """The subject of the mail that ``create`` builds, as the view calls it."""
+    def render() -> str:
+        return create("https://gain.example.org", path, "code")["subject"]
+    return render
+
+
+#: Pinned mail subject -> the backend function that sends it.  The key must
+#: be a substring of the subject the producer returns, both
+#: :func:`collapsed`, as a MailPit ``subject:`` search matches.  Every
+#: subject a spec gives :data:`SUBJECT_HELPER` needs an entry here, whatever
+#: its shape.  Keys are spelled out for the reason given on
+#: :data:`REGISTRY`.
+SUBJECTS: dict[str, Callable[[], str]] = {
+    "GAIn: Registration validation": _subject(
+        _create_confirmation_email, EMAIL_ACCOUNT_CONFIRMATION_PATH),
+    "GAIn: Password reset request": _subject(
+        _create_reset_mail, EMAIL_VERIFICATION_RESET_PATH),
+}
+
+
+def _scanned_files() -> Iterator[pathlib.Path]:
+    for name in SPEC_PATHS:
+        path = E2E_ROOT / name
+        if path.is_file():
+            yield path
+        else:
+            yield from sorted(path.rglob("*.ts"))
 
 
 @pytest.fixture(scope="module")
-def spec_pins() -> list[Pin]:
-    """Every pin in the live spec tree; skips or fails when it is absent.
+def spec_sources() -> dict[str, str]:
+    """Each scanned file's source by its path under ``web_e2e``.
 
-    A source tree (``pyproject.toml`` beside ``web_e2e/``) must carry the
-    specs -- the CI image copies them for exactly this -- so their absence
-    there is a failure.  Anywhere else it is a skip.
+    Skips or fails when one of :data:`SPEC_PATHS` is absent.  A source tree
+    (``pyproject.toml`` beside ``web_e2e/``) must carry them -- the CI image
+    copies them for exactly this -- so their absence there is a failure.
+    Anywhere else it is a skip.
     """
-    for sub in SPEC_DIRS:
-        if (E2E_ROOT / sub).is_dir():
+    for name in SPEC_PATHS:
+        if (E2E_ROOT / name).exists():
             continue
-        reason = f"{E2E_ROOT / sub} is absent"
+        reason = f"{E2E_ROOT / name} is absent"
         if (REPO_ROOT / "pyproject.toml").is_file():
             pytest.fail(f"{reason} from the source tree {REPO_ROOT}")
         pytest.skip(f"{reason}: not a source tree")
+    return {
+        str(path.relative_to(E2E_ROOT)): path.read_text()
+        for path in _scanned_files()
+    }
+
+
+@pytest.fixture(scope="module")
+def spec_pins(spec_sources: dict[str, str]) -> list[Pin]:
+    """Every text pin in the live spec tree."""
     return [
         pin
-        for path in _spec_files()
-        for pin in extract_pins(
-            path.read_text(), str(path.relative_to(E2E_ROOT)))
+        for spec, source in spec_sources.items()
+        for pin in extract_pins(source, spec)
+    ]
+
+
+@pytest.fixture(scope="module")
+def subject_pins(spec_sources: dict[str, str]) -> list[Pin]:
+    """Every mail subject the live spec tree searches MailPit for."""
+    return [
+        pin
+        for spec, source in spec_sources.items()
+        for pin in extract_subject_pins(source, spec)
     ]
 
 
@@ -467,6 +591,24 @@ def test_extract_pins_skips_non_literal_arguments() -> None:
     pins = extract_pins(source, spec="s.spec.ts")
 
     assert [(pin.line, pin.text) for pin in pins] == [(3, "kept")]
+
+
+def test_extract_subject_pins_reads_the_third_argument() -> None:
+    source = (
+        "  const href = await getLinkInEmail(page, email, "
+        "'GAIn: Registration validation');\n"
+        "export async function getLinkInEmail(page: Page, email: string, "
+        "subject: string): Promise<string> {\n"
+        "  const h = await utils.getLinkInEmail(\n"
+        "    page, `${a}@b.c`, 'GAIn: ' +\n      'Password reset');\n"
+        "  notgetLinkInEmail(page, email, 'Other');\n")
+
+    pins = extract_subject_pins(source, spec="s.ts")
+
+    assert [(pin.line, pin.text) for pin in pins] == [
+        (1, "GAIn: Registration validation"),
+        (3, "GAIn: Password reset"),
+    ]
 
 
 @pytest.mark.parametrize(("text", "sentence"), [
@@ -559,6 +701,21 @@ def test_registered_pin_is_what_the_backend_renders(
         + "\n  ".join(pinned_by))
 
 
+@pytest.mark.parametrize("key", list(SUBJECTS), ids=repr)
+def test_registered_subject_is_what_the_backend_sends(
+    key: str, subject_pins: list[Pin],
+) -> None:
+    pinned_by = [str(pin) for pin in subject_pins if pin.text == key]
+
+    sent = collapsed(SUBJECTS[key]())
+
+    assert collapsed(key) in sent, (
+        f"the backend no longer sends the subject {key!r}\n"
+        f"it sends:\n  {sent!r}\n"
+        "the specs still searching MailPit for the old subject:\n  "
+        + "\n  ".join(pinned_by))
+
+
 def test_every_sentence_shaped_pin_is_rendered_or_listed(
     spec_pins: list[Pin], rendered: dict[str, str],
 ) -> None:
@@ -576,9 +733,29 @@ def test_every_sentence_shaped_pin_is_rendered_or_listed(
         + "\n  ".join(unaccounted))
 
 
-def test_tables_carry_no_dead_entries(spec_pins: list[Pin]) -> None:
+def test_every_subject_pin_has_a_registered_producer(
+    subject_pins: list[Pin],
+) -> None:
+    sent = [collapsed(producer()) for producer in SUBJECTS.values()]
+    unaccounted = [
+        str(pin) for pin in subject_pins
+        if not any(collapsed(pin.text) in subject for subject in sent)
+    ]
+
+    assert not unaccounted, (
+        "specs search MailPit for subjects no registered producer sends; "
+        "add each to SUBJECTS with the backend function that sends it:\n  "
+        + "\n  ".join(unaccounted))
+
+
+def test_tables_carry_no_dead_entries(
+    spec_pins: list[Pin], subject_pins: list[Pin],
+) -> None:
     pinned = {pin.text for pin in spec_pins}
-    dead = sorted(key for key in (*REGISTRY, *NOT_BACKEND) if key not in pinned)
+    subjects = {pin.text for pin in subject_pins}
+    dead = sorted(
+        [key for key in (*REGISTRY, *NOT_BACKEND) if key not in pinned]
+        + [key for key in SUBJECTS if key not in subjects])
 
     assert not dead, (
         "no spec pins these any more; delete the entries:\n  "
