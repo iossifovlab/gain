@@ -236,6 +236,27 @@ def test_job_failure_sends_no_email_when_the_owner_turned_it_off(
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("outcome", ["success", "failure"])
+def test_job_reads_the_mail_setting_stored_while_the_job_ran(
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: str,
+) -> None:
+    mocked = MagicMock()
+    monkeypatch.setattr("web_annotation.models.send_email", mocked)
+    test_job = _in_progress_job_of(
+        User.objects.get(email="user@example.com"))
+    _user_with_settings(
+        notify_on_job_success=False, notify_on_job_failure=False)
+
+    if outcome == "success":
+        test_job.update_job_success("")
+    else:
+        test_job.update_job_failed("", "")
+
+    assert mocked.call_count == 0
+
+
+@pytest.mark.django_db
 def test_job_failure_still_emails_when_only_the_success_mail_is_off(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

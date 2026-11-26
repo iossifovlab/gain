@@ -727,6 +727,7 @@ class Job(BaseJob):
     def update_job_failed(self, args: str, exc: str) -> None:
         """Update a job's state to failed."""
         super().update_job_failed(args, exc)
+        self.owner.refresh_from_db(fields=["notify_on_job_failure"])
         if not self.owner.notify_on_job_failure:
             return
         send_email(
@@ -742,6 +743,7 @@ class Job(BaseJob):
     def update_job_success(self, args: str) -> None:
         """Update a job's state to success."""
         super().update_job_success(args)
+        self.owner.refresh_from_db(fields=["notify_on_job_success"])
         if not self.owner.notify_on_job_success:
             return
         send_email(

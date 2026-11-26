@@ -783,6 +783,7 @@ def test_patch_user_info_turns_off_the_success_mail(
     assert response.json()["email"] == "user@example.com"
     assert "limitations" in response.json()
     assert _stored_job_mail_settings("user@example.com") == (False, True)
+    assert _stored_job_mail_settings("admin@example.com") == (True, True)
 
 
 @pytest.mark.django_db
