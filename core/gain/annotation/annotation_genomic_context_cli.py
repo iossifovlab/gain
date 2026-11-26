@@ -10,6 +10,7 @@ instances available through the shared genomic context mechanism.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import pathlib
 import tempfile
 from typing import Any
@@ -112,23 +113,17 @@ class CLIAnnotationContextProvider(GenomicContextProvider):
                 "cannot load the annotation pipeline.")
             return None
 
-        allow_repeated_attributes = bool(
-            kwargs.get("allow_repeated_attributes"))
-        if kwargs.get("work_dir"):
-            pipeline = load_pipeline_from_file_or_resource(
-                kwargs["pipeline"], grr,
-                allow_repeated_attributes=allow_repeated_attributes,
-                work_dir=pathlib.Path(kwargs["work_dir"]))
-        else:
+        with contextlib.ExitStack() as stack:
             # The CLIs without a ``--work-dir`` option (``annotate_doc``,
             # ``grr_cache_repo``) never open the pipeline, so no annotator
-            # makes a directory under this one.
-            with tempfile.TemporaryDirectory(
-                    prefix="gain-annotation-cli-") as work_dir:
-                pipeline = load_pipeline_from_file_or_resource(
-                    kwargs["pipeline"], grr,
-                    allow_repeated_attributes=allow_repeated_attributes,
-                    work_dir=pathlib.Path(work_dir))
+            # makes a directory under the temporary one.
+            work_dir = kwargs.get("work_dir") or stack.enter_context(
+                tempfile.TemporaryDirectory(prefix="gain-annotation-cli-"))
+            pipeline = load_pipeline_from_file_or_resource(
+                kwargs["pipeline"], grr,
+                allow_repeated_attributes=bool(
+                    kwargs.get("allow_repeated_attributes")),
+                work_dir=pathlib.Path(work_dir))
         return SimpleGenomicContext(
             {GC_ANNOTATION_PIPELINE_KEY: pipeline},
             source="CLIAnnotationContextProvider")
