@@ -243,6 +243,8 @@ class User(AbstractUser):
     REQUIRED_FIELDS: ClassVar = []
     job_counter = models.IntegerField(default=0)
     is_unlimited = models.BooleanField(default=False)
+    notify_on_job_success = models.BooleanField(default=True)
+    notify_on_job_failure = models.BooleanField(default=True)
 
     @property
     def job_class(self) -> type[Job]:
@@ -725,7 +727,9 @@ class Job(BaseJob):
     def update_job_failed(self, args: str, exc: str) -> None:
         """Update a job's state to failed."""
         super().update_job_failed(args, exc)
-
+        self.owner.refresh_from_db(fields=["notify_on_job_failure"])
+        if not self.owner.notify_on_job_failure:
+            return
         send_email(
             "GAIn: Annotation job failed",
             (
@@ -739,6 +743,9 @@ class Job(BaseJob):
     def update_job_success(self, args: str) -> None:
         """Update a job's state to success."""
         super().update_job_success(args)
+        self.owner.refresh_from_db(fields=["notify_on_job_success"])
+        if not self.owner.notify_on_job_success:
+            return
         send_email(
             "GAIn: Annotation job finished successfully",
             (

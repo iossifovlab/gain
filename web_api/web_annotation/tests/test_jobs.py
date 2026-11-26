@@ -185,6 +185,113 @@ def test_job_success_starts_email_task(
     assert recipient == ["user@example.com"]
 
 
+def _in_progress_job_of(user: User) -> Job:
+    return Job(
+        owner=user,
+        input_path="input", config_path="config", result_path="result",
+        status=Job.Status.IN_PROGRESS,
+    )
+
+
+def _user_with_settings(
+    *, notify_on_job_success: bool, notify_on_job_failure: bool,
+) -> User:
+    user = User.objects.get(email="user@example.com")
+    user.notify_on_job_success = notify_on_job_success
+    user.notify_on_job_failure = notify_on_job_failure
+    user.save()
+    return User.objects.get(pk=user.pk)
+
+
+@pytest.mark.django_db
+def test_job_success_sends_no_email_when_the_owner_turned_it_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mocked = MagicMock()
+    monkeypatch.setattr("web_annotation.models.send_email", mocked)
+    user = _user_with_settings(
+        notify_on_job_success=False, notify_on_job_failure=True)
+    test_job = _in_progress_job_of(user)
+
+    test_job.update_job_success("")
+
+    assert mocked.call_count == 0
+    assert test_job.status == Job.Status.SUCCESS
+
+
+@pytest.mark.django_db
+def test_job_failure_sends_no_email_when_the_owner_turned_it_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mocked = MagicMock()
+    monkeypatch.setattr("web_annotation.models.send_email", mocked)
+    user = _user_with_settings(
+        notify_on_job_success=True, notify_on_job_failure=False)
+    test_job = _in_progress_job_of(user)
+
+    test_job.update_job_failed("", "")
+
+    assert mocked.call_count == 0
+    assert test_job.status == Job.Status.FAILED
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("outcome", ["success", "failure"])
+def test_job_reads_the_mail_setting_stored_while_the_job_ran(
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: str,
+) -> None:
+    mocked = MagicMock()
+    monkeypatch.setattr("web_annotation.models.send_email", mocked)
+    test_job = _in_progress_job_of(
+        User.objects.get(email="user@example.com"))
+    _user_with_settings(
+        notify_on_job_success=False, notify_on_job_failure=False)
+
+    if outcome == "success":
+        test_job.update_job_success("")
+    else:
+        test_job.update_job_failed("", "")
+
+    assert mocked.call_count == 0
+
+
+@pytest.mark.django_db
+def test_job_failure_still_emails_when_only_the_success_mail_is_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mocked = MagicMock()
+    monkeypatch.setattr("web_annotation.models.send_email", mocked)
+    user = _user_with_settings(
+        notify_on_job_success=False, notify_on_job_failure=True)
+    test_job = _in_progress_job_of(user)
+
+    test_job.update_job_failed("", "")
+
+    assert mocked.call_count == 1
+    subject, _, recipient = mocked.call_args.args
+    assert subject == "GAIn: Annotation job failed"
+    assert recipient == ["user@example.com"]
+
+
+@pytest.mark.django_db
+def test_job_success_still_emails_when_only_the_failure_mail_is_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mocked = MagicMock()
+    monkeypatch.setattr("web_annotation.models.send_email", mocked)
+    user = _user_with_settings(
+        notify_on_job_success=True, notify_on_job_failure=False)
+    test_job = _in_progress_job_of(user)
+
+    test_job.update_job_success("")
+
+    assert mocked.call_count == 1
+    subject, _, recipient = mocked.call_args.args
+    assert subject == "GAIn: Annotation job finished successfully"
+    assert recipient == ["user@example.com"]
+
+
 @pytest.mark.django_db
 def test_clean_old_jobs_removes_old_jobs(
     tmp_path: pathlib.Path,

@@ -743,7 +743,156 @@ def test_get_user_info(user_client: Client) -> None:
             "todayJobsCount": 1,
             "diskSpace": "10.0 MB / 2.0 GB",
         },
+        "notifyOnJobSuccess": True,
+        "notifyOnJobFailure": True,
     }
+
+
+@pytest.mark.django_db
+def test_get_user_info_of_a_new_user_has_both_job_mails_on() -> None:
+    User.objects.create_user(
+        "new@example.com", "new@example.com", "secret")
+    client = Client()
+    client.login(email="new@example.com", password="secret")
+
+    response = client.get("/api/user_info")
+
+    assert response.status_code == 200
+    assert response.json()["notifyOnJobSuccess"] is True
+    assert response.json()["notifyOnJobFailure"] is True
+
+
+def _stored_job_mail_settings(email: str) -> tuple[bool, bool]:
+    user = User.objects.get(email=email)
+    return user.notify_on_job_success, user.notify_on_job_failure
+
+
+@pytest.mark.django_db
+def test_patch_user_info_turns_off_the_success_mail(
+    user_client: Client,
+) -> None:
+    response = user_client.patch(
+        "/api/user_info",
+        {"notifyOnJobSuccess": False},
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    assert response.json()["notifyOnJobSuccess"] is False
+    assert response.json()["notifyOnJobFailure"] is True
+    assert response.json()["email"] == "user@example.com"
+    assert "limitations" in response.json()
+    assert _stored_job_mail_settings("user@example.com") == (False, True)
+    assert _stored_job_mail_settings("admin@example.com") == (True, True)
+
+
+@pytest.mark.django_db
+def test_patch_user_info_refuses_an_anonymous_request(
+    anonymous_client: Client,
+) -> None:
+    response = anonymous_client.patch(
+        "/api/user_info",
+        {"notifyOnJobSuccess": False, "notifyOnJobFailure": False},
+        content_type="application/json",
+    )
+
+    assert response.status_code == 403
+    assert _stored_job_mail_settings("user@example.com") == (True, True)
+    assert _stored_job_mail_settings("admin@example.com") == (True, True)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("value", ["false", 0, None, [False]])
+def test_patch_user_info_refuses_a_value_that_is_not_a_boolean(
+    user_client: Client,
+    value: object,
+) -> None:
+    response = user_client.patch(
+        "/api/user_info",
+        {"notifyOnJobSuccess": False, "notifyOnJobFailure": value},
+        content_type="application/json",
+    )
+
+    assert response.status_code == 400
+    assert _stored_job_mail_settings("user@example.com") == (True, True)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "body",
+    # The client sends a str body as it is, so the last one is a JSON string.
+    [{}, {"notifyOnJobsuccess": False}, ["notifyOnJobSuccess"],
+     '"notifyOnJobSuccess"'],
+)
+def test_patch_user_info_refuses_a_body_with_no_known_key(
+    user_client: Client,
+    body: object,
+) -> None:
+    response = user_client.patch(
+        "/api/user_info",
+        body,
+        content_type="application/json",
+    )
+
+    assert response.status_code == 400
+    assert _stored_job_mail_settings("user@example.com") == (True, True)
+
+
+CSRF_SECRET = "a" * 32
+
+
+def _csrf_enforcing_user_client() -> Client:
+    client = Client(enforce_csrf_checks=True)
+    client.login(email="user@example.com", password="secret")
+    client.cookies["csrftoken"] = CSRF_SECRET
+    return client
+
+
+@pytest.mark.django_db
+def test_patch_user_info_refuses_a_request_without_the_csrf_token() -> None:
+    client = _csrf_enforcing_user_client()
+
+    response = client.patch(
+        "/api/user_info",
+        {"notifyOnJobSuccess": False},
+        content_type="application/json",
+    )
+
+    assert response.status_code == 403
+    assert _stored_job_mail_settings("user@example.com") == (True, True)
+
+
+@pytest.mark.django_db
+def test_patch_user_info_accepts_a_request_with_the_csrf_token() -> None:
+    client = _csrf_enforcing_user_client()
+
+    response = client.patch(
+        "/api/user_info",
+        {"notifyOnJobSuccess": False},
+        content_type="application/json",
+        headers={"X-CSRFToken": CSRF_SECRET},
+    )
+
+    assert response.status_code == 200
+    assert _stored_job_mail_settings("user@example.com") == (False, True)
+
+
+@pytest.mark.django_db
+def test_reset_password_mail_ignores_the_job_mail_settings(
+    client: Client,
+) -> None:
+    User.objects.filter(email="user@example.com").update(
+        notify_on_job_success=False, notify_on_job_failure=False)
+
+    with mock.patch("web_annotation.utils.send_email") as mocked:
+        response = client.post(
+            "/api/forgotten_password",
+            {"email": "user@example.com"},
+        )
+
+    assert response.status_code == 200
+    assert mocked.call_count == 1
+    assert mocked.call_args.args[2] == ["user@example.com"]
 
 
 @pytest.mark.django_db

@@ -35,7 +35,9 @@ def _migrate(target: str) -> MigrationExecutor:
 def _reset_schema() -> Generator[None, None, None]:
     """Leave the DB on the latest migration after the test runs."""
     yield
-    _migrate(AFTER)
+    executor = MigrationExecutor(connection)
+    executor.loader.build_graph()
+    executor.migrate(executor.loader.graph.leaf_nodes(APP))
 
 
 @pytest.mark.usefixtures("_reset_schema")

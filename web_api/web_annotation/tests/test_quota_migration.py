@@ -35,10 +35,6 @@ AFTER = "0042_alter_anonymoususerquota_ip_alter_userquota_user"
 CONSUMED_BEFORE = "0043_rename_annotation_type_columns_to_tabular"
 CONSUMED_AFTER = "0044_quota_counters_store_consumed_units"
 
-#: Where a migration test leaves the schema. Every test here rewinds, so the
-#: rest of the suite depends on this being the head migration.
-LATEST = CONSUMED_AFTER
-
 
 def _migrate(target: str) -> MigrationExecutor:
     """Migrate the schema to ``target`` and return a fresh executor."""
@@ -52,9 +48,15 @@ def _migrate(target: str) -> MigrationExecutor:
 
 @pytest.fixture
 def _reset_schema() -> Generator[None, None, None]:
-    """Leave the DB on the latest migration after the test runs."""
+    """Leave the DB on the latest migration after the test runs.
+
+    Every test here rewinds, so the rest of the suite depends on the reset
+    reaching the head migration of the app, whatever its name.
+    """
     yield
-    _migrate(LATEST)
+    executor = MigrationExecutor(connection)
+    executor.loader.build_graph()
+    executor.migrate(executor.loader.graph.leaf_nodes(APP))
 
 
 @pytest.mark.usefixtures("_reset_schema")
