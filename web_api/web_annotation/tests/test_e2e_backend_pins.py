@@ -239,9 +239,9 @@ def _argument_start(source: str, pos: int, index: int) -> int | None:
     seen = 0
     while pos < len(source):
         if seen == index and not closers:
-            return _skip_blanks(source, pos)
+            return pos
         ch = source[pos]
-        literal = _read_literal(source, pos) if ch in "'\"`" else None
+        literal = _read_literal(source, pos)
         if literal is not None:
             pos = literal[1]
             continue
