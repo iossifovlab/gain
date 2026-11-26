@@ -688,6 +688,17 @@ pipeline {
             // validates a token without an upload. A bad
             // pypi-token-iossifovlab fails step 0 of `Publish`,
             // before any other destination changes.
+            //
+            // Anaconda: scripts/anaconda_token_probe.sh sends
+            // `GET /user` to api.anaconda.org with ANACONDA_TOKEN. It
+            // catches a token that Anaconda.org rejects (401 or 403),
+            // and it stops the release on any other answer than 200.
+            // `anaconda whoami` exits 0 for a rejected token (#2533).
+            // The check does not prove upload rights to the
+            // `iossifovlab` org: `GET /user` proves only that the
+            // token authenticates. The stage reads the script from
+            // origin/master, as `Pre-flight: release notes` does, so
+            // a tag cut before the script existed is checked too.
             steps {
                 sshagent(credentials: ['wheels-seqpipe-ssh-key']) {
                     sh '''
@@ -697,10 +708,13 @@ pipeline {
                     '''
                 }
                 sh '''
-                    docker run --rm \
-                        -e ANACONDA_TOKEN \
-                        "${CONDA_BUILDER}" \
-                        anaconda --token "$ANACONDA_TOKEN" whoami
+                    d=.anaconda-token-probe
+                    rm -rf "$d"
+                    mkdir -p "$d"
+                    trap 'rm -rf "$d"' EXIT
+                    git fetch --no-tags origin +master:refs/remotes/origin/master
+                    git show origin/master:scripts/anaconda_token_probe.sh > "$d/anaconda_token_probe.sh"
+                    bash "$d/anaconda_token_probe.sh"
                 '''
                 sh '''
                     # #10: validate registry creds in an isolated
