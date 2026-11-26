@@ -43,6 +43,15 @@ A pin on Markdown the page renders (the annotator modal,
 and compared the way `toHaveText` compares, whitespace collapsed on both
 sides.
 
+The same test checks each mail subject that a spec gives
+`getLinkInEmail`, the subjects in `utils.ts` included (`registerUser`
+gives one). The specs and `utils.ts` are scanned, and the `web_api` CI
+image copies both. Each subject must be a substring of the `"subject"`
+that the backend function sends now, as a MailPit `subject:` search
+matches. To add a subject, register it in `SUBJECTS` in that module, with
+the function in `web_annotation.utils` that builds the mail. A subject with
+no registered producer fails the test, whatever its shape.
+
 ## Counts the specs pin
 
 The suite runs against the node-local grr-sync mirrors of the live

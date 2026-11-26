@@ -63,11 +63,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --package gain-web-api --group dev --frozen
 
 # The Playwright specs, so test_e2e_backend_pins can check the backend
-# strings they pin without the deployed stack (gain#1357). Specs and page
-# objects only -- no node_modules, fixtures or reports. After the install
-# layer, so a spec-only edit does not re-run uv sync.
+# strings they pin without the deployed stack (gain#1357). Specs, page
+# objects and utils.ts only -- no node_modules, fixtures or reports.
+# utils.ts carries the mail subject pin of registerUser (gain#2531). After
+# the install layer, so a spec-only edit does not re-run uv sync.
 COPY web_e2e/tests/ ./web_e2e/tests/
 COPY web_e2e/pages/ ./web_e2e/pages/
+COPY web_e2e/utils.ts ./web_e2e/utils.ts
 
 ENV PATH="/workspace/.venv/bin:$PATH"
 WORKDIR /workspace/web_api
