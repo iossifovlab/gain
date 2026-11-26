@@ -61,6 +61,7 @@ from .models import (
     BaseVerificationCode,
     ResetPasswordCode,
     User,
+    UserWrapper,
 )
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,13 @@ class UserInfo(views.APIView):
     """View that returns the request session's user information."""
 
     authentication_classes: ClassVar = [WebAnnotationAuthentication]
+    parser_classes: ClassVar = [JSONParser]
+
+    # The request key of each job mail setting, and its field on ``User``.
+    JOB_MAIL_SETTINGS: ClassVar[dict[str, str]] = {
+        "notifyOnJobSuccess": "notify_on_job_success",
+        "notifyOnJobFailure": "notify_on_job_failure",
+    }
 
     def get_user_daily_limit(self, user: User | None = None) -> int | None:
         """Return the daily job limit for a user."""
@@ -130,8 +138,39 @@ class UserInfo(views.APIView):
         if user.is_authenticated:
             info["loggedIn"] = True
             info["email"] = user.email
+            account = cast(UserWrapper, user).user
+            info["notifyOnJobSuccess"] = account.notify_on_job_success
+            info["notifyOnJobFailure"] = account.notify_on_job_failure
 
         return Response(info, views.status.HTTP_200_OK)
+
+    def patch(self, request: Request) -> Response:
+        """Change the job mail settings of the session's user."""
+        if not request.user.is_authenticated:
+            return Response(status=views.status.HTTP_403_FORBIDDEN)
+        data = request.data
+        if not isinstance(data, dict):
+            return non_object_body_response()
+        changes = {
+            field: data[key]
+            for key, field in self.JOB_MAIL_SETTINGS.items()
+            if key in data
+        }
+        if not changes:
+            return Response(
+                {"error": "The body names no job mail setting"},
+                status=views.status.HTTP_400_BAD_REQUEST,
+            )
+        if any(not isinstance(value, bool) for value in changes.values()):
+            return Response(
+                {"error": "Each job mail setting must be true or false"},
+                status=views.status.HTTP_400_BAD_REQUEST,
+            )
+        account = cast(UserWrapper, request.user).user
+        for field, value in changes.items():
+            setattr(account, field, value)
+        account.save(update_fields=list(changes))
+        return self.get(request)
 
 
 class Logout(views.APIView):
