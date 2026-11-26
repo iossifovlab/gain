@@ -1,10 +1,12 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import pathlib
+
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources.repository_ids import GR_CONF_FILE_NAME
 from gain.genomic_resources.testing import build_inmemory_test_repository
 
 
-def test_basic() -> None:
+def test_basic(tmp_path: pathlib.Path) -> None:
     grr_repo = build_inmemory_test_repository({
         "one": {
             GR_CONF_FILE_NAME: """
@@ -28,6 +30,6 @@ def test_basic() -> None:
     - position_score:
         resource_id: one
     """
-    ann_pipe = load_pipeline_from_yaml(config, grr_repo)
+    ann_pipe = load_pipeline_from_yaml(config, grr_repo, work_dir=tmp_path)
     assert grr_repo
     assert ann_pipe

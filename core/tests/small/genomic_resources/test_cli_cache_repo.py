@@ -120,7 +120,9 @@ class _FakeInstanceContextProvider(GenomicContextProvider):
         if not instance:
             return None
         grr = build_genomic_resource_repository(file_name=instance)
-        pipeline = load_pipeline_from_file_or_resource("res_pipeline", grr)
+        pipeline = load_pipeline_from_file_or_resource(
+            "res_pipeline", grr,
+            work_dir=pathlib.Path(instance).parent / "pipeline_work")
         return SimpleGenomicContext(
             {
                 GC_GRR_KEY: grr,

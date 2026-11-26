@@ -174,24 +174,27 @@ def fragment_grr() -> GenomicResourceRepo:
 # position_score_annotator
 # ---------------------------------------------------------------------------
 
-def test_position_score_default_name(t4c8_grr: GenomicResourceRepo) -> None:
+def test_position_score_default_name(
+    t4c8_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - position_score: genomic_scores/score_one
-    """), t4c8_grr)
+    """), t4c8_grr, work_dir=tmp_path)
     with pipeline.open() as p:
         result = p.annotate(Position("chr1", 4))
     assert result["score_one"] == pytest.approx(0.01)
 
 
 def test_position_score_renamed_attribute(
-        t4c8_grr: GenomicResourceRepo) -> None:
+        t4c8_grr: GenomicResourceRepo, tmp_path: pathlib.Path) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - position_score:
             resource_id: genomic_scores/score_one
             attributes:
             - source: score_one
               name: my_score
-    """), t4c8_grr)
+    """), t4c8_grr, work_dir=tmp_path)
     with pipeline.open() as p:
         result = p.annotate(Position("chr1", 4))
     assert result["my_score"] == pytest.approx(0.01)
@@ -203,24 +206,24 @@ def test_position_score_renamed_attribute(
 # ---------------------------------------------------------------------------
 
 def test_allele_score_default_name(
-        allele_score_grr: GenomicResourceRepo) -> None:
+        allele_score_grr: GenomicResourceRepo, tmp_path: pathlib.Path) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - allele_score: allele_res
-    """), allele_score_grr)
+    """), allele_score_grr, work_dir=tmp_path)
     with pipeline.open() as p:
         result = p.annotate(VCFAllele("chr1", 10, "A", "C"))
     assert result["af"] == pytest.approx(0.05)
 
 
 def test_allele_score_renamed_attribute(
-        allele_score_grr: GenomicResourceRepo) -> None:
+        allele_score_grr: GenomicResourceRepo, tmp_path: pathlib.Path) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - allele_score:
             resource_id: allele_res
             attributes:
             - source: af
               name: my_af
-    """), allele_score_grr)
+    """), allele_score_grr, work_dir=tmp_path)
     with pipeline.open() as p:
         result = p.annotate(VCFAllele("chr1", 10, "A", "C"))
     assert result["my_af"] == pytest.approx(0.05)
@@ -231,7 +234,10 @@ def test_allele_score_renamed_attribute(
 # liftover_annotator
 # ---------------------------------------------------------------------------
 
-def test_liftover_default_name(liftover_grr: GenomicResourceRepo) -> None:
+def test_liftover_default_name(
+    liftover_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - liftover_annotator:
             chain: chain
@@ -239,14 +245,17 @@ def test_liftover_default_name(liftover_grr: GenomicResourceRepo) -> None:
             - source: liftover_annotatable
               name: liftover_annotatable
               internal: false
-    """), liftover_grr)
+    """), liftover_grr, work_dir=tmp_path)
     with pipeline.open() as p:
         result = p.annotate(VCFAllele("chrA", 5, "A", "C"))
     assert result["liftover_annotatable"] is not None
     assert result["liftover_annotatable"].chrom == "chrB"
 
 
-def test_liftover_renamed_attribute(liftover_grr: GenomicResourceRepo) -> None:
+def test_liftover_renamed_attribute(
+    liftover_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - liftover_annotator:
             chain: chain
@@ -254,7 +263,7 @@ def test_liftover_renamed_attribute(liftover_grr: GenomicResourceRepo) -> None:
             - source: liftover_annotatable
               name: lifted_allele
               internal: false
-    """), liftover_grr)
+    """), liftover_grr, work_dir=tmp_path)
     with pipeline.open() as p:
         result = p.annotate(VCFAllele("chrA", 5, "A", "C"))
     assert result["lifted_allele"] is not None
@@ -266,7 +275,10 @@ def test_liftover_renamed_attribute(liftover_grr: GenomicResourceRepo) -> None:
 # normalize_allele_annotator
 # ---------------------------------------------------------------------------
 
-def test_normalize_allele_default_name(t4c8_grr: GenomicResourceRepo) -> None:
+def test_normalize_allele_default_name(
+    t4c8_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - normalize_allele_annotator:
             genome: normalize_genome_1
@@ -274,14 +286,14 @@ def test_normalize_allele_default_name(t4c8_grr: GenomicResourceRepo) -> None:
             - source: normalized_allele
               name: normalized_allele
               internal: false
-    """), t4c8_grr)
+    """), t4c8_grr, work_dir=tmp_path)
     with pipeline.open() as p:
         result = p.annotate(VCFAllele("1", 4, "GCAT", "GTGC"))
     assert result["normalized_allele"].pos == 5
 
 
 def test_normalize_allele_renamed_attribute(
-        t4c8_grr: GenomicResourceRepo) -> None:
+        t4c8_grr: GenomicResourceRepo, tmp_path: pathlib.Path) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - normalize_allele_annotator:
             genome: normalize_genome_1
@@ -289,7 +301,7 @@ def test_normalize_allele_renamed_attribute(
             - source: normalized_allele
               name: my_norm
               internal: false
-    """), t4c8_grr)
+    """), t4c8_grr, work_dir=tmp_path)
     with pipeline.open() as p:
         result = p.annotate(VCFAllele("1", 4, "GCAT", "GTGC"))
     assert result["my_norm"].pos == 5
@@ -333,12 +345,15 @@ def test_chrom_mapping_renamed_attribute(tmp_path: pathlib.Path) -> None:
 # effect_annotator
 # ---------------------------------------------------------------------------
 
-def test_effect_annotator_default_name(t4c8_grr: GenomicResourceRepo) -> None:
+def test_effect_annotator_default_name(
+    t4c8_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - effect_annotator:
             gene_models: t4c8_genes
             genome: t4c8_genome
-    """), t4c8_grr)
+    """), t4c8_grr, work_dir=tmp_path)
     with pipeline.open() as p:
         result = p.annotate(VCFAllele("chr1", 7, "A", "T"))
     assert result["worst_effect"] is not None
@@ -347,7 +362,7 @@ def test_effect_annotator_default_name(t4c8_grr: GenomicResourceRepo) -> None:
 
 
 def test_effect_annotator_renamed_attribute(
-        t4c8_grr: GenomicResourceRepo) -> None:
+        t4c8_grr: GenomicResourceRepo, tmp_path: pathlib.Path) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - effect_annotator:
             gene_models: t4c8_genes
@@ -357,7 +372,7 @@ def test_effect_annotator_renamed_attribute(
               name: my_worst_effect
             - source: effect_details
               name: my_effect_details
-    """), t4c8_grr)
+    """), t4c8_grr, work_dir=tmp_path)
     with pipeline.open() as p:
         result = p.annotate(VCFAllele("chr1", 7, "A", "T"))
     assert result["my_worst_effect"] is not None
@@ -370,24 +385,30 @@ def test_effect_annotator_renamed_attribute(
 # simple_effect_annotator
 # ---------------------------------------------------------------------------
 
-def test_simple_effect_default_name(t4c8_grr: GenomicResourceRepo) -> None:
+def test_simple_effect_default_name(
+    t4c8_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - simple_effect_annotator:
             gene_models: t4c8_genes
-    """), t4c8_grr)
+    """), t4c8_grr, work_dir=tmp_path)
     with pipeline.open() as p:
         result = p.annotate(Region("chr1", 5, 20))
     assert result["worst_effect"] is not None
 
 
-def test_simple_effect_renamed_attribute(t4c8_grr: GenomicResourceRepo) -> None:
+def test_simple_effect_renamed_attribute(
+    t4c8_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - simple_effect_annotator:
             gene_models: t4c8_genes
             attributes:
             - source: worst_effect
               name: my_worst
-    """), t4c8_grr)
+    """), t4c8_grr, work_dir=tmp_path)
     with pipeline.open() as p:
         result = p.annotate(Region("chr1", 5, 20))
     assert result["my_worst"] is not None
@@ -409,20 +430,26 @@ _GENE_SCORE_PREFIX = textwrap.dedent("""
 """)
 
 
-def test_gene_score_default_name(t4c8_grr: GenomicResourceRepo) -> None:
+def test_gene_score_default_name(
+    t4c8_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     pipeline = load_pipeline_from_yaml(
         _GENE_SCORE_PREFIX + textwrap.dedent("""
         - gene_score_annotator:
             resource_id: gene_scores/t4c8_score
             input_gene_list: gene_list
-        """), t4c8_grr)
+        """), t4c8_grr, work_dir=tmp_path)
     with pipeline.open() as p:
         result = p.annotate(VCFAllele("chr1", 7, "A", "T"))
     assert "t4" in result["t4c8_score"]
     assert result["t4c8_score"]["t4"] == pytest.approx(10.123456789)
 
 
-def test_gene_score_renamed_attribute(t4c8_grr: GenomicResourceRepo) -> None:
+def test_gene_score_renamed_attribute(
+    t4c8_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     pipeline = load_pipeline_from_yaml(
         _GENE_SCORE_PREFIX + textwrap.dedent("""
         - gene_score_annotator:
@@ -431,7 +458,7 @@ def test_gene_score_renamed_attribute(t4c8_grr: GenomicResourceRepo) -> None:
             attributes:
             - source: t4c8_score
               name: my_gene_score
-        """), t4c8_grr)
+        """), t4c8_grr, work_dir=tmp_path)
     with pipeline.open() as p:
         result = p.annotate(VCFAllele("chr1", 7, "A", "T"))
     assert "t4" in result["my_gene_score"]
@@ -454,19 +481,25 @@ _GENE_SET_PREFIX = textwrap.dedent("""
 """)
 
 
-def test_gene_set_default_name(gene_set_grr: GenomicResourceRepo) -> None:
+def test_gene_set_default_name(
+    gene_set_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     pipeline = load_pipeline_from_yaml(
         _GENE_SET_PREFIX + textwrap.dedent("""
         - gene_set_annotator:
             resource_id: gs_collection
             input_gene_list: gene_list
-        """), gene_set_grr)
+        """), gene_set_grr, work_dir=tmp_path)
     with pipeline.open() as p:
         result = p.annotate(VCFAllele("chr1", 7, "A", "T"))
     assert "gs_alpha" in result["in_sets"]
 
 
-def test_gene_set_renamed_attribute(gene_set_grr: GenomicResourceRepo) -> None:
+def test_gene_set_renamed_attribute(
+    gene_set_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     pipeline = load_pipeline_from_yaml(
         _GENE_SET_PREFIX + textwrap.dedent("""
         - gene_set_annotator:
@@ -475,7 +508,7 @@ def test_gene_set_renamed_attribute(gene_set_grr: GenomicResourceRepo) -> None:
             attributes:
             - source: in_sets
               name: my_in_sets
-        """), gene_set_grr)
+        """), gene_set_grr, work_dir=tmp_path)
     with pipeline.open() as p:
         result = p.annotate(VCFAllele("chr1", 7, "A", "T"))
     assert "gs_alpha" in result["my_in_sets"]
@@ -486,10 +519,13 @@ def test_gene_set_renamed_attribute(gene_set_grr: GenomicResourceRepo) -> None:
 # fragment_score_annotator
 # ---------------------------------------------------------------------------
 
-def test_fragment_score_default_name(fragment_grr: GenomicResourceRepo) -> None:
+def test_fragment_score_default_name(
+    fragment_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - fragment_score: fragments
-    """), fragment_grr)
+    """), fragment_grr, work_dir=tmp_path)
     with pipeline.open() as p:
         result = p.annotate(Position("chr1", 10))
     assert result["count"] == 1
@@ -497,6 +533,7 @@ def test_fragment_score_default_name(fragment_grr: GenomicResourceRepo) -> None:
 
 def test_fragment_score_renamed_attribute(
     fragment_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - fragment_score:
@@ -504,7 +541,7 @@ def test_fragment_score_renamed_attribute(
             attributes:
             - source: count
               name: my_count
-    """), fragment_grr)
+    """), fragment_grr, work_dir=tmp_path)
     with pipeline.open() as p:
         result = p.annotate(Position("chr1", 10))
     assert result["my_count"] == 1
@@ -515,22 +552,22 @@ def test_fragment_score_renamed_attribute(
 # debug_annotator
 # ---------------------------------------------------------------------------
 
-def test_debug_annotator_default_name() -> None:
+def test_debug_annotator_default_name(tmp_path: pathlib.Path) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - debug_annotator: {}
-    """), None)  # type: ignore[arg-type]
+    """), None, work_dir=tmp_path)  # type: ignore[arg-type]
     with pipeline.open() as p:
         result = p.annotate(Position("chr1", 4))
     assert result["hi"] == "hello world"
 
 
-def test_debug_annotator_renamed_attribute() -> None:
+def test_debug_annotator_renamed_attribute(tmp_path: pathlib.Path) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - debug_annotator:
             attributes:
             - source: hi
               name: my_greeting
-    """), None)  # type: ignore[arg-type]
+    """), None, work_dir=tmp_path)  # type: ignore[arg-type]
     with pipeline.open() as p:
         result = p.annotate(Position("chr1", 4))
     assert result["my_greeting"] == "hello world"

@@ -14,6 +14,7 @@ templates are private helpers, and what matters is what a browser is told.
 The one exception is the list of types, read at collection time from the
 helper the ``annotator_types`` endpoint serves, so that it can parametrize.
 """
+import pathlib
 from typing import Any
 
 import pytest
@@ -204,6 +205,7 @@ def test_the_tables_cover_exactly_the_types_the_editor_offers() -> None:
 @pytest.mark.parametrize("annotator_type", ANNOTATOR_TYPES)
 def test_the_template_offers_every_parameter_the_annotator_reads(
     client: APIClient, test_grr: GenomicResourceRepo, annotator_type: str,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The two declarations of an annotator's vocabulary agree.
 
@@ -225,7 +227,7 @@ def test_the_template_offers_every_parameter_the_annotator_reads(
     offered = set(template) - {"annotator_type", "documentation_url"}
 
     pipeline = load_pipeline_from_yaml(
-        MINIMAL_PIPELINES[annotator_type], test_grr)
+        MINIMAL_PIPELINES[annotator_type], test_grr, work_dir=tmp_path)
     accepted = pipeline.annotators[-1].get_info().parameters.get_used_keys()
     accepted = accepted - INJECTED_PARAMETERS
 

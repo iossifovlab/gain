@@ -389,9 +389,10 @@ def test_legacy_implementation_entry_point_key_still_resolves() -> None:
 def test_legacy_annotator_entry_point_keys_still_build(
     annotator_name: str,
     legacy_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
-        f"- {annotator_name}: fragments", legacy_grr)
+        f"- {annotator_name}: fragments", legacy_grr, work_dir=tmp_path)
 
     with pipeline.open() as open_pipeline:
         attributes = open_pipeline.annotate(Region("1", 15, 60))
@@ -408,9 +409,11 @@ def test_legacy_annotator_name_warns_once_naming_its_replacement(
     preferred_name: str,
     modern_grr: GenomicResourceRepo,
     caplog: pytest.LogCaptureFixture,
+    tmp_path: pathlib.Path,
 ) -> None:
     with caplog.at_level(logging.WARNING):
-        load_pipeline_from_yaml(f"- {annotator_name}: fragments", modern_grr)
+        load_pipeline_from_yaml(
+            f"- {annotator_name}: fragments", modern_grr, work_dir=tmp_path)
 
     # Compared whole rather than by `in` checks: the resource id alone
     # satisfies every substring assertion this could make, so dropping
@@ -427,6 +430,7 @@ def test_legacy_annotator_name_warns_once_naming_its_replacement(
 def test_each_annotator_on_one_resource_is_named_apart(
     modern_grr: GenomicResourceRepo,
     caplog: pytest.LogCaptureFixture,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Two legacy stanzas over one resource are two offenders.
 
@@ -450,7 +454,7 @@ def test_each_annotator_on_one_resource_is_named_apart(
                     - name: count_two
                       source: count
             """),
-            modern_grr)
+            modern_grr, work_dir=tmp_path)
 
     assert deprecation_warnings(
         caplog, "annotator name", "cnv_collection") == [
@@ -469,11 +473,12 @@ def test_legacy_annotator_name_annotates_identically_to_its_replacement(
     legacy_name: str,
     preferred_name: str,
     modern_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The deprecation announces; it does not change an answer."""
-    def annotate(annotator_name: str) -> dict:
+    def annotate(annotator_name: str, *, work_dir: pathlib.Path) -> dict:
         pipeline = load_pipeline_from_yaml(
-            f"- {annotator_name}: fragments", modern_grr)
+            f"- {annotator_name}: fragments", modern_grr, work_dir=work_dir)
         # Bound and returned outside the `with`, which ruff reads as a
         # redundant temporary and mypy requires: the pipeline's `__exit__`
         # is typed as able to suppress, so a `return` inside the body leaves
@@ -482,17 +487,19 @@ def test_legacy_annotator_name_annotates_identically_to_its_replacement(
             annotated = open_pipeline.annotate(Region("1", 15, 60))
         return annotated  # ruff: ignore[unnecessary-assign]
 
-    assert annotate(legacy_name) == annotate(preferred_name)
+    assert annotate(legacy_name, work_dir=tmp_path / "legacy") \
+        == annotate(preferred_name, work_dir=tmp_path / "preferred")
 
 
 def test_building_and_opening_a_legacy_pipeline_warns_once_each(
     legacy_grr: GenomicResourceRepo,
     caplog: pytest.LogCaptureFixture,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Both offences in one pipeline are announced, once apiece."""
     with caplog.at_level(logging.WARNING):
         pipeline = load_pipeline_from_yaml(
-            "- cnv_collection: fragments", legacy_grr)
+            "- cnv_collection: fragments", legacy_grr, work_dir=tmp_path)
         with pipeline.open():
             pass
 
@@ -507,6 +514,7 @@ def test_annotating_a_record_never_announces(
     record_count: int,
     legacy_grr: GenomicResourceRepo,
     caplog: pytest.LogCaptureFixture,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The seams are pipeline build and resource open, never a record.
 
@@ -525,7 +533,7 @@ def test_annotating_a_record_never_announces(
     the memo would have collapsed the rest.
     """
     pipeline = load_pipeline_from_yaml(
-        "- cnv_collection: fragments", legacy_grr)
+        "- cnv_collection: fragments", legacy_grr, work_dir=tmp_path)
 
     with pipeline.open() as open_pipeline:
         # Both halves of "what came before does not count": `caplog`
@@ -544,6 +552,7 @@ def test_annotating_a_record_never_announces(
 def test_preferred_spellings_emit_no_deprecation_warning(
     modern_grr: GenomicResourceRepo,
     caplog: pytest.LogCaptureFixture,
+    tmp_path: pathlib.Path,
 ) -> None:
     with caplog.at_level(logging.WARNING):
         pipeline = load_pipeline_from_yaml(
@@ -552,7 +561,7 @@ def test_preferred_spellings_emit_no_deprecation_warning(
                     resource_id: fragments
                     fragment_filter: collection == "SSC"
             """),
-            modern_grr)
+            modern_grr, work_dir=tmp_path)
         with pipeline.open() as open_pipeline:
             open_pipeline.annotate(Region("1", 15, 60))
 
@@ -669,6 +678,7 @@ def test_legacy_annotator_names_still_select_resources_by_wildcard(
 
 def test_legacy_cnv_filter_parameter_is_still_honoured(
     legacy_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
@@ -676,7 +686,7 @@ def test_legacy_cnv_filter_parameter_is_still_honoured(
                 resource_id: fragments
                 cnv_filter: collection == "SSC"
         """),
-        legacy_grr)
+        legacy_grr, work_dir=tmp_path)
 
     with pipeline.open() as open_pipeline:
         attributes = open_pipeline.annotate(Region("1", 15, 60))
@@ -687,6 +697,7 @@ def test_legacy_cnv_filter_parameter_is_still_honoured(
 def test_legacy_cnv_filter_parameter_warns_once_naming_its_replacement(
     modern_grr: GenomicResourceRepo,
     caplog: pytest.LogCaptureFixture,
+    tmp_path: pathlib.Path,
 ) -> None:
     with caplog.at_level(logging.WARNING):
         load_pipeline_from_yaml(
@@ -695,7 +706,7 @@ def test_legacy_cnv_filter_parameter_warns_once_naming_its_replacement(
                     resource_id: fragments
                     cnv_filter: collection == "SSC"
             """),
-            modern_grr)
+            modern_grr, work_dir=tmp_path)
 
     (message,) = deprecation_warnings(caplog, "parameter", "cnv_filter")
     assert "fragments" in message

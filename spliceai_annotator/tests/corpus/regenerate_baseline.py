@@ -20,6 +20,7 @@ from __future__ import annotations
 import gzip
 import json
 import pathlib
+import tempfile
 from collections import defaultdict
 from typing import Any
 
@@ -60,18 +61,20 @@ def annotate_corpus(
         by_distance[variant["distance"]].append(variant)
 
     results: dict[str, dict[str, Any]] = {}
-    for distance in sorted(by_distance):
-        pipeline = load_pipeline_from_yaml(
-            make_pipeline_yaml(distance), grr)
-        with pipeline.open() as opened:
-            for variant in by_distance[distance]:
-                annotatable = VCFAllele(
-                    variant["contig"], variant["pos"],
-                    variant["ref"], variant["alt"])
-                result = opened.annotate(annotatable)
-                results[variant["id"]] = {
-                    key: _jsonable(val) for key, val in result.items()
-                }
+    with tempfile.TemporaryDirectory() as work_root:
+        for distance in sorted(by_distance):
+            pipeline = load_pipeline_from_yaml(
+                make_pipeline_yaml(distance), grr,
+                work_dir=pathlib.Path(work_root) / f"distance_{distance}")
+            with pipeline.open() as opened:
+                for variant in by_distance[distance]:
+                    annotatable = VCFAllele(
+                        variant["contig"], variant["pos"],
+                        variant["ref"], variant["alt"])
+                    result = opened.annotate(annotatable)
+                    results[variant["id"]] = {
+                        key: _jsonable(val) for key, val in result.items()
+                    }
     return results
 
 

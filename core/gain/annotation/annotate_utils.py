@@ -233,7 +233,8 @@ def maybe_wrap_reannotation(
     if not args.get("reannotate"):
         return pipeline
     pipeline_previous = load_pipeline_from_file_or_resource(
-        args["reannotate"], grr)
+        args["reannotate"], grr,
+        work_dir=Path(args["work_dir"]) / "reannotate")
     try:
         return ReannotationPipeline(
             pipeline, pipeline_previous,

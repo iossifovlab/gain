@@ -53,7 +53,10 @@ def grr(tmp_path: pathlib.Path) -> GenomicResourceRepo:
     return build_filesystem_test_repository(tmp_path)
 
 
-def test_effect_annotator_resources(grr: GenomicResourceRepo) -> None:
+def test_effect_annotator_resources(
+    grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     genome = "t4c8_genome"
     gene_models = "t4c8_genes"
     config = textwrap.dedent(f"""
@@ -62,7 +65,8 @@ def test_effect_annotator_resources(grr: GenomicResourceRepo) -> None:
             gene_models: {gene_models}
         """)
 
-    annotation_pipeline = load_pipeline_from_yaml(config, grr)
+    annotation_pipeline = load_pipeline_from_yaml(
+        config, grr, work_dir=tmp_path)
 
     with annotation_pipeline.open() as pipeline:
         annotator = pipeline.annotators[0]
@@ -72,13 +76,16 @@ def test_effect_annotator_resources(grr: GenomicResourceRepo) -> None:
         }
 
 
-def test_effect_annotator_documentation(grr: GenomicResourceRepo) -> None:
+def test_effect_annotator_documentation(
+    grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     pipeline_config = textwrap.dedent("""
         - effect_annotator:
             genome: t4c8_genome
             gene_models: t4c8_genes
         """)
-    pipeline = load_pipeline_from_yaml(pipeline_config, grr)
+    pipeline = load_pipeline_from_yaml(pipeline_config, grr, work_dir=tmp_path)
     att = pipeline.get_attribute_info("worst_effect")
     assert att is not None
     assert "Worst" in att.documentation
@@ -86,6 +93,7 @@ def test_effect_annotator_documentation(grr: GenomicResourceRepo) -> None:
 
 def test_effect_annotator_implicit_genome_from_gene_models(
     grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     genome = "t4c8_genome_implicit_A"
     gene_models = "t4c8_genes"
@@ -94,7 +102,8 @@ def test_effect_annotator_implicit_genome_from_gene_models(
             gene_models: {gene_models}
         """)
 
-    annotation_pipeline = load_pipeline_from_yaml(config, grr)
+    annotation_pipeline = load_pipeline_from_yaml(
+        config, grr, work_dir=tmp_path)
 
     with annotation_pipeline.open() as pipeline:
         annotator = pipeline.annotators[0]
@@ -106,6 +115,7 @@ def test_effect_annotator_implicit_genome_from_gene_models(
 
 def test_effect_annotator_implicit_genome_from_preamble(
     grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     genome = "t4c8_genome_implicit_B"
     gene_models = "t4c8_genes_ALT"
@@ -117,7 +127,8 @@ def test_effect_annotator_implicit_genome_from_preamble(
               gene_models: {gene_models}
         """)
 
-    annotation_pipeline = load_pipeline_from_yaml(config, grr)
+    annotation_pipeline = load_pipeline_from_yaml(
+        config, grr, work_dir=tmp_path)
 
     with annotation_pipeline.open() as pipeline:
         annotator = pipeline.annotators[0]
@@ -130,6 +141,7 @@ def test_effect_annotator_implicit_genome_from_preamble(
 def test_effect_annotator_implicit_genome_from_context(
     mocker: pytest_mock.MockerFixture,
     grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     genome_id = "t4c8_genome_implicit_B"
     gene_models = "t4c8_genes_ALT"
@@ -145,7 +157,8 @@ def test_effect_annotator_implicit_genome_from_context(
         "gain.annotation.utils.get_genomic_context",
     ).return_value = context
 
-    annotation_pipeline = load_pipeline_from_yaml(config, grr)
+    annotation_pipeline = load_pipeline_from_yaml(
+        config, grr, work_dir=tmp_path)
 
     with annotation_pipeline.open() as pipeline:
         annotator = pipeline.annotators[0]
@@ -158,6 +171,7 @@ def test_effect_annotator_implicit_genome_from_context(
 def test_effect_annotator_with_no_genome_anywhere_says_so(
     mocker: pytest_mock.MockerFixture,
     grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The last resort is a message about the genome, not about the GRR.
 
@@ -183,7 +197,7 @@ def test_effect_annotator_with_no_genome_anywhere_says_so(
         context_objects={}, source="test_context")
 
     with pytest.raises(AnnotationConfigurationError) as excinfo:
-        load_pipeline_from_yaml(config, grr)
+        load_pipeline_from_yaml(config, grr, work_dir=tmp_path)
 
     cause = excinfo.value.__cause__
     assert isinstance(cause, ValueError)
@@ -193,6 +207,7 @@ def test_effect_annotator_with_no_genome_anywhere_says_so(
 
 def test_effect_annotator_refuses_an_empty_gene_models_id(
     grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """An explicit ``gene_models: ""`` is refused by name (gain#1101)."""
     config = textwrap.dedent("""
@@ -201,13 +216,14 @@ def test_effect_annotator_refuses_an_empty_gene_models_id(
         """)
 
     with pytest.raises(AnnotationConfigurationError) as excinfo:
-        load_pipeline_from_yaml(config, grr)
+        load_pipeline_from_yaml(config, grr, work_dir=tmp_path)
 
     assert_refuses_empty_resource_id(excinfo, "effect_annotator", "gene_models")
 
 
 def test_effect_annotator_refuses_an_empty_genome_id(
     grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """An explicit ``genome: ""`` is refused, not read as "not configured".
 
@@ -223,7 +239,7 @@ def test_effect_annotator_refuses_an_empty_genome_id(
         """)
 
     with pytest.raises(AnnotationConfigurationError) as excinfo:
-        load_pipeline_from_yaml(config, grr)
+        load_pipeline_from_yaml(config, grr, work_dir=tmp_path)
 
     assert_refuses_empty_resource_id(excinfo, "effect_annotator", "genome")
 
@@ -231,6 +247,7 @@ def test_effect_annotator_refuses_an_empty_genome_id(
 def test_effect_annotator_genomeless_preamble_uses_the_context(
     mocker: pytest_mock.MockerFixture,
     grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The same fall-through, with a preamble that declares no genome.
 
@@ -261,7 +278,8 @@ def test_effect_annotator_genomeless_preamble_uses_the_context(
         "gain.annotation.utils.get_genomic_context",
     ).return_value = context
 
-    annotation_pipeline = load_pipeline_from_yaml(config, grr)
+    annotation_pipeline = load_pipeline_from_yaml(
+        config, grr, work_dir=tmp_path)
 
     with annotation_pipeline.open() as pipeline:
         annotator = pipeline.annotators[0]
@@ -309,6 +327,7 @@ def test_effect_annotator_gene_lists(
     effects: list[str],
     target_gene_list: str,
     expected_gene_list: list[str],
+    tmp_path: pathlib.Path,
 ) -> None:
     genome_id = "t4c8_genome_implicit_B"
     gene_models = "t4c8_genes_ALT"
@@ -321,7 +340,8 @@ def test_effect_annotator_gene_lists(
               - {target_gene_list}_gene_list
         """)
 
-    annotation_pipeline = load_pipeline_from_yaml(config, grr)
+    annotation_pipeline = load_pipeline_from_yaml(
+        config, grr, work_dir=tmp_path)
 
     annotation_effects = [
         AnnotationEffect(effect) for effect in effects
@@ -354,6 +374,7 @@ def test_effect_annotator_attributes(
     grr: GenomicResourceRepo,
     attribute: str,
     expected: bool,
+    tmp_path: pathlib.Path,
 ) -> None:
     genome = "t4c8_genome"
     gene_models = "t4c8_genes"
@@ -365,7 +386,8 @@ def test_effect_annotator_attributes(
               - {attribute}
         """)
 
-    annotation_pipeline = load_pipeline_from_yaml(config, grr)
+    annotation_pipeline = load_pipeline_from_yaml(
+        config, grr, work_dir=tmp_path)
 
     with annotation_pipeline.open() as pipeline:
         annotator = pipeline.annotators[0]
@@ -398,6 +420,7 @@ def test_effect_annotator_gene_lists_aggregator(
     target_effect: str,
     expected_target_genes: list[str],
     expected_genes: list[str],
+    tmp_path: pathlib.Path,
 ) -> None:
     genome_id = "t4c8_genome_implicit_B"
     gene_models = "t4c8_genes_ALT"
@@ -414,7 +437,8 @@ def test_effect_annotator_gene_lists_aggregator(
                 gene_list_aggregator: join(|)
         """)
 
-    annotation_pipeline = load_pipeline_from_yaml(config, grr)
+    annotation_pipeline = load_pipeline_from_yaml(
+        config, grr, work_dir=tmp_path)
 
     annotation_effects = [
         AnnotationEffect(effect) for effect in effects
@@ -440,6 +464,7 @@ def test_effect_annotator_gene_lists_aggregator(
 def test_effect_annotator_preamble_genome_wins_over_the_context(
     mocker: pytest_mock.MockerFixture,
     grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Precedence, pinned against a context that could have won.
 
@@ -468,7 +493,8 @@ def test_effect_annotator_preamble_genome_wins_over_the_context(
         },
         source="test_context")
 
-    annotation_pipeline = load_pipeline_from_yaml(config, grr)
+    annotation_pipeline = load_pipeline_from_yaml(
+        config, grr, work_dir=tmp_path)
 
     with annotation_pipeline.open() as pipeline:
         annotator = pipeline.annotators[0]
@@ -478,6 +504,7 @@ def test_effect_annotator_preamble_genome_wins_over_the_context(
 def test_effect_annotator_genome_parameter_wins_over_everything(
     mocker: pytest_mock.MockerFixture,
     grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The head of the chain, with every later operand also populated."""
     parameter_genome = "t4c8_genome"
@@ -502,7 +529,8 @@ def test_effect_annotator_genome_parameter_wins_over_everything(
         },
         source="test_context")
 
-    annotation_pipeline = load_pipeline_from_yaml(config, grr)
+    annotation_pipeline = load_pipeline_from_yaml(
+        config, grr, work_dir=tmp_path)
 
     with annotation_pipeline.open() as pipeline:
         annotator = pipeline.annotators[0]

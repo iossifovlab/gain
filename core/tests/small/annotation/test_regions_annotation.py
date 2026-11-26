@@ -1,5 +1,6 @@
 # pylint: disable=redefined-outer-name,C0114,C0116,protected-access,fixme
 
+import pathlib
 import textwrap
 
 import pytest
@@ -109,7 +110,7 @@ def fixture_repo() -> GenomicResourceRepo:
 ])
 def test_position_score_annotator(
         region: tuple, pos_aggregator: str, expected: float,
-        fixture_repo: GenomicResourceRepo) -> None:
+        fixture_repo: GenomicResourceRepo, tmp_path: pathlib.Path) -> None:
 
     annotatable = Region(*region)
 
@@ -122,7 +123,8 @@ def test_position_score_annotator(
                   aggregator: {pos_aggregator}
             """)
 
-    pipeline = load_pipeline_from_yaml(pipeline_config, fixture_repo)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, fixture_repo, work_dir=tmp_path)
 
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(annotatable)
@@ -139,7 +141,7 @@ def test_position_score_annotator(
 def test_allele_score_region_annotator(
         region: tuple,
         aggregator: str, expected: float,
-        fixture_repo: GenomicResourceRepo) -> None:
+        fixture_repo: GenomicResourceRepo, tmp_path: pathlib.Path) -> None:
 
     annotatable = Region(*region)
 
@@ -152,7 +154,8 @@ def test_allele_score_region_annotator(
               aggregator: {aggregator}
         """)
 
-    pipeline = load_pipeline_from_yaml(pipeline_config, fixture_repo)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, fixture_repo, work_dir=tmp_path)
     result = None
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(annotatable)
@@ -177,7 +180,7 @@ def test_allele_score_region_length_cutoff(
         region: tuple,
         aggregator: str, expected: float,
         configured: str,
-        fixture_repo: GenomicResourceRepo) -> None:
+        fixture_repo: GenomicResourceRepo, tmp_path: pathlib.Path) -> None:
 
     annotatable = Region(*region)
 
@@ -191,7 +194,8 @@ def test_allele_score_region_length_cutoff(
               aggregator: {aggregator}
         """)
 
-    pipeline = load_pipeline_from_yaml(pipeline_config, fixture_repo)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, fixture_repo, work_dir=tmp_path)
 
     result = None
     with pipeline.open() as work_pipeline:
@@ -210,7 +214,7 @@ def test_allele_score_region_length_cutoff(
 def test_allele_score_annotator(
         region: tuple,
         aggregator: str, expected: float,
-        fixture_repo: GenomicResourceRepo) -> None:
+        fixture_repo: GenomicResourceRepo, tmp_path: pathlib.Path) -> None:
 
     annotatable = Region(*region)
 
@@ -223,7 +227,8 @@ def test_allele_score_annotator(
               aggregator: {aggregator}
         """)
 
-    pipeline = load_pipeline_from_yaml(pipeline_config, fixture_repo)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, fixture_repo, work_dir=tmp_path)
 
     result = None
     with pipeline.open() as work_pipeline:
@@ -242,6 +247,7 @@ def test_allele_score_annotator(
 ])
 def test_a_score_region_length_cutoff_that_is_no_length_is_refused(
     configured: str, fixture_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Refused as the pipeline LOADS, naming the key the user wrote.
 
@@ -257,4 +263,5 @@ def test_a_score_region_length_cutoff_that_is_no_length_is_refused(
 
     with pytest.raises(
             AnnotationConfigurationError, match="region_length_cutoff"):
-        load_pipeline_from_yaml(pipeline_config, fixture_repo)
+        load_pipeline_from_yaml(
+            pipeline_config, fixture_repo, work_dir=tmp_path)

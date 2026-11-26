@@ -1,4 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613,R0917
+import pathlib
 import textwrap
 
 import pytest
@@ -69,13 +70,14 @@ def test_basic(
     effect: str,
     genes: str,
     grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
             - simple_effect_annotator:
                 gene_models: gene_models
             """),
-        grr)
+        grr, work_dir=tmp_path)
 
     atts = pipeline.annotate(annotatable)
     assert atts["worst_effect"] == effect
@@ -103,13 +105,14 @@ def test_run_annotate(
     pos_end: int,
     expected: dict[str, set[str]],
     grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
             - simple_effect_annotator:
                 gene_models: gene_models
             """),
-        grr)
+        grr, work_dir=tmp_path)
 
     with pipeline.open() as pipeline:
         sea = pipeline.annotators[0]
@@ -123,13 +126,14 @@ def test_run_annotate(
 
 def test_run_annotate_noncoding_effect(
     grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
             - simple_effect_annotator:
                 gene_models: gene_models
             """),
-        grr)
+        grr, work_dir=tmp_path)
 
     with pipeline.open() as opened_pipeline:
         sea = opened_pipeline.annotators[0]
@@ -159,6 +163,7 @@ def test_full_annotation(
     genes: str,
     gene_effects: str,
     grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
@@ -178,7 +183,7 @@ def test_full_annotation(
                 - inter-coding_intronic_gene_list
                 - inter-coding_intronic_genes
             """),
-        grr)
+        grr, work_dir=tmp_path)
 
     atts = pipeline.annotate(annotatable)
     assert atts["worst_effect"] == worst_effect
@@ -189,13 +194,14 @@ def test_full_annotation(
 
 def test_simple_effect_annotator_handles_none_annotatable(
     grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
             - simple_effect_annotator:
                 gene_models: gene_models
             """),
-        grr)
+        grr, work_dir=tmp_path)
 
     result = pipeline.annotate(None)
     assert result == {
@@ -248,6 +254,7 @@ def test_full_annotation2(
     gene_effects: str,
     effect_details: str,
     grr2: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
@@ -268,7 +275,7 @@ def test_full_annotation2(
                 - inter-coding_intronic_gene_list
                 - inter-coding_intronic_genes
             """),
-        grr2)
+        grr2, work_dir=tmp_path)
 
     atts = pipeline.annotate(annotatable)
     assert atts["worst_effect"] == worst_effect
@@ -279,6 +286,7 @@ def test_full_annotation2(
 
 
 def test_simple_effect_annotator_requires_gene_models_resource(
+    tmp_path: pathlib.Path,
 ) -> None:
     empty_repo = build_inmemory_test_repository({})
     with pytest.raises(
@@ -290,12 +298,14 @@ def test_simple_effect_annotator_requires_gene_models_resource(
                 - simple_effect_annotator: {}
                 """),
             empty_repo,
+            work_dir=tmp_path,
         )
 
 
 def test_simple_effect_annotator_absent_gene_models_uses_the_context(
     mocker: pytest_mock.MockerFixture,
     grr: GenomicResourceProtocolRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """An *absent* ``gene_models`` still falls back to the context.
 
@@ -314,6 +324,7 @@ def test_simple_effect_annotator_absent_gene_models_uses_the_context(
             - simple_effect_annotator: {}
             """),
         build_inmemory_test_repository({}),
+        work_dir=tmp_path,
     )
 
     with annotation_pipeline.open() as pipeline:
@@ -321,6 +332,7 @@ def test_simple_effect_annotator_absent_gene_models_uses_the_context(
 
 
 def test_simple_effect_annotator_refuses_an_empty_gene_models_id(
+    tmp_path: pathlib.Path,
 ) -> None:
     """An explicit ``gene_models: ""`` is a configuration error, not an id.
 
@@ -337,6 +349,7 @@ def test_simple_effect_annotator_refuses_an_empty_gene_models_id(
                     gene_models: ""
                 """),
             empty_repo,
+            work_dir=tmp_path,
         )
 
     assert_refuses_empty_resource_id(
@@ -369,13 +382,14 @@ def test_regions(
     func_name: str,
     expected_regions: list[BedRegion],
     grr2: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
             - simple_effect_annotator:
                 gene_models: gene_models
             """),
-        grr2).open()
+        grr2, work_dir=tmp_path).open()
     sea = pipeline.annotators[0]
     assert isinstance(sea, SimpleEffectAnnotator)
 
@@ -408,13 +422,14 @@ def test_run_annotate2(
     end: int,
     expected_effects: dict[str, set[SimpleEffect]],
     grr2: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
             - simple_effect_annotator:
                 gene_models: gene_models
             """),
-        grr2).open()
+        grr2, work_dir=tmp_path).open()
     sea = pipeline.annotators[0]
     assert isinstance(sea, SimpleEffectAnnotator)
 
@@ -437,6 +452,7 @@ def test_gene_list_aggregator(
     genes: str,
     coding_genes: str,
     grr2: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
@@ -457,7 +473,7 @@ def test_gene_list_aggregator(
                   name: coding_genes
                   gene_list_aggregator: join(|)
             """),
-        grr2)
+        grr2, work_dir=tmp_path)
 
     atts = pipeline.annotate(annotatable)
     assert atts["worst_effect"] == worst_effect
@@ -468,6 +484,7 @@ def test_gene_list_aggregator(
 
 def test_gene_list_aggregator_wrong_aggregator(
     grr2: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     with pytest.raises(
         AnnotationConfigurationError,
@@ -483,11 +500,12 @@ def test_gene_list_aggregator_wrong_aggregator(
                       name: wrong_aggregator
                       gene_list_aggregator: true
                 """),
-            grr2)
+            grr2, work_dir=tmp_path)
 
 
 def test_gene_list_aggregator_wrong_attribute(
     grr2: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     with pytest.raises(
         AnnotationConfigurationError,
@@ -502,4 +520,4 @@ def test_gene_list_aggregator_wrong_attribute(
                       name: wrong_attribute
                       aggregator: join(|)
                 """),
-            grr2)
+            grr2, work_dir=tmp_path)

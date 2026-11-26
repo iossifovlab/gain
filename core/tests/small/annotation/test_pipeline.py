@@ -159,11 +159,15 @@ def test_input_annotatable_decorator_used_context_attributes(
     assert annotator.used_context_attributes == ("dummy_annotatable",)
 
 
-def test_pipeline_with_wildcards(test_grr: GenomicResourceRepo) -> None:
+def test_pipeline_with_wildcards(
+    test_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     pipeline_config = """
         - position_score: score_*
     """
-    pipeline = load_pipeline_from_yaml(pipeline_config, test_grr)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, test_grr, work_dir=tmp_path)
     result = pipeline.annotate(Position("foo", 1))
     assert len(pipeline.annotators) == 2
     assert result == {"s1": 0.1, "s2": 0.2}
@@ -194,11 +198,13 @@ def labeled_grr(tmp_path: pathlib.Path) -> GenomicResourceProtocolRepo:
 
 def test_pipeline_with_label_in_wildcard(
     labeled_grr: GenomicResourceProtocolRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline_config = """
         - position_score: '*["tism" in phenotype]'
     """
-    pipeline = load_pipeline_from_yaml(pipeline_config, labeled_grr)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, labeled_grr, work_dir=tmp_path)
     result = pipeline.annotate(Position("foo", 1))
     assert len(pipeline.annotators) == 1
     assert result == {"s1": 0.1}
@@ -206,12 +212,13 @@ def test_pipeline_with_label_in_wildcard(
 
 def test_pipeline_repeated_attributes_forbidden(
     test_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline_config = """
         - position_score: "*score_one"
     """
     with pytest.raises(AnnotationConfigurationError) as error:
-        load_pipeline_from_yaml(pipeline_config, test_grr)
+        load_pipeline_from_yaml(pipeline_config, test_grr, work_dir=tmp_path)
     assert str(error.value) == (
         "Repeated attributes in pipeline were found -"
         " {'s1': ['A0_score_one', 'A0_dup_score_one']}"
@@ -220,6 +227,7 @@ def test_pipeline_repeated_attributes_forbidden(
 
 def test_pipeline_repeated_attributes_allowed(
     test_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline_config = """
         - position_score: "*score_one"
@@ -227,6 +235,7 @@ def test_pipeline_repeated_attributes_allowed(
     pipeline = load_pipeline_from_yaml(
         pipeline_config, test_grr,
         allow_repeated_attributes=True,
+        work_dir=tmp_path,
     )
     result = pipeline.annotate(Position("foo", 1))
     assert len(pipeline.annotators) == 2

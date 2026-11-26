@@ -112,13 +112,15 @@ ALL_DISTANCES = sorted(set(DISTANCES) | set(EXTRA_DISTANCES))
 @pytest.fixture(scope="session")
 def real_pipelines(
     real_grr: GenomicResourceRepo,
+    tmp_path_factory: pytest.TempPathFactory,
 ) -> Iterator[dict[int, AnnotationPipeline]]:
     """One opened all-16-attribute pipeline per distance, on the real GRR."""
+    work_dir = tmp_path_factory.mktemp("real_pipelines")
     pipelines = {}
     for distance in ALL_DISTANCES:
         pipeline = load_pipeline_from_yaml(
             make_pipeline_yaml(distance, REAL_GENOME, REAL_GENE_MODELS),
-            real_grr)
+            real_grr, work_dir=work_dir / f"distance_{distance}")
         pipelines[distance] = pipeline.open()
     yield pipelines
     for pipeline in pipelines.values():

@@ -1,5 +1,6 @@
 # pylint: disable=redefined-outer-name,C0114,C0116,protected-access,fixme
 
+import pathlib
 import textwrap
 
 import pytest
@@ -55,6 +56,7 @@ def test_effect_annotator(
     effect_details: str,
     gene_list: set[str],
     fixture_repo: GenomicResourceProtocolRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
 
     pipeline_config = textwrap.dedent("""
@@ -63,7 +65,8 @@ def test_effect_annotator(
             gene_models: t4c8_genes
     """)
 
-    pipeline = load_pipeline_from_yaml(pipeline_config, fixture_repo)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, fixture_repo, work_dir=tmp_path)
 
     result = None
     with pipeline.open() as work_pipeline:

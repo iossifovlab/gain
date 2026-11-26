@@ -1,5 +1,7 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 
+import pathlib
+
 import pytest
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources.repository import GenomicResourceRepo
@@ -81,7 +83,9 @@ def genomic_resources_repo() -> GenomicResourceRepo:
 
 
 def test_annotation_pipeline_schema_basics(
-        genomic_resources_repo: GenomicResourceRepo) -> None:
+    genomic_resources_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     pipeline = load_pipeline_from_yaml("""
         - allele_score:
             resource_id: allele_score1
@@ -90,7 +94,7 @@ def test_annotation_pipeline_schema_basics(
               name: test
         - position_score:
             resource_id: position_score1
-        """, genomic_resources_repo)
+        """, genomic_resources_repo, work_dir=tmp_path)
 
     assert len(pipeline.annotators) == 2
     assert len(pipeline.get_attributes()) == 4
@@ -98,7 +102,9 @@ def test_annotation_pipeline_schema_basics(
 
 
 def test_annotation_pipeline_schema_with_internal(
-        genomic_resources_repo: GenomicResourceRepo) -> None:
+    genomic_resources_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
 
     pipeline = load_pipeline_from_yaml("""
         - allele_score:
@@ -112,7 +118,7 @@ def test_annotation_pipeline_schema_with_internal(
             - test100way
             - name: t1
               internal: True
-        """, genomic_resources_repo)
+        """, genomic_resources_repo, work_dir=tmp_path)
 
     assert len(pipeline.annotators) == 2
 

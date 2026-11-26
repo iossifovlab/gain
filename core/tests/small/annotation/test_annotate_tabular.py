@@ -2297,6 +2297,7 @@ def test_annotate_tabular_function_basic(
     ]
     pipeline = build_annotation_pipeline(
         pipeline_config, grr,
+        work_dir=tmp_path,
     )
 
     # Test annotate_tabular function
@@ -2330,7 +2331,8 @@ def test_annotate_tabular_function_preserves_bgz_output(
 
     setup_denovo(in_file, in_content)
     grr = build_genomic_resource_repository(file_name=str(grr_file))
-    pipeline = build_annotation_pipeline([{"position_score": "one"}], grr)
+    pipeline = build_annotation_pipeline(
+        [{"position_score": "one"}], grr, work_dir=tmp_path)
     args = _build_annotate_tabular_args()
 
     annotate_tabular(str(in_file), pipeline, str(out_file), args)
@@ -2374,6 +2376,7 @@ def test_annotate_tabular_function_with_batch_mode(
     ]
     pipeline = build_annotation_pipeline(
         pipeline_config, grr,
+        work_dir=tmp_path,
     )
 
     spy = mocker.spy(_CSVBatchSource, "__init__")
@@ -2426,6 +2429,7 @@ def test_annotate_tabular_function_with_vcf_alleles(
     ]
     pipeline = build_annotation_pipeline(
         pipeline_config, grr,
+        work_dir=tmp_path,
     )
 
     # Test annotate_tabular function
@@ -2476,6 +2480,7 @@ def test_annotate_tabular_function_with_region(
     ]
     pipeline = build_annotation_pipeline(
         pipeline_config, grr,
+        work_dir=tmp_path,
     )
 
     # Test annotate_tabular function - region parameter is accepted
@@ -2523,6 +2528,7 @@ def test_annotate_tabular_function_with_attributes_to_delete(
     ]
     pipeline = build_annotation_pipeline(
         pipeline_config, grr,
+        work_dir=tmp_path,
     )
 
     # Test annotate_tabular function with attributes to delete
@@ -2567,6 +2573,7 @@ def test_annotate_tabular_function_with_compressed_input(
     ]
     pipeline = build_annotation_pipeline(
         pipeline_config, grr,
+        work_dir=tmp_path,
     )
 
     # Test annotate_tabular function with compressed input
@@ -2624,6 +2631,7 @@ def test_annotate_tabular_function_with_reference_genome(
     ]
     pipeline = build_annotation_pipeline(
         pipeline_config, grr,
+        work_dir=tmp_path,
     )
 
     # Test annotate_tabular function with reference genome
@@ -2674,6 +2682,7 @@ def test_annotate_tabular_function_with_compressed_input_output(
     ]
     pipeline = build_annotation_pipeline(
         pipeline_config, grr,
+        work_dir=tmp_path,
     )
 
     # Test annotate_tabular function with reference genome
@@ -2864,7 +2873,8 @@ def test_annotate_tabular_round_trip_quoted_field(
 
     grr_file = annotate_directory_fixture / "grr.yaml"
     grr = build_genomic_resource_repository(file_name=str(grr_file))
-    pipeline = build_annotation_pipeline([{"position_score": "one"}], grr)
+    pipeline = build_annotation_pipeline(
+        [{"position_score": "one"}], grr, work_dir=tmp_path)
     args = _build_annotate_tabular_args(
         input_separator=",", output_separator=",")
 
@@ -2981,7 +2991,8 @@ def test_annotate_tabular_function_rejects_multichar_input_separator(
 
     grr = build_genomic_resource_repository(
         file_name=str(annotate_directory_fixture / "grr.yaml"))
-    pipeline = build_annotation_pipeline([{"position_score": "one"}], grr)
+    pipeline = build_annotation_pipeline(
+        [{"position_score": "one"}], grr, work_dir=tmp_path)
     args = _build_annotate_tabular_args(input_separator=",,")
 
     with pytest.raises(ValueError, match=r"--input-separator must be a single"):
@@ -3000,7 +3011,8 @@ def test_annotate_tabular_function_rejects_multichar_output_separator(
 
     grr = build_genomic_resource_repository(
         file_name=str(annotate_directory_fixture / "grr.yaml"))
-    pipeline = build_annotation_pipeline([{"position_score": "one"}], grr)
+    pipeline = build_annotation_pipeline(
+        [{"position_score": "one"}], grr, work_dir=tmp_path)
     args = _build_annotate_tabular_args(output_separator="::")
 
     with pytest.raises(

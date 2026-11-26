@@ -58,7 +58,7 @@ def test_normalize_allele_annotator_config() -> None:
 ])
 def test_normalize_allele_annotator_pipeline(
         t4c8_grr: GenomicResourceRepo,
-        pos: int, ref: str, alt: str) -> None:
+        pos: int, ref: str, alt: str, tmp_path: pathlib.Path) -> None:
     config = textwrap.dedent("""
         - normalize_allele_annotator:
             genome: normalize_genome_1
@@ -68,7 +68,8 @@ def test_normalize_allele_annotator_pipeline(
               internal: False
         """)
 
-    annotation_pipeline = load_pipeline_from_yaml(config, t4c8_grr)
+    annotation_pipeline = load_pipeline_from_yaml(
+        config, t4c8_grr, work_dir=tmp_path)
 
     with annotation_pipeline.open() as pipeline:
         assert len(pipeline.annotators) == 1
@@ -99,6 +100,7 @@ def test_normalize_tandem_repeats(
     pos: int, ref: str, alt: str,
     npos: int, nref: str, nalt: str,
     t4c8_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     config = textwrap.dedent("""
         - normalize_allele_annotator:
@@ -110,7 +112,8 @@ def test_normalize_tandem_repeats(
         """)
 
     grr = t4c8_grr
-    annotation_pipeline = load_pipeline_from_yaml(config, grr)
+    annotation_pipeline = load_pipeline_from_yaml(
+        config, grr, work_dir=tmp_path)
 
     with annotation_pipeline.open() as pipeline:
         assert pipeline is not None
@@ -136,13 +139,15 @@ def test_normalize_tandem_repeats(
 
 def test_normalize_allele_annotator_pipeline_schema(
     t4c8_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     config = textwrap.dedent("""
         - normalize_allele_annotator:
             genome: tr_genome
         """)
 
-    annotation_pipeline = load_pipeline_from_yaml(config, t4c8_grr)
+    annotation_pipeline = load_pipeline_from_yaml(
+        config, t4c8_grr, work_dir=tmp_path)
 
     attributes = annotation_pipeline.get_attributes()
     assert len(attributes) == 1
@@ -152,6 +157,7 @@ def test_normalize_allele_annotator_pipeline_schema(
 
 def test_normalize_allele_annotator_resources(
     t4c8_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     config = textwrap.dedent("""
         - normalize_allele_annotator:
@@ -162,7 +168,8 @@ def test_normalize_allele_annotator_resources(
               internal: False
         """)
 
-    annotation_pipeline = load_pipeline_from_yaml(config, t4c8_grr)
+    annotation_pipeline = load_pipeline_from_yaml(
+        config, t4c8_grr, work_dir=tmp_path)
 
     with annotation_pipeline.open() as pipeline:
         annotator = pipeline.annotators[0]
@@ -173,6 +180,7 @@ def test_normalize_allele_annotator_resources(
 
 def test_normalize_allele_annotator_implicit_genome_from_preamble(
     grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     genome_id = "t4c8_genome_implicit_A"
     config = textwrap.dedent(f"""
@@ -185,7 +193,8 @@ def test_normalize_allele_annotator_implicit_genome_from_preamble(
                 name: normalized_allele
         """)
 
-    annotation_pipeline = load_pipeline_from_yaml(config, grr)
+    annotation_pipeline = load_pipeline_from_yaml(
+        config, grr, work_dir=tmp_path)
 
     with annotation_pipeline.open() as pipeline:
         annotator = pipeline.annotators[0]
@@ -195,6 +204,7 @@ def test_normalize_allele_annotator_implicit_genome_from_preamble(
 def test_normalize_allele_annotator_implicit_genome_from_context(
     mocker: pytest_mock.MockerFixture,
     grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     genome_id = "t4c8_genome_implicit_B"
     config = textwrap.dedent("""
@@ -211,7 +221,8 @@ def test_normalize_allele_annotator_implicit_genome_from_context(
         "gain.annotation.utils.get_genomic_context",
     ).return_value = context
 
-    annotation_pipeline = load_pipeline_from_yaml(config, grr)
+    annotation_pipeline = load_pipeline_from_yaml(
+        config, grr, work_dir=tmp_path)
 
     with annotation_pipeline.open() as pipeline:
         annotator = pipeline.annotators[0]
@@ -221,6 +232,7 @@ def test_normalize_allele_annotator_implicit_genome_from_context(
 def _no_genome_anywhere_cause(
     mocker: pytest_mock.MockerFixture,
     grr: GenomicResourceRepo,
+    *, work_dir: pathlib.Path,
 ) -> ValueError:
     """Build a pipeline with nothing to resolve, and return the error.
 
@@ -243,7 +255,7 @@ def _no_genome_anywhere_cause(
         context_objects={}, source="test_context")
 
     with pytest.raises(AnnotationConfigurationError) as excinfo:
-        load_pipeline_from_yaml(config, grr)
+        load_pipeline_from_yaml(config, grr, work_dir=work_dir)
 
     cause = excinfo.value.__cause__
     assert isinstance(cause, ValueError)
@@ -253,6 +265,7 @@ def _no_genome_anywhere_cause(
 def test_normalize_allele_annotator_with_no_genome_anywhere_says_so(
     mocker: pytest_mock.MockerFixture,
     grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The last resort is a message about the genome, not about the GRR.
 
@@ -262,7 +275,7 @@ def test_normalize_allele_annotator_with_no_genome_anywhere_says_so(
     what surfaced was the repository's ``resource <> (None) not found``
     -- which names neither the genome nor the pipeline that lacks one.
     """
-    cause = _no_genome_anywhere_cause(mocker, grr)
+    cause = _no_genome_anywhere_cause(mocker, grr, work_dir=tmp_path)
 
     assert "has no reference genome" in str(cause)
     assert "<>" not in str(cause)
@@ -271,6 +284,7 @@ def test_normalize_allele_annotator_with_no_genome_anywhere_says_so(
 def test_normalize_allele_annotator_no_genome_error_names_what_it_searched(
     mocker: pytest_mock.MockerFixture,
     grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The message must name the sources this annotator actually consults.
 
@@ -282,7 +296,7 @@ def test_normalize_allele_annotator_no_genome_error_names_what_it_searched(
     not name the gene models' configuration, which is the wording the
     shared helper uses for annotators that *do* consult gene models.
     """
-    cause = _no_genome_anywhere_cause(mocker, grr)
+    cause = _no_genome_anywhere_cause(mocker, grr, work_dir=tmp_path)
 
     assert "preamble" in str(cause)
     assert "context" in str(cause)
@@ -292,6 +306,7 @@ def test_normalize_allele_annotator_no_genome_error_names_what_it_searched(
 def test_normalize_allele_annotator_genomeless_preamble_uses_the_context(
     mocker: pytest_mock.MockerFixture,
     grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """A preamble that omits the genome must not out-rank the context.
 
@@ -320,7 +335,8 @@ def test_normalize_allele_annotator_genomeless_preamble_uses_the_context(
         "gain.annotation.utils.get_genomic_context",
     ).return_value = context
 
-    annotation_pipeline = load_pipeline_from_yaml(config, grr)
+    annotation_pipeline = load_pipeline_from_yaml(
+        config, grr, work_dir=tmp_path)
 
     with annotation_pipeline.open() as pipeline:
         annotator = pipeline.annotators[0]
@@ -330,6 +346,7 @@ def test_normalize_allele_annotator_genomeless_preamble_uses_the_context(
 def test_normalize_allele_annotator_preamble_genome_wins_over_the_context(
     mocker: pytest_mock.MockerFixture,
     grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Precedence, pinned against a context that could have won.
 
@@ -357,7 +374,8 @@ def test_normalize_allele_annotator_preamble_genome_wins_over_the_context(
         },
         source="test_context")
 
-    annotation_pipeline = load_pipeline_from_yaml(config, grr)
+    annotation_pipeline = load_pipeline_from_yaml(
+        config, grr, work_dir=tmp_path)
 
     with annotation_pipeline.open() as pipeline:
         annotator = pipeline.annotators[0]
@@ -367,6 +385,7 @@ def test_normalize_allele_annotator_preamble_genome_wins_over_the_context(
 def test_normalize_allele_annotator_genome_parameter_wins_over_everything(
     mocker: pytest_mock.MockerFixture,
     grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The head of the chain, with every later operand also populated.
 
@@ -395,7 +414,8 @@ def test_normalize_allele_annotator_genome_parameter_wins_over_everything(
         },
         source="test_context")
 
-    annotation_pipeline = load_pipeline_from_yaml(config, grr)
+    annotation_pipeline = load_pipeline_from_yaml(
+        config, grr, work_dir=tmp_path)
 
     with annotation_pipeline.open() as pipeline:
         annotator = pipeline.annotators[0]
@@ -405,6 +425,7 @@ def test_normalize_allele_annotator_genome_parameter_wins_over_everything(
 def test_normalize_allele_annotator_refuses_an_empty_genome_id(
     mocker: pytest_mock.MockerFixture,
     grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """An explicit ``genome: ""`` is refused, not read as "not configured".
 
@@ -428,7 +449,7 @@ def test_normalize_allele_annotator_refuses_an_empty_genome_id(
         context_objects={"reference_genome": genome}, source="test_context")
 
     with pytest.raises(AnnotationConfigurationError) as excinfo:
-        load_pipeline_from_yaml(config, grr)
+        load_pipeline_from_yaml(config, grr, work_dir=tmp_path)
 
     assert_refuses_empty_resource_id(
         excinfo, "normalize_allele_annotator", "genome")

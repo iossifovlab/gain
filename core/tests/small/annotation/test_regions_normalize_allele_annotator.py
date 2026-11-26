@@ -1,5 +1,6 @@
 # pylint: disable=redefined-outer-name,C0114,C0116,protected-access,fixme
 
+import pathlib
 import textwrap
 
 import pytest
@@ -48,6 +49,7 @@ def test_normalize_allele_annotator(
     annotatable: Annotatable,
     expected: Annotatable,
     fixture_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline_config = textwrap.dedent("""
         - normalize_allele_annotator:
@@ -58,7 +60,8 @@ def test_normalize_allele_annotator(
               internal: False
     """)
 
-    pipeline = load_pipeline_from_yaml(pipeline_config, fixture_repo)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, fixture_repo, work_dir=tmp_path)
 
     result = None
     with pipeline.open() as work_pipeline:

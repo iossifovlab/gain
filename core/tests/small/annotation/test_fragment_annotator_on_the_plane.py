@@ -85,17 +85,19 @@ def repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
 
 def _pipeline(
     repo: GenomicResourceRepo, attributes: str,
+    *, work_dir: pathlib.Path,
 ) -> AnnotationPipeline:
     return load_pipeline_from_yaml(textwrap.dedent(f"""
         - fragment_score:
             resource_id: fragments
             attributes:
 {textwrap.indent(textwrap.dedent(attributes), " " * 12)}
-        """), repo)
+        """), repo, work_dir=work_dir)
 
 
 def test_one_source_asked_twice_answers_twice(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Two aggregators over one source are two answers, keyed by NAME.
 
@@ -110,7 +112,7 @@ def test_one_source_asked_twice_answers_twice(
         - source: v
           name: as_max
           aggregator: max
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         result = pipeline.annotate(Region("chr1", 100, 199))
 
     assert result == {"as_min": 1.0, "as_max": 3.0}
@@ -118,6 +120,7 @@ def test_one_source_asked_twice_answers_twice(
 
 def test_an_attribute_with_no_aggregator_answers_the_fragment_count(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Not only ``count`` -- a ``bool`` score lands here too.
 
@@ -136,7 +139,7 @@ def test_an_attribute_with_no_aggregator_answers_the_fragment_count(
           name: count
         - source: flag
           name: flag
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         result = pipeline.annotate(Region("chr1", 100, 199))
 
     assert result == {"count": 3, "flag": 3}
@@ -144,6 +147,7 @@ def test_an_attribute_with_no_aggregator_answers_the_fragment_count(
 
 def test_a_none_annotatable_and_an_empty_region_are_different_answers(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """``None`` for no annotatable; ``0`` for a region nothing overlaps.
 
@@ -160,7 +164,7 @@ def test_a_none_annotatable_and_an_empty_region_are_different_answers(
         - source: v
           name: as_max
           aggregator: max
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         for_nothing = pipeline.annotate(None)
         for_empty_region = pipeline.annotate(Region("chr1", 500, 600))
 
@@ -170,6 +174,7 @@ def test_a_none_annotatable_and_an_empty_region_are_different_answers(
 
 def test_a_region_below_position_one_is_refused_rather_than_answered(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The one answer this move CHANGES, pinned deliberately.
 
@@ -190,7 +195,7 @@ def test_a_region_below_position_one_is_refused_rather_than_answered(
     with _pipeline(repo, """
         - source: count
           name: count
-    """) as pipeline, pytest.raises(
+    """, work_dir=tmp_path) as pipeline, pytest.raises(
             ValueError, match="positions are 1-based"):
         pipeline.annotate(Region("chr1", 0, 120))
 
@@ -232,7 +237,9 @@ _MEASURE_PEAK = textwrap.dedent("""
 
     repo = build_filesystem_test_repository(pathlib.Path(sys.argv[1]))
     region = Region(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]))
-    with load_pipeline_from_yaml(sys.argv[5], repo) as pipeline:
+    with load_pipeline_from_yaml(
+            sys.argv[5], repo,
+            work_dir=pathlib.Path(sys.argv[6])) as pipeline:
         pipeline.annotate(region)
 
         tracemalloc.start()
@@ -246,7 +253,9 @@ _MEASURE_PEAK = textwrap.dedent("""
 """The script that ``_peak_bytes_annotating`` runs in a new interpreter."""
 
 
-def _peak_bytes_annotating(root: pathlib.Path, region: Region) -> int:
+def _peak_bytes_annotating(
+    root: pathlib.Path, region: Region, *, work_dir: pathlib.Path,
+) -> int:
     """Peak bytes allocated by ONE annotate call over ``region``.
 
     ``root`` holds the GRR of ``_repo_of_overlapping_fragments``.  The
@@ -271,7 +280,8 @@ def _peak_bytes_annotating(root: pathlib.Path, region: Region) -> int:
     """)
     result = subprocess.run(
         [sys.executable, "-c", _MEASURE_PEAK, str(root),
-         region.chrom, str(region.pos), str(region.pos_end), config],
+         region.chrom, str(region.pos), str(region.pos_end), config,
+         str(work_dir)],
         capture_output=True, text=True, check=False)
     assert result.returncode == 0, (
         f"the measuring interpreter exited {result.returncode}:\n"
@@ -292,7 +302,8 @@ def test_a_failing_peak_measurement_reports_the_traceback_of_the_child(
 
     with pytest.raises(AssertionError) as failure:
         _peak_bytes_annotating(
-            tmp_path / "empty", Region("chr1", 1, 10 ** 6))
+            tmp_path / "empty", Region("chr1", 1, 10 ** 6),
+            work_dir=tmp_path / "work")
 
     assert "Traceback (most recent call last)" in str(failure.value)
 
@@ -323,8 +334,10 @@ def test_peak_memory_does_not_grow_with_the_number_of_fragments(
     region = Region("chr1", 1, 10 ** 6)
     _repo_of_overlapping_fragments(tmp_path / "small", 200)
     _repo_of_overlapping_fragments(tmp_path / "large", 2000)
-    small = _peak_bytes_annotating(tmp_path / "small", region)
-    large = _peak_bytes_annotating(tmp_path / "large", region)
+    small = _peak_bytes_annotating(
+        tmp_path / "small", region, work_dir=tmp_path / "small_work")
+    large = _peak_bytes_annotating(
+        tmp_path / "large", region, work_dir=tmp_path / "large_work")
 
     assert large < 3 * small, (
         f"peak grew from {small} to {large} bytes for 10x the fragments")
@@ -355,7 +368,8 @@ def test_peak_measurement_ignores_allocations_of_other_threads(
     noise = threading.Thread(target=allocate, daemon=True)
     noise.start()
     try:
-        peak = _peak_bytes_annotating(tmp_path, region)
+        peak = _peak_bytes_annotating(
+            tmp_path, region, work_dir=tmp_path / "work")
     finally:
         stop.set()
         noise.join()

@@ -55,9 +55,11 @@ chrA   3   .  A   T   .    .       A=3;B=31;C=c21;D=d31,d32
 
 def test_vcf_info_annotator_all_attributes(
     score1_repo: GenomicResourceProtocolRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
 
-    pipeline = load_pipeline_from_yaml("- allele_score: score1", score1_repo)
+    pipeline = load_pipeline_from_yaml(
+        "- allele_score: score1", score1_repo, work_dir=tmp_path)
 
     expected_name_scr_type_desc = [
         ("A", "A", "int", "Score A"),
@@ -76,6 +78,7 @@ def test_vcf_info_annotator_all_attributes(
 
 def test_vcf_info_config_annotation(
     score1_repo: GenomicResourceProtocolRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
 
     pipeline = load_pipeline_from_yaml(
@@ -84,7 +87,7 @@ def test_vcf_info_config_annotation(
                 attributes:
                 - source: C
                   name: score1_c
-        """, score1_repo)
+        """, score1_repo, work_dir=tmp_path)
 
     assert len(pipeline.get_attributes()) == 1
     att = pipeline.get_attributes()[0]
@@ -118,6 +121,7 @@ def test_vcf_info_annotator(
     vcf_allele: VCFAllele,
     expected: dict[str, int | str | None],
     score1_repo: GenomicResourceProtocolRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
 
     pipeline_config = textwrap.dedent("""
@@ -134,7 +138,8 @@ def test_vcf_info_annotator(
               name: score1_d
         """)
 
-    pipeline = load_pipeline_from_yaml(pipeline_config, score1_repo)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, score1_repo, work_dir=tmp_path)
 
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(vcf_allele)
@@ -165,7 +170,8 @@ chr1   6   .  A   T   .    .       SC=2.5,3.5;SS=a,b
 """))
         .build_repo(tmp_path)
     )
-    pipeline = load_pipeline_from_yaml("- allele_score: score", repo)
+    pipeline = load_pipeline_from_yaml(
+        "- allele_score: score", repo, work_dir=tmp_path)
 
     with pipeline.open() as work_pipeline:
         results = [

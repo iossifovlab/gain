@@ -505,13 +505,10 @@ class LRUPipelineCache:
         build_delay = _load_test_build_delay()
         if build_delay > 0.0:
             time.sleep(build_delay)
-        # Pass work_dir EXPLICITLY. build_annotation_pipeline defaults it to a
-        # relative Path("./work") -- fine for the annotate_* CLIs, which run in
-        # the user's own writable cwd, but a server has no such cwd: it resolves
-        # against the container's root-owned working directory, so every build
-        # EPERMs once the process runs as a non-root uid (gain#276). The job
-        # path in tasks.py already passes one; this is the editor /
-        # pipeline_status path, which is what the healthcheck exercises.
+        # The work dir is a setting under the data storage dir: the container
+        # cwd is root-owned, so a path under it EPERMs once the process runs
+        # as a non-root uid (gain#276). This is the editor / pipeline_status
+        # path, which is what the healthcheck exercises.
         pipeline = ThreadSafePipeline(
             load_pipeline_from_yaml(
                 raw, grr, work_dir=Path(settings.PIPELINE_WORK_DIR)),

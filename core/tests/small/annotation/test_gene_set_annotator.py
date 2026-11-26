@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613,R0917
 
+import pathlib
 import textwrap
 
 import pytest
@@ -168,6 +169,7 @@ def test_gene_set_annotator_bool_aggregator(
     ref: str,
     alt: str,
     expected: bool,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent(
         """
@@ -185,7 +187,7 @@ def test_gene_set_annotator_bool_aggregator(
                 - name: set_2
                   aggregator: bool
         """),
-        test_grr)
+        test_grr, work_dir=tmp_path)
 
     with pipeline as pipeline:
         allele = VCFAllele(chrom, pos, ref, alt)
@@ -224,6 +226,7 @@ def test_gene_set_annotator_in_pipeline(
     ref: str,
     alt: str,
     expected: bool,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent(
         """
@@ -238,7 +241,7 @@ def test_gene_set_annotator_in_pipeline(
                 - set_1
                 - set_2
         """),
-        test_grr)
+        test_grr, work_dir=tmp_path)
 
     with pipeline as pipeline:
         allele = VCFAllele(chrom, pos, ref, alt)
@@ -248,6 +251,7 @@ def test_gene_set_annotator_in_pipeline(
 
 def test_gene_set_annotator_broken_configuration(
     test_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     with pytest.raises(AnnotationConfigurationError):
         load_pipeline_from_yaml(textwrap.dedent(
@@ -261,7 +265,7 @@ def test_gene_set_annotator_broken_configuration(
                 attributes:
                 - ala_bala
             """),
-            test_grr)
+            test_grr, work_dir=tmp_path)
 
 
 def test_gene_set_annotator_missing_input_gene_list_names_the_annotator(
@@ -283,6 +287,7 @@ def test_gene_set_annotator_missing_input_gene_list_names_the_annotator(
 
 def test_gene_set_annotator_refuses_a_gene_list_the_pipeline_lacks(
     test_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     # The effect annotator upstream produces ``gene_list`` (and more);
     # ``genes_of_interest`` is a name nobody upstream produces.
@@ -292,7 +297,7 @@ def test_gene_set_annotator_refuses_a_gene_list_the_pipeline_lacks(
             genome: foobar_genome
             gene_models: foobar_genes
         """),
-        test_grr)
+        test_grr, work_dir=tmp_path)
     info = AnnotatorInfo(
         "gene_set_annotator", [],
         {"resource_id": "foobar_gene_set_collection",
@@ -354,6 +359,7 @@ def test_gene_set_annotator_in_pipeline_with_configuration(
     ref: str,
     alt: str,
     expected: bool,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent(
         f"""
@@ -366,7 +372,7 @@ def test_gene_set_annotator_in_pipeline_with_configuration(
             attributes:
             - {set_config}
         """),
-        test_grr)
+        test_grr, work_dir=tmp_path)
 
     with pipeline as pipeline:
         allele = VCFAllele(chrom, pos, ref, alt)

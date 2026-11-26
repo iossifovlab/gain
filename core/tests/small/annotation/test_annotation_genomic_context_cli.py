@@ -2,7 +2,7 @@
 import argparse
 import pathlib
 import textwrap
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from gain.annotation.annotation_genomic_context_cli import (
@@ -320,3 +320,53 @@ def test_cli_genomic_context_provider_sources(
     assert context.get_source() == (
         "PriorityGenomicContext("
         "CLIAnnotationContextProvider|CLIGenomicContextProvider)")
+
+
+def _effect_pipeline_args(
+    tmp_path: pathlib.Path, grr_dirname: str,
+) -> dict[str, Any]:
+    parser = argparse.ArgumentParser()
+    context_providers_add_argparser_arguments(parser)
+    (tmp_path / "pipeline.yaml").write_text(textwrap.dedent(
+        """
+        - effect_annotator
+        """))
+    return vars(parser.parse_args([
+        "--grr-directory", grr_dirname,
+        "--ref", "t4c8_genome",
+        "-G", "t4c8_genes",
+        str(tmp_path / "pipeline.yaml"),
+    ]))
+
+
+def test_cli_annotation_context_builds_pipeline_without_work_dir(
+    tmp_path: pathlib.Path,
+    grr_dirname: str,
+    context_providers: None,
+) -> None:
+    args = _effect_pipeline_args(tmp_path, grr_dirname)
+    assert "work_dir" not in args
+
+    context_providers_init(**args)
+
+    pipeline = get_context_pipeline(get_genomic_context())
+    assert pipeline is not None
+    assert len(pipeline.annotators) == 1
+
+
+def test_cli_annotation_context_builds_pipeline_under_work_dir(
+    tmp_path: pathlib.Path,
+    grr_dirname: str,
+    context_providers: None,
+) -> None:
+    work_dir = tmp_path / "work"
+    args = _effect_pipeline_args(tmp_path, grr_dirname)
+
+    context_providers_init(**args, work_dir=str(work_dir))
+
+    pipeline = get_context_pipeline(get_genomic_context())
+    assert pipeline is not None
+    assert len(pipeline.annotators) == 1
+    for annotator in pipeline.annotators:
+        params = annotator.get_info().parameters.as_dict()
+        assert pathlib.Path(params["work_dir"]).is_relative_to(work_dir)

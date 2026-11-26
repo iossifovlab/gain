@@ -35,6 +35,7 @@ def repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
 
 def _pipeline_with_attribute(
     repo: GenomicResourceRepo, attribute_extra: str,
+    *, work_dir: pathlib.Path,
 ) -> AnnotationPipeline:
     """A one-annotator pipeline whose only attribute carries ``extra``."""
     return load_pipeline_from_yaml(
@@ -47,15 +48,18 @@ def _pipeline_with_attribute(
                     {attribute_extra}
         """),
         repo,
+        work_dir=work_dir,
     )
 
 
 def _reannotation(
     repo: GenomicResourceRepo, previous_extra: str, new_extra: str,
+    *, work_dir: pathlib.Path,
 ) -> ReannotationPipeline:
     return ReannotationPipeline(
-        _pipeline_with_attribute(repo, new_extra),
-        _pipeline_with_attribute(repo, previous_extra),
+        _pipeline_with_attribute(repo, new_extra, work_dir=work_dir / "new"),
+        _pipeline_with_attribute(
+            repo, previous_extra, work_dir=work_dir / "previous"),
     )
 
 
@@ -65,8 +69,10 @@ def _reannotation(
 ])
 def test_changed_attribute_parameter_reruns_the_annotator(
     repo: GenomicResourceRepo, previous_extra: str, new_extra: str,
+    tmp_path: pathlib.Path,
 ) -> None:
-    reannotation = _reannotation(repo, previous_extra, new_extra)
+    reannotation = _reannotation(
+        repo, previous_extra, new_extra, work_dir=tmp_path)
 
     assert [a.get_info().annotator_id for a in reannotation.annotators] \
         == ["A0"]
@@ -76,11 +82,13 @@ def test_changed_attribute_parameter_reruns_the_annotator(
 
 def test_identical_attribute_parameters_rerun_nothing(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     reannotation = _reannotation(
         repo,
         'value_transform: "value * 2"',
         'value_transform: "value * 2"',
+        work_dir=tmp_path,
     )
 
     assert reannotation.annotators == []

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import pathlib
+import tempfile
 from typing import Any
 
 from gain import logging
@@ -111,15 +112,23 @@ class CLIAnnotationContextProvider(GenomicContextProvider):
                 "cannot load the annotation pipeline.")
             return None
 
-        work_dir = None
+        allow_repeated_attributes = bool(
+            kwargs.get("allow_repeated_attributes"))
         if kwargs.get("work_dir"):
-            work_dir = pathlib.Path(kwargs["work_dir"])
-
-        pipeline = load_pipeline_from_file_or_resource(
-            kwargs["pipeline"], grr,
-            allow_repeated_attributes=bool(kwargs.get(
-                "allow_repeated_attributes")),
-            work_dir=work_dir)
+            pipeline = load_pipeline_from_file_or_resource(
+                kwargs["pipeline"], grr,
+                allow_repeated_attributes=allow_repeated_attributes,
+                work_dir=pathlib.Path(kwargs["work_dir"]))
+        else:
+            # The CLIs without a ``--work-dir`` option (``annotate_doc``,
+            # ``grr_cache_repo``) never open the pipeline, so no annotator
+            # makes a directory under this one.
+            with tempfile.TemporaryDirectory(
+                    prefix="gain-annotation-cli-") as work_dir:
+                pipeline = load_pipeline_from_file_or_resource(
+                    kwargs["pipeline"], grr,
+                    allow_repeated_attributes=allow_repeated_attributes,
+                    work_dir=pathlib.Path(work_dir))
         return SimpleGenomicContext(
             {GC_ANNOTATION_PIPELINE_KEY: pipeline},
             source="CLIAnnotationContextProvider")

@@ -86,6 +86,7 @@ from __future__ import annotations
 
 import pathlib
 import re
+import tempfile
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from html.parser import HTMLParser
@@ -362,7 +363,9 @@ def _config_error(config: str) -> Callable[[], str]:
     """Render what the validation endpoint says about ``config``."""
     def render() -> str:
         try:
-            load_pipeline_from_yaml(config, GRR)
+            with tempfile.TemporaryDirectory() as work_dir:
+                load_pipeline_from_yaml(
+                    config, GRR, work_dir=pathlib.Path(work_dir))
         except Exception as exc:  # ruff: ignore[blind-except]
             return format_config_error(exc)
         return "<the configuration loaded without error>"
@@ -378,7 +381,9 @@ def _annotator_documentation(config: str) -> Callable[[], str]:
     it as a list item.
     """
     def render() -> str:
-        pipeline = load_pipeline_from_yaml(config, GRR)
+        with tempfile.TemporaryDirectory() as work_dir:
+            pipeline = load_pipeline_from_yaml(
+                config, GRR, work_dir=pathlib.Path(work_dir))
         return markdown_text(pipeline.annotators[-1].get_info().documentation)
     return render
 

@@ -33,8 +33,8 @@ and two keyword arguments:
   subdirectory into the annotator's parameters as ``work_dir``, unless the
   YAML entry sets one. Pass a ``Path``: the loader joins the subdirectory
   name with ``/`` for each annotator, so a ``str`` raises ``TypeError`` as
-  soon as the configuration has an annotator. Left unset, a
-  temporary directory is minted with a warning; pass one.
+  soon as the configuration has an annotator. The argument is required: a
+  call without it raises ``TypeError``.
 * ``allow_repeated_attributes`` — what to do when two annotators emit the
   same attribute name. Off, the pipeline refuses to build and names the
   overlap. On, every attribute with that name, the first one included, is

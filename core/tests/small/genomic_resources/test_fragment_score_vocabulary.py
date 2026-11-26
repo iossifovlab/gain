@@ -138,9 +138,10 @@ def test_new_entry_point_keys_are_declared_in_pyproject(
 def test_new_annotator_names_build_and_annotate(
     annotator_name: str,
     modern_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
-        f"- {annotator_name}: fragments", modern_grr)
+        f"- {annotator_name}: fragments", modern_grr, work_dir=tmp_path)
 
     with pipeline.open() as open_pipeline:
         attributes = open_pipeline.annotate(Region("1", 15, 60))
@@ -150,6 +151,7 @@ def test_new_annotator_names_build_and_annotate(
 
 def test_fragment_filter_parameter_is_honoured(
     modern_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
@@ -157,7 +159,7 @@ def test_fragment_filter_parameter_is_honoured(
                 resource_id: fragments
                 fragment_filter: collection == "SSC"
         """),
-        modern_grr)
+        modern_grr, work_dir=tmp_path)
 
     with pipeline.open() as open_pipeline:
         attributes = open_pipeline.annotate(Region("1", 15, 60))
@@ -168,6 +170,7 @@ def test_fragment_filter_parameter_is_honoured(
 @pytest.mark.legacy_vocabulary
 def test_configuring_both_filter_spellings_is_refused(
     modern_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Refused, not silently resolved.
 
@@ -189,7 +192,7 @@ def test_configuring_both_filter_spellings_is_refused(
     """)
 
     with pytest.raises(AnnotationConfigurationError) as excinfo:
-        load_pipeline_from_yaml(pipeline_config, modern_grr)
+        load_pipeline_from_yaml(pipeline_config, modern_grr, work_dir=tmp_path)
 
     message = str(excinfo.value)
     assert "fragment_filter" in message

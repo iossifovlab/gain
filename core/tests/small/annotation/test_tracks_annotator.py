@@ -121,11 +121,12 @@ def fragment_entry(**entry: Any) -> dict[str, Any]:
 
 def tracks_pipeline(
     repo: GenomicResourceRepo, entries: list[dict[str, Any]],
+    *, work_dir: pathlib.Path,
     **parameters: Any,
 ) -> AnnotationPipeline:
     config = yaml.safe_dump([{"tracks_annotator": {
         **parameters, "tracks": entries}}])
-    return load_pipeline_from_yaml(config, repo)
+    return load_pipeline_from_yaml(config, repo, work_dir=work_dir)
 
 
 def annotate(
@@ -144,8 +145,10 @@ def annotate(
 def test_a_constant_group_answers_the_hand_counted_value(
     repo: GenomicResourceRepo, aggregate: dict[str, Any],
     expected: list[float],
+    tmp_path: pathlib.Path,
 ) -> None:
-    pipeline = tracks_pipeline(repo, [fragment_entry(aggregate=aggregate)])
+    pipeline = tracks_pipeline(
+        repo, [fragment_entry(aggregate=aggregate)], work_dir=tmp_path)
 
     values = [
         annotate(pipeline, annotatable)["track_0_0"]
@@ -161,8 +164,10 @@ def test_a_constant_group_answers_the_hand_counted_value(
 def test_an_attribute_is_named_by_its_prefix_and_track(
     repo: GenomicResourceRepo, parameters: dict[str, Any],
     expected: list[str],
+    tmp_path: pathlib.Path,
 ) -> None:
-    pipeline = tracks_pipeline(repo, [fragment_entry()], **parameters)
+    pipeline = tracks_pipeline(
+        repo, [fragment_entry()], work_dir=tmp_path, **parameters)
 
     assert list(annotate(pipeline, REGION)) == expected
 
@@ -181,7 +186,8 @@ def test_a_track_attribute_is_a_float_described_by_its_track_label(
         .build_repo(tmp_path / "pair")
     )
     pipeline = tracks_pipeline(repo, [{"fragment_score_tracks": {
-        "resource_query": "pair/*", "group": {"group": "all"}}}])
+        "resource_query": "pair/*", "group": {"group": "all"}}}],
+        work_dir=tmp_path)
 
     (attribute,) = pipeline.get_attributes()
 
@@ -335,6 +341,7 @@ def test_the_rendered_documentation_shows_the_label_and_fields_verbatim(
 
 def test_close_exits_each_binding_that_open_entered(
     repo: GenomicResourceRepo, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
 ) -> None:
     exits: list[FragmentScoreBinding] = []
     original_exit = FragmentScoreBinding.__exit__
@@ -345,7 +352,8 @@ def test_close_exits_each_binding_that_open_entered(
 
     monkeypatch.setattr(FragmentScoreBinding, "__exit__", counting_exit)
     pipeline = tracks_pipeline(
-        repo, [fragment_entry(), fragment_entry(name="second")])
+        repo, [fragment_entry(), fragment_entry(name="second")],
+        work_dir=tmp_path)
 
     annotate(pipeline, REGION)
     annotate(pipeline, REGION)
@@ -362,21 +370,24 @@ def test_close_exits_each_binding_that_open_entered(
 def test_a_region_of_no_fragments_answers_the_empty_value_of_the_fold(
     repo: GenomicResourceRepo, aggregator: str, annotatable: Annotatable,
     expected: float | None,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = tracks_pipeline(repo, [fragment_entry(
-        aggregate={"mode": "fragment_start", "aggregator": aggregator})])
+        aggregate={"mode": "fragment_start", "aggregator": aggregator})],
+        work_dir=tmp_path)
 
     assert annotate(pipeline, annotatable)["track_0_0"] == expected
 
 
 def test_a_position_entry_before_a_fragment_entry(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = tracks_pipeline(repo, [
         {"position_score_tracks": {
             "resource_query": "pos", "aggregator": "mean"}},
         fragment_entry(),
-    ])
+    ], work_dir=tmp_path)
 
     result = annotate(pipeline, REGION)
 
@@ -410,7 +421,8 @@ def test_a_value_equals_the_binning_tool_value_of_the_same_window(
         "--grr-directory", str(grr_dir), "-j", "1"])
 
     result = annotate(
-        tracks_pipeline(repo, entries), Region("chr1", 13, 24))
+        tracks_pipeline(
+            repo, entries, work_dir=tmp_path), Region("chr1", 13, 24))
 
     assert read_values(output).tolist() == [
         [result["track_0_0"], result["track_1_0"]]]
@@ -429,7 +441,7 @@ def test_a_local_meta_file_is_refused_before_it_is_read(
             {"fragment_score_tracks": {
                 "resource_query": "frags", "group": {},
                 "meta": {"file_name": str(server_file)}}},
-        ])
+        ], work_dir=tmp_path)
 
     message = str(excinfo.value)
     assert "tracks[1]" in message
@@ -440,9 +452,11 @@ def test_a_local_meta_file_is_refused_before_it_is_read(
 @pytest.mark.parametrize("prefix", ["1kg", "a-b", "", "x y"])
 def test_a_prefix_that_is_not_a_vcf_key_is_refused(
     repo: GenomicResourceRepo, prefix: str,
+    tmp_path: pathlib.Path,
 ) -> None:
     with pytest.raises(AnnotationConfigurationError) as excinfo:
-        tracks_pipeline(repo, [fragment_entry()], prefix=prefix)
+        tracks_pipeline(
+            repo, [fragment_entry()], prefix=prefix, work_dir=tmp_path)
 
     message = str(excinfo.value)
     assert repr(prefix) in message
@@ -455,21 +469,24 @@ def test_a_prefix_that_is_not_a_vcf_key_is_refused(
 ])
 def test_a_non_empty_attributes_list_is_refused(
     repo: GenomicResourceRepo, attributes: list[dict[str, str]],
+    tmp_path: pathlib.Path,
 ) -> None:
     with pytest.raises(AnnotationConfigurationError) as excinfo:
-        tracks_pipeline(repo, [fragment_entry()], attributes=attributes)
+        tracks_pipeline(
+            repo, [fragment_entry()], attributes=attributes, work_dir=tmp_path)
 
     assert "the tracks entries define the attributes" in str(excinfo.value)
 
 
 def test_an_empty_attributes_list_gives_every_track_attribute(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = tracks_pipeline(repo, [
         {"position_score_tracks": {
             "resource_query": "pos", "aggregator": "mean"}},
         fragment_entry(),
-    ], attributes=[])
+    ], attributes=[], work_dir=tmp_path)
 
     assert [attribute.name for attribute in pipeline.get_attributes()] == [
         "track_0_0", "track_1_0"]
@@ -481,12 +498,13 @@ def test_an_empty_attributes_list_gives_every_track_attribute(
 ], ids=["binners-alone", "binners-and-tracks"])
 def test_the_renamed_binners_parameter_is_refused(
     repo: GenomicResourceRepo, tracks: dict[str, Any],
+    tmp_path: pathlib.Path,
 ) -> None:
     config = yaml.safe_dump([{"tracks_annotator": {
         "binners": [fragment_entry()], **tracks}}])
 
     with pytest.raises(AnnotationConfigurationError) as excinfo:
-        load_pipeline_from_yaml(config, repo)
+        load_pipeline_from_yaml(config, repo, work_dir=tmp_path)
 
     assert "binners was renamed tracks; rename the key" in str(
         excinfo.value)
@@ -498,11 +516,12 @@ def test_the_renamed_binners_parameter_is_refused(
 ])
 def test_a_renamed_kind_in_the_annotator_is_refused(
     repo: GenomicResourceRepo, old_kind: str, new_kind: str,
+    tmp_path: pathlib.Path,
 ) -> None:
     entries = [fragment_entry(), {old_kind: {"resource_query": "frags"}}]
 
     with pytest.raises(AnnotationConfigurationError) as excinfo:
-        tracks_pipeline(repo, entries)
+        tracks_pipeline(repo, entries, work_dir=tmp_path)
 
     assert (
         f"tracks[1]: {old_kind} was renamed {new_kind}; rename the kind"
@@ -511,6 +530,7 @@ def test_a_renamed_kind_in_the_annotator_is_refused(
 
 def test_an_entry_error_has_the_words_of_parse_run_definition(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     entries = [fragment_entry(), {"no_such_kind": {}}]
     with pytest.raises(RunDefinitionError) as run_error:
@@ -519,7 +539,7 @@ def test_an_entry_error_has_the_words_of_parse_run_definition(
             build_reference_genome_from_resource_id("genome", repo))
 
     with pytest.raises(AnnotationConfigurationError) as excinfo:
-        tracks_pipeline(repo, entries)
+        tracks_pipeline(repo, entries, work_dir=tmp_path)
 
     assert "tracks[1]" in str(run_error.value)
     assert str(run_error.value) in str(excinfo.value)
@@ -549,12 +569,13 @@ def readable_cells_csv(
 @pytest.mark.usefixtures("readable_cells_csv")
 def test_a_job_that_reads_a_local_file_is_refused(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     # The parser gives a job a local file only for a meta file_name, so
     # the refusal before resolution raises this error first.  The tests
     # below pin the refusal after resolution.
     with pytest.raises(AnnotationConfigurationError) as excinfo:
-        tracks_pipeline(repo, [LOCAL_CELL_GROUPING])
+        tracks_pipeline(repo, [LOCAL_CELL_GROUPING], work_dir=tmp_path)
 
     message = str(excinfo.value)
     assert "tracks[0]" in message
@@ -565,6 +586,7 @@ def test_a_job_that_reads_a_local_file_is_refused(
 @pytest.mark.usefixtures("readable_cells_csv")
 def test_the_refusal_after_resolution_holds_without_the_one_before(
     repo: GenomicResourceRepo, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
 ) -> None:
     # The refusal before resolution covers meta.file_name.  The refusal
     # after resolution covers local_files of every job, whatever key of
@@ -576,7 +598,7 @@ def test_the_refusal_after_resolution_holds_without_the_one_before(
         lambda _entries: None)
 
     with pytest.raises(AnnotationConfigurationError) as excinfo:
-        tracks_pipeline(repo, [LOCAL_CELL_GROUPING])
+        tracks_pipeline(repo, [LOCAL_CELL_GROUPING], work_dir=tmp_path)
 
     assert isinstance(excinfo.value.other_error, LocalFilesError)
     assert str(LocalFilesError("tracks[0]")) in str(excinfo.value)

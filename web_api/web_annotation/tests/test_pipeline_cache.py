@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import operator
+import pathlib
 import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -27,12 +28,14 @@ from web_annotation.pipeline_cache import (
 @pytest.fixture
 def sample_pipeline_factory(
     test_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> Callable[[], AnnotationPipeline]:
     def pipeline_factory() -> AnnotationPipeline:
         pipeline_config = "- position_score: scores/pos1"
         return load_pipeline_from_yaml(
             pipeline_config,
             test_grr,
+            work_dir=tmp_path,
         )
     return pipeline_factory
 

@@ -103,11 +103,12 @@ def repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
 
 def tracks_pipeline(
     repo: GenomicResourceRepo, *entries: dict[str, Any],
+    work_dir: pathlib.Path,
 ) -> AnnotationPipeline:
     config = yaml.safe_dump([{"tracks_annotator": {
         "tracks": [{"fragment_score_tracks": entry}
                     for entry in entries]}}])
-    return load_pipeline_from_yaml(config, repo)
+    return load_pipeline_from_yaml(config, repo, work_dir=work_dir)
 
 
 def described_values(
@@ -127,10 +128,11 @@ def described_values(
 
 def test_a_cell_grouping_reads_the_metadata_of_a_data_frame(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = tracks_pipeline(repo, {
         "resource_query": "frags/s1", "group": BY_CLASS_GROUP,
-        "meta": BY_SAMPLE_META})
+        "meta": BY_SAMPLE_META}, work_dir=tmp_path)
 
     assert described_values(pipeline) == [
         ("track_0_0", "frags/s1:B:sum", 1.0),
@@ -140,9 +142,11 @@ def test_a_cell_grouping_reads_the_metadata_of_a_data_frame(
 
 def test_a_value_grouping_reads_the_values_of_the_built_statistics(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = tracks_pipeline(repo, {
-        "resource_query": "frags/s1", "group": {"group_score_id": "cell"}})
+        "resource_query": "frags/s1", "group": {"group_score_id": "cell"}},
+        work_dir=tmp_path)
 
     # A pooled entry prefixes each value with the sample of the resource.
     assert described_values(pipeline) == [
@@ -155,8 +159,10 @@ def test_a_value_grouping_reads_the_values_of_the_built_statistics(
 
 def test_an_entry_without_a_group_reads_the_labelled_metadata(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
-    pipeline = tracks_pipeline(repo, {"resource_query": "frags/s1"})
+    pipeline = tracks_pipeline(
+        repo, {"resource_query": "frags/s1"}, work_dir=tmp_path)
 
     assert described_values(pipeline) == [
         ("track_0_0", "frags/s1:B:sum", 1.0),
@@ -166,9 +172,10 @@ def test_an_entry_without_a_group_reads_the_labelled_metadata(
 
 def test_an_unpooled_entry_gives_the_groups_of_each_resource(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = tracks_pipeline(
-        repo, {"resource_query": "frags/*", "pool": False})
+        repo, {"resource_query": "frags/*", "pool": False}, work_dir=tmp_path)
 
     assert described_values(pipeline) == [
         ("track_0_0", "frags/s1:B:sum", 1.0),
@@ -180,11 +187,13 @@ def test_an_unpooled_entry_gives_the_groups_of_each_resource(
 
 def test_the_resources_hold_each_read_resource_once(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     # Both entries read frags/s1 and the metadata meta/cells.
     entry = {"resource_query": "frags/s1", "group": BY_CLASS_GROUP,
              "meta": BY_SAMPLE_META}
-    pipeline = tracks_pipeline(repo, entry, entry | {"name": "again"})
+    pipeline = tracks_pipeline(
+        repo, entry, entry | {"name": "again"}, work_dir=tmp_path)
 
     assert [resource.get_id() for annotator in pipeline.annotators
             for resource in annotator.resources] == [
@@ -194,9 +203,11 @@ def test_the_resources_hold_each_read_resource_once(
 
 def test_an_annotatable_logs_no_line_about_dropped_fragments(
     repo: GenomicResourceRepo, caplog: pytest.LogCaptureFixture,
+    tmp_path: pathlib.Path,
 ) -> None:
     # frags/s1 drops the fragments of CCC and DDD over CHR1.
-    pipeline = tracks_pipeline(repo, {"resource_query": "frags/s1"})
+    pipeline = tracks_pipeline(
+        repo, {"resource_query": "frags/s1"}, work_dir=tmp_path)
 
     with caplog.at_level(logging.INFO, logger="gain.binning"), \
             pipeline.open() as opened:
@@ -237,7 +248,7 @@ def test_more_than_2000_tracks_are_refused_naming_the_number(
     repo = many_cells_repo(tmp_path / "grr", 2001)
 
     with pytest.raises(AnnotationConfigurationError) as excinfo:
-        tracks_pipeline(repo, EACH_CELL)
+        tracks_pipeline(repo, EACH_CELL, work_dir=tmp_path)
 
     assert "2001" in str(excinfo.value)
 
@@ -245,7 +256,7 @@ def test_more_than_2000_tracks_are_refused_naming_the_number(
 def test_2000_tracks_are_accepted(tmp_path: pathlib.Path) -> None:
     repo = many_cells_repo(tmp_path / "grr", 2000)
 
-    pipeline = tracks_pipeline(repo, EACH_CELL)
+    pipeline = tracks_pipeline(repo, EACH_CELL, work_dir=tmp_path)
 
     assert len(pipeline.get_attributes()) == 2000
 
@@ -257,6 +268,7 @@ def test_the_limit_counts_the_tracks_of_all_entries_together(
     repo = many_cells_repo(tmp_path / "grr", 1001)
 
     with pytest.raises(AnnotationConfigurationError) as excinfo:
-        tracks_pipeline(repo, EACH_CELL, EACH_CELL | {"name": "again"})
+        tracks_pipeline(
+            repo, EACH_CELL, EACH_CELL | {"name": "again"}, work_dir=tmp_path)
 
     assert "2002" in str(excinfo.value)

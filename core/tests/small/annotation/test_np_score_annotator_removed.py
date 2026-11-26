@@ -18,6 +18,8 @@ The resources these pipelines point at are deliberately valid and
 test that pointed at a missing or retired resource could pass for the
 wrong reason.
 """
+import pathlib
+
 import pytest
 from gain.annotation.annotation_config import (
     AnnotationConfigurationError,
@@ -76,13 +78,14 @@ def grr() -> GenomicResourceProtocolRepo:
 @pytest.mark.parametrize("retired", list(RETIRED_ANNOTATOR_NAMES))
 def test_a_retired_annotator_name_is_refused_naming_its_replacement(
     grr: GenomicResourceProtocolRepo, retired: str,
+    tmp_path: pathlib.Path,
 ) -> None:
     """A pipeline naming either retired spelling is told what to write."""
     with pytest.raises(AnnotationConfigurationError) as excinfo:
         load_pipeline_from_yaml(f"""
             - {retired}:
                 resource_id: a_score
-        """, grr)
+        """, grr, work_dir=tmp_path)
 
     message = str(excinfo.value)
     assert retired_annotator_message(retired) in message
@@ -92,6 +95,7 @@ def test_a_retired_annotator_name_is_refused_naming_its_replacement(
 @pytest.mark.parametrize("retired", list(RETIRED_ANNOTATOR_NAMES))
 def test_a_retired_name_is_refused_before_a_wildcard_is_resolved(
     grr: GenomicResourceProtocolRepo, retired: str,
+    tmp_path: pathlib.Path,
 ) -> None:
     """A wildcard ``resource_id`` must not swallow the migration message.
 
@@ -110,7 +114,7 @@ def test_a_retired_name_is_refused_before_a_wildcard_is_resolved(
         load_pipeline_from_yaml(f"""
             - {retired}:
                 resource_id: a_*
-        """, grr)
+        """, grr, work_dir=tmp_path)
 
     message = str(excinfo.value)
     assert retired_annotator_message(retired) in message

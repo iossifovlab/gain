@@ -23,6 +23,7 @@ So with ``max``: the substitution ``11 C>T`` is 0.2 by match and 0.25
 folded; the deletion ``11 CG>C`` is 0.05 by match and 0.3 folded; the
 insertion ``12 G>GT`` is 0.07 by match and 0.3 folded.
 """
+import pathlib
 import textwrap
 from typing import Any
 
@@ -81,6 +82,7 @@ def _annotate(
     repo: GenomicResourceRepo,
     allele: VCFAllele,
     extra: str = "",
+    *, work_dir: pathlib.Path,
 ) -> dict[str, Any]:
     pipeline_config = textwrap.dedent(f"""
         - allele_score:
@@ -91,7 +93,8 @@ def _annotate(
             - source: allele
               internal: false
         """)
-    pipeline = load_pipeline_from_yaml(pipeline_config, repo)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, repo, work_dir=work_dir)
     with pipeline.open() as work_pipeline:
         result: dict[str, Any] = work_pipeline.annotate(allele)
     return result
@@ -114,8 +117,10 @@ def default_mode_repo() -> GenomicResourceRepo:
 
 def test_substitution_on_a_substitutions_resource_is_matched_exactly(
     substitutions_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
-    assert _annotate(substitutions_repo, SUBSTITUTION)["freq"] == 0.2
+    assert _annotate(
+        substitutions_repo, SUBSTITUTION, work_dir=tmp_path)["freq"] == 0.2
 
 
 @pytest.mark.parametrize("allele,folded", [
@@ -126,8 +131,10 @@ def test_indel_on_a_substitutions_resource_is_region_folded(
     substitutions_repo: GenomicResourceRepo,
     allele: VCFAllele,
     folded: float,
+    tmp_path: pathlib.Path,
 ) -> None:
-    assert _annotate(substitutions_repo, allele)["freq"] == folded
+    assert _annotate(
+        substitutions_repo, allele, work_dir=tmp_path)["freq"] == folded
 
 
 @pytest.mark.parametrize("allele,matched", [
@@ -139,51 +146,64 @@ def test_every_allele_on_an_alleles_resource_is_matched_exactly(
     alleles_repo: GenomicResourceRepo,
     allele: VCFAllele,
     matched: float,
+    tmp_path: pathlib.Path,
 ) -> None:
-    assert _annotate(alleles_repo, allele)["freq"] == matched
+    assert _annotate(
+        alleles_repo, allele, work_dir=tmp_path)["freq"] == matched
 
 
 def test_complex_allele_on_a_substitutions_resource_is_region_folded(
     substitutions_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     # No row matches ``CG>TA`` exactly, so only the fold over the bases
     # it covers answers 0.3.
-    assert _annotate(substitutions_repo, UNLISTED_COMPLEX)["freq"] == 0.3
+    assert _annotate(
+        substitutions_repo, UNLISTED_COMPLEX, work_dir=tmp_path)["freq"] == 0.3
 
 
 def test_a_resource_without_the_mode_key_matches_indels_exactly(
     default_mode_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
-    assert _annotate(default_mode_repo, DELETION)["freq"] == 0.05
+    assert _annotate(
+        default_mode_repo, DELETION, work_dir=tmp_path)["freq"] == 0.05
 
 
 def test_unlisted_indel_on_an_alleles_resource_is_not_folded(
     alleles_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
-    assert _annotate(alleles_repo, UNLISTED_INSERTION)["freq"] is None
+    assert _annotate(
+        alleles_repo, UNLISTED_INSERTION, work_dir=tmp_path)["freq"] is None
 
 
 def test_explicit_region_mode_folds_a_substitution_too(
     substitutions_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
-    result = _annotate(substitutions_repo, SUBSTITUTION, "mode: region")
+    result = _annotate(
+        substitutions_repo, SUBSTITUTION, "mode: region", work_dir=tmp_path)
 
     assert result["freq"] == 0.25
 
 
 def test_indel_routed_to_the_fold_honours_region_length_cutoff(
     substitutions_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     result = _annotate(
-        substitutions_repo, LONG_DELETION, "region_length_cutoff: 1")
+        substitutions_repo, LONG_DELETION, "region_length_cutoff: 1",
+        work_dir=tmp_path)
 
     assert result == {"freq": None, "allele": None}
 
 
 def test_allele_attribute_of_a_folded_indel_lists_the_overlapping_keys(
     substitutions_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
-    result = _annotate(substitutions_repo, DELETION)
+    result = _annotate(substitutions_repo, DELETION, work_dir=tmp_path)
 
     assert sorted(result["allele"]) == [
         "1:11:C:A", "1:11:C:T", "1:11:CG:C", "1:12:G:A", "1:12:G:GT"]

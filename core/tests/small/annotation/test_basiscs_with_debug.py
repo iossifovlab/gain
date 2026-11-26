@@ -1,16 +1,18 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 
+import pathlib
+
 from gain.annotation.annotatable import Position
 from gain.annotation.annotation_factory import load_pipeline_from_yaml
 from gain.genomic_resources.testing import build_inmemory_test_repository
 
 
-def test_default_attributes() -> None:
+def test_default_attributes(tmp_path: pathlib.Path) -> None:
     empty_grr = build_inmemory_test_repository({})
     config = """
     - debug_annotator
     """
-    pipeline = load_pipeline_from_yaml(config, empty_grr)
+    pipeline = load_pipeline_from_yaml(config, empty_grr, work_dir=tmp_path)
 
     info = pipeline.get_info()
     assert len(info) == 1
@@ -27,7 +29,7 @@ def test_default_attributes() -> None:
     assert annotation["hi"] == "hello world"
 
 
-def test_default_remapping() -> None:
+def test_default_remapping(tmp_path: pathlib.Path) -> None:
     empty_grr = build_inmemory_test_repository({})
     config = """
     - debug_annotator:
@@ -38,7 +40,7 @@ def test_default_remapping() -> None:
           - name: hi3
             source: hi
     """
-    pipeline = load_pipeline_from_yaml(config, empty_grr)
+    pipeline = load_pipeline_from_yaml(config, empty_grr, work_dir=tmp_path)
 
     info = pipeline.get_info()
     assert len(info) == 1
@@ -57,7 +59,7 @@ def test_default_remapping() -> None:
     assert annotation["hi3"] == "hello world"
 
 
-def test_str_value_trasform() -> None:
+def test_str_value_trasform(tmp_path: pathlib.Path) -> None:
     empty_grr = build_inmemory_test_repository({})
     config = """
     - debug_annotator:
@@ -70,7 +72,7 @@ def test_str_value_trasform() -> None:
             source: hi
             value_transform: len(value)
     """
-    pipeline = load_pipeline_from_yaml(config, empty_grr)
+    pipeline = load_pipeline_from_yaml(config, empty_grr, work_dir=tmp_path)
 
     info = pipeline.get_info()
     assert len(info) == 1

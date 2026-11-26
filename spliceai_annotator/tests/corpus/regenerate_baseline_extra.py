@@ -23,6 +23,7 @@ import gzip
 import json
 import os
 import pathlib
+import tempfile
 from collections import defaultdict
 from typing import Any
 
@@ -65,18 +66,21 @@ def annotate_extra(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
         by_distance[variant["distance"]].append(variant)
 
     results: dict[str, dict[str, Any]] = {}
-    for distance in sorted(by_distance):
-        pipeline = load_pipeline_from_yaml(
-            make_pipeline_yaml(distance, REAL_GENOME, REAL_GENE_MODELS), grr)
-        with pipeline.open() as opened:
-            for variant in by_distance[distance]:
-                annotatable = VCFAllele(
-                    variant["contig"], variant["pos"],
-                    variant["ref"], variant["alt"])
-                result = opened.annotate(annotatable)
-                results[variant["id"]] = {
-                    key: _jsonable(val) for key, val in result.items()
-                }
+    with tempfile.TemporaryDirectory() as work_root:
+        for distance in sorted(by_distance):
+            pipeline = load_pipeline_from_yaml(
+                make_pipeline_yaml(distance, REAL_GENOME, REAL_GENE_MODELS),
+                grr,
+                work_dir=pathlib.Path(work_root) / f"distance_{distance}")
+            with pipeline.open() as opened:
+                for variant in by_distance[distance]:
+                    annotatable = VCFAllele(
+                        variant["contig"], variant["pos"],
+                        variant["ref"], variant["alt"])
+                    result = opened.annotate(annotatable)
+                    results[variant["id"]] = {
+                        key: _jsonable(val) for key, val in result.items()
+                    }
     return results
 
 

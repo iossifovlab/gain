@@ -100,6 +100,7 @@ def fixture_repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
 
 def _pipeline(
     fixture_repo: GenomicResourceRepo, aggregator: str,
+    *, work_dir: pathlib.Path,
 ) -> AnnotationPipeline:
     return load_pipeline_from_yaml(textwrap.dedent(f"""
         - position_score:
@@ -108,7 +109,7 @@ def _pipeline(
             - source: test100way
               name: test100
               aggregator: {aggregator}
-        """), fixture_repo)
+        """), fixture_repo, work_dir=work_dir)
 
 
 def _score_answer(
@@ -124,6 +125,7 @@ def _score_answer(
 
 def test_each_record_counts_once_per_base_pair_it_covers(
     fixture_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Two records of equal width average to their midpoint.
 
@@ -132,7 +134,7 @@ def test_each_record_counts_once_per_base_pair_it_covers(
     why the clipped case below, where the two weights differ, is the one
     that can tell the rule apart.
     """
-    with _pipeline(fixture_repo, "mean") as pipeline:
+    with _pipeline(fixture_repo, "mean", work_dir=tmp_path) as pipeline:
         result = pipeline.annotate(Region("chr1", 10, 29))
 
     assert result["test100"] == 1.5
@@ -141,6 +143,7 @@ def test_each_record_counts_once_per_base_pair_it_covers(
 
 def test_a_records_weight_is_clipped_to_the_annotatable(
     fixture_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Only the part of a record inside the annotatable counts.
 
@@ -148,7 +151,7 @@ def test_a_records_weight_is_clipped_to_the_annotatable(
     not to 1.5, which is what counting each record once, or counting them
     at their full ten-base width, would give.
     """
-    with _pipeline(fixture_repo, "mean") as pipeline:
+    with _pipeline(fixture_repo, "mean", work_dir=tmp_path) as pipeline:
         result = pipeline.annotate(Region("chr1", 15, 22))
 
     assert result["test100"] == pytest.approx((1.0 * 5 + 2.0 * 3) / 8)
@@ -172,6 +175,7 @@ def _allele_score_answer(
 
 def test_an_allele_line_counts_once_however_wide_the_region(
     fixture_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Three allele lines average to their plain mean, spans notwithstanding.
 
@@ -192,7 +196,7 @@ def test_an_allele_line_counts_once_however_wide_the_region(
             - source: freq
               name: freq
               aggregator: mean
-        """), fixture_repo)
+        """), fixture_repo, work_dir=tmp_path)
 
     with pipeline:
         result = pipeline.annotate(Region("chr1", 10, 11))
@@ -216,6 +220,7 @@ def _fragment_score_answer(
 
 def test_a_fragment_counts_once_however_long_it_is(
     fixture_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Two fragments of wildly different length average to their midpoint.
 
@@ -236,7 +241,7 @@ def test_a_fragment_counts_once_however_long_it_is(
             - source: frequency
               name: frequency
               aggregator: mean
-        """), fixture_repo)
+        """), fixture_repo, work_dir=tmp_path)
 
     with pipeline:
         result = pipeline.annotate(Region("chr1", 10, 200))
@@ -289,7 +294,7 @@ def test_a_region_product_agrees_with_the_track_kind_over_long_runs(
             attributes:
             - source: s
               aggregator: product
-        """), repo)
+        """), repo, work_dir=tmp_path)
 
     with pipeline:
         annotated = pipeline.annotate(Region("chr1", start, end))["s"]

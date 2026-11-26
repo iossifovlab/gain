@@ -91,6 +91,7 @@ def real_grr() -> GenomicResourceRepo:
 @pytest.fixture(scope="session")
 def spliceai_annotation_pipeline(
     spliceai_grr: GenomicResourceRepo,
+    tmp_path_factory: pytest.TempPathFactory,
 ) -> AnnotationPipeline:
     """Fixture for SpliceAI annotator."""
 
@@ -105,6 +106,7 @@ def spliceai_annotation_pipeline(
     return load_pipeline_from_yaml(
         pipeline_config,
         spliceai_grr,
+        work_dir=tmp_path_factory.mktemp("spliceai_pipeline"),
     )
 
 
