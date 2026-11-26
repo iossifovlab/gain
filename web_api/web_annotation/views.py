@@ -139,8 +139,8 @@ class UserInfo(views.APIView):
             info["loggedIn"] = True
             info["email"] = user.email
             account = cast(UserWrapper, user).user
-            info["notifyOnJobSuccess"] = account.notify_on_job_success
-            info["notifyOnJobFailure"] = account.notify_on_job_failure
+            for key, field in self.JOB_MAIL_SETTINGS.items():
+                info[key] = getattr(account, field)
 
         return Response(info, views.status.HTTP_200_OK)
 
