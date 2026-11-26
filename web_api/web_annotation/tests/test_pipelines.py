@@ -3,6 +3,7 @@ import contextlib
 import gc
 import json
 import logging
+import pathlib
 import textwrap
 from typing import Any
 from unittest.mock import MagicMock
@@ -14,6 +15,7 @@ from django.core.files.base import ContentFile
 from django.test import Client
 from gain.genomic_resources.repository import GenomicResourceRepo
 from gain.genomic_resources.resource_query import MAX_RESOURCE_QUERY_LENGTH
+from pytest_django.fixtures import SettingsWrapper
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.request import Request
 
@@ -25,6 +27,7 @@ from web_annotation.consumers import AnnotationStateConsumer
 from web_annotation.executor import SequentialTaskExecutor
 from web_annotation.models import Pipeline, User
 from web_annotation.pipeline_cache import LRUPipelineCache, PipelineNotCached
+from web_annotation.pipelines import views as pipelines_views
 from web_annotation.pipelines.throttling import PipelineValidationRateThrottle
 from web_annotation.pipelines.views import PipelineValidation
 from web_annotation.single_allele_annotation.throttling import (
@@ -1013,6 +1016,37 @@ def test_validate_refuses_a_request_with_no_config(
     response = anonymous_client.post("/api/pipelines/validate", {})
 
     assert response.status_code == 400
+
+
+@pytest.mark.django_db
+def test_validate_builds_the_pipeline_under_the_pipeline_work_dir(
+    user_client: Client,
+    settings: SettingsWrapper,
+    mocker: pytest_mock.MockerFixture,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The validation build puts each annotator under PIPELINE_WORK_DIR.
+
+    A cwd-relative work dir is the gain#276 EPERM shape under the
+    non-root container. Validation never opens the pipeline, so only the
+    annotator parameters show which directory the build got (#333).
+    """
+    work_dir = tmp_path / "pipeline-work"
+    settings.PIPELINE_WORK_DIR = str(work_dir)
+    spy = mocker.spy(pipelines_views, "load_pipeline_from_yaml")
+
+    response = user_client.post(
+        "/api/pipelines/validate",
+        {"config": "- position_score: scores/pos1"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"errors": ""}
+    pipeline = spy.spy_return
+    assert len(pipeline.annotators) == 1
+    for annotator in pipeline.annotators:
+        params = annotator.get_info().parameters.as_dict()
+        assert pathlib.Path(params["work_dir"]).is_relative_to(work_dir)
 
 
 def _post_deeply_nested_config(client: Client) -> Any:
