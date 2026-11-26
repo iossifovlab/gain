@@ -1596,6 +1596,27 @@ def test_a_stem_of_150_characters_is_kept_as_it_is(
     assert _chunk_path("c", track, region, 10) == f"c/{stem}_chr1_1_10.npy"
 
 
+def test_a_stem_of_151_characters_is_cut_to_150(
+    repo: GenomicResourceRepo, grr_dir: pathlib.Path,
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # ``summary_<120 x>_bigwig_s_max_none_bs10`` is 151 characters, the
+    # shortest stem that is cut: it pins the upper edge of the threshold.
+    track = replace(
+        TRACK, name="edge", resource_ids=(f"summary/{'x' * 120}/bigwig",))
+    full = f"summary_{'x' * 120}_bigwig_s_max_none_bs10"
+    region = TWO_BUNDLES[0]
+
+    ids = task_ids_of([track], grr_dir, tmp_path, monkeypatch, regions=[region])
+
+    assert len(full) == 151
+    stem = ids[0].removeprefix("bin_").removesuffix("_chr1_1_chr1_10")
+    assert len(stem) == 150
+    assert stem.startswith(f"{full[:133]}_")
+    assert all(c in "0123456789abcdef" for c in stem[134:])
+    assert _chunk_path("c", track, region, 10) == f"c/{stem}_chr1_1_10.npy"
+
+
 def test_a_short_stem_keeps_its_task_id_and_chunk_name(
     repo: GenomicResourceRepo, grr_dir: pathlib.Path,
     tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
