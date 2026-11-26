@@ -1518,6 +1518,8 @@ def test_a_long_stem_names_its_tasks_and_chunks_the_same_every_time(
 
     # A rerun is a new process, so name the chunk in one with another
     # hash seed: a per-process value in the stem would differ there.
+    # The test pickles a track that it builds itself, so the pickle
+    # holds no outside data: the pickle import is safe here.
     rerun = subprocess.run(
         [sys.executable, "-c", (
             "import pickle, sys\n"
