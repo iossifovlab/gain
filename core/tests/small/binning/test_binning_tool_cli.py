@@ -2,8 +2,12 @@
 import argparse
 import datetime
 import json
+import os
 import pathlib
+import pickle  # ruff: ignore[suspicious-pickle-import]
 import shutil
+import subprocess
+import sys
 import textwrap
 from collections.abc import Callable
 from dataclasses import replace
@@ -1512,8 +1516,20 @@ def test_a_long_stem_names_its_tasks_and_chunks_the_same_every_time(
     first = task_ids_of([LONG_TRACK], grr_dir, tmp_path, monkeypatch)
     second = task_ids_of([LONG_TRACK], grr_dir, tmp_path, monkeypatch)
 
+    # A rerun is a new process, so name the chunk in one with another
+    # hash seed: a per-process value in the stem would differ there.
+    rerun = subprocess.run(
+        [sys.executable, "-c", (
+            "import pickle, sys\n"
+            "from gain.binning.cli import _chunk_path\n"
+            "track, region = pickle.load(sys.stdin.buffer)\n"
+            "print(_chunk_path('c', track, region, 10))")],
+        input=pickle.dumps((LONG_TRACK, region)),
+        env={**os.environ, "PYTHONHASHSEED": "1"},
+        capture_output=True, check=True)
+
     assert first == second
-    assert _chunk_path("c", LONG_TRACK, region, 10) == _chunk_path(
+    assert rerun.stdout.decode().strip() == _chunk_path(
         "c", LONG_TRACK, region, 10)
 
 
