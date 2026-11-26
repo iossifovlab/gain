@@ -170,6 +170,14 @@ uv run --directory gain habit-hooks --all # from the directory that contains the
 <important if="you are rebasing, merging, or deleting a branch">
 
 - **Merge only when the PR is up to date with `master` and its branch build is green on that tip.** `gh pr view <n> --json mergeStateStatus` saying `BEHIND` means update the branch, push, and wait for the *new* build: GitHub replays the branch onto the current `master`, Jenkins built the PR's *head*, so a behind-master PR lands a tree nobody built, and the whole-tree lint invariants are what a clean-looking replay breaks (#1108: eight commits behind, check green, `master` UNSTABLE on two files the branch never touched). `master` is not protected (#1437), so this is a rule, not a button.
+  - **Exception: a PR that changes only `.md` files.** Run `gh pr diff <n> --name-only`. If each changed file ends in `.md`, merge the PR when it is `BEHIND`. The PR needs no update of the branch and no green build, neither of its head nor of a rebuild: no Jenkins stage checks a Markdown file outside `docs/source/`. The exception does not cover these files:
+    - `web_api/web_annotation/about.md`. The web API reads it at runtime, in `web_api/web_annotation/views.py`.
+    - `core/README.md`. `core/pyproject.toml` names it as the package readme, and the Dockerfiles copy it.
+    - Each `.md` file under `core/gain/`. The wheel ships the whole `gain` package.
+    - Each `.md` file under `docs/source/`. `myst_parser` makes `sphinx-build -W` read Markdown there, the same as a `.rst` file.
+    - Each `.rst` file. One docutils warning fails `sphinx-build -W` in the `Build docs` stage, so a PR with one or more `.rst` files follows the full merge rule.
+
+    A PR that changes one of these files follows the full merge rule.
 - After **every** rebase of a repo-wide mechanical sweep (ruff bump, suppression conversion, line-cap work) re-run the tool over the **entire tree**, not the commit's file list: the file that breaks is one the branch did not touch (#928, #1007). The pre-push hook does the ruff half.
 - **Merge without `--delete-branch`.** The branch-scoped downstream jobs (`gain-web-e2e`, `gain-core-integration`, `gain-conda-integration`, `gain-spliceai-integration`) are triggered from the root `Jenkinsfile`'s last stages with `wait: false` and resolve the branch at their own start, minutes later; `gain-web-e2e` also loads its pipeline definition from the branch (#272), so a branch deleted at merge time gives a ~1s red build that ran nothing (#489). `delete_branch_on_merge` is deliberately **false** on `iossifovlab/gain`; leave it. Do not prune merged branches by hand: `/land-pr` deletes the branch after the downstream jobs finish, by the rule in the next section.
 
