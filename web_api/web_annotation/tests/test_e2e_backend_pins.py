@@ -35,7 +35,8 @@ have their own table, :data:`SUBJECTS`, checked the same way: each key is a
 substring of the ``"subject"`` that ``_create_confirmation_email`` or
 ``_create_reset_mail`` returns now, as a MailPit ``subject:`` search
 matches; every subject a spec gives has a registered producer, whatever
-its shape; and no key is dead.
+its shape; and no key is dead.  A subject must be a literal: a call
+that gives a variable or a constant fails, as it cannot be checked.
 
 Both sides are compared with whitespace :func:`collapsed`, as every
 Playwright text matcher compares, so where core wraps a sentence is
@@ -256,21 +257,50 @@ def _argument_start(source: str, pos: int, index: int) -> int | None:
     return None
 
 
+#: The helper's own definition, which names its subject parameter.
+_SUBJECT_DEFINITION = re.compile(r"\bfunction\s+$")
+
+
+def _subject_calls(source: str) -> Iterator[tuple[int, str | None]]:
+    """The line and subject literal of each call of :data:`SUBJECT_HELPER`.
+
+    The subject is ``None`` when the call gives no literal.  The helper's
+    definition is not a call and is left out.
+    """
+    for call in _SUBJECT_CALL.finditer(source):
+        if _SUBJECT_DEFINITION.search(source, 0, call.start()):
+            continue
+        start = _argument_start(source, call.end(), _SUBJECT_ARGUMENT)
+        text = None if start is None else _read_concatenation(source, start)
+        yield source.count("\n", 0, call.start()) + 1, text
+
+
 def extract_subject_pins(source: str, spec: str = "<source>") -> list[Pin]:
     """Every subject literal given to :data:`SUBJECT_HELPER`, in file order.
 
-    A call whose subject is not a literal (the helper's own definition)
-    gives no pin.
+    A call whose subject is not a literal gives no pin:
+    :func:`unpinned_subject_calls` names it.
     """
-    pins: list[Pin] = []
-    for call in _SUBJECT_CALL.finditer(source):
-        start = _argument_start(source, call.end(), _SUBJECT_ARGUMENT)
-        text = None if start is None else _read_concatenation(source, start)
-        if text is None:
-            continue
-        line = source.count("\n", 0, call.start()) + 1
-        pins.append(Pin(spec, line, SUBJECT_HELPER, text))
-    return pins
+    return [
+        Pin(spec, line, SUBJECT_HELPER, text)
+        for line, text in _subject_calls(source)
+        if text is not None
+    ]
+
+
+def unpinned_subject_calls(
+    source: str, spec: str = "<source>",
+) -> list[str]:
+    """``spec:line`` of each call of :data:`SUBJECT_HELPER` with no literal.
+
+    Such a subject (a variable, a constant) cannot be checked against the
+    backend, so the guard refuses it.
+    """
+    return [
+        f"{spec}:{line}"
+        for line, text in _subject_calls(source)
+        if text is None
+    ]
 
 
 def is_sentence_shaped(text: str) -> bool:
@@ -611,6 +641,40 @@ def test_extract_subject_pins_reads_the_third_argument() -> None:
     ]
 
 
+@pytest.mark.parametrize(("source", "expected"), [
+    pytest.param(
+        "getLinkInEmail(page, makeEmail(a, b), 'GAIn: Subject')",
+        "GAIn: Subject",
+        id="commas inside a nested call"),
+    pytest.param(
+        "getLinkInEmail(page, 'a, b', 'GAIn: Subject')",
+        "GAIn: Subject",
+        id="a comma inside a string literal"),
+    pytest.param(
+        "getLinkInEmail({ p: 1, q: 2 }, [a, b], 'GAIn: Subject')",
+        "GAIn: Subject",
+        id="commas inside braces and brackets"),
+])
+def test_extract_subject_pins_counts_only_top_level_commas(
+    source: str, expected: str,
+) -> None:
+    pins = extract_subject_pins(source)
+
+    assert [pin.text for pin in pins] == [expected]
+
+
+def test_unpinned_subject_calls_names_a_non_literal_subject() -> None:
+    source = (
+        "export async function getLinkInEmail(page: Page, email: string, "
+        "subject: string): Promise<string> {\n"
+        "  const href = await utils.getLinkInEmail(page, email, subject);\n"
+        "  await getLinkInEmail(page, email, 'GAIn: Subject');\n")
+
+    calls = unpinned_subject_calls(source, spec="s.ts")
+
+    assert calls == ["s.ts:2"]
+
+
 @pytest.mark.parametrize(("text", "sentence"), [
     ("Job quota exceeded!", True),
     ("Invalid configuration, reason: 'annotators'", True),
@@ -746,6 +810,20 @@ def test_every_subject_pin_has_a_registered_producer(
         "specs search MailPit for subjects no registered producer sends; "
         "add each to SUBJECTS with the backend function that sends it:\n  "
         + "\n  ".join(unaccounted))
+
+
+def test_every_subject_is_a_literal(spec_sources: dict[str, str]) -> None:
+    unpinned = [
+        call
+        for spec, source in spec_sources.items()
+        for call in unpinned_subject_calls(source, spec)
+    ]
+
+    assert not unpinned, (
+        f"specs give {SUBJECT_HELPER} a subject that is not a literal, so "
+        "it cannot be checked against the backend; pass the subject as a "
+        "string literal:\n  "
+        + "\n  ".join(unpinned))
 
 
 def test_tables_carry_no_dead_entries(
