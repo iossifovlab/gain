@@ -48,9 +48,12 @@ CI / release plumbing:
 - **`Jenkinsfile.release`** — tag-driven release
   pipeline (`gain-release`): rebuilds wheels, conda
   packages, and digest-pinned prod Docker images for a
-  tagged commit, then publishes wheels to
-  `wheels.seqpipe.org`, conda to Anaconda.org, and
-  Docker images to `registry.seqpipe.org`. Gated on the
+  tagged commit, then publishes, in this order, sdists
+  and wheels to PyPI, conda to Anaconda.org, Docker
+  images to `registry.seqpipe.org`, and wheels to
+  `wheels.seqpipe.org`. The wheel index goes last: its
+  `gain_core` wheel marks a finished release, so a rerun
+  with the same tag resumes a failed one. Gated on the
   master CI build and the `gain-conda-integration` run for
   the tagged commit; `DRY_RUN` exercises the pre-flights
   without publishing, `SKIP_CONDA_GATE` overrides the
