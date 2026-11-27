@@ -162,6 +162,7 @@ def _replicated_pass(score: PositionScore) -> Callable[[], float]:
 def test_region_aggregation_benchmark(
     dense_repo: GenomicResourceRepo,
     capsys: pytest.CaptureFixture[str],
+    tmp_path: pathlib.Path,
 ) -> None:
     """Report ms/region for the weighted and the replicated aggregation.
 
@@ -177,7 +178,7 @@ def test_region_aggregation_benchmark(
             - source: {_SCORE_ID}
               name: test100
               aggregator: mean
-        """), dense_repo)
+        """), dense_repo, work_dir=tmp_path)
 
     with pipeline:
         weighted, weighted_mean = _measure(_weighted_pass(pipeline))

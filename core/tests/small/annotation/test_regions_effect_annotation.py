@@ -1,5 +1,6 @@
 # pylint: disable=redefined-outer-name,C0114,C0116,protected-access,fixme
 
+import pathlib
 import textwrap
 
 import pytest
@@ -77,6 +78,7 @@ def test_effect_annotator(
         effect_type: str, length: int,
         txs: dict[str, list[str]],
         fixture_repo: GenomicResourceProtocolRepo,
+        tmp_path: pathlib.Path,
 ) -> None:
 
     pipeline_config = textwrap.dedent("""
@@ -85,7 +87,8 @@ def test_effect_annotator(
             gene_models: gene_models
     """)
 
-    pipeline = load_pipeline_from_yaml(pipeline_config, fixture_repo)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, fixture_repo, work_dir=tmp_path)
 
     result = None
     with pipeline.open() as work_pipeline:
@@ -125,6 +128,7 @@ def test_effect_annotator_region_length_cutoff(
     length: int,
     configured: str,
     fixture_repo: GenomicResourceProtocolRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
 
     pipeline_config = textwrap.dedent(f"""
@@ -134,7 +138,8 @@ def test_effect_annotator_region_length_cutoff(
             region_length_cutoff: {configured}
     """)
 
-    pipeline = load_pipeline_from_yaml(pipeline_config, fixture_repo)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, fixture_repo, work_dir=tmp_path)
 
     result = None
     with pipeline.open() as work_pipeline:
@@ -160,6 +165,7 @@ def test_effect_annotator_region_length_cutoff(
 def test_a_length_that_is_no_length_is_refused_by_name(
     parameter: str, configured: str,
     fixture_repo: GenomicResourceProtocolRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Refused as the PIPELINE LOADS, naming the key the user wrote.
 
@@ -178,11 +184,13 @@ def test_a_length_that_is_no_length_is_refused_by_name(
     """)
 
     with pytest.raises(AnnotationConfigurationError, match=parameter):
-        load_pipeline_from_yaml(pipeline_config, fixture_repo)
+        load_pipeline_from_yaml(
+            pipeline_config, fixture_repo, work_dir=tmp_path)
 
 
 def test_promoter_len_reaches_the_effect_engine_as_an_int(
     fixture_repo: GenomicResourceProtocolRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The engine counts bases with it.
 
@@ -197,7 +205,8 @@ def test_promoter_len_reaches_the_effect_engine_as_an_int(
             promoter_len: "100"
     """)
 
-    pipeline = load_pipeline_from_yaml(pipeline_config, fixture_repo)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, fixture_repo, work_dir=tmp_path)
 
     annotator = pipeline.annotators[0]
     promoter_len = annotator.effect_annotator.promoter_len  # type: ignore

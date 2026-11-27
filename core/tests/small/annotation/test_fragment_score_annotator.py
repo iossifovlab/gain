@@ -1,5 +1,6 @@
 # pylint: disable=W0621,C0114,C0116
 
+import pathlib
 import textwrap
 
 import pytest
@@ -102,13 +103,16 @@ chr1   24         35       2          AGRE        affected         900
     (Region("1", 30, 40), 0),
 ])
 def test_basic(
-        annotatable: Annotatable,
-        fragment_count: int, grr: GenomicResourceRepo) -> None:
+    annotatable: Annotatable,
+    fragment_count: int,
+    grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
             - fragment_score: fragments
             """),
-        grr)
+        grr, work_dir=tmp_path)
 
     atts = pipeline.annotate(annotatable)
     assert atts["count"] == fragment_count
@@ -121,14 +125,14 @@ def test_basic(
 ])
 def test_fragment_filter(
         annotatable: Annotatable, fragment_count: int,
-        grr: GenomicResourceRepo) -> None:
+        grr: GenomicResourceRepo, tmp_path: pathlib.Path) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
             - fragment_score:
                 resource_id: fragments
                 fragment_filter: frequency < 0.05 or collection == "SSC"
             """),
-        grr)
+        grr, work_dir=tmp_path)
 
     atts = pipeline.annotate(annotatable)
     assert atts["count"] == fragment_count
@@ -141,14 +145,14 @@ def test_fragment_filter(
 ])
 def test_fragment_filter_in(
         annotatable: Annotatable, fragment_count: int,
-        grr: GenomicResourceRepo) -> None:
+        grr: GenomicResourceRepo, tmp_path: pathlib.Path) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
             - fragment_score:
                 resource_id: fragments
                 fragment_filter: '"SSC" in collection'
             """),
-        grr)
+        grr, work_dir=tmp_path)
 
     atts = pipeline.annotate(annotatable)
     assert atts["count"] == fragment_count
@@ -161,7 +165,7 @@ def test_fragment_filter_in(
 ])
 def test_fragment_filter_on_newline(
         annotatable: Annotatable, fragment_count: int,
-        grr: GenomicResourceRepo) -> None:
+        grr: GenomicResourceRepo, tmp_path: pathlib.Path) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
             - fragment_score:
@@ -169,7 +173,7 @@ def test_fragment_filter_on_newline(
                 fragment_filter: >
                     frequency < 0.05 or collection == "SSC"
             """),
-        grr)
+        grr, work_dir=tmp_path)
 
     atts = pipeline.annotate(annotatable)
     assert atts["count"] == fragment_count
@@ -204,6 +208,7 @@ def digit_named_grr() -> GenomicResourceRepo:
 
 def test_fragment_filter_takes_digit_names_and_negative_numbers(
     digit_named_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """This annotator reaches the shared compiler, not its own grammar.
 
@@ -218,7 +223,7 @@ def test_fragment_filter_takes_digit_names_and_negative_numbers(
                 resource_id: fragments
                 fragment_filter: "1000G > 0.05 and 1000G > -1"
             """),
-        digit_named_grr)
+        digit_named_grr, work_dir=tmp_path)
 
     atts = pipeline.annotate(Region("1", 1, 200))
     assert atts["count"] == 1
@@ -232,6 +237,7 @@ def test_fragment_filter_takes_digit_names_and_negative_numbers(
 ])
 def test_fragment_filter_naming_an_unknown_score_is_refused(
     parameter: str, grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Refused while the pipeline builds, under the spelling the user wrote.
 
@@ -246,7 +252,7 @@ def test_fragment_filter_naming_an_unknown_score_is_refused(
                     resource_id: fragments
                     {parameter}: 'freq < 0.05'
                 """),
-            grr)
+            grr, work_dir=tmp_path)
 
     message = str(excinfo.value)
     assert f"Error parsing {parameter}" in message
@@ -264,6 +270,7 @@ def test_fragment_filter_and_attribute(
     annotatable: Annotatable, fragment_count: int,
     status: str, status2: str, collection: list[str],
     grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
@@ -279,7 +286,7 @@ def test_fragment_filter_and_attribute(
                   aggregator: mode
                 - source: "collection"
             """),
-        grr)
+        grr, work_dir=tmp_path)
 
     atts = pipeline.annotate(annotatable)
     assert "status" in atts
@@ -306,6 +313,7 @@ def test_fragment_filter_and_attribute(
 
 def test_fragment_aggregators(
     larger_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
@@ -335,7 +343,7 @@ def test_fragment_aggregators(
                   source: "collection"
                   aggregator: join(;)
             """),
-        larger_grr)
+        larger_grr, work_dir=tmp_path)
     annotatable = Region("chr1", 1, 100)
     atts = pipeline.annotate(annotatable)
 
@@ -399,6 +407,7 @@ def test_fragment_aggregators(
 def test_an_overlap_fraction_selects_by_the_length_it_is_named_for(
     configured: str, count: int, frequency: str,
     grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Each threshold admits what the other rejects, from one region.
 
@@ -426,7 +435,7 @@ def test_an_overlap_fraction_selects_by_the_length_it_is_named_for(
                 - source: frequency
                   aggregator: join(;)
             """),
-        grr)
+        grr, work_dir=tmp_path)
 
     atts = pipeline.annotate(Region("1", 15, 60))
 
@@ -451,6 +460,7 @@ def test_an_overlap_fraction_selects_by_the_length_it_is_named_for(
 ])
 def test_a_refused_fraction_says_what_a_fraction_IS(
     configured: str, expected: str, grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The two refusals in full, because the wording is the point.
 
@@ -468,7 +478,7 @@ def test_a_refused_fraction_says_what_a_fraction_IS(
                     resource_id: fragments
                     min_region_overlap_fraction: {configured}
                 """),
-            grr)
+            grr, work_dir=tmp_path)
 
     assert str(excinfo.value) == expected
 
@@ -480,6 +490,7 @@ def test_a_refused_fraction_says_what_a_fraction_IS(
 ])
 def test_a_value_that_is_no_fraction_is_refused_by_name(
     parameter: str, configured: str, grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Refused as the PIPELINE LOADS, naming the key the user wrote.
 
@@ -500,4 +511,4 @@ def test_a_value_that_is_no_fraction_is_refused_by_name(
                     resource_id: fragments
                     {parameter}: {configured}
                 """),
-            grr)
+            grr, work_dir=tmp_path)

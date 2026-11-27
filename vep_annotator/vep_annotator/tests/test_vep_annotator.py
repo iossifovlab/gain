@@ -20,6 +20,7 @@ from vep_annotator.vep_annotator import VEPCacheAnnotator, VEPEffectAnnotator
 def vep_annotator(
     mocker: MockerFixture,
     vep_fixtures: Path,
+    tmp_path: Path,
 ) -> Generator[VEPCacheAnnotator, None, None]:
 
     temp_cache_dir = tempfile.mkdtemp(prefix="vep_cache_test")
@@ -50,7 +51,7 @@ def vep_annotator(
               - name: worst_consequence
               - name: highest_impact
               - name: gene_consequence
-    """), None)  # type: ignore
+    """), None, work_dir=tmp_path)  # type: ignore
     annotator = pipeline.annotators[0]
 
     annotator.work_dir = Path(annotator.work_dir)  # type: ignore

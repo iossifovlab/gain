@@ -53,6 +53,7 @@ def repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
 
 def _pipeline_over(
     repo: GenomicResourceRepo, body: str,
+    *, work_dir: pathlib.Path,
 ) -> AnnotationPipeline:
     """A one-annotator pipeline over ``scores``, with ``body`` beneath it.
 
@@ -64,17 +65,21 @@ def _pipeline_over(
         - position_score:
             resource_id: scores
 {textwrap.indent(textwrap.dedent(body), " " * 12)}
-        """), repo)
+        """), repo, work_dir=work_dir)
 
 
 def _pipeline(
     repo: GenomicResourceRepo, attributes: str,
+    *, work_dir: pathlib.Path,
 ) -> AnnotationPipeline:
     return _pipeline_over(
-        repo, f"attributes:\n{textwrap.dedent(attributes)}")
+        repo, f"attributes:\n{textwrap.dedent(attributes)}", work_dir=work_dir)
 
 
-def test_a_gap_counts_as_the_replacement(repo: GenomicResourceRepo) -> None:
+def test_a_gap_counts_as_the_replacement(
+    repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     """The feature, at its smallest: a partly covered region.
 
     chr1:10-39 is thirty positions -- ten at 1.0, ten at 2.0, and ten no
@@ -92,14 +97,14 @@ def test_a_gap_counts_as_the_replacement(repo: GenomicResourceRepo) -> None:
           name: filled
           aggregator: mean
           none_value_replacement: 0.0
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         filled = pipeline.annotate(Region("chr1", 10, 39))
 
     with _pipeline(repo, """
         - source: s
           name: bare
           aggregator: mean
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         bare = pipeline.annotate(Region("chr1", 10, 39))
 
     assert filled == {"filled": 1.0}
@@ -108,6 +113,7 @@ def test_a_gap_counts_as_the_replacement(repo: GenomicResourceRepo) -> None:
 
 def test_a_region_no_record_touches_is_all_replacement(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The sharpest case the parameter has: a region that is nothing but gap.
 
@@ -130,14 +136,14 @@ def test_a_region_no_record_touches_is_all_replacement(
           name: filled
           aggregator: mean
           none_value_replacement: 0.5
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         filled = pipeline.annotate(Region("chr1", 100, 110))
 
     with _pipeline(repo, """
         - source: s
           name: bare
           aggregator: mean
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         bare = pipeline.annotate(Region("chr1", 100, 110))
 
     assert filled == {"filled": 0.5}
@@ -146,6 +152,7 @@ def test_a_region_no_record_touches_is_all_replacement(
 
 def test_one_source_may_be_read_twice_with_and_without_a_replacement(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The replacement belongs to the QUERY, not to the score.
 
@@ -168,7 +175,7 @@ def test_one_source_may_be_read_twice_with_and_without_a_replacement(
         - source: s
           name: bare
           aggregator: mean
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         result = pipeline.annotate(Region("chr1", 10, 39))
 
     assert result == {"filled": 1.0, "bare": 1.5}
@@ -176,6 +183,7 @@ def test_one_source_may_be_read_twice_with_and_without_a_replacement(
 
 def test_a_pipeline_may_clear_a_resource_declared_replacement(
     repo_with_resource_default: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Writing ``null`` turns a resource's default off, rather than keeping it.
 
@@ -191,7 +199,7 @@ def test_a_pipeline_may_clear_a_resource_declared_replacement(
               name: s
               aggregator: mean
               none_value_replacement: null
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         result = pipeline.annotate(Region("chr1", 10, 39))
 
     assert result == {"s": 1.5}
@@ -199,6 +207,7 @@ def test_a_pipeline_may_clear_a_resource_declared_replacement(
 
 def test_a_replacement_the_score_cannot_mean_is_refused_at_load(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Refused building the pipeline, not on the first region.
 
@@ -221,7 +230,7 @@ def test_a_replacement_the_score_cannot_mean_is_refused_at_load(
               name: s
               aggregator: mean
               none_value_replacement: "not a number"
-        """)
+        """, work_dir=tmp_path)
 
     assert str(excinfo.value).endswith(
         "none_value_replacement 'not a number' for score 's' of resource "
@@ -230,6 +239,7 @@ def test_a_replacement_the_score_cannot_mean_is_refused_at_load(
 
 def test_a_bool_replacement_is_refused_for_a_numeric_score(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """``true`` is not a zero, even though Python would let it be one.
 
@@ -249,7 +259,7 @@ def test_a_bool_replacement_is_refused_for_a_numeric_score(
               name: s
               aggregator: mean
               none_value_replacement: true
-        """)
+        """, work_dir=tmp_path)
 
     assert str(excinfo.value).endswith(
         "none_value_replacement True for score 's' of resource 'scores' "
@@ -258,6 +268,7 @@ def test_a_bool_replacement_is_refused_for_a_numeric_score(
 
 def test_an_int_replacement_is_accepted_for_a_float_score(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The other side of that boundary, so the refusal cannot over-reach.
 
@@ -272,7 +283,7 @@ def test_an_int_replacement_is_accepted_for_a_float_score(
           name: filled
           aggregator: mean
           none_value_replacement: 0
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         result = pipeline.annotate(Region("chr1", 10, 39))
 
     assert result == {"filled": 1.0}
@@ -280,6 +291,7 @@ def test_an_int_replacement_is_accepted_for_a_float_score(
 
 def test_a_substitution_does_not_receive_the_replacement(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The scope fence, decided during triage of #1135.
 
@@ -304,7 +316,7 @@ def test_a_substitution_does_not_receive_the_replacement(
           name: s
           aggregator: mean
           none_value_replacement: 0.5
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         covered = pipeline.annotate(VCFAllele("chr1", 15, "A", "G"))
         uncovered = pipeline.annotate(VCFAllele("chr1", 100, "A", "G"))
 
@@ -350,6 +362,7 @@ def repo_with_resource_default() -> GenomicResourceRepo:
 
 def test_a_resource_may_declare_the_replacement_and_a_pipeline_override_it(
     repo_with_resource_default: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Where the value may be written, and which one wins.
 
@@ -365,7 +378,8 @@ def test_a_resource_may_declare_the_replacement_and_a_pipeline_override_it(
     Both differ from each other AND from the 1.5 an ignored replacement
     would produce, so neither passes by coincidence.
     """
-    with _pipeline_over(repo_with_resource_default, "") as pipeline:
+    with _pipeline_over(
+        repo_with_resource_default, "", work_dir=tmp_path) as pipeline:
         from_resource = pipeline.annotate(Region("chr1", 10, 39))
 
     with _pipeline_over(repo_with_resource_default, """
@@ -374,7 +388,7 @@ def test_a_resource_may_declare_the_replacement_and_a_pipeline_override_it(
               name: s
               aggregator: mean
               none_value_replacement: 3.0
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         overridden = pipeline.annotate(Region("chr1", 10, 39))
 
     assert from_resource == {"s": 1.0}
@@ -383,6 +397,7 @@ def test_a_resource_may_declare_the_replacement_and_a_pipeline_override_it(
 
 def test_the_replacement_is_documented_on_the_attribute(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """A configured replacement shows up where the aggregator does.
 
@@ -404,7 +419,7 @@ def test_the_replacement_is_documented_on_the_attribute(
         - source: s
           name: bare
           aggregator: mean
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         filled, bare = pipeline.annotators[0].attributes
 
     assert "**none_value_replacement**: 0.0" in filled.documentation
@@ -413,6 +428,7 @@ def test_the_replacement_is_documented_on_the_attribute(
 
 def test_the_replacement_is_listed_among_the_attribute_properties(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The OTHER documentation surface: the rendered attribute help.
 
@@ -428,7 +444,7 @@ def test_the_replacement_is_listed_among_the_attribute_properties(
           name: filled
           aggregator: mean
           none_value_replacement: 0.0
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         annotator = pipeline.annotators[0]
         assert isinstance(annotator, PositionScoreAnnotator)
         properties = annotator.build_score_aggregator_documentation(

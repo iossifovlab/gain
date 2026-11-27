@@ -264,6 +264,8 @@ In this example, a small annotation pipeline is defined directly as a YAML strin
 
 .. code-block:: python
 
+    import pathlib
+
     from gain.annotation.annotation_factory import load_pipeline_from_yaml
     from gain.annotation.annotatable import VCFAllele
 
@@ -271,7 +273,7 @@ In this example, a small annotation pipeline is defined directly as a YAML strin
     pipeline = load_pipeline_from_yaml("""
     - effect_annotator:
         gene_models: hg38/gene_models/MANE/1.5
-    """, None)
+    """, None, work_dir=pathlib.Path("annotation_work"))
 
     allele = VCFAllele("chr1", 11796321, "G", "A")
 

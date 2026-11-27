@@ -63,14 +63,10 @@ class AnnotationPipelineImplementation(
         this path does not reach (pinned by
         ``test_rendering_a_page_does_not_open_the_pipeline``).
 
-        It is still named explicitly rather than left to
-        ``build_annotation_pipeline``'s fallback, which is deprecated and due
-        to become an error (#333): ``grr_manage`` renders both pages of every
-        resource, so this caller alone accounted for two deprecation warnings
-        per pipeline resource in every repo-wide run (#507).  A temporary
-        directory scoped to the call, rather than a fixed shared path: a
-        constant under the system temp dir is the shape that made a
-        pipeline's work dir another user's to create (#276, #278).
+        The ``work_dir`` is a temporary directory scoped to the call, rather
+        than a fixed shared path: a constant under the system temp dir is the
+        shape that made a pipeline's work dir another user's to create (#276,
+        #278).
         """
         with tempfile.TemporaryDirectory(
                 prefix="gain-annotation-doc-") as work_dir:

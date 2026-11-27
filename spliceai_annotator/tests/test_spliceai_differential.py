@@ -62,12 +62,15 @@ for _v in VARIANTS:
 @pytest.fixture(scope="session")
 def differential_pipelines(
     spliceai_grr: GenomicResourceRepo,
+    tmp_path_factory: pytest.TempPathFactory,
 ) -> Iterator[dict[int, AnnotationPipeline]]:
     """One opened all-16-attribute pipeline per corpus distance."""
+    work_dir = tmp_path_factory.mktemp("differential_pipelines")
     pipelines = {}
     for distance in DISTANCES:
         pipeline = load_pipeline_from_yaml(
-            make_pipeline_yaml(distance), spliceai_grr)
+            make_pipeline_yaml(distance), spliceai_grr,
+            work_dir=work_dir / f"distance_{distance}")
         pipelines[distance] = pipeline.open()
     yield pipelines
     for pipeline in pipelines.values():

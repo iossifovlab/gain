@@ -66,6 +66,7 @@ def repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
 
 def _pipeline(
     repo: GenomicResourceRepo, attributes: str, *, mode: str = "region",
+    work_dir: pathlib.Path,
 ) -> AnnotationPipeline:
     return load_pipeline_from_yaml(textwrap.dedent(f"""
         - allele_score:
@@ -73,12 +74,13 @@ def _pipeline(
             mode: {mode}
             attributes:
 {textwrap.indent(textwrap.dedent(attributes), " " * 12)}
-        """), repo)
+        """), repo, work_dir=work_dir)
 
 
 @pytest.mark.parametrize("mode", ["region", "allele"])
 def test_a_bool_attribute_naming_no_aggregator_is_refused_at_load(
     repo: GenomicResourceRepo, mode: str,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Refused building the pipeline, not on the first region -- in BOTH modes.
 
@@ -93,7 +95,7 @@ def test_a_bool_attribute_naming_no_aggregator_is_refused_at_load(
         _pipeline(repo, """
             - source: flag
               name: flag
-        """, mode=mode)
+        """, mode=mode, work_dir=tmp_path)
 
     assert str(excinfo.value).endswith(
         "score 'flag' of resource 'alleles' has no default aggregator "
@@ -102,6 +104,7 @@ def test_a_bool_attribute_naming_no_aggregator_is_refused_at_load(
 
 def test_a_bool_attribute_that_names_one_loads_and_answers(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The other side of that boundary: naming one is all it takes.
 
@@ -112,7 +115,7 @@ def test_a_bool_attribute_that_names_one_loads_and_answers(
         - source: flag
           name: flag
           aggregator: bool
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         result = pipeline.annotate(Region("chr1", 10, 16))
 
     assert result == {"flag": True}
@@ -120,6 +123,7 @@ def test_a_bool_attribute_that_names_one_loads_and_answers(
 
 def test_an_unknown_include_attributes_id_is_refused_at_load(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Resolved through the score as the pipeline loads, with the valid names.
 
@@ -130,7 +134,7 @@ def test_an_unknown_include_attributes_id_is_refused_at_load(
         _pipeline(repo, """
             - source: allele
               include_attributes: nope
-        """)
+        """, work_dir=tmp_path)
 
     assert str(excinfo.value).endswith(
         "score 'nope' is not defined by resource 'alleles'; it has "
@@ -139,6 +143,7 @@ def test_an_unknown_include_attributes_id_is_refused_at_load(
 
 def test_a_region_answers_aggregated_values(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The annotator hands the base finished values, keyed by NAME.
 
@@ -153,7 +158,7 @@ def test_a_region_answers_aggregated_values(
           name: as_max
         - source: allele
           name: keys
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         # Entering the pipeline does not open its annotators; annotate()
         # does that lazily, and this test bypasses annotate().
         pipeline.open()
@@ -168,6 +173,7 @@ def test_a_region_answers_aggregated_values(
 
 def test_one_source_asked_twice_answers_twice(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Two aggregators over one source are two answers, keyed by NAME."""
     with _pipeline(repo, """
@@ -177,7 +183,7 @@ def test_one_source_asked_twice_answers_twice(
         - source: freq
           name: as_max
           aggregator: max
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         result = pipeline.annotate(Region("chr1", 10, 16))
 
     assert result == {"as_min": 0.1, "as_max": 0.3}
@@ -185,6 +191,7 @@ def test_one_source_asked_twice_answers_twice(
 
 def test_allele_keys_come_in_first_seen_order(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Ordered, where the old set promised nothing (D2).
 
@@ -197,7 +204,7 @@ def test_allele_keys_come_in_first_seen_order(
           include_attributes:
           - id
           - freq
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         for_region = pipeline.annotate(Region("chr1", 10, 16))
         for_allele = pipeline.annotate(VCFAllele("chr1", 10, "A", "C"))
 
@@ -209,6 +216,7 @@ def test_allele_keys_come_in_first_seen_order(
 
 def test_the_region_path_folds_regions_and_alleles_alike(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Both annotatable shapes that take the region path fold the same way.
 
@@ -219,7 +227,7 @@ def test_the_region_path_folds_regions_and_alleles_alike(
           name: as_max
         - source: allele
           name: keys
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         for_region = pipeline.annotate(Region("chr1", 10, 16))
         for_allele = pipeline.annotate(VCFAllele("chr1", 16, "C", "T"))
         for_nothing = pipeline.annotate(Region("chr1", 100, 200))

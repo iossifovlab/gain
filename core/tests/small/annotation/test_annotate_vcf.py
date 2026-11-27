@@ -1251,6 +1251,7 @@ def test_annotate_vcf_function_basic(
     ]
     pipeline = build_annotation_pipeline(
         pipeline_config, grr,
+        work_dir=tmp_path,
     )
 
     # Test annotate_vcf function
@@ -1288,7 +1289,8 @@ def test_annotate_vcf_function_preserves_bgz_output(
 
     setup_vcf(in_file, in_content)
     grr = build_genomic_resource_repository(file_name=str(grr_file))
-    pipeline = build_annotation_pipeline([{"position_score": "one"}], grr)
+    pipeline = build_annotation_pipeline(
+        [{"position_score": "one"}], grr, work_dir=tmp_path)
     args = _build_annotate_vcf_args()
 
     annotate_vcf(str(in_file), pipeline, str(out_file), args)
@@ -1328,6 +1330,7 @@ def test_annotate_vcf_function_with_batch_mode(
     ]
     pipeline = build_annotation_pipeline(
         pipeline_config, grr,
+        work_dir=tmp_path,
     )
 
     spy = mocker.spy(_VCFBatchSource, "__init__")
@@ -1383,6 +1386,7 @@ def test_annotate_vcf_function_with_region(
     ]
     pipeline = build_annotation_pipeline(
         pipeline_config, grr,
+        work_dir=tmp_path,
     )
 
     # Test annotate_vcf function with region
@@ -1433,6 +1437,7 @@ def test_annotate_vcf_function_with_attributes_to_delete(
     ]
     pipeline = build_annotation_pipeline(
         pipeline_config, grr,
+        work_dir=tmp_path,
     )
 
     # Test annotate_vcf function with attributes to delete
@@ -1480,6 +1485,7 @@ def test_annotate_vcf_function_multiallelic(
     ]
     pipeline = build_annotation_pipeline(
         pipeline_config, grr,
+        work_dir=tmp_path,
     )
 
     # Test annotate_vcf function
@@ -1531,6 +1537,7 @@ def test_annotate_vcf_function_with_compressed_input(
     ]
     pipeline = build_annotation_pipeline(
         pipeline_config, grr,
+        work_dir=tmp_path,
     )
 
     # Test annotate_vcf function with compressed input
@@ -1582,6 +1589,7 @@ def test_annotate_vcf_function_with_compressed_input_output(
     ]
     pipeline = build_annotation_pipeline(
         pipeline_config, grr,
+        work_dir=tmp_path,
     )
 
     # Test annotate_vcf function with compressed input
@@ -1672,7 +1680,8 @@ def _annotate_with_scores(
     out_file = tmp_path / "out.vcf"
     grr = build_genomic_resource_repository(
         file_name=str(annotate_directory_fixture / "grr.yaml"))
-    pipeline = build_annotation_pipeline([{"position_score": "one"}], grr)
+    pipeline = build_annotation_pipeline(
+        [{"position_score": "one"}], grr, work_dir=tmp_path)
     remaining = iter(values)
     mocker.patch.object(
         pipeline, "annotate",

@@ -111,7 +111,9 @@ def test_position_resource_default_annotation(
 
 
 def test_position_score_annotator_all_attributes(
-        position_score_repo: GenomicResourceRepo) -> None:
+    position_score_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
 
     pipeline_config = textwrap.dedent("""
             - position_score:
@@ -122,7 +124,8 @@ def test_position_score_annotator_all_attributes(
                   aggregator: max
             """)
 
-    pipeline = load_pipeline_from_yaml(pipeline_config, position_score_repo)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, position_score_repo, work_dir=tmp_path)
 
     annotator = pipeline.annotators[0]
     assert len(annotator.attributes) == 1
@@ -136,13 +139,16 @@ def test_position_score_annotator_all_attributes(
 
 
 def test_position_score_annotator_empty_default_annotation(
-        position_score_repo: GenomicResourceRepo) -> None:
+    position_score_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
 
     pipeline_config = textwrap.dedent("""
         - position_score: position_score1_empty_default
     """)
 
-    pipeline = load_pipeline_from_yaml(pipeline_config, position_score_repo)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, position_score_repo, work_dir=tmp_path)
 
     annotator = pipeline.annotators[0]
     assert len(annotator.attributes) == 0
@@ -150,7 +156,9 @@ def test_position_score_annotator_empty_default_annotation(
     assert all(attr_desc.is_default is False for attr_desc in attr_descs)
 
 
-def test_position_score_annotator_default_annotation_specs() -> None:
+def test_position_score_annotator_default_annotation_specs(
+    tmp_path: pathlib.Path,
+) -> None:
     repo = build_inmemory_test_repository({
         "score": {
             "genomic_resource.yaml": """\
@@ -176,7 +184,7 @@ def test_position_score_annotator_default_annotation_specs() -> None:
     })
 
     pipeline = load_pipeline_from_yaml(
-        "- position_score: score\n", repo)
+        "- position_score: score\n", repo, work_dir=tmp_path)
     specs = pipeline.annotators[0].get_attribute_specs()
 
     assert specs["s1"].is_default is True
@@ -220,8 +228,12 @@ def test_position_score_annotator_default_annotation_specs() -> None:
 
 ])
 def test_position_score_annotator(
-        allele: tuple, pos_aggregator: str, expected: float,
-        position_score_repo: GenomicResourceRepo) -> None:
+    allele: tuple,
+    pos_aggregator: str,
+    expected: float,
+    position_score_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
 
     annotatable = VCFAllele(*allele)
 
@@ -234,7 +246,8 @@ def test_position_score_annotator(
                   aggregator: {pos_aggregator}
             """)
 
-    pipeline = load_pipeline_from_yaml(pipeline_config, position_score_repo)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, position_score_repo, work_dir=tmp_path)
 
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(annotatable)
@@ -244,7 +257,9 @@ def test_position_score_annotator(
 
 
 def test_position_annotator_info(
-        position_score_repo: GenomicResourceRepo) -> None:
+    position_score_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     pipeline_config = textwrap.dedent("""
             - position_score:
                 resource_id: position_score1
@@ -253,7 +268,8 @@ def test_position_annotator_info(
                   name: test100
             """)
 
-    pipeline = load_pipeline_from_yaml(pipeline_config, position_score_repo)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, position_score_repo, work_dir=tmp_path)
 
     pipeline_info = pipeline.get_info()
     assert len(pipeline_info) == 1
@@ -277,20 +293,25 @@ def test_position_annotator_info(
 
 
 def test_position_default_annotator_schema(
-        position_score_repo: GenomicResourceRepo) -> None:
+    position_score_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     pipeline_config = textwrap.dedent("""
             - position_score:
                 resource_id: position_score1
             """)
 
-    pipeline = load_pipeline_from_yaml(pipeline_config, position_score_repo)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, position_score_repo, work_dir=tmp_path)
 
     attributes = pipeline.get_attributes()
     assert [att.name for att in attributes] == ["test100", "t1", "t2"]
 
 
 def test_position_annotator_schema_one_source_two_dest_schema(
-        position_score_repo: GenomicResourceRepo) -> None:
+    position_score_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     pipeline_config = textwrap.dedent("""
             - position_score:
                 resource_id: position_score1
@@ -302,7 +323,8 @@ def test_position_annotator_schema_one_source_two_dest_schema(
                   aggregator: max
             """)
 
-    pipeline = load_pipeline_from_yaml(pipeline_config, position_score_repo)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, position_score_repo, work_dir=tmp_path)
 
     assert len(pipeline.get_info()) == 1
     annotator_info = pipeline.get_info()[0]
@@ -326,7 +348,9 @@ def test_position_annotator_schema_one_source_two_dest_schema(
 
 
 def test_position_annotator_join_aggregation(
-        position_score_repo: GenomicResourceRepo) -> None:
+    position_score_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     pipeline_config = textwrap.dedent("""
             - position_score:
                 resource_id: position_score1
@@ -337,7 +361,8 @@ def test_position_annotator_join_aggregation(
             """)
     print(pipeline_config)
 
-    pipeline = load_pipeline_from_yaml(pipeline_config, position_score_repo)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, position_score_repo, work_dir=tmp_path)
     result = None
     with pipeline.open() as work_pipeline:
         allele = ("1", 14970, "CC", "C")
@@ -349,7 +374,9 @@ def test_position_annotator_join_aggregation(
 
 
 def test_position_annotator_schema_one_source_two_dest_annotate(
-        position_score_repo: GenomicResourceRepo) -> None:
+    position_score_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     pipeline_config = textwrap.dedent("""
             - position_score:
                 resource_id: position_score1
@@ -362,7 +389,8 @@ def test_position_annotator_schema_one_source_two_dest_annotate(
                   aggregator: max
             """)
 
-    pipeline = load_pipeline_from_yaml(pipeline_config, position_score_repo)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, position_score_repo, work_dir=tmp_path)
 
     result = None
     with pipeline.open() as work_pipeline:
@@ -379,7 +407,9 @@ def test_position_annotator_schema_one_source_two_dest_annotate(
 
 
 def test_position_score_annotator_attributes_with_aggr_fails(
-        position_score_repo: GenomicResourceRepo) -> None:
+    position_score_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     with pytest.raises(
         AnnotationConfigurationError,
         match="aggregator",
@@ -392,11 +422,13 @@ def test_position_score_annotator_attributes_with_aggr_fails(
                   name: test100min
                   aggregator: min
                   position_aggregator: mean
-        """, position_score_repo)
+        """, position_score_repo, work_dir=tmp_path)
 
 
 def test_position_score_annotator_invalid_aggregator(
-        position_score_repo: GenomicResourceRepo) -> None:
+    position_score_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     with pytest.raises(
         AnnotationConfigurationError,
         match="minn",
@@ -408,11 +440,13 @@ def test_position_score_annotator_invalid_aggregator(
                 - source: test100way
                   name: test100min
                   aggregator: minn
-        """, position_score_repo)
+        """, position_score_repo, work_dir=tmp_path)
 
 
 def test_position_annotator_documentation(
-        position_score_repo: GenomicResourceRepo) -> None:
+    position_score_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
     pipeline_config = textwrap.dedent("""
             - position_score:
                 resource_id: position_score1
@@ -427,7 +461,8 @@ def test_position_annotator_documentation(
                   name: test100default
             """)
 
-    pipeline = load_pipeline_from_yaml(pipeline_config, position_score_repo)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, position_score_repo, work_dir=tmp_path)
 
     att1 = pipeline.get_attribute_info("test100min")
     assert att1 is not None
@@ -488,7 +523,8 @@ def test_position_annotator_add_chrom_prefix_tabix_table(
                   aggregator: min
             """)
 
-    pipeline = load_pipeline_from_yaml(pipeline_config, repo)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, repo, work_dir=tmp_path)
     with pipeline.open() as work_pipeline:
         annotatable = VCFAllele(*allele)
         result = work_pipeline.annotate(annotatable)
@@ -503,7 +539,7 @@ def test_position_annotator_add_chrom_prefix_tabix_table(
     (("chr1", 31, "C", "A"), 0.3),
 ])
 def test_position_annotator_add_chrom_prefix_inmemory_table(
-        allele: tuple, expected: float) -> None:
+        allele: tuple, expected: float, tmp_path: pathlib.Path) -> None:
 
     repo = build_inmemory_test_repository({
         "position_score1": {
@@ -538,7 +574,8 @@ def test_position_annotator_add_chrom_prefix_inmemory_table(
                   aggregator: min
             """)
 
-    pipeline = load_pipeline_from_yaml(pipeline_config, repo)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, repo, work_dir=tmp_path)
     with pipeline.open() as work_pipeline:
         annotatable = VCFAllele(*allele)
         result = work_pipeline.annotate(annotatable)
@@ -598,7 +635,7 @@ def test_bigwig_annotation(
         - position_score: bigwig_score
     """)
 
-    pipeline = load_pipeline_from_yaml(pipeline_config, grr)
+    pipeline = load_pipeline_from_yaml(pipeline_config, grr, work_dir=tmp_path)
     with pipeline.open() as work_pipeline:
         annotatable = Position(*allele)
         result = work_pipeline.annotate(annotatable)
@@ -639,11 +676,13 @@ def _position_score_repo(default_annotation: str) -> GenomicResourceRepo:
     })
 
 
-def test_a_resource_default_description_is_on_the_attribute_spec() -> None:
+def test_a_resource_default_description_is_on_the_attribute_spec(
+    tmp_path: pathlib.Path,
+) -> None:
     repo = _position_score_repo(
         "  - {source: s1, description: the resource description}")
     pipeline = load_pipeline_from_yaml(
-        "- position_score: PS", repo)
+        "- position_score: PS", repo, work_dir=tmp_path)
 
     (attribute,) = pipeline.annotators[0].attributes
 
@@ -652,6 +691,7 @@ def test_a_resource_default_description_is_on_the_attribute_spec() -> None:
 
 
 def test_a_resource_default_internal_applies_to_a_listed_position_attribute(
+    tmp_path: pathlib.Path,
 ) -> None:
     repo = _position_score_repo("  - {source: s1, internal: true}")
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
@@ -659,7 +699,7 @@ def test_a_resource_default_internal_applies_to_a_listed_position_attribute(
             resource_id: PS
             attributes:
             - source: s1
-        """), repo)
+        """), repo, work_dir=tmp_path)
 
     (attribute,) = pipeline.annotators[0].attributes
 

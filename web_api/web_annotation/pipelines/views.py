@@ -1025,7 +1025,8 @@ class PipelineValidation(AsyncAnnotationBaseView):
         build_delay = _load_test_build_delay()
         if build_delay > 0.0:
             time.sleep(build_delay)
-        load_pipeline_from_yaml(content, grr)
+        load_pipeline_from_yaml(
+            content, grr, work_dir=Path(settings.PIPELINE_WORK_DIR))
 
 
 class LoadPipeline(AnnotationBaseView):

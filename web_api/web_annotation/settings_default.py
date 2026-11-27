@@ -41,12 +41,10 @@ JOB_INPUT_STORAGE_DIR = f"{DATA_STORAGE_DIR}/job-inputs"
 # Subdir to store results of annotation in
 JOB_RESULT_STORAGE_DIR = f"{DATA_STORAGE_DIR}/job-results"
 # Scratch dir for annotators built by the pipeline cache (the editor /
-# pipeline_status path). gain's build_annotation_pipeline defaults work_dir to
-# a RELATIVE Path("./work") -- a CLI convention, since annotate_* run in the
-# user's own writable cwd. A server does not have one: "./work" resolves
-# against the process cwd, which is root-owned in the container, so every
-# pipeline build EPERMs as a non-root uid (gain#276). The job path already
-# passes an explicit work_dir (tasks.py); this gives the cache one too.
+# pipeline_status path) and by the pipeline validation build. It sits under
+# the data storage dir because the process cwd is root-owned in the
+# container, so a path under it EPERMs as a non-root uid (gain#276). The job
+# path passes its own work_dir (tasks.py).
 PIPELINE_WORK_DIR = f"{DATA_STORAGE_DIR}/pipeline-work"
 
 PIPELINES_STORAGE_DIR = f"{DATA_STORAGE_DIR}/pipelines"

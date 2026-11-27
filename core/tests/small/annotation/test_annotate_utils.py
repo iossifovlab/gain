@@ -2,6 +2,7 @@
 import argparse
 import os
 import pathlib
+import textwrap
 from unittest.mock import MagicMock
 
 import pytest
@@ -12,8 +13,12 @@ from gain.annotation.annotate_utils import (
     check_resource_locality,
     find_nonlocal_resources,
     handle_default_args,
+    maybe_wrap_reannotation,
 )
+from gain.annotation.annotation_factory import build_annotation_pipeline
+from gain.annotation.annotation_pipeline import ReannotationPipeline
 from gain.genomic_resources.cached_repository import CachingProtocol
+from gain.genomic_resources.repository import GenomicResourceRepo
 
 
 def _resource(
@@ -328,3 +333,43 @@ def test_keep_work_dir_flag(argv: list[str], *, expected: bool) -> None:
     add_common_annotation_arguments(parser)
     args = vars(parser.parse_args(argv))
     assert args["keep_work_dir"] is expected
+
+
+def test_maybe_wrap_reannotation_builds_previous_under_reannotate_subdir(
+    annotation_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
+) -> None:
+    previous_config = tmp_path / "previous.yaml"
+    previous_config.write_text(textwrap.dedent("""
+        - position_score:
+            resource_id: one
+            attributes:
+            - source: score
+              name: score_1
+        - position_score:
+            resource_id: four
+            attributes:
+            - source: score
+              name: score_4
+        """))
+    work_dir = tmp_path / "work"
+    pipeline = build_annotation_pipeline(
+        [{"position_score": {
+            "resource_id": "one",
+            "attributes": [{"source": "score", "name": "score_1"}]}}],
+        annotation_grr, work_dir=work_dir / "new")
+    args = {
+        "reannotate": str(previous_config),
+        "full_reannotation": False,
+        "work_dir": str(work_dir),
+    }
+
+    wrapped = maybe_wrap_reannotation(pipeline, args, annotation_grr)
+
+    assert isinstance(wrapped, ReannotationPipeline)
+    previous_annotators = wrapped.pipeline_previous.annotators
+    assert len(previous_annotators) == 2
+    for annotator in previous_annotators:
+        params = annotator.get_info().parameters.as_dict()
+        assert pathlib.Path(params["work_dir"]).is_relative_to(
+            work_dir / "reannotate")

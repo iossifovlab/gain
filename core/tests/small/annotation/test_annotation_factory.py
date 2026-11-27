@@ -1,7 +1,6 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
 import inspect
 import pathlib
-from collections.abc import Iterator
 
 import pytest
 from gain.annotation import annotation_factory
@@ -10,11 +9,10 @@ from gain.annotation.annotation_factory import (
     build_annotation_pipeline,
     load_pipeline_from_file,
     load_pipeline_from_file_or_resource,
+    load_pipeline_from_yaml,
 )
 from gain.annotation.annotator_base import AnnotatorBase
 from gain.genomic_resources.repository import GenomicResourceRepo
-
-_FACTORY_LOGGER = "gain.annotation.annotation_factory"
 
 #: Keyword arguments every pipeline builder must accept and forward.
 _FORWARDED_KEYWORDS = ("work_dir", "allow_repeated_attributes")
@@ -46,81 +44,33 @@ def _pipeline_builder_names() -> list[str]:
     )
 
 
-@pytest.fixture
-def reset_default_work_dir() -> Iterator[None]:
-    """Isolate the memoized per-process default work dir between tests."""
-    annotation_factory._DEFAULT_WORK_DIR = None
-    yield
-    annotation_factory._DEFAULT_WORK_DIR = None
-
-
-def test_build_pipeline_default_work_dir_is_absolute(
+def test_build_pipeline_without_work_dir_is_refused(
     annotation_grr: GenomicResourceRepo,
-    reset_default_work_dir: None,
 ) -> None:
-    pipeline = build_annotation_pipeline(
-        [{"position_score": "one"}], annotation_grr)
-
-    annotator = pipeline.annotators[0]
-    assert isinstance(annotator, AnnotatorBase)
-    assert annotator.work_dir.is_absolute()
-    assert not str(annotator.work_dir).startswith("work")
+    with pytest.raises(TypeError, match="work_dir"):
+        build_annotation_pipeline(  # type: ignore[call-arg]
+            [{"position_score": "one"}], annotation_grr)
 
 
-def test_build_pipeline_warns_once_for_multiple_annotators(
+def test_load_pipeline_from_yaml_without_work_dir_is_refused(
     annotation_grr: GenomicResourceRepo,
-    reset_default_work_dir: None,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    config = [
-        {"position_score": {
-            "resource_id": "one",
-            "attributes": [{"source": "score", "name": "score_1"}]}},
-        {"position_score": {
-            "resource_id": "four",
-            "attributes": [{"source": "score", "name": "score_4"}]}},
-    ]
-    with caplog.at_level("WARNING", logger=_FACTORY_LOGGER):
-        pipeline = build_annotation_pipeline(config, annotation_grr)
-
-    assert len(pipeline.annotators) == 2
-    default_work_dir_warnings = [
-        rec for rec in caplog.records
-        if rec.name == _FACTORY_LOGGER
-        and "no `work_dir` passed" in rec.message
-    ]
-    assert len(default_work_dir_warnings) == 1
-
-    # both annotators live under the same memoized temp root
-    root = annotation_factory._get_default_work_dir()
-    for annotator in pipeline.annotators:
-        assert isinstance(annotator, AnnotatorBase)
-        assert root in annotator.work_dir.parents
+    with pytest.raises(TypeError, match="work_dir"):
+        load_pipeline_from_yaml(  # type: ignore[call-arg]
+            "- position_score: one", annotation_grr)
 
 
-def test_build_pipeline_explicit_work_dir_used_verbatim_no_warning(
+def test_build_pipeline_explicit_work_dir_used_verbatim(
     annotation_grr: GenomicResourceRepo,
-    reset_default_work_dir: None,
     tmp_path: pathlib.Path,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     explicit = tmp_path / "my_work"
-    with caplog.at_level("WARNING", logger=_FACTORY_LOGGER):
-        pipeline = build_annotation_pipeline(
-            [{"position_score": "one"}], annotation_grr, work_dir=explicit)
+    pipeline = build_annotation_pipeline(
+        [{"position_score": "one"}], annotation_grr, work_dir=explicit)
 
     annotator = pipeline.annotators[0]
     assert isinstance(annotator, AnnotatorBase)
     assert annotator.work_dir == explicit / "A0_position_score"
-
-    default_work_dir_warnings = [
-        rec for rec in caplog.records
-        if rec.name == _FACTORY_LOGGER
-        and "no `work_dir` passed" in rec.message
-    ]
-    assert default_work_dir_warnings == []
-    # the memo is never minted when an explicit work_dir is supplied
-    assert annotation_factory._DEFAULT_WORK_DIR is None
 
 
 @pytest.mark.parametrize(
@@ -139,7 +89,7 @@ def test_load_pipeline_from_file(
             resource_id: one
         """)
     pipeline = load_pipeline_from_file(
-        str(pipeline_filename), annotation_grr)
+        str(pipeline_filename), annotation_grr, work_dir=tmp_path)
     assert len(pipeline.annotators) == 1
 
 
@@ -154,15 +104,16 @@ def test_load_pipeline_from_file_or_resource_file_branch(
             resource_id: one
         """)
     pipeline = load_pipeline_from_file_or_resource(
-        str(pipeline_filename), annotation_grr)
+        str(pipeline_filename), annotation_grr, work_dir=tmp_path)
     assert len(pipeline.annotators) == 1
 
 
 def test_load_pipeline_from_file_or_resource_grr_id_branch(
     annotation_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_file_or_resource(
-        "res_pipeline", annotation_grr)
+        "res_pipeline", annotation_grr, work_dir=tmp_path)
     assert len(pipeline.annotators) == 1
 
 
@@ -184,10 +135,9 @@ def test_pipeline_builders_all_accept_the_forwarded_keywords(
 ) -> None:
     """Every builder must at least *take* what its siblings forward.
 
-    A builder that omits one of these does not fail loudly -- it silently
-    falls back to the deprecated default work dir, or silently loses the
-    caller's repeated-attribute handling.  Whoever adds the next builder gets
-    told here rather than by a stray warning in a repo-wide run.
+    A builder that omits one of these cannot forward the caller's work dir,
+    or silently loses the caller's repeated-attribute handling.  Whoever adds
+    the next builder gets told here rather than by a failed call.
 
     Accepting is all this pins; that the value is then *forwarded* is pinned
     behaviourally, per branch, by the tests further down.
@@ -209,9 +159,7 @@ def test_pipeline_builders_all_accept_the_forwarded_keywords(
 
 def test_load_pipeline_from_file_or_resource_grr_id_branch_work_dir(
     annotation_grr: GenomicResourceRepo,
-    reset_default_work_dir: None,
     tmp_path: pathlib.Path,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """An explicit work dir survives the resource branch, not just the file one.
 
@@ -220,21 +168,12 @@ def test_load_pipeline_from_file_or_resource_grr_id_branch_work_dir(
     branch inheriting its job does not.
     """
     explicit = tmp_path / "resource_work"
-    with caplog.at_level("WARNING", logger=_FACTORY_LOGGER):
-        pipeline = load_pipeline_from_file_or_resource(
-            "res_pipeline", annotation_grr, work_dir=explicit)
+    pipeline = load_pipeline_from_file_or_resource(
+        "res_pipeline", annotation_grr, work_dir=explicit)
 
     annotator = pipeline.annotators[0]
     assert isinstance(annotator, AnnotatorBase)
     assert annotator.work_dir == explicit / "A0_position_score"
-
-    default_work_dir_warnings = [
-        rec for rec in caplog.records
-        if rec.name == _FACTORY_LOGGER
-        and "no `work_dir` passed" in rec.message
-    ]
-    assert default_work_dir_warnings == []
-    assert annotation_factory._DEFAULT_WORK_DIR is None
 
 
 def test_load_pipeline_from_file_or_resource_grr_id_branch_repeated(
@@ -263,14 +202,17 @@ def test_load_pipeline_from_file_or_resource_grr_id_branch_repeated(
 
 def test_load_pipeline_from_file_or_resource_missing(
     annotation_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     with pytest.raises(ValueError, match="neither a valid file path"):
         load_pipeline_from_file_or_resource(
-            "definitely_not_a_path_or_resource", annotation_grr)
+            "definitely_not_a_path_or_resource", annotation_grr,
+            work_dir=tmp_path)
 
 
 def test_load_pipeline_from_file_or_resource_wrong_type(
     annotation_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The refusal says which resource was wrong and what it actually is.
 
@@ -279,7 +221,8 @@ def test_load_pipeline_from_file_or_resource_wrong_type(
     leaves the reader to work out which of them it means.
     """
     with pytest.raises(TypeError) as excinfo:
-        load_pipeline_from_file_or_resource("one", annotation_grr)
+        load_pipeline_from_file_or_resource(
+            "one", annotation_grr, work_dir=tmp_path)
 
     message = str(excinfo.value)
     assert "annotation_pipeline" in message

@@ -64,22 +64,24 @@ def many_repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
 
 def _pipeline(
     repo: GenomicResourceRepo, attributes: str,
+    *, work_dir: pathlib.Path,
 ) -> AnnotationPipeline:
     return load_pipeline_from_yaml(textwrap.dedent(f"""
         - allele_score:
             resource_id: alleles
             attributes:
 {textwrap.indent(textwrap.dedent(attributes), " " * 12)}
-        """), repo)
+        """), repo, work_dir=work_dir)
 
 
 def test_many_folds_the_rows_with_the_float_default(
     many_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """``max`` is the float class default: 0.4 of the two rows' 0.2, 0.4."""
     with _pipeline(many_repo, """
         - source: freq
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         result = pipeline.annotate(TWO_ROWS)
 
     assert result == {"freq": 0.4}
@@ -87,11 +89,12 @@ def test_many_folds_the_rows_with_the_float_default(
 
 def test_many_folds_with_the_resource_per_score_default(
     many_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """``other`` declares ``min`` in the resource: 0.5 of 0.7, 0.5."""
     with _pipeline(many_repo, """
         - source: other
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         result = pipeline.annotate(TWO_ROWS)
 
     assert result == {"other": 0.5}
@@ -99,6 +102,7 @@ def test_many_folds_with_the_resource_per_score_default(
 
 def test_many_folds_with_the_attribute_aggregator_over_the_default(
     many_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """An attribute's own aggregator wins over the resource's ``min``."""
     with _pipeline(many_repo, """
@@ -107,7 +111,7 @@ def test_many_folds_with_the_attribute_aggregator_over_the_default(
         - source: freq
           name: freq_min
           aggregator: min
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         result = pipeline.annotate(TWO_ROWS)
 
     assert result == {"other": 0.7, "freq_min": 0.2}
@@ -115,6 +119,7 @@ def test_many_folds_with_the_attribute_aggregator_over_the_default(
 
 def test_many_answers_a_one_row_allele_and_an_absent_one(
     many_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """One row is folded too; an allele no row holds is ``None``.
 
@@ -124,7 +129,7 @@ def test_many_answers_a_one_row_allele_and_an_absent_one(
     with _pipeline(many_repo, """
         - source: freq
         - source: id
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         one_row = pipeline.annotate(ONE_ROW)
         absent = pipeline.annotate(VCFAllele("chr1", 10, "A", "T"))
 
@@ -134,6 +139,7 @@ def test_many_answers_a_one_row_allele_and_an_absent_one(
 
 def test_many_with_every_row_filtered_out_is_an_empty_selection(
     many_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Each aggregator answers for no rows; not the ``None`` of absence.
 
@@ -150,7 +156,7 @@ def test_many_with_every_row_filtered_out_is_an_empty_selection(
               name: freqs
               aggregator: list
             - source: allele
-        """), many_repo) as pipeline:
+        """), many_repo, work_dir=tmp_path) as pipeline:
         filtered = pipeline.annotate(TWO_ROWS)
         absent = pipeline.annotate(VCFAllele("chr1", 10, "A", "T"))
 
@@ -160,12 +166,13 @@ def test_many_with_every_row_filtered_out_is_an_empty_selection(
 
 def test_many_answers_one_allele_key_for_rows_that_agree(
     many_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Two rows, one key: the suffixed ``id`` is the same on both."""
     with _pipeline(many_repo, """
         - source: allele
           include_attributes: id
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         result = pipeline.annotate(TWO_ROWS)
 
     assert result == {"allele": ["chr1:10:A:C:ac"]}
@@ -173,12 +180,13 @@ def test_many_answers_one_allele_key_for_rows_that_agree(
 
 def test_many_answers_a_key_per_differing_suffix(
     many_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """``freq`` differs across the two rows, so each row is its own key."""
     with _pipeline(many_repo, """
         - source: allele
           include_attributes: freq
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         result = pipeline.annotate(TWO_ROWS)
 
     assert result == {"allele": ["chr1:10:A:C:0.2", "chr1:10:A:C:0.4"]}
@@ -186,12 +194,13 @@ def test_many_answers_a_key_per_differing_suffix(
 
 def test_many_counts_one_allele_key_for_two_rows(
     many_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """``count`` on ``allele`` counts the allele keys, not the rows."""
     with _pipeline(many_repo, """
         - source: allele
           aggregator: count
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         result = pipeline.annotate(TWO_ROWS)
 
     assert result == {"allele": 1}
@@ -199,6 +208,7 @@ def test_many_counts_one_allele_key_for_two_rows(
 
 def test_many_counts_no_allele_key_when_the_filter_rejects_every_row(
     many_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The rows are an empty selection, so ``count`` answers ``0``."""
     with load_pipeline_from_yaml(textwrap.dedent("""
@@ -208,7 +218,7 @@ def test_many_counts_no_allele_key_when_the_filter_rejects_every_row(
             attributes:
             - source: allele
               aggregator: count
-        """), many_repo) as pipeline:
+        """), many_repo, work_dir=tmp_path) as pipeline:
         result = pipeline.annotate(TWO_ROWS)
 
     assert result == {"allele": 0}
@@ -216,13 +226,14 @@ def test_many_counts_no_allele_key_when_the_filter_rejects_every_row(
 
 def test_many_refuses_a_bool_attribute_naming_no_aggregator_at_load(
     many_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The exact match folds on ``many``, so the refusal names the attribute.
     """
     with pytest.raises(AnnotationConfigurationError) as excinfo:
         _pipeline(many_repo, """
             - source: flag
-        """)
+        """, work_dir=tmp_path)
 
     assert str(excinfo.value).endswith(
         "score 'flag' of resource 'alleles' has no default aggregator "
@@ -255,6 +266,7 @@ def one_repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
 
 def test_one_answers_the_bare_row_values(
     one_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """A substitution and an indel with a row get that row, unfolded.
 
@@ -267,7 +279,7 @@ def test_one_answers_the_bare_row_values(
         - source: id
         - source: allele
           include_attributes: id
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         substitution = pipeline.annotate(VCFAllele("chr1", 10, "A", "C"))
         indel = pipeline.annotate(VCFAllele("chr1", 12, "G", "GT"))
         no_row = pipeline.annotate(VCFAllele("chr1", 12, "G", "GA"))
@@ -281,6 +293,7 @@ def test_one_answers_the_bare_row_values(
 
 def test_one_suffixes_the_key_with_a_score_that_is_no_attribute(
     one_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The key's suffix is read off the row even when nothing else reads it.
 
@@ -291,7 +304,7 @@ def test_one_suffixes_the_key_with_a_score_that_is_no_attribute(
         - source: freq
         - source: allele
           include_attributes: id
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         result = pipeline.annotate(VCFAllele("chr1", 10, "A", "C"))
 
     assert result == {"freq": 0.2, "allele": ["chr1:10:A:C:ac"]}
@@ -299,6 +312,7 @@ def test_one_suffixes_the_key_with_a_score_that_is_no_attribute(
 
 def test_a_row_starting_before_pos_is_not_matched(
     one_repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """``1:100 AA>A`` spans 101, yet ``1:101 AA>A`` is not that allele.
 
@@ -306,7 +320,7 @@ def test_a_row_starting_before_pos_is_not_matched(
     """
     with _pipeline(one_repo, """
         - source: freq
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         own = pipeline.annotate(VCFAllele("chr1", 100, "AA", "A"))
         shifted = pipeline.annotate(VCFAllele("chr1", 101, "AA", "A"))
 

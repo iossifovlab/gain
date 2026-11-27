@@ -32,6 +32,8 @@ annotation is pinned here, at the end, because it is the half of the
 advice a holder actually notices: following it keeps an indel's
 ``np_score``-era region fold (gain#1748).
 """
+import pathlib
+
 import pytest
 from gain.annotation.annotatable import VCFAllele
 from gain.annotation.annotation_config import (
@@ -121,6 +123,7 @@ def test_building_an_implementation_from_a_np_score_resource_guides_too(
 
 
 def test_an_annotation_pipeline_naming_a_np_score_resource_is_guided_too(
+    tmp_path: pathlib.Path,
 ) -> None:
     """The seam a user is most likely to meet, and the easiest to regress.
 
@@ -138,7 +141,8 @@ def test_an_annotation_pipeline_naming_a_np_score_resource_is_guided_too(
 
     with pytest.raises(AnnotationConfigurationError) as excinfo:
         load_pipeline_from_yaml(
-            "- allele_score:\n    resource_id: retired\n", repo)
+            "- allele_score:\n    resource_id: retired\n", repo,
+            work_dir=tmp_path)
 
     # Compared whole, and only here: this is the one test whose resource
     # has an id (the others build a bare resource, whose id is empty), so
@@ -195,7 +199,9 @@ def _migrated_as_the_refusal_advises(*, with_mode_key: bool) -> dict:
     }
 
 
-def _annotate_the_deletion(resource: dict) -> object:
+def _annotate_the_deletion(
+    resource: dict, *, work_dir: pathlib.Path,
+) -> object:
     repo = build_inmemory_test_repository({"migrated": resource})
     pipeline = load_pipeline_from_yaml("""
         - allele_score:
@@ -203,13 +209,15 @@ def _annotate_the_deletion(resource: dict) -> object:
             attributes:
             - source: cadd_raw
               aggregator: max
-    """, repo)
+    """, repo, work_dir=work_dir)
     with pipeline.open() as work_pipeline:
         annotation = work_pipeline.annotate(VCFAllele("1", 10, "AT", "A"))
     return annotation["cadd_raw"]
 
 
-def test_the_advised_migration_keeps_np_score_indel_annotation() -> None:
+def test_the_advised_migration_keeps_np_score_indel_annotation(
+    tmp_path: pathlib.Path,
+) -> None:
     """Following the refusal's advice keeps what ``np_score`` answered.
 
     A ``np_score`` resource read in substitutions mode, and its annotator
@@ -219,14 +227,18 @@ def test_the_advised_migration_keeps_np_score_indel_annotation() -> None:
     gives it.
     """
     assert _annotate_the_deletion(
-        _migrated_as_the_refusal_advises(with_mode_key=True)) == 0.03
+        _migrated_as_the_refusal_advises(with_mode_key=True),
+        work_dir=tmp_path) == 0.03
 
 
-def test_a_bare_rename_changes_the_indel_answer() -> None:
+def test_a_bare_rename_changes_the_indel_answer(
+    tmp_path: pathlib.Path,
+) -> None:
     """The control for the test above: the mode key is what keeps it.
 
     Swapping only the type string reads in alleles mode, which matches the
     deletion exactly -- the silent change the refusal warns about.
     """
     assert _annotate_the_deletion(
-        _migrated_as_the_refusal_advises(with_mode_key=False)) == 0.01
+        _migrated_as_the_refusal_advises(with_mode_key=False),
+        work_dir=tmp_path) == 0.01

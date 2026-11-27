@@ -1,4 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613,R0917
+import pathlib
 import textwrap
 
 import pytest
@@ -297,6 +298,7 @@ def test_spliceai_padding(
 
 def test_spliceai_annotate_renamed_attribute(
     spliceai_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - spliceai_annotator:
@@ -306,7 +308,7 @@ def test_spliceai_annotate_renamed_attribute(
             attributes:
             - name: my_delta
               source: delta_score
-    """), spliceai_grr)
+    """), spliceai_grr, work_dir=tmp_path)
     with pipeline.open() as p:
         result = p.annotate(VCFAllele("10", 94077, "A", "C"))
     assert "my_delta" in result
@@ -317,6 +319,7 @@ def test_spliceai_annotate_renamed_attribute(
 
 def test_spliceai_batch_annotate_renamed_attribute(
     spliceai_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(textwrap.dedent("""
         - spliceai_annotator:
@@ -326,7 +329,7 @@ def test_spliceai_batch_annotate_renamed_attribute(
             attributes:
             - name: my_delta
               source: delta_score
-    """), spliceai_grr)
+    """), spliceai_grr, work_dir=tmp_path)
     with pipeline.open() as p:
         results = p.batch_annotate([VCFAllele("10", 94077, "A", "C")])
     assert "my_delta" in results[0]
@@ -345,7 +348,7 @@ _LOSS_ON_BOUNDARY_MASKED = "T|TUBB8|0.01|0.00|0.15|0.62|-2|110|-190|0"
 
 
 def _masking_pipeline(
-    grr: GenomicResourceRepo, mask: str,
+    grr: GenomicResourceRepo, mask: str, *, work_dir: pathlib.Path,
 ) -> AnnotationPipeline:
     return load_pipeline_from_yaml(textwrap.dedent(f"""
         - spliceai_annotator:
@@ -356,14 +359,16 @@ def _masking_pipeline(
             attributes:
             - DS_MAX
             - delta_score
-    """), grr)
+    """), grr, work_dir=work_dir)
 
 
 @pytest.fixture(scope="module")
 def spliceai_masking_pipeline(
     spliceai_grr: GenomicResourceRepo,
+    tmp_path_factory: pytest.TempPathFactory,
 ) -> AnnotationPipeline:
-    return _masking_pipeline(spliceai_grr, "1")
+    return _masking_pipeline(
+        spliceai_grr, "1", work_dir=tmp_path_factory.mktemp("masking"))
 
 
 def test_spliceai_mask_zeroes_a_gain_on_the_annotated_splice_site(
@@ -414,9 +419,10 @@ def test_spliceai_mask_config_values(
     spliceai_grr: GenomicResourceRepo,
     mask: str,
     expected: str,
+    tmp_path: pathlib.Path,
 ) -> None:
     # YAML booleans are accepted; an out-of-range value falls back to 0.
-    pipeline = _masking_pipeline(spliceai_grr, mask)
+    pipeline = _masking_pipeline(spliceai_grr, mask, work_dir=tmp_path)
     with pipeline.open() as p:
         result = p.annotate(_GAIN_ON_BOUNDARY)
     assert result["delta_score"] == expected
@@ -425,15 +431,17 @@ def test_spliceai_mask_config_values(
 def test_spliceai_mask_out_of_range_warns(
     spliceai_grr: GenomicResourceRepo,
     caplog: pytest.LogCaptureFixture,
+    tmp_path: pathlib.Path,
 ) -> None:
     with caplog.at_level("WARNING"):
-        _masking_pipeline(spliceai_grr, "2")
+        _masking_pipeline(spliceai_grr, "2", work_dir=tmp_path)
     assert "mask 2 is out of range" in caplog.text
 
 
 def test_spliceai_annotator_genomeless_preamble_uses_the_context(
     mocker: pytest_mock.MockerFixture,
     spliceai_grr: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The gain#1055 chain, reached through this plugin's annotator.
 
@@ -481,7 +489,7 @@ def test_spliceai_annotator_genomeless_preamble_uses_the_context(
         "gain.annotation.utils.get_genomic_context",
     ).return_value = context
 
-    pipeline = load_pipeline_from_yaml(config, spliceai_grr)
+    pipeline = load_pipeline_from_yaml(config, spliceai_grr, work_dir=tmp_path)
 
     annotator = pipeline.annotators[0]
     assert annotator.resource_ids == {genome_id, gene_models}
@@ -489,6 +497,7 @@ def test_spliceai_annotator_genomeless_preamble_uses_the_context(
 
 def test_spliceai_annotator_requires_gene_models_resource(
     mocker: pytest_mock.MockerFixture,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The plugin reports the shared helper's missing-gene-models error.
 
@@ -517,4 +526,5 @@ def test_spliceai_annotator_requires_gene_models_resource(
                 - spliceai_annotator: {}
                 """),
             empty_repo,
+            work_dir=tmp_path,
         )

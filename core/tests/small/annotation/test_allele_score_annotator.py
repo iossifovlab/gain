@@ -76,7 +76,8 @@ def annotation_pipeline(tmp_path: pathlib.Path) -> AnnotationPipeline:
         - allele_score:
             resource_id: allele_score
     """)
-    return load_pipeline_from_yaml(annotation_configuration, local_repo)
+    return load_pipeline_from_yaml(
+        annotation_configuration, local_repo, work_dir=tmp_path)
 
 
 def test_allele_score_annotator_attributes(
@@ -165,7 +166,8 @@ def test_allele_score_with_default_score_annotation(
         - allele_score:
             resource_id: allele_score
     """)
-    pipeline = load_pipeline_from_yaml(annotation_configuration, local_repo)
+    pipeline = load_pipeline_from_yaml(
+        annotation_configuration, local_repo, work_dir=tmp_path)
 
     annotatable = VCFAllele(*variant)
     result = pipeline.annotate(annotatable)
@@ -226,7 +228,8 @@ def test_allele_annotator_add_chrom_prefix_vcf_table(
                 - source: test100way
             """)
 
-    pipeline = load_pipeline_from_yaml(pipeline_config, repo)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, repo, work_dir=tmp_path)
     with pipeline.open() as work_pipeline:
         annotatable = VCFAllele(*allele)
         result = work_pipeline.annotate(annotatable)
@@ -312,6 +315,7 @@ def test_allele_score_annotator_region_with_default_annotation(
                 resource_id: allele_score
         """),
         local_repo,
+        work_dir=tmp_path,
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(Region("1", 10, 20))
@@ -386,6 +390,7 @@ def test_allele_attribute_listed_with_default_false(
 
 def test_allele_score_exact_match_allele_attribute(
     allele_score_repository: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
@@ -397,6 +402,7 @@ def test_allele_score_exact_match_allele_attribute(
                 - source: allele
         """),
         allele_score_repository,
+        work_dir=tmp_path,
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(VCFAllele("1", 10, "A", "G"))
@@ -411,6 +417,7 @@ def _annotate_allele_attribute(
     mode: str,
     aggregator: str,
     allele_filter: str | None = None,
+    work_dir: pathlib.Path,
 ) -> object:
     """Annotate with the ``allele`` attribute alone, under ``aggregator``."""
     filter_line = (
@@ -426,6 +433,7 @@ def _annotate_allele_attribute(
                   aggregator: {aggregator}
         """),
         repo,
+        work_dir=work_dir,
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(annotatable)
@@ -440,11 +448,12 @@ def test_count_on_the_allele_attribute_counts_the_allele_keys(
     allele_score_repository: GenomicResourceRepo,
     mode: str,
     expected: int,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The exact match selects one line, the region fold all three."""
     value = _annotate_allele_attribute(
         allele_score_repository, VCFAllele("1", 10, "A", "G"),
-        mode=mode, aggregator="count")
+        mode=mode, aggregator="count", work_dir=tmp_path)
 
     assert value == expected
 
@@ -457,11 +466,12 @@ def test_join_on_the_allele_attribute_joins_the_allele_keys(
     allele_score_repository: GenomicResourceRepo,
     mode: str,
     expected: str,
+    tmp_path: pathlib.Path,
 ) -> None:
     """A bare string, the keys in the order the table serves the lines."""
     value = _annotate_allele_attribute(
         allele_score_repository, VCFAllele("1", 10, "A", "G"),
-        mode=mode, aggregator="join(;)")
+        mode=mode, aggregator="join(;)", work_dir=tmp_path)
 
     assert value == expected
 
@@ -474,6 +484,7 @@ def test_count_on_the_allele_attribute_with_every_line_filtered_out(
     allele_score_repository: GenomicResourceRepo,
     mode: str,
     expected: int | None,
+    tmp_path: pathlib.Path,
 ) -> None:
     """A ``one`` exact match rejected by the filter is no line: ``None``.
 
@@ -482,17 +493,19 @@ def test_count_on_the_allele_attribute_with_every_line_filtered_out(
     """
     value = _annotate_allele_attribute(
         allele_score_repository, VCFAllele("1", 10, "A", "G"),
-        mode=mode, aggregator="count", allele_filter="freq > 2.0")
+        mode=mode, aggregator="count", allele_filter="freq > 2.0",
+        work_dir=tmp_path)
 
     assert value == expected
 
 
 def test_count_on_the_allele_attribute_of_a_region_with_no_lines(
     allele_score_repository: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     value = _annotate_allele_attribute(
         allele_score_repository, Region("1", 1, 5),
-        mode="region", aggregator="count")
+        mode="region", aggregator="count", work_dir=tmp_path)
 
     assert value is None
 
@@ -505,6 +518,7 @@ def test_value_type_of_the_allele_attribute_under_an_aggregator(
     allele_score_repository: GenomicResourceRepo,
     aggregator: str,
     expected: str,
+    tmp_path: pathlib.Path,
 ) -> None:
     """``mode`` answers one allele key; ``most_common`` declares a list."""
     pipeline = load_pipeline_from_yaml(
@@ -516,6 +530,7 @@ def test_value_type_of_the_allele_attribute_under_an_aggregator(
                   aggregator: {aggregator}
         """),
         allele_score_repository,
+        work_dir=tmp_path,
     )
 
     attribute = pipeline.get_attribute_info("allele")
@@ -526,6 +541,7 @@ def test_value_type_of_the_allele_attribute_under_an_aggregator(
 
 def test_the_pipeline_refuses_max_on_the_allele_attribute_at_load(
     allele_score_repository: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     with pytest.raises(
         AnnotationConfigurationError,
@@ -540,11 +556,13 @@ def test_the_pipeline_refuses_max_on_the_allele_attribute_at_load(
                       aggregator: max
             """),
             allele_score_repository,
+            work_dir=tmp_path,
         )
 
 
 def test_allele_score_exact_match_allele_attribute_renamed(
     allele_score_repository: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
@@ -557,6 +575,7 @@ def test_allele_score_exact_match_allele_attribute_renamed(
                   name: variant_key
         """),
         allele_score_repository,
+        work_dir=tmp_path,
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(VCFAllele("1", 10, "A", "G"))
@@ -566,6 +585,7 @@ def test_allele_score_exact_match_allele_attribute_renamed(
 
 def test_allele_score_exact_match_allele_with_include_attributes(
     allele_score_repository: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
@@ -578,6 +598,7 @@ def test_allele_score_exact_match_allele_with_include_attributes(
                   include_attributes: freq
         """),
         allele_score_repository,
+        work_dir=tmp_path,
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(VCFAllele("1", 10, "A", "G"))
@@ -587,6 +608,7 @@ def test_allele_score_exact_match_allele_with_include_attributes(
 
 def test_allele_score_exact_match_allele_filtered(
     allele_score_repository: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
@@ -600,6 +622,7 @@ def test_allele_score_exact_match_allele_filtered(
                   include_attributes: freq
         """),
         allele_score_repository,
+        work_dir=tmp_path,
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(VCFAllele("1", 10, "A", "G"))
@@ -645,6 +668,7 @@ def test_allele_score_region_allele_filter(
     allele_score_repository: GenomicResourceRepo,
     allele_filter: str,
     expected_alleles: set,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent(f"""
@@ -655,6 +679,7 @@ def test_allele_score_region_allele_filter(
                 - source: allele
         """),
         allele_score_repository,
+        work_dir=tmp_path,
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(Region("1", 10, 16))
@@ -682,6 +707,7 @@ def test_allele_score_region_allele_filter_in_operator(
     allele_score_repository: GenomicResourceRepo,
     allele_filter: str,
     expected_alleles: set,
+    tmp_path: pathlib.Path,
 ) -> None:
     """``in`` is containment, in both operand directions.
 
@@ -699,6 +725,7 @@ def test_allele_score_region_allele_filter_in_operator(
                 - source: allele
         """),
         allele_score_repository,
+        work_dir=tmp_path,
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(Region("1", 10, 16))
@@ -707,6 +734,7 @@ def test_allele_score_region_allele_filter_in_operator(
 
 def test_allele_score_exact_match_allele_filter_in_operator(
     allele_score_repository: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """``in`` filters exact-match lookups the same way as region ones."""
     pipeline = load_pipeline_from_yaml(
@@ -719,6 +747,7 @@ def test_allele_score_exact_match_allele_filter_in_operator(
                   name: allele_freq
         """),
         allele_score_repository,
+        work_dir=tmp_path,
     )
     with pipeline.open() as work_pipeline:
         kept = work_pipeline.annotate(VCFAllele("1", 10, "A", "C"))
@@ -738,6 +767,7 @@ _UNPARSABLE_ALLELE_FILTER_CONFIG = textwrap.dedent("""
 
 def test_unparsable_allele_filter_names_allele_filter(
     allele_score_repository: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The message names the parameter the user actually wrote.
 
@@ -748,7 +778,8 @@ def test_unparsable_allele_filter_names_allele_filter(
     """
     with pytest.raises(AnnotationConfigurationError) as excinfo:
         load_pipeline_from_yaml(
-            _UNPARSABLE_ALLELE_FILTER_CONFIG, allele_score_repository)
+            _UNPARSABLE_ALLELE_FILTER_CONFIG, allele_score_repository,
+            work_dir=tmp_path)
 
     message = str(excinfo.value)
     assert "Error parsing allele_filter" in message
@@ -757,6 +788,7 @@ def test_unparsable_allele_filter_names_allele_filter(
 
 def test_allele_filter_naming_an_unknown_score_is_refused_at_config_time(
     allele_score_repository: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """A misspelt score name fails the pipeline, not each annotated record.
 
@@ -776,6 +808,7 @@ def test_allele_filter_naming_an_unknown_score_is_refused_at_config_time(
                     - source: freq
             """),
             allele_score_repository,
+            work_dir=tmp_path,
         )
 
     message = str(excinfo.value)
@@ -786,6 +819,7 @@ def test_allele_filter_naming_an_unknown_score_is_refused_at_config_time(
 
 def test_unparsable_allele_filter_keeps_the_parser_diagnostics(
     allele_score_repository: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Naming the parameter must not cost the user the parser's detail.
 
@@ -800,7 +834,8 @@ def test_unparsable_allele_filter_keeps_the_parser_diagnostics(
     """
     with pytest.raises(AnnotationConfigurationError) as excinfo:
         load_pipeline_from_yaml(
-            _UNPARSABLE_ALLELE_FILTER_CONFIG, allele_score_repository)
+            _UNPARSABLE_ALLELE_FILTER_CONFIG, allele_score_repository,
+            work_dir=tmp_path)
 
     cause = excinfo.value.__cause__
     assert cause is not None
@@ -850,6 +885,7 @@ def test_allele_score_filter_digit_prefixed_score_name(
                 - source: allele
         """),
         repo,
+        work_dir=tmp_path,
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(Region("1", 10, 10))
@@ -859,6 +895,7 @@ def test_allele_score_filter_digit_prefixed_score_name(
 
 def test_allele_score_region_allele_with_include_attributes(
     allele_score_repository: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
@@ -870,6 +907,7 @@ def test_allele_score_region_allele_with_include_attributes(
                   include_attributes: freq
         """),
         allele_score_repository,
+        work_dir=tmp_path,
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(Region("1", 10, 16))
@@ -884,6 +922,7 @@ def test_allele_score_region_allele_with_include_attributes(
 
 def test_allele_score_region_with_no_lines(
     allele_score_repository: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
@@ -896,6 +935,7 @@ def test_allele_score_region_with_no_lines(
                 - source: freq
         """),
         allele_score_repository,
+        work_dir=tmp_path,
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(Region("1", 200, 300))
@@ -904,6 +944,7 @@ def test_allele_score_region_with_no_lines(
 
 def test_allele_score_region_filter_all_alleles(
     allele_score_repository: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
@@ -916,6 +957,7 @@ def test_allele_score_region_filter_all_alleles(
                 - source: freq
         """),
         allele_score_repository,
+        work_dir=tmp_path,
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(Region("1", 10, 16))
@@ -925,6 +967,7 @@ def test_allele_score_region_filter_all_alleles(
 
 def test_allele_score_include_multiple_attributes(
     allele_score_repository: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline = load_pipeline_from_yaml(
         textwrap.dedent("""
@@ -939,6 +982,7 @@ def test_allele_score_include_multiple_attributes(
                 - source: freq
         """),
         allele_score_repository,
+        work_dir=tmp_path,
     )
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(VCFAllele("1", 10, "A", "G"))
@@ -997,6 +1041,7 @@ chr1   20  .  A   T   .    .      label=other
                 - source: label
         """),
         repo,
+        work_dir=tmp_path,
     )
     annotatable = VCFAllele("chr1", 11, "G", "A")
     with pipeline.open() as work_pipeline:
@@ -1053,6 +1098,7 @@ def test_allele_score_value_count_aggregator_on_string_attribute(
                   aggregator: value_count
         """),
         repo,
+        work_dir=tmp_path,
     )
     with pipeline.open() as work_pipeline:
         result_pos10 = work_pipeline.annotate(Region("1", 10, 10))
@@ -1109,7 +1155,11 @@ _INMEMORY_ALLELE_SCORE_REPO = {
     (("1", 14970, "C", "CA"), "max", 0.04),
 ])
 def test_allele_score_annotator_inmemory_region_indels(
-        variant: tuple, aggregator: str, expected: float) -> None:
+    variant: tuple,
+    aggregator: str,
+    expected: float,
+    tmp_path: pathlib.Path,
+) -> None:
     repo = build_inmemory_test_repository(_INMEMORY_ALLELE_SCORE_REPO)
     pipeline_config = textwrap.dedent(f"""
         - allele_score:
@@ -1120,7 +1170,8 @@ def test_allele_score_annotator_inmemory_region_indels(
               name: test
               aggregator: {aggregator}
         """)
-    pipeline = load_pipeline_from_yaml(pipeline_config, repo)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, repo, work_dir=tmp_path)
     with pipeline.open() as work_pipeline:
         result = work_pipeline.annotate(VCFAllele(*variant))
         assert result is not None
@@ -1197,6 +1248,7 @@ def test_allele_score_annotator_tabix_multiple_scores(
     variant: tuple,
     s1: float,
     s2: float,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline_config = textwrap.dedent("""
         - allele_score:
@@ -1209,7 +1261,7 @@ def test_allele_score_annotator_tabix_multiple_scores(
         """)
 
     pipeline = load_pipeline_from_yaml(
-        pipeline_config, tabix_allele_score_repo)
+        pipeline_config, tabix_allele_score_repo, work_dir=tmp_path)
 
     annotatable = VCFAllele(*variant)
     with pipeline.open() as work_pipeline:

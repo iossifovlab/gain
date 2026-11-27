@@ -1,4 +1,5 @@
 # pylint: disable=W0621,C0114,C0116,W0212,W0613
+import pathlib
 import textwrap
 
 import pytest
@@ -77,13 +78,14 @@ def dummy_liftover_grr_fixture(
 
 def test_liftover_annotator_implicit_genomes(
     dummy_liftover_grr_fixture: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     pipeline_config = textwrap.dedent("""
       - liftover_annotator:
           chain: dummyChain
       """)
     pipeline = load_pipeline_from_yaml(
-        pipeline_config, dummy_liftover_grr_fixture)
+        pipeline_config, dummy_liftover_grr_fixture, work_dir=tmp_path)
     assert pipeline.get_resource_ids() == {
         "genomeA",
         "genomeB",
@@ -93,6 +95,7 @@ def test_liftover_annotator_implicit_genomes(
 
 def test_build_liftover_annotator_bcf_type(
     dummy_liftover_grr_fixture: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Test build_liftover_annotator creates BcfLiftoverAnnotator."""
     pipeline_config = textwrap.dedent("""
@@ -100,7 +103,7 @@ def test_build_liftover_annotator_bcf_type(
           chain: dummyChain
       """)
     pipeline = load_pipeline_from_yaml(
-        pipeline_config, dummy_liftover_grr_fixture)
+        pipeline_config, dummy_liftover_grr_fixture, work_dir=tmp_path)
 
     # Get the annotator from the pipeline
     assert len(pipeline.annotators) == 1
@@ -110,6 +113,7 @@ def test_build_liftover_annotator_bcf_type(
 
 def test_build_liftover_annotator_basic_type(
     dummy_liftover_grr_fixture: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Test build_liftover_annotator creates BasicLiftoverAnnotator."""
     pipeline_config = textwrap.dedent("""
@@ -117,7 +121,7 @@ def test_build_liftover_annotator_basic_type(
           chain: dummyChain
       """)
     pipeline = load_pipeline_from_yaml(
-        pipeline_config, dummy_liftover_grr_fixture)
+        pipeline_config, dummy_liftover_grr_fixture, work_dir=tmp_path)
 
     # Get the annotator from the pipeline
     assert len(pipeline.annotators) == 1
@@ -127,6 +131,7 @@ def test_build_liftover_annotator_basic_type(
 
 def test_build_liftover_annotator_explicit_genomes(
     dummy_liftover_grr_fixture: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Test build_liftover_annotator with explicit genomes."""
     pipeline_config = textwrap.dedent("""
@@ -136,7 +141,7 @@ def test_build_liftover_annotator_explicit_genomes(
           target_genome: genomeB
       """)
     pipeline = load_pipeline_from_yaml(
-        pipeline_config, dummy_liftover_grr_fixture)
+        pipeline_config, dummy_liftover_grr_fixture, work_dir=tmp_path)
 
     assert len(pipeline.annotators) == 1
     annotator = pipeline.annotators[0]
@@ -226,6 +231,7 @@ def test_build_liftover_annotator_unsupported_type(
 def test_liftover_annotator_refuses_an_empty_chain_id(
     dummy_liftover_grr_fixture: GenomicResourceRepo,
     annotator_type: str,
+    tmp_path: pathlib.Path,
 ) -> None:
     """An explicit ``chain: ""`` is refused by name, not looked up.
 
@@ -239,7 +245,8 @@ def test_liftover_annotator_refuses_an_empty_chain_id(
       """)
 
     with pytest.raises(AnnotationConfigurationError) as excinfo:
-        load_pipeline_from_yaml(pipeline_config, dummy_liftover_grr_fixture)
+        load_pipeline_from_yaml(
+            pipeline_config, dummy_liftover_grr_fixture, work_dir=tmp_path)
 
     assert_refuses_empty_resource_id(excinfo, annotator_type, "chain")
 
@@ -248,6 +255,7 @@ def test_liftover_annotator_refuses_an_empty_chain_id(
 def test_liftover_annotator_refuses_an_empty_genome_id(
     dummy_liftover_grr_fixture: GenomicResourceRepo,
     parameter: str,
+    tmp_path: pathlib.Path,
 ) -> None:
     """An explicit empty genome id is refused, not read as absent.
 
@@ -262,7 +270,8 @@ def test_liftover_annotator_refuses_an_empty_genome_id(
       """)
 
     with pytest.raises(AnnotationConfigurationError) as excinfo:
-        load_pipeline_from_yaml(pipeline_config, dummy_liftover_grr_fixture)
+        load_pipeline_from_yaml(
+            pipeline_config, dummy_liftover_grr_fixture, work_dir=tmp_path)
 
     assert_refuses_empty_resource_id(excinfo, "liftover_annotator", parameter)
 
@@ -271,6 +280,7 @@ def test_liftover_annotator_refuses_an_empty_genome_id(
 def test_liftover_annotator_null_genome_parameter_reads_as_absent(
     dummy_liftover_grr_fixture: GenomicResourceRepo,
     parameter: str,
+    tmp_path: pathlib.Path,
 ) -> None:
     """An explicit YAML null is "not configured", so the chain's label wins.
 
@@ -285,7 +295,7 @@ def test_liftover_annotator_null_genome_parameter_reads_as_absent(
       """)
 
     pipeline = load_pipeline_from_yaml(
-        pipeline_config, dummy_liftover_grr_fixture)
+        pipeline_config, dummy_liftover_grr_fixture, work_dir=tmp_path)
 
     assert pipeline.get_resource_ids() == {
         "genomeA",

@@ -66,17 +66,19 @@ def repo(tmp_path: pathlib.Path) -> GenomicResourceRepo:
 
 def _pipeline(
     repo: GenomicResourceRepo, attributes: str,
+    *, work_dir: pathlib.Path,
 ) -> AnnotationPipeline:
     return load_pipeline_from_yaml(textwrap.dedent(f"""
         - position_score:
             resource_id: scores
             attributes:
 {textwrap.indent(textwrap.dedent(attributes), " " * 12)}
-        """), repo)
+        """), repo, work_dir=work_dir)
 
 
 def test_an_untouched_region_answers_per_aggregator(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Each aggregator's own empty answer, not one ``None`` for all of them.
 
@@ -105,7 +107,7 @@ def test_an_untouched_region_answers_per_aggregator(
         - source: s
           name: as_bool
           aggregator: bool
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         result = pipeline.annotate(Region("chr1", 100, 110))
 
     assert result == {
@@ -118,6 +120,7 @@ def test_an_untouched_region_answers_per_aggregator(
 
 def test_an_attribute_may_spell_its_aggregator_as_a_mapping(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """A pipeline may write an aggregator as a mapping, not just a name.
 
@@ -145,7 +148,7 @@ def test_an_attribute_may_spell_its_aggregator_as_a_mapping(
           aggregator:
             aggregator_type: join
             parameters: ["|"]
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         result = pipeline.annotate(Region("chr1", 10, 29))
 
     assert result["joined"] == "|".join(["1.0"] * 10 + ["2.0"] * 10)
@@ -153,6 +156,7 @@ def test_an_attribute_may_spell_its_aggregator_as_a_mapping(
 
 def test_one_source_twice_with_two_aggregators_is_two_answers(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The fault the attribute-name key exists to fix.
 
@@ -170,7 +174,7 @@ def test_one_source_twice_with_two_aggregators_is_two_answers(
         - source: s
           name: lowest
           aggregator: min
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         result = pipeline.annotate(Region("chr1", 10, 29))
 
     assert result == {"highest": 2.0, "lowest": 1.0}
@@ -214,7 +218,7 @@ def test_a_substitution_answers_a_source_named_twice_under_both_names(
           name: tee
         - source: s
           name: second
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         result = pipeline.annotate(VCFAllele("chr1", 12, "A", "C"))
 
     assert result == {"first": 1.0, "tee": 10.0, "second": 1.0}
@@ -222,6 +226,7 @@ def test_a_substitution_answers_a_source_named_twice_under_both_names(
 
 def test_an_uncovered_substitution_answers_none_under_every_name(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """An uncovered SUBSTITUTION answers ``None`` per attribute.
 
@@ -244,7 +249,7 @@ def test_an_uncovered_substitution_answers_none_under_every_name(
           name: score
         - source: s
           name: again
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         result = pipeline.annotate(VCFAllele("chr1", 40, "A", "C"))
 
     assert result == {"score": None, "again": None}
@@ -252,6 +257,7 @@ def test_an_uncovered_substitution_answers_none_under_every_name(
 
 def test_a_substitution_below_position_one_is_refused(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """A substitution at a position no region can mean is REFUSED.
 
@@ -268,12 +274,14 @@ def test_a_substitution_below_position_one_is_refused(
     with _pipeline(repo, """
         - source: s
           name: score
-    """) as pipeline, pytest.raises(ValueError, match="1-based"):
+    """,
+    work_dir=tmp_path) as pipeline, pytest.raises(ValueError, match="1-based"):
         pipeline.annotate(VCFAllele("chr1", 0, "A", "C"))
 
 
 def test_the_bool_fixtures_false_record_answers_false(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The fixture has carried a ``False`` row all along; now it is asserted.
 
@@ -292,7 +300,7 @@ def test_the_bool_fixtures_false_record_answers_false(
         - source: flag
           name: flags
           aggregator: list
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         covered_true = pipeline.annotate(Region("chr1", 10, 19))
         covered_false = pipeline.annotate(Region("chr1", 20, 29))
 
@@ -302,6 +310,7 @@ def test_the_bool_fixtures_false_record_answers_false(
 
 def test_a_bool_attribute_naming_no_aggregator_is_refused_at_load(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Refused building the pipeline, not on the first region.
 
@@ -325,7 +334,7 @@ def test_a_bool_attribute_naming_no_aggregator_is_refused_at_load(
         _pipeline(repo, """
             - source: flag
               name: flag
-        """)
+        """, work_dir=tmp_path)
 
     assert str(excinfo.value).endswith(
         "score 'flag' of resource 'scores' has no default aggregator "
@@ -334,6 +343,7 @@ def test_a_bool_attribute_naming_no_aggregator_is_refused_at_load(
 
 def test_a_bool_attribute_that_names_one_loads_and_answers(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The other side of that boundary: naming one is all it takes.
 
@@ -344,7 +354,7 @@ def test_a_bool_attribute_that_names_one_loads_and_answers(
         - source: flag
           name: flag
           aggregator: bool
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         result = pipeline.annotate(Region("chr1", 10, 19))
 
     assert result == {"flag": True}
@@ -352,6 +362,7 @@ def test_a_bool_attribute_that_names_one_loads_and_answers(
 
 def test_a_region_starting_below_one_is_refused_rather_than_answered(
     repo: GenomicResourceRepo,
+    tmp_path: pathlib.Path,
 ) -> None:
     """The plane's span guard is allowed through (#1131).
 
@@ -376,7 +387,7 @@ def test_a_region_starting_below_one_is_refused_rather_than_answered(
         - source: s
           name: s
           aggregator: mean
-    """) as pipeline, pytest.raises(ValueError) as excinfo:
+    """, work_dir=tmp_path) as pipeline, pytest.raises(ValueError) as excinfo:
         pipeline.annotate(Region("chr1", 0, 10))
 
     assert str(excinfo.value) == (
@@ -420,7 +431,7 @@ def test_overlapping_records_count_each_position_once(
         - source: s
           name: s
           aggregator: mean
-    """) as pipeline:
+    """, work_dir=tmp_path) as pipeline:
         result = pipeline.annotate(Region("chr1", 10, 24))
 
     # 1.0 for 10-19 and 3.0 for 20-24: fifteen positions, each once.

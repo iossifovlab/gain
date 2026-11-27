@@ -1,5 +1,6 @@
 # pylint: disable=redefined-outer-name,C0114,C0116,protected-access,fixme
 
+import pathlib
 import textwrap
 
 import pytest
@@ -108,7 +109,7 @@ def test_liftover_chain_fixture(
 def test_liftover_annotator(
         annotatable: Annotatable,
         expected: Annotatable | None,
-        fixture_repo: GenomicResourceRepo) -> None:
+        fixture_repo: GenomicResourceRepo, tmp_path: pathlib.Path) -> None:
 
     pipeline_config = textwrap.dedent("""
         - liftover_annotator:
@@ -120,7 +121,8 @@ def test_liftover_annotator(
               internal: false
     """)
 
-    pipeline = load_pipeline_from_yaml(pipeline_config, fixture_repo)
+    pipeline = load_pipeline_from_yaml(
+        pipeline_config, fixture_repo, work_dir=tmp_path)
 
     result = None
     with pipeline.open() as work_pipeline:
